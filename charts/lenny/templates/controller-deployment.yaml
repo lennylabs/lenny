@@ -74,6 +74,17 @@ spec:
             {{- if .Values.controller.adapterImage }}
             - --adapter-image={{ .Values.controller.adapterImage }}
             {{- end }}
+            {{- if .Values.minio.tls.caBundle }}
+            {{- /* spec: §13.2 (NET-071) — name the per-agent-namespace
+                   object-store CA ConfigMap (agent-objectstore-ca.yaml) so
+                   the controller projects it into each agent pod and points
+                   the adapter's --objectstore-ca-bundle at the mounted ca.crt,
+                   letting the adapter trust a self-managed object store's
+                   non-public CA during checkpoint chunk PUT/GET. Rendered only
+                   when minio.tls.caBundle carries a PEM, the same condition
+                   under which the ConfigMap renders. */}}
+            - --objectstore-ca-configmap=lenny-objectstore-ca
+            {{- end }}
             {{- /* spec: §9.1 lines 14-31 — point each agent pod's adapter at
                    the gateway's GatewayControl listener so a type:agent
                    runtime's platform tool calls (lenny/delegate_task, ...)

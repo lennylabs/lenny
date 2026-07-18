@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -30,7 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -1300,28 +1298,11 @@ func TestTwoStepStartRejectsNonReadySession(t *testing.T) {
 // §5 warm pod from its §7.1 WorkspaceSnapshot and reports the
 // transition as `resume_pending` → `running`.
 
-// resumeCheckpointSource is an adapter.CheckpointSource serving a fixed
-// gzip-tar workspace archive for the resume path's restore step.
-type resumeCheckpointSource struct{ archive []byte }
-
-func (s resumeCheckpointSource) LoadCheckpoint(context.Context, string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(s.archive)), nil
-}
-
-// emptyResumeArchive returns a gzip-tar archive of an empty workspace,
-// the minimal valid input the adapter's Resume RPC can restore.
-func emptyResumeArchive(t *testing.T) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if _, err := workspace.Archive(t.TempDir(), &buf); err != nil {
-		t.Fatalf("archive empty workspace: %v", err)
-	}
-	return buf.Bytes()
-}
-
 // podResumeServer builds a sessionserver wired to a warm pool whose
-// §4.7 adapter carries a checkpoint source, so the §7.1 resume path
-// can restore a session onto a fresh pod. It returns the server, the
+// §4.7 adapter can restore a session onto a fresh pod. The gateway-driven
+// restore fetches the checkpoint's presigned chunk capabilities (§10.1
+// line 155); a resume that carries no chunks restores an empty workspace,
+// which is all these placement tests require. It returns the server, the
 // session store for seeding `awaiting_client_action` rows, the pod
 // registry, and the cluster client.
 func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.Store, *podsession.Registry, client.Client) {
@@ -1329,7 +1310,6 @@ func podResumeServer(t *testing.T, id string) (*sessionserver.Server, *memstore.
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
-	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
 
 	cluster := podBindClient(
 		t,
@@ -1564,7 +1544,6 @@ func TestResumeArchivesFailedChild(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
-	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
 
 	cluster := podBindClient(
 		t,
@@ -1675,7 +1654,6 @@ func TestResumeKeepsAwaitingOnTransientPoolExhaustion(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = &podBindRuntime{}
-	adapterSrv.Restorer = resumeCheckpointSource{archive: emptyResumeArchive(t)}
 
 	// A pool with no idle sandbox triggers podclaim.ErrNoIdlePod and
 	// the gateway maps that to WARM_POOL_EXHAUSTED (a §5.2 line 519
@@ -1733,8 +1711,6 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	adapterSrv := adapter.New("adapter-test")
 	adapterSrv.WorkspaceRoot = t.TempDir()
 	adapterSrv.Runtime = rt
-	captured := &capturingRestorer{archive: emptyResumeArchive(t)}
-	adapterSrv.Restorer = captured
 
 	// WorkspaceSizeLimitBytes on the template is the §4.4 / §10.1
 	// per-pod hard cap; the resume path forwards it to the adapter.
@@ -1780,18 +1756,6 @@ func TestResumePassesRecoveryGenerationAndSizeHintsToAdapter(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("resume: status %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-}
-
-// capturingRestorer is a CheckpointSource that records that LoadCheckpoint
-// was called so the resume tests can assert the restore path ran.
-type capturingRestorer struct {
-	archive []byte
-	loaded  bool
-}
-
-func (c *capturingRestorer) LoadCheckpoint(_ context.Context, _ string) (io.ReadCloser, error) {
-	c.loaded = true
-	return io.NopCloser(bytes.NewReader(c.archive)), nil
 }
 
 // spec: §4.2 line 156 — recovery_generation is incremented on each

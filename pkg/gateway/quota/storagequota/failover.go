@@ -38,13 +38,18 @@ var ErrUnavailable = errors.New("storagequota: counter unavailable (Redis and Po
 //
 // During the outage window the fallback reservation reads the Postgres
 // sum for the pre-check but performs no Redis increment — there is no
-// reachable counter to advance. The durable accounting is the
+// reachable counter to advance. In production sizeOf is the
+// reservation-aware seam ReservationAwareLiveBytes composes (live
+// artifact_store bytes plus outstanding checkpoint reservations), so the
+// during-outage pre-check counts a tenant's held checkpoint reservations
+// against its quota rather than handing that reserved headroom back
+// invisibly while Redis is down. The durable accounting is the
 // artifact_store row the §12.5 cataloging decorator writes when the
 // upload commits, which the next Postgres-derived read reflects. On
 // Redis recovery, RecoveryReconciler writes the authoritative sum back
 // to Redis and the atomic fast path resumes.
 //
-// spec: §12.4 line 210.
+// spec: §12.4 line 222.
 type Failover struct {
 	primary    Counter
 	sizeOf     LiveBytesSource
@@ -81,13 +86,15 @@ func (f *Failover) routedToFallback() {
 
 // Reserve runs the §11.2 pre-upload reservation on the primary, falling
 // back to a Postgres-derived check when Redis is unavailable. On
-// fallback it reads the tenant's live byte sum from Postgres and admits
-// the upload when sum+incoming fits the limit, returning the sum as the
-// prior usage (so the caller's headroom math is exact). A simultaneous
-// Postgres outage returns ErrUnavailable for the §12.4 fail-closed 503.
+// fallback it reads the tenant's durable byte total from Postgres (live
+// artifact bytes plus outstanding checkpoint reservations, through the
+// reservation-aware sizeOf seam) and admits the upload when sum+incoming
+// fits the limit, returning the sum as the prior usage (so the caller's
+// headroom math is exact). A simultaneous Postgres outage returns
+// ErrUnavailable for the §12.4 fail-closed 503.
 //
-// spec: §12.4 line 210 — "Upload pre-checks ... use the Postgres-derived
-// value during the outage window."
+// spec: §12.4 line 222 — "Upload pre-checks ... use this reservation-aware
+// Postgres-derived value ... during the outage window."
 func (f *Failover) Reserve(ctx context.Context, tenantID string, incoming, limit int64) (int64, error) {
 	prior, err := f.primary.Reserve(ctx, tenantID, incoming, limit)
 	if isDomainOutcome(err) {

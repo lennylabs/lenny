@@ -4,7 +4,6 @@ package adapter
 
 import (
 	"context"
-	"errors"
 	"io"
 	"time"
 
@@ -13,292 +12,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
-
-// CheckpointSink stores a session's workspace checkpoint archive in the
-// §4.4 artifact store and returns the stored checkpoint's identifier.
-type CheckpointSink interface {
-	// SaveCheckpoint reads the gzip-tar workspace archive from r and
-	// stores it as a checkpoint for the session, returning the
-	// checkpoint's identifier. The implementation reads r to EOF on
-	// success and may stop early on error.
-	SaveCheckpoint(ctx context.Context, sessionID string, r io.Reader) (checkpointID string, err error)
-}
-
-// CheckpointAborter is the §4.4 line 248 abort-cleanup surface the
-// adapter invokes whenever a checkpoint fails between the initial
-// quiescence request and the metadata commit. The implementation
-// deletes any partially-uploaded MinIO objects for the session's
-// in-flight checkpoint (`AbortMultipartUpload` for multipart uploads,
-// `DeleteObject` for single-part). The cleanup is best-effort: a
-// DeleteObject failure returns an error so the adapter can bump the
-// `lenny_checkpoint_orphaned_objects_total` counter.
-//
-// spec: §4.4 line 248 — "When a checkpoint is aborted ... the adapter
-// MUST delete any partially uploaded MinIO objects for that checkpoint
-// attempt".
-type CheckpointAborter interface {
-	// AbortPartial removes any partially-uploaded objects for the
-	// session's in-flight checkpoint attempt. Returns an error when
-	// the underlying storage delete failed; the adapter bumps the
-	// orphan counter in that case. A no-op (no partial objects to
-	// clean) returns nil.
-	AbortPartial(ctx context.Context, sessionID string) error
-}
-
-// CheckpointMetrics is the §4.4 metrics surface the adapter Checkpoint
-// RPC emits on. The gateway-side adapter wires this against the
-// gatewaymetrics.Metrics; tests substitute fakes through the same
-// interface. A nil implementation makes every metric call a no-op.
-//
-// spec: §4.4 lines 248, 254, 262 — `lenny_checkpoint_orphaned_objects_total`
-// on abort-cleanup failure; `lenny_checkpoint_size_exceeded_total` on
-// pre-checkpoint workspace-size probe exceed; `lenny_checkpoint_storage_failure_total`
-// on MinIO upload failure for non-eviction triggers.
-type CheckpointMetrics interface {
-	// IncCheckpointOrphanedObjects bumps
-	// `lenny_checkpoint_orphaned_objects_total` per §4.4 line 248
-	// when an abort-cleanup DeleteObject call failed. Pool and trigger
-	// label values are advisory; pass empty strings when unknown.
-	IncCheckpointOrphanedObjects(pool, trigger string)
-	// IncCheckpointSizeExceeded bumps
-	// `lenny_checkpoint_size_exceeded_total` per §4.4 line 254 when
-	// the pre-checkpoint workspace-size probe rejects the run. Pool
-	// and level label values are advisory; pass empty strings when
-	// unknown.
-	IncCheckpointSizeExceeded(pool, level string)
-	// IncCheckpointStorageFailure bumps
-	// `lenny_checkpoint_storage_failure_total` per §4.4 line 262 when
-	// a non-eviction checkpoint upload fails after all retries (the
-	// adapter discards the failed checkpoint and resumes the agent).
-	// Pool, level, and trigger label values are advisory; pass empty
-	// strings when unknown.
-	// spec: §4.4 line 262.
-	IncCheckpointStorageFailure(pool, level, trigger string)
-}
-
-// CheckpointEventEmitter is the §4.4 session-event surface the adapter
-// publishes `checkpoint.skipped` events on. The gateway-side adapter
-// wires it against the session event bus; tests substitute fakes
-// through the same interface. A nil implementation makes every emit
-// call a no-op.
-//
-// spec: §4.4 line 254 — on workspace_size_limit reject the session
-// emits a `checkpoint.skipped` event with `reason:
-// "workspace_size_limit"`.
-type CheckpointEventEmitter interface {
-	// EmitCheckpointSkipped publishes a `checkpoint.skipped` event on
-	// the session's event stream with the supplied reason and detail
-	// fields. Best-effort: emission failures are logged by the
-	// implementation, not returned, so a stuck event bus never blocks
-	// the checkpoint path.
-	EmitCheckpointSkipped(ctx context.Context, sessionID, reason string, fields map[string]any)
-}
-
-// WorkspaceSizeFunc returns the on-disk byte count of the session's
-// workspace root. The adapter calls this immediately before quiescing
-// the runtime to evaluate the §4.4 pre-checkpoint workspace-size
-// probe. Returning (0, nil) for an unconfigured workspace path skips
-// the probe (the kubelet `emptyDir.sizeLimit` is the backstop). A nil
-// WorkspaceSizeFunc on the Server skips the probe entirely.
-//
-// spec: §4.4 line 254 — "the adapter additionally performs a
-// pre-checkpoint workspace size probe before initiating the
-// quiescence handshake".
-type WorkspaceSizeFunc func(workspaceRoot string) (int64, error)
-
-// Checkpoint implements the §4.4 / §4.7 Checkpoint RPC: it snapshots the
-// session's workspace and stores it as a checkpoint in the artifact
-// store. This is the best-effort path — the workspace is archived live
-// without quiescing the runtime, suitable for Basic and Standard-level
-// runtimes; Full-level cooperative quiescence runs over the lifecycle
-// channel.
-//
-// The archive is streamed to the sink through an in-process pipe so a
-// large workspace is never buffered in memory. The compressed byte
-// count Archive reports is returned as the checkpoint size.
-//
-// Before any quiescence, the adapter evaluates the §4.4 line 254
-// pre-checkpoint workspace-size probe. If the workspace exceeds
-// `WorkspaceSizeLimitBytes`, the checkpoint is aborted immediately
-// (no quiescence), the `lenny_checkpoint_size_exceeded_total` counter
-// is incremented, and the session emits a `checkpoint.skipped` event
-// with `reason: "workspace_size_limit"`.
-func (s *Server) Checkpoint(ctx context.Context, req *adapterv1.CheckpointRequest) (*adapterv1.CheckpointResponse, error) {
-	// spec: §16.3 line 355 — `session.checkpoint` is a Gateway + Pod span.
-	// This is the Pod half: the adapter's workspace-snapshot RPC. The
-	// gateway half (the checkpoint orchestration) is emitted there.
-	// F-16.3.6 / pod half of F-16.3.1.
-	ctx, span := tracing.NewTracer(nil).Start(ctx, tracing.SpanSessionCheckpoint)
-	var spanErr error
-	defer func() {
-		tracing.RecordError(span, spanErr)
-		span.End()
-	}()
-
-	sessionID := req.GetSessionId().GetValue()
-	if sessionID == "" {
-		spanErr = tracing.CategorizeError(
-			status.Error(codes.InvalidArgument, "Checkpoint requires a session id"),
-			tracing.CategoryPermanent,
-		)
-		return nil, status.Error(codes.InvalidArgument, "Checkpoint requires a session id")
-	}
-	if err := s.checkSession(sessionID); err != nil {
-		spanErr = err
-		return nil, err
-	}
-	if s.WorkspaceRoot == "" {
-		spanErr = tracing.CategorizeError(
-			status.Error(codes.FailedPrecondition, "adapter is not configured with a workspace root"),
-			tracing.CategoryPermanent,
-		)
-		return nil, status.Error(codes.FailedPrecondition,
-			"adapter is not configured with a workspace root")
-	}
-	if s.Checkpoints == nil {
-		spanErr = tracing.CategorizeError(
-			status.Error(codes.Unimplemented, "adapter is not configured with a checkpoint sink"),
-			tracing.CategoryPermanent,
-		)
-		return nil, status.Error(codes.Unimplemented,
-			"adapter is not configured with a checkpoint sink")
-	}
-
-	deadline := checkpoint.CheckpointTimeout
-	if ms := req.GetDeadlineMs(); ms > 0 {
-		deadline = time.Duration(ms) * time.Millisecond
-	}
-	ctx, cancel := context.WithTimeout(ctx, deadline)
-	defer cancel()
-
-	// §4.7: Checkpoint and Interrupt are serialized per session.
-	release, err := s.ops.Begin(ctx, opCheckpoint)
-	if err != nil {
-		if errors.Is(err, errOpCoalesced) || errors.Is(err, errOpBusy) {
-			// §16.3: a coalesced/busy checkpoint is TRANSIENT (the caller
-			// is told to retry).
-			spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
-			return nil, status.Error(codes.Aborted,
-				"checkpoint coalesced into an in-flight operation; retry")
-		}
-		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
-		return nil, status.FromContextError(err).Err()
-	}
-	defer release()
-
-	// §4.4 line 254 — pre-checkpoint workspace-size probe. Runs before
-	// quiescence so an oversized workspace never pauses the runtime.
-	if err := s.workspaceSizePreCheck(ctx, sessionID); err != nil {
-		// §16.3: a workspace exceeding the size limit is PERMANENT (the
-		// same workspace re-probes the same way).
-		spanErr = tracing.CategorizeError(err, tracing.CategoryPermanent)
-		return nil, err
-	}
-
-	// §4.7: a Full-level runtime checkpoints cooperatively over the
-	// lifecycle channel — quiesce, snapshot, resume. Other runtimes are
-	// archived live (best-effort consistency).
-	if s.Lifecycle != nil && s.Lifecycle.Supports("checkpoint") {
-		resp, err := s.checkpointViaLifecycle(ctx, req, sessionID)
-		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
-		return resp, err
-	}
-	id, size, err := s.archiveAndStore(ctx, sessionID)
-	if err != nil {
-		// §4.4 line 248 — abort cleanup on every failed checkpoint.
-		s.runAbortCleanup(ctx, sessionID)
-		// §16.3: an archive/store failure is TRANSIENT (a retry can
-		// succeed once the artifact store recovers).
-		spanErr = tracing.CategorizeError(err, tracing.CategoryTransient)
-		return nil, err
-	}
-	return &adapterv1.CheckpointResponse{CheckpointId: id, SizeBytes: size}, nil
-}
-
-// workspaceSizePreCheck evaluates the §4.4 line 254 pre-checkpoint
-// workspace-size probe. On a size_exceeded result it emits the
-// `lenny_checkpoint_size_exceeded_total` counter, publishes the
-// `checkpoint.skipped` event with `reason: "workspace_size_limit"`,
-// and returns a FailedPrecondition gRPC error so the gateway sees the
-// abort. Returns nil when the probe passes or is unconfigured.
-//
-// spec: §4.4 line 254 — "If the measured size exceeds
-// workspaceSizeLimitBytes, the checkpoint is aborted immediately ...
-// the lenny_checkpoint_size_exceeded_total counter is incremented ...
-// the session emits a checkpoint.skipped event with reason:
-// 'workspace_size_limit'".
-func (s *Server) workspaceSizePreCheck(ctx context.Context, sessionID string) error {
-	if s.WorkspaceSize == nil || s.WorkspaceSizeLimitBytes <= 0 {
-		// Probe is unconfigured; the kubelet emptyDir.sizeLimit backstop
-		// is the only enforcement (per §4.4 hard workspace size limit).
-		return nil
-	}
-	size, err := s.WorkspaceSize(s.WorkspaceRoot)
-	if err != nil {
-		// A stat failure should not block a checkpoint — fall through
-		// without invoking the size limit. The §4.4 emptyDir cap still
-		// applies as the kubelet-enforced backstop.
-		return nil
-	}
-	if probeErr := checkpoint.WorkspaceSizePreCheck(size, s.WorkspaceSizeLimitBytes); probeErr != nil {
-		var sizeErr *checkpoint.WorkspaceSizeExceededError
-		if errors.As(probeErr, &sizeErr) {
-			s.recordSizeExceeded(ctx, sessionID, sizeErr)
-			return status.Errorf(codes.FailedPrecondition,
-				"checkpoint: %s", sizeErr.Error())
-		}
-		return status.Errorf(codes.FailedPrecondition,
-			"checkpoint: workspace-size probe: %v", probeErr)
-	}
-	return nil
-}
-
-// recordSizeExceeded emits the §4.4 line 254 size-exceeded telemetry:
-// the `lenny_checkpoint_size_exceeded_total` counter increment and the
-// `checkpoint.skipped` session-event publish with `reason:
-// "workspace_size_limit"`. Both surfaces are no-ops when unwired so a
-// dev-mode adapter without metrics or events still functions.
-func (s *Server) recordSizeExceeded(ctx context.Context, sessionID string, err *checkpoint.WorkspaceSizeExceededError) {
-	if s.CheckpointMetrics != nil {
-		s.CheckpointMetrics.IncCheckpointSizeExceeded(s.CheckpointPoolLabel, s.CheckpointLevelLabel)
-	}
-	if s.CheckpointEvents != nil {
-		s.CheckpointEvents.EmitCheckpointSkipped(ctx, sessionID,
-			"workspace_size_limit",
-			map[string]any{
-				"workspace_bytes": err.WorkspaceBytes,
-				"limit_bytes":     err.LimitBytes,
-				"pool":            s.CheckpointPoolLabel,
-				"level":           s.CheckpointLevelLabel,
-			})
-	}
-}
-
-// runAbortCleanup performs the §4.4 line 248 checkpoint abort cleanup:
-// every failed checkpoint MUST delete any partially-uploaded MinIO
-// objects for the in-flight attempt. The CheckpointAborter
-// implementation walks the partial-manifest store for the session and
-// issues per-key DeleteObject calls (or AbortMultipartUpload on
-// in-flight multipart uploads); a DeleteObject failure bumps the
-// `lenny_checkpoint_orphaned_objects_total` counter. The cleanup runs
-// best-effort: an aborter failure never re-raises out of the
-// Checkpoint RPC (the underlying checkpoint error is already returned
-// to the caller).
-//
-// spec: §4.4 line 248.
-func (s *Server) runAbortCleanup(ctx context.Context, sessionID string) {
-	if s.CheckpointAborter == nil {
-		return
-	}
-	if err := s.CheckpointAborter.AbortPartial(ctx, sessionID); err != nil {
-		if s.CheckpointMetrics != nil {
-			s.CheckpointMetrics.IncCheckpointOrphanedObjects(s.CheckpointPoolLabel, s.CheckpointTriggerLabel)
-		}
-	}
-}
 
 // checkpointRoots returns the §4.4 checkpoint bundle: the session
 // workspace under workspace.WorkspacePrefix, plus the §6.4 line 380
@@ -322,105 +37,368 @@ func (s *Server) checkpointRoots() []workspace.NamedRoot {
 	return roots
 }
 
-// archiveAndStore archives the session workspace and streams it to the
-// checkpoint sink through an in-process pipe, so a large workspace is
-// never buffered in memory. It returns the stored checkpoint id and the
-// compressed archive size.
-func (s *Server) archiveAndStore(ctx context.Context, sessionID string) (string, int64, error) {
-	type archiveResult struct {
-		n   int64
-		err error
+// probeWorkspaceBytes measures the on-disk workspace byte total for the
+// §4.4 line 254 pre-checkpoint size probe, summing every checkpoint root
+// the resume path replays so the gateway reserves quota against the whole
+// bundle rather than the workspace tree alone.
+func (s *Server) probeWorkspaceBytes() (int64, error) {
+	var total int64
+	for _, root := range s.checkpointRoots() {
+		n, err := workspace.Size(root.Root)
+		if err != nil {
+			return 0, err
+		}
+		total += n
 	}
-	archived := make(chan archiveResult, 1)
+	return total, nil
+}
+
+// Checkpoint serves the §4.4 / §10.1 gateway-driven Checkpoint stream. The
+// gateway is the gRPC client: it opens the stream with a CheckpointStart
+// carrying the gateway-minted checkpoint_id, the adapter reports the
+// on-disk workspace size (CheckpointProbe) so the gateway reserves storage
+// quota, and then the adapter archives the checkpoint bundle into a
+// continuous tar (or tar.gz) byte stream, slices it into fixed-size
+// chunks, and for each chunk declares it (ChunkReady), receives a
+// single-chunk presigned PUT capability (CheckpointGrant), PUTs the chunk
+// against object storage replaying every signed header verbatim, and
+// confirms it (ChunkCommitted). The stream closes with a CheckpointSummary
+// on success, a CheckpointFailed carrying the object store's HTTP status
+// and error code when a chunk PUT is rejected, or a FailedPrecondition
+// gRPC status when the §4.4 line 255 workspace-size probe rejects the
+// attempt before any grant is minted.
+//
+// spec: §4.4 (checkpoint quiescence, hard workspace size limit, storage
+// failure retry budget); §10.1 line 130 (the gateway mints checkpoint_id).
+func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
+	ctx := stream.Context()
+	first, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	start := first.GetStart()
+	if start == nil {
+		return status.Error(codes.InvalidArgument,
+			"Checkpoint stream must open with a CheckpointStart")
+	}
+	if s.WorkspaceRoot == "" {
+		return status.Error(codes.FailedPrecondition,
+			"adapter is not configured with a workspace root")
+	}
+	if s.CheckpointTransport == nil {
+		return status.Error(codes.FailedPrecondition,
+			"adapter is not configured with a checkpoint transport")
+	}
+
+	// spec: §4.7 — the Checkpoint RPC shares the per-session op lock with
+	// Interrupt so at most one runs at a time. A barrier-window checkpoint
+	// runs through the same lock; the barrier's quiescence has already
+	// drained dispatch, so the lock is uncontended there by construction.
+	release, err := s.ops.Begin(ctx, opCheckpoint)
+	if err != nil {
+		// A busy lock is a gateway-side abort of this attempt; the gateway
+		// finalises the manifest row partial.
+		return status.Errorf(codes.Aborted, "checkpoint op lock: %v", err)
+	}
+	defer release()
+
+	// Link a quiesce-and-hold barrier, if one is waiting, to this stream's
+	// checkpoint_id and signal it on stream termination so the barrier's
+	// CheckpointBarrierAck echoes the gateway-minted id (§10.1 line 167).
+	linked := s.barrier.link(start.GetCheckpointId())
+	if linked {
+		defer s.barrier.complete()
+	}
+
+	trigger := checkpoint.TriggerFromProto(start.GetTrigger())
+
+	// spec: §4.4 line 254-255 — probe the on-disk workspace size and enforce
+	// the hard limit before the quiescence handshake. An over-limit workspace
+	// aborts with FailedPrecondition before any grant is minted and before
+	// the runtime is quiesced, so a checkpoint that cannot be taken never
+	// pauses the agent. The gateway maps the FailedPrecondition onto
+	// lenny_checkpoint_size_exceeded_total and the checkpoint.skipped event.
+	wsBytes, err := s.probeWorkspaceBytes()
+	if err != nil {
+		return status.Errorf(codes.Internal, "probe workspace size: %v", err)
+	}
+	if serr := checkpoint.WorkspaceSizePreCheck(wsBytes, s.WorkspaceSizeLimitBytes); serr != nil {
+		return status.Errorf(codes.FailedPrecondition, "%s", serr.Error())
+	}
+	if serr := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Probe{
+			Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: wsBytes},
+		},
+	}); serr != nil {
+		return serr
+	}
+
+	// spec: §4.4 line 241 — Full-level runtimes quiesce cooperatively over
+	// the lifecycle channel: checkpoint_request → checkpoint_ready before the
+	// first chunk is archived, checkpoint_complete after the stream ends. The
+	// runtime stays quiesced for the whole chunked archive, and the completion
+	// frame carries status ok only when Summary is reached; a terminal Failed
+	// frame or a gateway Abort completes with status failed and the reason.
+	completeStatus, completeReason := "ok", ""
+	if s.Lifecycle != nil {
+		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
+			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
+		}
+		defer func() {
+			_ = s.Lifecycle.CompleteCheckpoint(start.GetCheckpointId(), completeStatus, completeReason)
+		}()
+	}
+
+	failReason, serr := s.streamChunks(ctx, stream, start, trigger)
+	if serr != nil {
+		completeStatus, completeReason = "failed", serr.Error()
+		return serr
+	}
+	if failReason != "" {
+		completeStatus, completeReason = "failed", failReason
+	}
+	return nil
+}
+
+// streamChunks archives the checkpoint bundle, slices it into fixed-size
+// chunks, and runs the ChunkReady → CheckpointGrant → PUT → ChunkCommitted
+// loop for each, closing with a CheckpointSummary. A rejected chunk PUT or a
+// gateway Abort terminates the stream with a CheckpointFailed frame (not a
+// gRPC error) so the gateway observes the object store's HTTP status and
+// error code. It returns a non-empty failReason when the stream terminated
+// on a Failed frame or an Abort (so the caller reports a Full-level runtime a
+// failed checkpoint_complete) and an empty reason on the Summary success
+// path. A non-nil error is a gRPC-level failure of the stream itself.
+func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, start *adapterv1.CheckpointStart, trigger checkpoint.Trigger) (string, error) {
+	// Archive the bundle into a pipe. The goroutine keeps the recover() →
+	// re-panic semantics §4.4 mandates: silently recovering the checkpoint
+	// goroutine panic without signaling unhealthiness would leave the agent
+	// frozen while liveness still passes, so the re-panic exits the process
+	// and Kubernetes restarts the pod, resuming from the last checkpoint.
 	pr, pw := io.Pipe()
 	go func() {
-		// §4.4 line 248 — a Go recover() wrapping the checkpoint
-		// goroutine MUST either re-panic or mark /healthz unhealthy.
-		// Re-panic preserves the existing crash semantics: the adapter
-		// process exits and Kubernetes restarts the pod (the agent
-		// process resumes from the last successful checkpoint per
-		// §7.2). The PipeWriter is closed with an error so the read
-		// side unblocks immediately rather than waiting for the close
-		// implied by the goroutine exit.
 		defer func() {
 			if r := recover(); r != nil {
 				_ = pw.CloseWithError(io.ErrClosedPipe)
-				archived <- archiveResult{err: io.ErrClosedPipe}
-				panic(r) // spec: §4.4 line 248 re-panic mandate.
+				panic(r) // spec: §4.4 re-panic mandate.
 			}
 		}()
-		// §4.4 / §7.3 step (f): bundle the workspace and the /sessions
-		// session-file tmpfs so a resume can restore both.
-		n, err := workspace.ArchiveTree(s.checkpointRoots(), pw)
-		_ = pw.CloseWithError(err)
-		archived <- archiveResult{n: n, err: err}
+		_, aerr := workspace.ArchiveTree(s.checkpointRoots(), pw)
+		_ = pw.CloseWithError(aerr)
 	}()
-	id, saveErr := s.Checkpoints.SaveCheckpoint(ctx, sessionID, pr)
-	// Closing the read end unblocks the archive goroutine if the sink
-	// stopped reading before EOF (an error or a deadline).
-	_ = pr.Close()
-	res := <-archived
-	if res.err != nil {
-		// §4.4 line 262 — archive failure is treated as a non-eviction
-		// checkpoint upload failure for telemetry purposes: the agent
-		// resumes, the failed checkpoint is discarded, the next
-		// scheduled checkpoint retries normally. Eviction triggers
-		// bypass this counter (their fallback writer emits
-		// lenny_checkpoint_eviction_fallback_total instead).
-		s.recordStorageFailure()
-		return "", 0, status.Errorf(codes.Internal, "archive workspace: %v", res.err)
+	defer func() { _ = pr.Close() }()
+
+	chunkSize := start.GetChunkSizeBytes()
+	if chunkSize <= 0 {
+		chunkSize = defaultCheckpointChunkSize
 	}
-	if saveErr != nil {
-		// spec: §4.4 line 262 — non-eviction MinIO upload failure.
-		s.recordStorageFailure()
-		return "", 0, status.Errorf(codes.Internal, "store checkpoint: %v", saveErr)
+	budget := checkpoint.RetryBudgetFor(trigger)
+	spill := s.spillDir()
+
+	var index uint32
+	var total int64
+	for {
+		chunk, more, rerr := readChunk(pr, chunkSize, checkpointBufferMemoryBytes, spill)
+		if rerr != nil {
+			return "", status.Errorf(codes.Internal, "archive workspace: %v", rerr)
+		}
+		if !more {
+			break
+		}
+		failReason, serr := s.uploadChunk(ctx, stream, index, chunk, budget)
+		chunk.close()
+		if serr != nil {
+			return "", serr
+		}
+		if failReason != "" {
+			// A CheckpointFailed frame or a gateway Abort ended the stream.
+			return failReason, nil
+		}
+		total += chunk.len()
+		index++
 	}
-	return id, res.n, nil
+
+	return "", stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Summary{
+			Summary: &adapterv1.CheckpointSummary{ChunkCount: index, TotalBytes: total},
+		},
+	})
 }
 
-// recordStorageFailure emits the §4.4 line 262
-// `lenny_checkpoint_storage_failure_total` counter. Eviction
-// triggers skip this counter — they bump
-// `lenny_checkpoint_eviction_fallback_total` instead through the
-// fallback writer — so the emission is gated on the trigger label
-// being non-eviction.
-// spec: §4.4 line 262.
-func (s *Server) recordStorageFailure() {
-	if s.CheckpointMetrics == nil {
-		return
+// uploadChunk declares one chunk, receives its grant (or a gateway Abort),
+// PUTs it within the §4.4 retry budget, and confirms it. It returns a
+// non-empty failReason when the stream terminated on this chunk (a
+// CheckpointFailed frame the caller already sent, or a gateway Abort) so the
+// loop stops without emitting a Summary and the Full-level runtime is told
+// the checkpoint failed. A successful ChunkCommitted returns an empty reason
+// and nil error; a non-nil error is a gRPC-level failure of the stream.
+func (s *Server) uploadChunk(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, index uint32, chunk *chunkBuffer, budget checkpoint.RetryBudget) (string, error) {
+	if err := stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_ChunkReady{
+			ChunkReady: &adapterv1.ChunkReady{Index: index, Length: chunk.len()},
+		},
+	}); err != nil {
+		return "", err
 	}
-	trigger := s.CheckpointTriggerLabel
-	// Eviction-trigger failures are accounted by the
-	// evictionfallback writer's IncCheckpointEvictionFallback so
-	// every fallback attempt counts once.
-	if trigger == string(checkpoint.TriggerEviction) {
-		return
+
+	grant, aborted, err := s.awaitGrant(stream, index)
+	if err != nil {
+		return "", err
 	}
-	s.CheckpointMetrics.IncCheckpointStorageFailure(s.CheckpointPoolLabel,
-		s.CheckpointLevelLabel, trigger)
+	if aborted {
+		// spec: §4.4 — the adapter does not retry a PUT the gateway aborts;
+		// the attempt terminates as a failed checkpoint.
+		return "checkpoint aborted by gateway", nil
+	}
+
+	deadline := time.Now().Add(budget.TotalBudget)
+	delay := budget.Initial
+	var lastStatus int
+	var lastCode string
+	for {
+		httpStatus, code, retriable, perr := s.attemptPut(ctx, grant, chunk)
+		if perr != nil {
+			return "", status.Errorf(codes.Internal, "checkpoint PUT chunk %d: %v", index, perr)
+		}
+		if httpStatus >= 200 && httpStatus < 300 {
+			return "", stream.Send(&adapterv1.CheckpointResponse{
+				Msg: &adapterv1.CheckpointResponse_ChunkCommitted{
+					ChunkCommitted: &adapterv1.ChunkCommitted{Index: index},
+				},
+			})
+		}
+		lastStatus, lastCode = httpStatus, code
+		if !retriable {
+			// spec: §4.4 — an object-store rejection terminates the stream
+			// with the HTTP status and error code so the gateway can map a
+			// kms:-coded rejection onto a classification-control violation.
+			return s.failChunk(stream, index, "object store rejected chunk", httpStatus, code)
+		}
+		if !time.Now().Before(deadline) {
+			// spec: §4.4 lines 261-264 — retry budget exhausted; report the
+			// retry-exhausted failure so the gateway stamps
+			// lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}.
+			return s.failChunk(stream, index, "retry_exhausted", lastStatus, lastCode)
+		}
+		if serr := sleepCtx(ctx, delay); serr != nil {
+			return "", serr
+		}
+		delay *= 2
+		if delay > budget.Cap {
+			delay = budget.Cap
+		}
+		// spec: §4.4 — a retry that outlives the grant's expiry requests a
+		// fresh grant for the same index on the open stream.
+		if grantExpired(grant) {
+			if serr := stream.Send(&adapterv1.CheckpointResponse{
+				Msg: &adapterv1.CheckpointResponse_ChunkReady{
+					ChunkReady: &adapterv1.ChunkReady{Index: index, Length: chunk.len()},
+				},
+			}); serr != nil {
+				return "", serr
+			}
+			fresh, aborted, gerr := s.awaitGrant(stream, index)
+			if gerr != nil {
+				return "", gerr
+			}
+			if aborted {
+				return "checkpoint aborted by gateway", nil
+			}
+			grant = fresh
+		}
+	}
 }
 
-// checkpointViaLifecycle runs the §4.7 cooperative checkpoint: it asks
-// the runtime to quiesce, captures the workspace snapshot once the
-// runtime reports checkpoint_ready, and resumes the runtime with the
-// snapshot outcome via checkpoint_complete.
-func (s *Server) checkpointViaLifecycle(ctx context.Context, req *adapterv1.CheckpointRequest, sessionID string) (*adapterv1.CheckpointResponse, error) {
-	corrID := newLifecycleID()
-	if err := s.Lifecycle.RequestCheckpoint(ctx, corrID, req.GetDeadlineMs()); err != nil {
-		return nil, status.Errorf(codes.Internal, "checkpoint quiesce: %v", err)
+// awaitGrant reads the gateway's response to a ChunkReady: the presigned
+// PUT capability for index, or a CheckpointAbort that stops the attempt.
+func (s *Server) awaitGrant(stream adapterv1.Adapter_CheckpointServer, index uint32) (*adapterv1.CheckpointGrant, bool, error) {
+	msg, err := stream.Recv()
+	if err != nil {
+		return nil, false, err
 	}
-	id, size, archiveErr := s.archiveAndStore(ctx, sessionID)
-	// Resume the runtime whatever the snapshot outcome.
-	cpStatus, reason := "ok", ""
-	if archiveErr != nil {
-		cpStatus, reason = "failed", archiveErr.Error()
+	if msg.GetAbort() != nil {
+		return nil, true, nil
 	}
-	_ = s.Lifecycle.CompleteCheckpoint(corrID, cpStatus, reason)
-	if archiveErr != nil {
-		// §4.4 line 248 — abort cleanup on every failed checkpoint
-		// (Full-level lifecycle path included).
-		s.runAbortCleanup(ctx, sessionID)
-		return nil, archiveErr
+	grant := msg.GetGrant()
+	if grant == nil {
+		return nil, false, status.Errorf(codes.InvalidArgument,
+			"expected a CheckpointGrant or CheckpointAbort for chunk %d", index)
 	}
-	return &adapterv1.CheckpointResponse{CheckpointId: id, SizeBytes: size}, nil
+	if grant.GetIndex() != index {
+		return nil, false, status.Errorf(codes.InvalidArgument,
+			"grant index %d does not match declared chunk %d", grant.GetIndex(), index)
+	}
+	return grant, false, nil
+}
+
+// attemptPut issues one PUT of chunk against grant. retriable reports
+// whether a non-2xx result (a 5xx or a transport error) should be retried
+// within the budget; a 4xx rejection is terminal.
+func (s *Server) attemptPut(ctx context.Context, grant *adapterv1.CheckpointGrant, chunk *chunkBuffer) (httpStatus int, errorCode string, retriable bool, err error) {
+	body, oerr := chunk.reopen()
+	if oerr != nil {
+		return 0, "", false, oerr
+	}
+	defer func() { _ = body.Close() }()
+	httpStatus, errorCode, err = s.CheckpointTransport.PutChunk(
+		ctx, grant.GetUrl(), grant.GetHeaders(), grant.GetContentLength(), body,
+	)
+	if err != nil {
+		// Transport-level failure (unreachable object store): retriable.
+		return 0, "", true, nil
+	}
+	if httpStatus >= 500 {
+		return httpStatus, errorCode, true, nil
+	}
+	return httpStatus, errorCode, false, nil
+}
+
+// failChunk terminates the stream with a CheckpointFailed frame and returns
+// the reason so the caller reports the Full-level runtime a failed
+// checkpoint_complete. It returns a non-nil error only when the Failed frame
+// itself could not be sent.
+func (s *Server) failChunk(stream adapterv1.Adapter_CheckpointServer, index uint32, reason string, httpStatus int, code string) (string, error) {
+	if err := s.sendFailed(stream, index, reason, httpStatus, code); err != nil {
+		return "", err
+	}
+	return reason, nil
+}
+
+// sendFailed terminates the stream with a CheckpointFailed frame.
+func (s *Server) sendFailed(stream adapterv1.Adapter_CheckpointServer, index uint32, reason string, httpStatus int, code string) error {
+	return stream.Send(&adapterv1.CheckpointResponse{
+		Msg: &adapterv1.CheckpointResponse_Failed{
+			Failed: &adapterv1.CheckpointFailed{
+				Reason:     reason,
+				Index:      index,
+				HttpStatus: int32(httpStatus),
+				ErrorCode:  code,
+			},
+		},
+	})
+}
+
+// grantExpired reports whether grant's capability has expired. A grant
+// with no expiry is treated as valid.
+func grantExpired(grant *adapterv1.CheckpointGrant) bool {
+	ts := grant.GetExpiresAt()
+	if ts == nil {
+		return false
+	}
+	return time.Now().After(ts.AsTime())
+}
+
+// sleepCtx sleeps for d unless ctx is cancelled first.
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }

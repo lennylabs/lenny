@@ -237,3 +237,54 @@ func TestRunReportsNetworkPolicyListFailureFailClosed(t *testing.T) {
 		t.Error("Run did not fail despite a NetworkPolicy cluster read error")
 	}
 }
+
+// TestRunFailsOnUnpairedObjectStoreEgress pins that the §13.2 NET-071
+// checkpoint object-store parity check is wired into Run: an in-cluster
+// object-store egress arm rendered without the paired allow-minio
+// agent-namespace ingress clause fails the install fail-closed.
+//
+// spec: §13.2 line 209; §17.6 (NET-071).
+func TestRunFailsOnUnpairedObjectStoreEgress(t *testing.T) {
+	objs := allBaselineWebhooks()
+	egress := lennyNetPolicy("allow-pod-egress-objectstore")
+	egress.Spec.Egress = []networkingv1.NetworkPolicyEgressRule{{
+		To: []networkingv1.NetworkPolicyPeer{{
+			NamespaceSelector: labelSel("kubernetes.io/metadata.name", "lenny-system"),
+			PodSelector:       labelSel("lenny.dev/component", "minio"),
+		}},
+	}}
+	objs = append(objs, egress)
+	c := runClient(t, objs...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{Namespace: preflightNS})
+	if resultByName(report, "networkpolicy-objectstore-egress-parity").Passed {
+		t.Error("networkpolicy-objectstore-egress-parity passed an unpaired in-cluster arm")
+	}
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite an unpaired object-store egress policy")
+	}
+}
+
+// TestRunFailsOnT4GCSWithoutDefaultEncryption pins that the §17.6
+// checkpoint T4 default-encryption gate is wired into Run: a gcs backend
+// serving a workspaceTier T4 tenant with no per-tenant bucket-default
+// CMEK fails the install fail-closed.
+//
+// spec: §12.5 line 315; §17.9.7; §17.6.
+func TestRunFailsOnT4GCSWithoutDefaultEncryption(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace:     preflightNS,
+		ObjectStorage: preflight.ObjectStorageConfig{Provider: "gcs"},
+		ObjectStorageT4: preflight.ObjectStorageT4Config{
+			ServesT4Tenant: true,
+		},
+	})
+	if resultByName(report, "checkpoint-t4-default-encryption").Passed {
+		t.Error("checkpoint-t4-default-encryption passed a gcs T4 backend with no bucket-default CMEK")
+	}
+	if !preflight.Failed(report) {
+		t.Error("Run did not fail despite a T4 gcs backend with no default encryption")
+	}
+}

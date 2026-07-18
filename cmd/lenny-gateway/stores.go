@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -720,6 +721,100 @@ func resolveDDLPools(
 	return billingAuditDDLPool, primaryDDLPool, nil
 }
 
+// t4DefaultEncryptionConfig carries the per-tenant default-encryption
+// declarations that the GCS V4 signed-URL and Azure SAS checkpoint PUT
+// paths cannot bind per request. On these two backends the presigned
+// capability signs no encryption header, so a workspaceTier T4 tenant's
+// per-tenant encryption rests on a backend default: a per-tenant GCS
+// bucket-default CMEK, or an Azure container-level default encryption
+// scope pinned with DenyEncryptionScopeOverride. These are read from the
+// same objectStorage.{gcs,azure} configuration keys the §17.6 preflight
+// check reads.
+//
+// spec: §12.5 line 315; §17.9.7.
+type t4DefaultEncryptionConfig struct {
+	gcsBucketDefaultCMEK             string
+	azureDefaultEncryptionScope      string
+	azureDenyEncryptionScopeOverride bool
+}
+
+// validateT4DefaultEncryption is the fail-closed replacement for the SigV4
+// signature binding that the GCS V4 and Azure SAS paths cannot carry per
+// request (spec §12.5 line 321-325): because the mint signs no encryption
+// header on these two backends, a misconfigured deployment would silently
+// write T4 checkpoints under the deployment-wide key rather than the
+// tenant-scoped key, defeating the §12.9 cryptographic-erasure property.
+// It returns a non-nil error when a gcs or azure backend serves any
+// workspaceTier T4 tenant without the required backend default:
+//
+//   - gcs requires a per-tenant bucket-default CMEK, which the T4
+//     checkpoint PUT inherits.
+//   - azure requires both a container-level default encryption scope and
+//     DenyEncryptionScopeOverride, so a chunk PUT cannot land under any
+//     other scope.
+//
+// A backend other than gcs/azure, or a deployment serving no T4 tenant,
+// returns nil: the SigV4 backends fold the SSE-KMS key into the signature
+// and fail closed at request time, and a deployment with no T4 tenant has
+// no per-tenant key requirement to assert. The caller escalates a non-nil
+// error to log.Fatalf so the gateway refuses to boot before it serves a
+// T4 tenant.
+//
+// spec: §12.5 line 315, 321-325; §17.9.7.
+func validateT4DefaultEncryption(provider string, servesT4Tenant bool, cfg t4DefaultEncryptionConfig) error {
+	if !servesT4Tenant {
+		return nil
+	}
+	switch provider {
+	case blobproviderflags.ProviderGCS:
+		if strings.TrimSpace(cfg.gcsBucketDefaultCMEK) == "" {
+			return fmt.Errorf("§12.5 line 315: object-storage-provider=gcs serves a workspaceTier T4 tenant but declares no per-tenant bucket-default CMEK; set objectStorage.gcs.bucketDefaultCmek (--object-storage-gcs-bucket-default-cmek / LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK) — the GCS V4 signed URL cannot carry a per-request CMEK, so the T4 checkpoint PUT inherits the bucket default and the gateway fails closed without it")
+		}
+	case blobproviderflags.ProviderAzure:
+		if strings.TrimSpace(cfg.azureDefaultEncryptionScope) == "" {
+			return fmt.Errorf("§12.5 line 315: object-storage-provider=azure serves a workspaceTier T4 tenant but declares no container default encryption scope; set objectStorage.azure.defaultEncryptionScope (--object-storage-azure-default-encryption-scope / LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE) — the Azure SAS carries no encryption scope, so the T4 chunk PUT lands under the container default and the gateway fails closed without it")
+		}
+		if !cfg.azureDenyEncryptionScopeOverride {
+			return fmt.Errorf("§12.5 line 315: object-storage-provider=azure serves a workspaceTier T4 tenant with a container default encryption scope but no override prevention; set objectStorage.azure.denyEncryptionScopeOverride=true (--object-storage-azure-deny-encryption-scope-override / LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE) so a chunk PUT cannot land under any other scope")
+		}
+	}
+	return nil
+}
+
+// assertT4DefaultEncryption fails the gateway boot closed when the resolved
+// gcs or azure object-store backend is configured to serve any workspaceTier
+// T4 tenant without the per-tenant bucket-default CMEK (GCS) or container-
+// level default encryption scope with override prevention (Azure) that the
+// presigned PUT cannot bind per request. The gate runs only for gcs/azure —
+// the SigV4 backends (minio, s3) fold the SSE-KMS key into the signature and
+// fail closed at request time. A failure to enumerate T4 tenants on a
+// gcs/azure backend is itself fatal: the gateway cannot verify the T4
+// default-encryption posture and must not start.
+//
+// spec: §12.5 line 315, 321-325; §17.9.7.
+func (w *gatewayWiring) assertT4DefaultEncryption(ctx context.Context, tenants tenantstore.Store) error {
+	// Normalize the provider exactly as blobproviderflags.Resolve does
+	// (lower-cased, whitespace-trimmed) so this fail-closed gate keys off
+	// the backend Resolve actually selects. A raw "GCS", "Azure", or
+	// " gcs" resolves to a genuine cloud backend; comparing the raw string
+	// would let that variant bypass the gate and boot without the required
+	// bucket/container default encryption, the fail-open this gate exists
+	// to prevent.
+	provider := strings.ToLower(strings.TrimSpace(*w.f.objectStorageProvider))
+	if provider != blobproviderflags.ProviderGCS && provider != blobproviderflags.ProviderAzure {
+		return nil
+	}
+	t4Tenants, err := (t4TenantSource{store: tenants}).T4Tenants(ctx)
+	if err != nil {
+		return fmt.Errorf("§12.5 T4 default-encryption startup assertion: cannot enumerate workspaceTier T4 tenants to verify the %s bucket/container default encryption posture: %w", provider, err)
+	}
+	return validateT4DefaultEncryption(provider, len(t4Tenants) > 0, t4DefaultEncryptionConfig{
+		gcsBucketDefaultCMEK:             *w.f.objectStorageGCSBucketDefaultCMEK,
+		azureDefaultEncryptionScope:      *w.f.objectStorageAzureDefaultEncryptionScope,
+		azureDenyEncryptionScopeOverride: *w.f.objectStorageAzureDenyEncryptionScopeOverride,
+	})
+}
+
 // buildPersistenceStores constructs the §4.2 session and metadata stores
 // (Postgres, §17.4 embedded SQLite, or in-memory), the §12.3 read-replica /
 // billing-audit / audit-sync pools, the §4.4 partial-manifest, session-log,
@@ -987,14 +1082,13 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 			log.Printf("lenny-gateway: session and metadata stores are in-memory (no --postgres-dsn or --sqlite-path)")
 		}
 	}
-	// §4.4 line 236 partial-manifest store: persists the recovery-aid
-	// row written when an eviction checkpoint exceeds the preStop
-	// tiered cap and the workspace upload is incomplete. The store is
-	// always initialized; the writer is dormant until the §10.1
-	// partial-upload pipeline is wired, but the resume-side cleanup
-	// path is plumbed unconditionally so a row written by a
-	// follow-on release is cleaned up correctly the first time a
-	// session resumes.
+	// §4.4 line 236 / §10.1 checkpoint_manifest store: persists the
+	// intent, per-chunk confirm, and terminal finalisation rows the §15.1
+	// checkpoint driver writes as it produces a workspace checkpoint, plus
+	// the partial recovery-aid row an eviction checkpoint leaves when it
+	// exceeds the preStop tiered cap. The store is always initialized; the
+	// pod-lifecycle checkpointer wires it as its writer, and the resume-side
+	// cleanup path reads the same rows.
 	var partialManifests partialmanifeststore.Store
 	if pgPool != nil {
 		partialManifests = partialmanifestpg.New(pgPool, nil)
@@ -1072,6 +1166,38 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	log.Printf("lenny-gateway: §4.5/§17.9.3 artifact store backend=%q (§12.5 SSEKeyResolver wired; T4 tenant-scoped SSE-KMS)",
 		objectStoreBackendName(*objectStorageProvider, *minioEndpoint))
 
+	// §13.2 capability model: a pod-based deployment mints presigned
+	// checkpoint capabilities against the resolved backend, so that
+	// backend MUST implement blobstore.Presigner. The check is on the
+	// resolved store rather than on the configured provider name because
+	// provider=minio with an empty --minio-endpoint falls back to the
+	// in-memory store, which deliberately omits Presigner. Fail closed at
+	// startup rather than at the first checkpoint attempt.
+	//
+	// spec: §13.2 (capability model).
+	if *f.agentNamespace != "" {
+		if _, ok := objectStore.(blobstore.Presigner); !ok {
+			log.Fatalf("lenny-gateway: §13.2 pod-based sandboxes (--agent-namespace=%q) require a Presigner-capable artifact store, but the resolved backend %T does not implement it (an empty --minio-endpoint falls back to the in-memory store); configure a signing object-store backend",
+				*f.agentNamespace, objectStore)
+		}
+	}
+
+	// §12.5 line 315 / §17.9.7 — the fail-closed replacement for the SigV4
+	// signature binding that the GCS V4 and Azure SAS checkpoint PUT paths
+	// cannot carry per request. On a gcs or azure backend the presigned
+	// capability signs no encryption header, so a workspaceTier T4 tenant's
+	// per-tenant encryption rests on a backend default (a per-tenant GCS
+	// bucket-default CMEK, or an Azure container default encryption scope with
+	// DenyEncryptionScopeOverride). Refuse to boot when such a backend serves
+	// any T4 tenant without that default declared, before the deployment
+	// silently writes T4 checkpoints under the deployment-wide key. The
+	// §17.6 preflight check reads the same objectStorage.{gcs,azure} keys.
+	//
+	// spec: §12.5 line 315, 321-325; §17.9.7.
+	if err := w.assertT4DefaultEncryption(context.Background(), tenants); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+
 	// §12.5 ll. 309-321 artifact_store catalog. The Postgres-backed
 	// catalog is the surface the §12.5 GC sweep, the §11.2 size
 	// accounting, the §12.8 erasure orchestrator, and the §12.5 legal-
@@ -1135,6 +1261,44 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 //
 // spec: §4.1 gateway subsystem seams; §12.4 Redis topology; §11.6 breakers;
 // §10.1 coordination; §11.1/§11.2 quota.
+// outstandingReservationSource adapts the checkpoint manifest store's
+// SumOutstandingReservations to a storagequota.LiveBytesSource so
+// ReservationAwareLiveBytes can fold outstanding checkpoint reservations into
+// the durable artifact_store byte sum. A nil store yields a nil source, which
+// degrades the composed seam to the bare artifact_store sum. Taking the method
+// value only when the store is non-nil avoids a method-value-on-nil panic.
+//
+// spec: §11.2 reservation-aware rebuild; §12.4 line 222.
+func outstandingReservationSource(m partialmanifeststore.Store) storagequota.LiveBytesSource {
+	if m == nil {
+		return nil
+	}
+	return m.SumOutstandingReservations
+}
+
+// tenantStorageQuotaResolver returns the §11.2 checkpointer QuotaLimitFor seam:
+// it resolves a tenant's configured storageQuotaBytes at reservation time so
+// the driver reserves the probed workspace size against the tenant's counter
+// before minting any grant. A tenant lookup failure is wrapped and named so a
+// checkpoint fails closed rather than reserving against a limit it could not
+// read; a tenant with no configured limit resolves to 0, which the driver
+// treats as unlimited and skips the reservation. Extracted from
+// buildPodLifecycle so the resolve-then-wrap path has a single canonical
+// implementation the tier-1 test pins rather than an inline closure only a live
+// cluster exercises.
+//
+// spec: §11.2 line 35 (reserve the probed size, fail closed on a limit-lookup
+// failure); §12.4 storageQuotaBytes.
+func tenantStorageQuotaResolver(tenants tenantstore.Store) func(ctx context.Context, tenantID string) (int64, error) {
+	return func(ctx context.Context, tenantID string) (int64, error) {
+		t, err := tenants.Get(ctx, tenantID)
+		if err != nil {
+			return 0, fmt.Errorf("resolve storage quota for tenant %s: %w", tenantID, err)
+		}
+		return t.StorageQuotaBytes, nil
+	}
+}
+
 func (w *gatewayWiring) buildRedisAndQuota() {
 	f := w.f
 	capacityTier := f.capacityTier
@@ -1160,6 +1324,24 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 	sessions := w.sessions
 	tenants := w.tenants
 	artifactCatalog := w.artifactCatalog
+	partialManifests := w.partialManifests
+
+	// spec: §11.2 / §12.4 line 222 — the reservation-aware storage
+	// LiveBytesSource (SumLiveBytes + SumOutstandingReservations) is composed
+	// once here, whenever the Postgres artifact catalog is wired, and shared by
+	// the during-outage Failover enforcement read, the RecoveryReconciler
+	// recovery-edge rebuild, and the startup Rehydrate, so a tenant's
+	// outstanding checkpoint reservations count against its quota on every
+	// rebuild the guarded relative Adjust runs after. Composition is independent
+	// of Redis: a Postgres-catalog deployment without Redis still rebuilds its
+	// in-memory counter (folding outstanding reservations) at startup, so the
+	// counter does not start at zero and under-count after a restart.
+	if artifactCatalog != nil {
+		w.storageLiveBytes = storagequota.ReservationAwareLiveBytes(
+			artifactCatalog.SumLiveBytes,
+			outstandingReservationSource(partialManifests),
+		)
+	}
 
 	// Circuit-breaker state goes to Redis when --redis-url is set, so
 	// an operator-opened breaker survives a restart and stays
@@ -1290,23 +1472,31 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// is Lua-atomic.
 		storageRedis := storagequotaredis.New(concernRedis.For(storerouter.RedisConcernQuota))
 		storageCounter = storageRedis
-		// §12.4 line 210: when the durable artifact catalog is wired,
+		// §12.4 line 222: when the durable artifact catalog is wired,
 		// front the Redis counter with the Postgres-fallback failover so a
 		// Redis outage degrades upload pre-checks to the authoritative
-		// SUM(artifact_size_bytes) instead of breaking uploads, and a
+		// Postgres-derived total instead of breaking uploads, and a
 		// simultaneous Postgres outage fails closed (ErrUnavailable → 503).
-		// On Redis recovery the reconciler below writes the sum back so the
+		// On Redis recovery the reconciler below writes the total back so the
 		// Lua fast path resumes. Without a catalog (dev/in-memory) the bare
 		// Redis store keeps the prior fail-on-Redis-error behavior.
+		//
+		// spec: §11.2 / §12.4 line 222 — the during-outage Failover
+		// enforcement read and the recovery-edge rebuild share the single
+		// reservation-aware LiveBytesSource composed above (whenever the
+		// artifact catalog is wired), so a tenant's outstanding checkpoint
+		// reservations count against its quota during a Redis outage and are
+		// re-added on every rebuild the guarded relative Adjust runs after.
 		if artifactCatalog != nil {
-			storageCounter = storagequota.NewFailover(storageRedis, artifactCatalog.SumLiveBytes, nil)
+			liveBytes := w.storageLiveBytes
+			storageCounter = storagequota.NewFailover(storageRedis, liveBytes, nil)
 			storageRecoveryReconciler = &storagequota.RecoveryReconciler{
 				Probe: func(ctx context.Context) bool {
 					return redisconn.PingWithTimeout(redisClient, 2*time.Second) == nil
 				},
 				Primary: storageRedis,
 				Tenants: (tenantsLister{tenants}).ListTenants,
-				SizeOf:  artifactCatalog.SumLiveBytes,
+				SizeOf:  liveBytes,
 				Logf:    log.Printf,
 			}
 		}
@@ -1379,7 +1569,6 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	redisClient := w.redisClient
 	concernRedis := w.concernRedis
 	tenants := w.tenants
-	artifactCatalog := w.artifactCatalog
 	blobsCataloged := w.blobsCataloged
 	storageCounter := w.storageCounter
 	billing := w.billing
@@ -1441,17 +1630,24 @@ func (w *gatewayWiring) buildStoreRouterAndSecurityBus() {
 	// setter. F-11.2.9.
 	if blobsCataloged != nil {
 		blobsCataloged.SetQuotaReleaser(storageCounter)
-		// §11 line 37 Redis-restart rehydration: reconstruct each tenant's
-		// storage counter from the authoritative sum of live artifact bytes
-		// in Postgres (same recovery path as the token quota counters). A
-		// per-tenant fault is logged and skipped so one tenant cannot block
-		// startup. Runs before the HTTP listener accepts traffic, so no
-		// reservation races the absolute Set.
-		if artifactCatalog != nil {
+		// §11.2 startup rehydration: reconstruct each tenant's storage
+		// counter from the authoritative Postgres byte total (live artifact
+		// bytes plus outstanding checkpoint reservations, through the
+		// reservation-aware seam composed in buildRedisAndQuota) so the
+		// rebuilt counter already holds every unreleased reservation the
+		// guarded relative Adjust will later release (same recovery path as
+		// the token quota counters). Runs whenever the Postgres artifact
+		// catalog is wired, independent of Redis: a Postgres-catalog
+		// deployment without Redis rebuilds its in-memory counter here so it
+		// does not start at zero and under-count after a restart. A per-tenant
+		// fault is logged and skipped so one tenant cannot block startup. Runs
+		// before the HTTP listener accepts traffic, so no reservation races the
+		// absolute Set.
+		if w.storageLiveBytes != nil {
 			rehydrateCtx, cancelRehydrate := context.WithTimeout(context.Background(), 30*time.Second)
 			if ids, lerr := (tenantsLister{tenants}).ListTenants(rehydrateCtx); lerr != nil {
 				log.Printf("lenny-gateway: §11 storage-quota rehydration: list tenants: %v", lerr)
-			} else if rerr := storagequota.Rehydrate(rehydrateCtx, storageCounter, ids, artifactCatalog.SumLiveBytes); rerr != nil {
+			} else if rerr := storagequota.Rehydrate(rehydrateCtx, storageCounter, ids, w.storageLiveBytes); rerr != nil {
 				log.Printf("lenny-gateway: §11 storage-quota rehydration: %v", rerr)
 			} else if len(ids) > 0 {
 				log.Printf("lenny-gateway: §11 storage-quota counters rehydrated from artifact_store for %d tenants", len(ids))
@@ -1647,6 +1843,8 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	agentNamespace := f.agentNamespace
 	checkpointInterval := f.checkpointInterval
 	checkpointJitterFraction := f.checkpointJitterFraction
+	checkpointGrantWindow := f.checkpointGrantWindow
+	checkpointCapabilityTTLSeconds := f.checkpointCapabilityTTLSeconds
 	claimHoldTTLSeconds := f.claimHoldTTLSeconds
 	clusterBurst := f.clusterBurst
 	clusterQPS := f.clusterQPS
@@ -1663,6 +1861,16 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	blobs := w.blobs
 	credAssign := w.credAssign
 	exec := w.exec
+	// §10.1 / §11.2 / §12.5 — the object-store, manifest, catalog, and
+	// storage-quota seams the checkpoint driver produces against. Recorded
+	// on the accumulator by buildStores/buildRedisAndQuota, they are read
+	// here into the §15.1 checkpointer construction below.
+	objectStore := w.objectStore
+	partialManifests := w.partialManifests
+	blobsCataloged := w.blobsCataloged
+	minioStore := w.minioStore
+	storageCounter := w.storageCounter
+	tenants := w.tenants
 
 	// §15.1 pod placement: with --agent-namespace the gateway claims a
 	// §5 warm pod for each started session and dispatches its messages
@@ -1881,6 +2089,28 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Printf("lenny-gateway: §4.6.1 Postgres-backed pod-claim fallback enabled")
 		}
 		exec = executor.NewPodExecutor(podRegistry, podBinder)
+		// §10.1 / §13.2 — the checkpoint driver mints one presigned PUT
+		// capability per chunk against the resolved object store. The §13.2
+		// startup assertion above already failed boot unless that store
+		// implements Presigner whenever --agent-namespace is set, so the
+		// assertion holds on this path.
+		checkpointPresigner, _ := objectStore.(blobstore.Presigner)
+		// §12.5 — the confirmed-chunk artifact_store catalog (RecordPut) and
+		// the rotation-side chunk release (SoftDeleteRow / ListByPrefix +
+		// HardDeleteObject) run only against the durable Postgres+MinIO
+		// backends. A pod deployment without them leaves each interface field
+		// nil rather than wrapping a nil concrete pointer, which the driver's
+		// nil guards then skip.
+		var checkpointChunkRecorder checkpointer.ChunkRecorder
+		var checkpointChunkCatalog checkpointer.ChunkCatalogReleaser
+		if blobsCataloged != nil {
+			checkpointChunkRecorder = blobsCataloged
+			checkpointChunkCatalog = blobsCataloged
+		}
+		var checkpointChunkObjects checkpointer.ChunkObjectStore
+		if minioStore != nil {
+			checkpointChunkObjects = minioStore
+		}
 		checkpointSvc = &checkpointer.Checkpointer{
 			Sessions:       sessions,
 			Registry:       podRegistry,
@@ -1895,6 +2125,37 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			// Metrics field is wired after gatewaymetrics.New() below
 			// so the §4.4 line 254 duration histogram is emitted.
 			Retention: checkpointRetention,
+			// §10.1 line 131 / §17.8.1 / §5.2 — the deployment-wide
+			// checkpointGrantWindow default and the presigned-capability
+			// TTL the grant/confirm loop signs into each grant. GrantWindow
+			// is the fallback the driver applies when a pool declares no
+			// per-pool override; PoolGrantWindow resolves that override from
+			// the §5.2 poolstore mirror.
+			GrantWindow:     *checkpointGrantWindow,
+			CapabilityTTL:   time.Duration(*checkpointCapabilityTTLSeconds) * time.Second,
+			PoolGrantWindow: sessionserver.NewPoolPolicyReader(pools),
+			// §10.1 lines 130-141 — the produce → store pipeline seams: the
+			// gateway writes the checkpoint_manifest intent/confirm/finalise
+			// rows, signs per-chunk presigned PUT capabilities, confirms each
+			// committed chunk's bytes-actually-written with a StatObject, and
+			// catalogs it. Without these the driver aborts every non-empty
+			// checkpoint at its first ChunkReady, so seal-and-export never
+			// completes and a completed session's pod never reaches the §6.2
+			// occupancy-zero recycle branch.
+			Manifests:    partialManifests,
+			Presigner:    checkpointPresigner,
+			ObjectStore:  objectStore,
+			Cataloging:   checkpointChunkRecorder,
+			ChunkCatalog: checkpointChunkCatalog,
+			ChunkObjects: checkpointChunkObjects,
+			// §11.2 — reserve the probed workspace size against the tenant's
+			// storage counter before any grant and reconcile it against the
+			// confirmed total on every terminal arm. QuotaLimitFor resolves
+			// the tenant's storageQuotaBytes at reservation time; a tenant
+			// with no configured limit is unlimited and the driver skips the
+			// reservation.
+			Quota:         storageCounter,
+			QuotaLimitFor: tenantStorageQuotaResolver(tenants),
 		}
 		log.Printf("lenny-gateway: placing sessions on warm pods in namespace %q", *agentNamespace)
 	}

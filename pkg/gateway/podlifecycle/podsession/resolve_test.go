@@ -109,6 +109,67 @@ func TestResolvePoolFoldsPolicyMirror(t *testing.T) {
 	}
 }
 
+// spec: §10.1 line 131 / §5.2 — the per-pool checkpointGrantWindow
+// override is declared on the SandboxTemplate, so ResolvePool copies it
+// onto the PoolMatch for the checkpoint driver to prefer over the
+// deployment-wide default. A pool that declares no override leaves the
+// field nil so the driver falls back to the deployment-wide default.
+func TestResolvePoolCopiesCheckpointGrantWindowFromTemplate_spec_10_1(t *testing.T) {
+	tmpl := sandboxTemplate("cp-tmpl", "cp-runtime", "microvm")
+	window := int32(8)
+	tmpl.Spec.CheckpointGrantWindow = &window
+	c := k8sClient(t, warmPool("cp-pool", "cp-tmpl"), tmpl)
+
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "cp-runtime", "microvm", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.CheckpointGrantWindow == nil {
+		t.Fatal("CheckpointGrantWindow = nil, want the template override 8")
+	}
+	if *got.CheckpointGrantWindow != 8 {
+		t.Errorf("CheckpointGrantWindow = %d, want 8 (from the template)", *got.CheckpointGrantWindow)
+	}
+}
+
+// spec: §10.1 line 131 / §5.2 — a pool that declares no per-pool
+// checkpointGrantWindow leaves the PoolMatch field nil so the checkpoint
+// driver resolves the deployment-wide default.
+func TestResolvePoolLeavesCheckpointGrantWindowNilWithoutOverride_spec_10_1(t *testing.T) {
+	tmpl := sandboxTemplate("cp-tmpl", "cp-runtime", "microvm")
+	c := k8sClient(t, warmPool("cp-pool", "cp-tmpl"), tmpl)
+
+	got, err := podsession.ResolvePool(context.Background(), c, nil, testNS, "cp-runtime", "microvm", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.CheckpointGrantWindow != nil {
+		t.Errorf("CheckpointGrantWindow = %d, want nil (no per-pool override)", *got.CheckpointGrantWindow)
+	}
+}
+
+// spec: §10.1 line 131 / §5.2 — a poolstore mirror row that carries a
+// checkpointGrantWindow override wins over the template-derived value, so
+// the gateway-enforced pool policy governs the driver's per-pool window.
+func TestResolvePoolMirrorOverridesCheckpointGrantWindow_spec_10_1(t *testing.T) {
+	tmpl := sandboxTemplate("cp-tmpl", "cp-runtime", "microvm")
+	tmplWindow := int32(8)
+	tmpl.Spec.CheckpointGrantWindow = &tmplWindow
+	c := k8sClient(t, warmPool("cp-pool", "cp-tmpl"), tmpl)
+	mirrorWindow := int32(2)
+	policy := fakePolicyReader{mirrors: map[string]podsession.PoolPolicyMirror{
+		"cp-pool": {CheckpointGrantWindow: &mirrorWindow},
+	}}
+
+	got, err := podsession.ResolvePool(context.Background(), c, policy, testNS, "cp-runtime", "microvm", "")
+	if err != nil {
+		t.Fatalf("ResolvePool: %v", err)
+	}
+	if got.CheckpointGrantWindow == nil || *got.CheckpointGrantWindow != 2 {
+		t.Errorf("CheckpointGrantWindow = %v, want 2 (mirror override wins over template)", got.CheckpointGrantWindow)
+	}
+}
+
 // spec: §5.2 (Recycle lifecycle) — "the pod is held for its tenant
 // through the claim's `reserved` state and serves the next session" on a
 // `standard` (or `in-place`) recycling pool, not only the microvm

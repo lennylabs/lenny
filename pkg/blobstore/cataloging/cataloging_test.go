@@ -22,6 +22,11 @@ type fakeCatalog struct {
 	mu        sync.Mutex
 	rows      map[string]artifactcatalog.Record
 	insertErr error
+	// getErr and softDeleteErr, when set, fail Get and SoftDelete with a
+	// non-ErrNotFound store error so a test can drive the chunk-release path's
+	// error arms (a Postgres read or write failure the caller must surface).
+	getErr        error
+	softDeleteErr error
 }
 
 func newFakeCatalog() *fakeCatalog {
@@ -41,6 +46,9 @@ func (f *fakeCatalog) Insert(_ context.Context, r artifactcatalog.Record) error 
 func (f *fakeCatalog) Get(_ context.Context, uri string) (artifactcatalog.Record, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.getErr != nil {
+		return artifactcatalog.Record{}, f.getErr
+	}
 	r, ok := f.rows[uri]
 	if !ok {
 		return artifactcatalog.Record{}, artifactcatalog.ErrNotFound
@@ -63,6 +71,9 @@ func (f *fakeCatalog) SumLiveBytes(_ context.Context, tenantID string) (int64, e
 func (f *fakeCatalog) SoftDelete(_ context.Context, uri string, deadline time.Time) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.softDeleteErr != nil {
+		return f.softDeleteErr
+	}
 	r, ok := f.rows[uri]
 	if !ok {
 		return artifactcatalog.ErrNotFound
@@ -278,6 +289,102 @@ func TestPutInsertsCatalogRow(t *testing.T) {
 	}
 }
 
+// TestRecordPutInsertsCheckpointRowWithoutObjectBytes pins the §12.5
+// post-hoc catalog surface the presigned-checkpoint path uses: the chunk
+// bytes are PUT directly to the object store through a capability, never
+// through this decorator, so the driver calls RecordPut with the
+// gateway-confirmed size to insert the artifact_store row. Without the
+// row the §11.2 storage-quota SUM would drift after a Redis restart while
+// the delete-side decrement still fired for those bytes.
+//
+// spec: §12.5 ll. 309 (artifact_store row); §13.2 (capability model).
+func TestRecordPutInsertsCheckpointRowWithoutObjectBytes(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "ck_9f2a/chunk-00000.tar",
+		TTL:        time.Hour,
+	}
+	if err := store.RecordPut(u, 4096, "application/x-tar"); err != nil {
+		t.Fatalf("RecordPut: %v", err)
+	}
+
+	row, err := cat.Get(context.Background(), u.String())
+	if err != nil {
+		t.Fatalf("catalog Get after RecordPut: %v", err)
+	}
+	if row.URI != u.String() || row.TenantID != "acme" || row.SessionID != "s_1" ||
+		row.PartID != "ck_9f2a/chunk-00000.tar" {
+		t.Errorf("catalog row mismatch: %+v", row)
+	}
+	if row.SizeBytes != 4096 {
+		t.Errorf("catalog SizeBytes = %d, want 4096 (the gateway-confirmed size)", row.SizeBytes)
+	}
+	if row.ArtifactType != artifactcatalog.ArtifactTypeCheckpoint {
+		t.Errorf("catalog ArtifactType = %q, want %q", row.ArtifactType, artifactcatalog.ArtifactTypeCheckpoint)
+	}
+	if row.State != artifactcatalog.StateLive {
+		t.Errorf("catalog State = %q, want %q", row.State, artifactcatalog.StateLive)
+	}
+
+	// RecordPut is an INSERT only: it never wrote object bytes, so the
+	// inner store holds nothing for the key.
+	if _, err := inner.Stat(u); !errors.Is(err, blobstore.ErrNotFound) {
+		t.Errorf("inner.Stat after RecordPut = %v, want ErrNotFound (RecordPut writes no object)", err)
+	}
+}
+
+// TestCatalogForwardsPresignerToInner pins that the decorator forwards
+// §13.2 capability minting to a Presigner-capable inner store, and fails
+// closed when the inner store omits Presigner.
+//
+// spec: §13.2 (capability model).
+func TestCatalogForwardsPresignerToInner(t *testing.T) {
+	cat := newFakeCatalog()
+
+	// The in-memory store omits Presigner, so the decorator must reject.
+	memBacked := New(blobstore.NewMemoryStore(nil), cat, Options{})
+	u := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s", PartID: "ck/chunk-00000.tar", TTL: time.Hour}
+	if _, err := memBacked.PresignPut(u, 10, time.Minute); err == nil {
+		t.Error("PresignPut through a non-presigning inner returned nil error")
+	}
+	if _, err := memBacked.PresignGet(u, time.Minute); err == nil {
+		t.Error("PresignGet through a non-presigning inner returned nil error")
+	}
+
+	// A presigning inner store forwards.
+	presigning := New(&catalogFakePresigner{MemoryStore: blobstore.NewMemoryStore(nil)}, cat, Options{})
+	grant, err := presigning.PresignPut(u, 10, time.Minute)
+	if err != nil {
+		t.Fatalf("PresignPut through a presigning inner: %v", err)
+	}
+	if grant.URL == "" {
+		t.Error("forwarded PresignPut returned an empty grant URL")
+	}
+	if _, err := presigning.PresignGet(u, time.Minute); err != nil {
+		t.Errorf("PresignGet through a presigning inner: %v", err)
+	}
+}
+
+// catalogFakePresigner is a blobstore.Store that also implements
+// Presigner, used to assert the decorator forwards the mint.
+type catalogFakePresigner struct {
+	*blobstore.MemoryStore
+}
+
+func (f *catalogFakePresigner) PresignPut(u blobstore.URI, _ int64, _ time.Duration) (blobstore.Grant, error) {
+	return blobstore.Grant{URL: "https://store.example/put/" + u.PartID}, nil
+}
+
+func (f *catalogFakePresigner) PresignGet(u blobstore.URI, _ time.Duration) (blobstore.Grant, error) {
+	return blobstore.Grant{URL: "https://store.example/get/" + u.PartID}, nil
+}
+
 // spec: §12.5 — the catalog must reflect the ObjectType the URI
 // embeds so the GC sweep selects rows by artifact class.
 func TestPutMapsObjectTypeToArtifactType(t *testing.T) {
@@ -420,6 +527,83 @@ func TestSoftDeleteIdempotentOnMissingRow(t *testing.T) {
 	// No Put — the row is absent. SoftDelete must not error.
 	if err := store.SoftDelete(u, time.Hour); err != nil {
 		t.Errorf("SoftDelete on missing row: %v, want nil", err)
+	}
+}
+
+// spec: §12.5 rule 4 — SoftDeleteRow surfaces a non-ErrNotFound catalog read
+// error wrapped and named by the chunk URI rather than treating it as an
+// absent row. A store read failure is not the "no catalog row" idempotent
+// case, so it must abort the chunk release rather than let the caller proceed
+// to a per-key object delete under a row whose bytes were never released.
+//
+// diagnosis: a swallowed Get error would collapse a transient Postgres read
+// failure onto the absent-row no-op, releasing no bytes while the caller
+// deletes the object, leaking the tenant's storage counter upward.
+func TestSoftDeleteRowSurfacesCatalogReadError(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "cp-1/chunk-00000.tar",
+		TTL:        time.Hour,
+	}
+	ref, err := store.Put(u, "application/x-tar", strings.NewReader("chunkbytes"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	cat.getErr = errors.New("postgres read timeout")
+	gotErr := store.SoftDeleteRow(context.Background(), ref, time.Hour)
+	if gotErr == nil {
+		t.Fatal("SoftDeleteRow succeeded despite a catalog read failure, want the wrapped error")
+	}
+	if !errors.Is(gotErr, cat.getErr) {
+		t.Errorf("error %v does not wrap the underlying catalog read error", gotErr)
+	}
+	if !strings.Contains(gotErr.Error(), ref) {
+		t.Errorf("error %q does not name the chunk URI", gotErr.Error())
+	}
+}
+
+// spec: §12.5 rule 4 — SoftDeleteRow surfaces a non-ErrNotFound catalog
+// soft-delete write error wrapped and named by the chunk URI. Only an
+// ErrNotFound (the row raced past live) is the idempotent no-decrement case;
+// any other write failure must abort so the §11 line 37 Redis decrement,
+// which follows the committed deleted_at, never fires against a row whose
+// transition failed.
+//
+// diagnosis: a swallowed SoftDelete error would leave the row live while the
+// caller deletes the object and the decrement fires, double-counting the
+// released bytes on the next reservation-aware rebuild.
+func TestSoftDeleteRowSurfacesCatalogWriteError(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	store := New(inner, cat, Options{})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "cp-1/chunk-00001.tar",
+		TTL:        time.Hour,
+	}
+	ref, err := store.Put(u, "application/x-tar", strings.NewReader("chunkbytes"))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	cat.softDeleteErr = errors.New("postgres write conflict")
+	gotErr := store.SoftDeleteRow(context.Background(), ref, time.Hour)
+	if gotErr == nil {
+		t.Fatal("SoftDeleteRow succeeded despite a catalog soft-delete failure, want the wrapped error")
+	}
+	if !errors.Is(gotErr, cat.softDeleteErr) {
+		t.Errorf("error %v does not wrap the underlying catalog soft-delete error", gotErr)
+	}
+	if !strings.Contains(gotErr.Error(), ref) {
+		t.Errorf("error %q does not name the chunk URI", gotErr.Error())
 	}
 }
 

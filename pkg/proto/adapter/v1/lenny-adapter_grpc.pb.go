@@ -139,10 +139,26 @@ type AdapterClient interface {
 	// Interrupt asks the agent to pause and (optionally) checkpoint. Two
 	// modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
 	Interrupt(ctx context.Context, in *InterruptRequest, opts ...grpc.CallOption) (*InterruptResponse, error)
-	// Checkpoint requests an immediate checkpoint of the current session
-	// state to the artifact store. Used for eviction, drain, and session
-	// suspend.
-	Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error)
+	// Checkpoint is the gateway-driven bidirectional grant/confirm stream
+	// that exports recoverable session state (§4.7 RPC table, §10.1). The
+	// gateway is the gRPC client and drives the exchange: it opens the
+	// stream with a CheckpointStart carrying the gateway-minted
+	// `checkpoint_id`, mints per-chunk presigned PUT capabilities
+	// (CheckpointGrant) up to `checkpointGrantWindow` ahead, and confirms
+	// each committed chunk. The adapter reports the workspace size probe
+	// (CheckpointProbe), declares each chunk by index and exact length
+	// (ChunkReady), PUTs the chunk bytes directly to object storage against
+	// the grant, acknowledges the commit (ChunkCommitted), and closes with
+	// CheckpointSummary. A chunk PUT the object store rejects terminates the
+	// stream with CheckpointFailed carrying the object store's HTTP status
+	// and error code. A probe that exceeds the workspace size limit
+	// terminates the stream with a gRPC FailedPrecondition status before any
+	// grant is minted, and carries no CheckpointFailed frame. The adapter
+	// never mints a `checkpoint_id`; the id the gateway
+	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
+	// the single upload path for every trigger.
+	Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error)
 	// SignalDeadline warns the running session's runtime that the session is
 	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
@@ -172,14 +188,18 @@ type AdapterClient interface {
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
 	// drain (§4.7 line 631, §10.1). The adapter validates the request's
 	// `coordination_generation` against the last fenced generation, quiesces
-	// tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
-	// via `CheckpointBarrierAck` on the LifecycleChannel control stream
-	// (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`). The RPC
-	// return value mirrors the ack so a
-	// synchronous caller has the same information; the control-stream emit
-	// is the canonical surface for the gateway's barrier-target reconciler.
-	// The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
-	// is enforced by the gateway across all coordinated pods.
+	// tool-call dispatch, and holds the quiesced state open while the
+	// gateway drives the Checkpoint stream against the held pod. The adapter
+	// acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
+	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+	// only after that gateway-driven stream terminates, then releases
+	// quiescence. The RPC return value mirrors the ack so a synchronous
+	// caller has the same information; the control-stream emit is the
+	// canonical surface for the gateway's barrier-target reconciler.
+	// `checkpoint_ref` echoes the gateway-minted `checkpoint_id` the adapter
+	// received in the barrier-window Checkpoint stream. The single
+	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
+	// the gateway across all coordinated pods.
 	CheckpointBarrier(ctx context.Context, in *CheckpointBarrierRequest, opts ...grpc.CallOption) (*CheckpointBarrierResponse, error)
 	// ExportPaths packages files from /workspace/current for delegation,
 	// rebased per the export spec (§8.7). The adapter resolves each export
@@ -360,15 +380,18 @@ func (c *adapterClient) Interrupt(ctx context.Context, in *InterruptRequest, opt
 	return out, nil
 }
 
-func (c *adapterClient) Checkpoint(ctx context.Context, in *CheckpointRequest, opts ...grpc.CallOption) (*CheckpointResponse, error) {
+func (c *adapterClient) Checkpoint(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(CheckpointResponse)
-	err := c.cc.Invoke(ctx, Adapter_Checkpoint_FullMethodName, in, out, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[2], Adapter_Checkpoint_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &grpc.GenericClientStream[CheckpointRequest, CheckpointResponse]{ClientStream: stream}
+	return x, nil
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Adapter_CheckpointClient = grpc.BidiStreamingClient[CheckpointRequest, CheckpointResponse]
 
 func (c *adapterClient) SignalDeadline(ctx context.Context, in *SignalDeadlineRequest, opts ...grpc.CallOption) (*SignalDeadlineResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
@@ -472,7 +495,7 @@ func (c *adapterClient) GetObservedIntegrationLevel(ctx context.Context, in *Get
 
 func (c *adapterClient) LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[2], Adapter_LifecycleChannel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[3], Adapter_LifecycleChannel_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -561,10 +584,26 @@ type AdapterServer interface {
 	// Interrupt asks the agent to pause and (optionally) checkpoint. Two
 	// modes: clean (graceful, with deadline) and hard (SIGTERM/SIGKILL).
 	Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error)
-	// Checkpoint requests an immediate checkpoint of the current session
-	// state to the artifact store. Used for eviction, drain, and session
-	// suspend.
-	Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error)
+	// Checkpoint is the gateway-driven bidirectional grant/confirm stream
+	// that exports recoverable session state (§4.7 RPC table, §10.1). The
+	// gateway is the gRPC client and drives the exchange: it opens the
+	// stream with a CheckpointStart carrying the gateway-minted
+	// `checkpoint_id`, mints per-chunk presigned PUT capabilities
+	// (CheckpointGrant) up to `checkpointGrantWindow` ahead, and confirms
+	// each committed chunk. The adapter reports the workspace size probe
+	// (CheckpointProbe), declares each chunk by index and exact length
+	// (ChunkReady), PUTs the chunk bytes directly to object storage against
+	// the grant, acknowledges the commit (ChunkCommitted), and closes with
+	// CheckpointSummary. A chunk PUT the object store rejects terminates the
+	// stream with CheckpointFailed carrying the object store's HTTP status
+	// and error code. A probe that exceeds the workspace size limit
+	// terminates the stream with a gRPC FailedPrecondition status before any
+	// grant is minted, and carries no CheckpointFailed frame. The adapter
+	// never mints a `checkpoint_id`; the id the gateway
+	// sends in CheckpointStart is authoritative (§10.1 line 130). Used for
+	// eviction, drain, periodic, and pre-scale-down checkpoints — this is
+	// the single upload path for every trigger.
+	Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error
 	// SignalDeadline warns the running session's runtime that the session is
 	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
@@ -594,14 +633,18 @@ type AdapterServer interface {
 	// CheckpointBarrier dispatches a barrier signal during gateway graceful
 	// drain (§4.7 line 631, §10.1). The adapter validates the request's
 	// `coordination_generation` against the last fenced generation, quiesces
-	// tool-call dispatch, flushes a best-effort checkpoint, and acknowledges
-	// via `CheckpointBarrierAck` on the LifecycleChannel control stream
-	// (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`). The RPC
-	// return value mirrors the ack so a
-	// synchronous caller has the same information; the control-stream emit
-	// is the canonical surface for the gateway's barrier-target reconciler.
-	// The single wall-clock deadline `checkpointBarrierAckTimeoutSeconds`
-	// is enforced by the gateway across all coordinated pods.
+	// tool-call dispatch, and holds the quiesced state open while the
+	// gateway drives the Checkpoint stream against the held pod. The adapter
+	// acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
+	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
+	// only after that gateway-driven stream terminates, then releases
+	// quiescence. The RPC return value mirrors the ack so a synchronous
+	// caller has the same information; the control-stream emit is the
+	// canonical surface for the gateway's barrier-target reconciler.
+	// `checkpoint_ref` echoes the gateway-minted `checkpoint_id` the adapter
+	// received in the barrier-window Checkpoint stream. The single
+	// wall-clock deadline `checkpointBarrierAckTimeoutSeconds` is enforced by
+	// the gateway across all coordinated pods.
 	CheckpointBarrier(context.Context, *CheckpointBarrierRequest) (*CheckpointBarrierResponse, error)
 	// ExportPaths packages files from /workspace/current for delegation,
 	// rebased per the export spec (§8.7). The adapter resolves each export
@@ -691,8 +734,8 @@ func (UnimplementedAdapterServer) RevokeCredentials(context.Context, *RevokeCred
 func (UnimplementedAdapterServer) Interrupt(context.Context, *InterruptRequest) (*InterruptResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Interrupt not implemented")
 }
-func (UnimplementedAdapterServer) Checkpoint(context.Context, *CheckpointRequest) (*CheckpointResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "method Checkpoint not implemented")
+func (UnimplementedAdapterServer) Checkpoint(grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]) error {
+	return status.Error(codes.Unimplemented, "method Checkpoint not implemented")
 }
 func (UnimplementedAdapterServer) SignalDeadline(context.Context, *SignalDeadlineRequest) (*SignalDeadlineResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SignalDeadline not implemented")
@@ -941,23 +984,12 @@ func _Adapter_Interrupt_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Adapter_Checkpoint_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CheckpointRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(AdapterServer).Checkpoint(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Adapter_Checkpoint_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AdapterServer).Checkpoint(ctx, req.(*CheckpointRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+func _Adapter_Checkpoint_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AdapterServer).Checkpoint(&grpc.GenericServerStream[CheckpointRequest, CheckpointResponse]{ServerStream: stream})
 }
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type Adapter_CheckpointServer = grpc.BidiStreamingServer[CheckpointRequest, CheckpointResponse]
 
 func _Adapter_SignalDeadline_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SignalDeadlineRequest)
@@ -1194,10 +1226,6 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Adapter_Interrupt_Handler,
 		},
 		{
-			MethodName: "Checkpoint",
-			Handler:    _Adapter_Checkpoint_Handler,
-		},
-		{
 			MethodName: "SignalDeadline",
 			Handler:    _Adapter_SignalDeadline_Handler,
 		},
@@ -1247,6 +1275,12 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			StreamName:    "Attach",
 			Handler:       _Adapter_Attach_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+		{
+			StreamName:    "Checkpoint",
+			Handler:       _Adapter_Checkpoint_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

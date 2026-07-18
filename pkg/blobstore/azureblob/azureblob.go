@@ -27,6 +27,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/bloberror"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/blockblob"
 	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/container"
+	"github.com/Azure/azure-sdk-for-go/sdk/storage/azblob/sas"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 )
@@ -70,6 +71,17 @@ type Config struct {
 
 	// CPKResolver, when set, picks per-object customer-provided keys.
 	CPKResolver CPKResolver
+
+	// AccountName and AccountKey, when both set, install the account-key
+	// credential the §13.2 SAS-minting path signs with. The
+	// azcore.TokenCredential above cannot sign a service SAS, so a
+	// deployment that mints presigned checkpoint capabilities configures
+	// the shared account key here. Both empty leaves the Presigner
+	// methods failing closed.
+	//
+	// spec: §13.2 (capability model).
+	AccountName string
+	AccountKey  string
 }
 
 // Store implements blobstore.Store + blobstore.Tombstoner over Azure
@@ -77,6 +89,8 @@ type Config struct {
 type Store struct {
 	client                objectClient
 	container             string
+	serviceURL            string
+	sharedKey             *sas.SharedKeyCredential
 	resolver              CPKResolver
 	onArtifactUploadError func(tenantID, errorType string)
 	onKMSUnavailable      func(tenantID string)
@@ -137,6 +151,57 @@ func (s *Store) fireKMSUnavailable(tenantID string) {
 	}
 }
 
+// PresignPut implements blobstore.Presigner. It mints an account-key
+// service SAS granting create+write on a single blob key. A SAS carries
+// no per-request encryption scope and no Content-Length, so T4
+// encryption rests on the container default encryption scope with
+// override prevention (§12.5) rather than on the grant, and
+// Grant.Headers is empty.
+//
+// spec: §13.2 (capability model); §12.5 (per-provider T4 mechanism).
+func (s *Store) PresignPut(u blobstore.URI, _ int64, ttl time.Duration) (blobstore.Grant, error) {
+	return s.signSAS(u, sas.BlobPermissions{Create: true, Write: true}, ttl)
+}
+
+// PresignGet implements blobstore.Presigner. It mints an account-key
+// service SAS granting read on a single blob key, with an empty
+// Grant.Headers.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	return s.signSAS(u, sas.BlobPermissions{Read: true}, ttl)
+}
+
+// signSAS mints a single-blob, single-permission service SAS for u. It
+// fails closed when no account-key credential is configured, because
+// the azcore.TokenCredential the read/write path uses cannot sign a
+// SAS.
+func (s *Store) signSAS(u blobstore.URI, perms sas.BlobPermissions, ttl time.Duration) (blobstore.Grant, error) {
+	if s.sharedKey == nil {
+		return blobstore.Grant{}, errors.New("blobstore/azureblob: account-key credential required to mint a SAS capability")
+	}
+	key := objectKey(u)
+	now := time.Now().UTC()
+	expires := now.Add(ttl)
+	qp, err := sas.BlobSignatureValues{
+		Protocol:      sas.ProtocolHTTPS,
+		StartTime:     now.Add(-5 * time.Minute),
+		ExpiryTime:    expires,
+		Permissions:   perms.String(),
+		ContainerName: s.container,
+		BlobName:      key,
+	}.SignWithSharedKey(s.sharedKey)
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("blobstore/azureblob: sign SAS for %s: %w", key, err)
+	}
+	blobURL := fmt.Sprintf("%s/%s/%s", strings.TrimRight(s.serviceURL, "/"), s.container, key)
+	return blobstore.Grant{
+		URL:       blobURL + "?" + qp.Encode(),
+		Headers:   map[string]string{},
+		ExpiresAt: expires,
+	}, nil
+}
+
 // classifyAzurePutError maps an Azure Blob write error onto the §16.5
 // error_type label. The transport-class branches emit
 // `minio_unreachable` so the §16.5 MinIOUnavailable alert fires
@@ -184,6 +249,7 @@ func classifyAzurePutError(err error) string {
 var (
 	_ blobstore.Store      = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
+	_ blobstore.Presigner  = (*Store)(nil)
 )
 
 // New returns a Store. Returns an error when cfg.Container is empty
@@ -202,10 +268,19 @@ func New(cfg Config) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("blobstore/azureblob: azblob.NewClient: %w", err)
 	}
+	var sharedKey *sas.SharedKeyCredential
+	if cfg.AccountName != "" && cfg.AccountKey != "" {
+		sharedKey, err = azblob.NewSharedKeyCredential(cfg.AccountName, cfg.AccountKey)
+		if err != nil {
+			return nil, fmt.Errorf("blobstore/azureblob: build shared-key credential: %w", err)
+		}
+	}
 	return &Store{
-		client:    newClientAdapter(cli, cfg.Container),
-		container: cfg.Container,
-		resolver:  cfg.CPKResolver,
+		client:     newClientAdapter(cli, cfg.Container),
+		container:  cfg.Container,
+		serviceURL: cfg.ServiceURL,
+		sharedKey:  sharedKey,
+		resolver:   cfg.CPKResolver,
 	}, nil
 }
 

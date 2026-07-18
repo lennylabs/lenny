@@ -174,6 +174,61 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 	return ref, nil
 }
 
+// RecordPut inserts the §12.5 artifact_store catalog row for an object
+// the caller already wrote through a presigned capability (the object
+// bytes never pass through this decorator, so Put's insert path does
+// not run). It is an INSERT only: the §11.2 Reserve / Adjust quota
+// reconciliation stays with the driver that issued the Reserve, exactly
+// as it does for the client-upload path, so RecordPut performs no quota
+// work. size is the gateway-confirmed byte count (from Store.Stat).
+//
+// spec: §12.5 ll. 309 — every artifact_store row is inserted alongside
+// the bucket object; §11.2 (quota reconciliation stays with the driver).
+func (s *Store) RecordPut(u blobstore.URI, size int64, mimeType string) error {
+	rec := artifactcatalog.Record{
+		URI:          u.String(),
+		TenantID:     u.TenantID,
+		SessionID:    u.SessionID,
+		PartID:       u.PartID,
+		MimeType:     mimeType,
+		SizeBytes:    size,
+		State:        artifactcatalog.StateLive,
+		ArtifactType: ArtifactTypeFor(u.ObjectType),
+		CreatedAt:    s.now(),
+	}
+	if err := s.catalog.Insert(context.Background(), rec); err != nil {
+		if s.logOnFail != nil {
+			s.logOnFail(u.String(), err)
+		}
+		return fmt.Errorf("cataloging: record put catalog row for %s: %w", u.String(), err)
+	}
+	return nil
+}
+
+// PresignPut forwards §13.2 capability minting to the inner store when
+// it implements blobstore.Presigner.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error) {
+	p, ok := s.inner.(blobstore.Presigner)
+	if !ok {
+		return blobstore.Grant{}, fmt.Errorf("cataloging: inner store %T does not implement Presigner", s.inner)
+	}
+	return p.PresignPut(u, contentLength, ttl)
+}
+
+// PresignGet forwards §13.2 read-capability minting to the inner store
+// when it implements blobstore.Presigner.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	p, ok := s.inner.(blobstore.Presigner)
+	if !ok {
+		return blobstore.Grant{}, fmt.Errorf("cataloging: inner store %T does not implement Presigner", s.inner)
+	}
+	return p.PresignGet(u, ttl)
+}
+
 // Get forwards to the inner store.
 func (s *Store) Get(u blobstore.URI) (blobstore.BlobInfo, io.ReadCloser, error) {
 	return s.inner.Get(u)
@@ -266,6 +321,59 @@ func (s *Store) SoftDelete(u blobstore.URI, retention time.Duration) error {
 	// The catalog row is committed with `deleted_at` set; only now is the
 	// §11 line 37 Redis decrement safe (the spec's ordering requirement).
 	s.releaseBytes(ctx, u.TenantID, freed)
+	return nil
+}
+
+// SoftDeleteRow soft-deletes the artifact_store catalog row named by uri
+// under the catalog's deleted_at IS NULL guard and issues the §11 line 37 /
+// §12.5 rule 4 Redis decrement exactly once for the live→soft_deleted
+// transition, without touching the bucket object. The §12.5 checkpoint
+// chunk-release paths (the retention rotation reclaimer, and by extension
+// the abort, resume, supersede, and backstop sweeps) hard-delete the object
+// by key through a separate DeleteObject call immediately after, so a bucket
+// tombstone would be redundant work the hard delete undoes. A row already
+// past live — a re-run of the release over the same checkpoint prefix —
+// reads freed bytes of zero and issues no second decrement, which is the
+// §12.5 rule 4 exactly-once guarantee.
+//
+// This differs from SoftDelete, which is the §7.1 retention path: SoftDelete
+// tombstones the bucket object so the hard-prune sweep removes it later,
+// whereas the chunk-release path deletes the object per key straight away
+// and only needs the catalog row transition and the guarded decrement here.
+//
+// spec: §12.5 rule 4 — the Redis decrement follows the Postgres deleted_at
+// commit and fires exactly once; §11 line 37 ordering requirement.
+func (s *Store) SoftDeleteRow(ctx context.Context, uri string, retention time.Duration) error {
+	rec, gerr := s.catalog.Get(ctx, uri)
+	if gerr != nil {
+		if errors.Is(gerr, artifactcatalog.ErrNotFound) {
+			// No catalog row — a chunk written before the cataloging wiring
+			// or an uncounted straggler an outstanding grant landed. Nothing
+			// to soft-delete and no bytes to release; the object delete the
+			// caller issues next removes it regardless.
+			return nil
+		}
+		return fmt.Errorf("cataloging: read catalog row for %s: %w", uri, gerr)
+	}
+	var freed int64
+	if rec.State == artifactcatalog.StateLive {
+		freed = rec.SizeBytes
+	}
+	deadline := s.now().Add(retention)
+	if err := s.catalog.SoftDelete(ctx, uri, deadline); err != nil {
+		if errors.Is(err, artifactcatalog.ErrNotFound) {
+			// The row raced past live between the Get above and here; the
+			// bytes were released by the writer that won, so treat as
+			// idempotent and issue no decrement.
+			return nil
+		}
+		return fmt.Errorf("cataloging: soft-delete catalog row for %s: %w", uri, err)
+	}
+	// The row is committed with deleted_at set; only now is the §11 line 37
+	// Redis decrement safe (the spec's ordering requirement). A row that was
+	// already past live released its bytes on the first transition, so freed
+	// is zero and no second decrement fires.
+	s.releaseBytes(ctx, rec.TenantID, freed)
 	return nil
 }
 

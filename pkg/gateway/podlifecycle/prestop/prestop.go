@@ -36,6 +36,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 )
 
 // DefaultTerminationGraceSeconds is the §4.4 line 263 default the
@@ -194,14 +196,22 @@ type SessionEnumerator interface {
 }
 
 // BarrierDispatcher fires the §10.1 lines 163-181 CheckpointBarrier to
-// every session this replica coordinates. The production implementation
-// wraps barrier.Coordinator; the preStop hook bounds the call by
-// checkpointBarrierAckTimeoutSeconds so the fan-out cannot exceed the
-// per-replica ACK budget. A nil dispatcher skips the barrier.
+// every session this replica coordinates and returns the per-session
+// Outcome set. The production implementation wraps barrier.Coordinator;
+// the preStop hook bounds the call by checkpointBarrierAckTimeoutSeconds
+// so the fan-out cannot exceed the per-replica ACK budget. A nil
+// dispatcher skips the barrier.
 //
-// spec: §10.1 line 167 / §11.3 line 210.
+// The Outcome set lets the hook skip every barrier-acked session in its
+// post-barrier per-session loop: under the §10.1 line 169
+// quiesce-and-hold contract the barrier already drove a full gateway-side
+// checkpoint for every session it acked, so re-checkpointing those
+// sessions in the loop would open a second manifest row and duplicate
+// catalog rows for one (session, coordination_generation).
+//
+// spec: §10.1 lines 167, 169 / §11.3 line 210.
 type BarrierDispatcher interface {
-	Dispatch(ctx context.Context) error
+	Dispatch(ctx context.Context) ([]barrier.Outcome, error)
 }
 
 // CheckpointFn is the per-session eviction-checkpoint surface. The
@@ -315,9 +325,13 @@ type Summary struct {
 	// budget before the grace deadline; the kubelet SIGKILLs the pod
 	// at the deadline so each is a forcibly terminated stream
 	// (§10.1 line 161 `lenny_gateway_sigkill_streams_total`).
-	SigkilledStreams int      `json:"sigkilled_streams,omitempty"`
-	AlreadyFired     bool     `json:"already_fired,omitempty"`
-	Errors           []string `json:"errors,omitempty"`
+	SigkilledStreams int `json:"sigkilled_streams,omitempty"`
+	// BarrierCheckpointedSessions counts sessions the §10.1 line 169
+	// quiesce-and-hold barrier already checkpointed, so the post-barrier
+	// per-session loop skipped them rather than checkpointing them twice.
+	BarrierCheckpointedSessions int      `json:"barrier_checkpointed_sessions,omitempty"`
+	AlreadyFired                bool     `json:"already_fired,omitempty"`
+	Errors                      []string `json:"errors,omitempty"`
 }
 
 // ServeHTTP implements http.Handler.
@@ -351,7 +365,7 @@ func (h *Hook) run(ctx context.Context) Summary {
 	// checkpointBarrierAckTimeoutSeconds wall-clock deadline (§10.1 line
 	// 167 / §11.3 line 210), so in-flight tool calls quiesce and flush a
 	// best-effort checkpoint before the eviction-checkpoint drain runs.
-	h.fireBarrier(ctx)
+	barrierAcked := h.fireBarrier(ctx)
 	tiers := h.tiers()
 	sessions, err := h.Sessions.Snapshot(ctx)
 	summary := Summary{
@@ -375,6 +389,15 @@ func (h *Hook) run(ctx context.Context) Summary {
 	var wg sync.WaitGroup
 	for _, sess := range sessions {
 		sess := sess
+		// spec: §10.1 line 169 — a session the barrier already checkpointed
+		// under quiesce-and-hold must not be checkpointed a second time by
+		// this loop. The loop covers only barrier-unreachable sessions
+		// (ack-timeout, generation-stale, or transport error), which are the
+		// §10.1 lines 169-172 partial-capture cases.
+		if barrierAcked[sess.SessionID] {
+			summary.BarrierCheckpointedSessions++
+			continue
+		}
 		summary.AttemptedSessions++
 		source := h.deriveSource(sess)
 		// spec: §10.1 — postgres_null and cache_miss_max_tier select
@@ -462,21 +485,35 @@ func (h *Hook) emitSigkillStream(pool string) {
 }
 
 // fireBarrier dispatches the §10.1 CheckpointBarrier to every coordinated
-// session under the per-replica ACK budget. Best-effort: a nil dispatcher
-// is skipped, and a dispatch error (deadline, transport) is logged but
-// does not abort the staged drain — the eviction-checkpoint stage still
-// runs. The bounded context enforces the §10.1 line 167 / §11.3 line 210
+// session under the per-replica ACK budget and returns the set of session
+// ids the barrier acked. Best-effort: a nil dispatcher is skipped, and a
+// dispatch error (deadline, transport) is logged but does not abort the
+// staged drain — the eviction-checkpoint stage still runs. The bounded
+// context enforces the §10.1 line 167 / §11.3 line 210
 // checkpointBarrierAckTimeoutSeconds single wall-clock deadline across all
 // pods.
-func (h *Hook) fireBarrier(ctx context.Context) {
+//
+// Under the §10.1 line 169 quiesce-and-hold contract every acked session
+// was checkpointed by the barrier itself, so the returned set is the
+// sessions the post-barrier per-session loop must skip to avoid
+// checkpointing them a second time.
+func (h *Hook) fireBarrier(ctx context.Context) map[string]bool {
+	acked := map[string]bool{}
 	if h.Barrier == nil {
-		return
+		return acked
 	}
 	bctx, cancel := context.WithTimeout(ctx, h.barrierAckTimeout())
 	defer cancel()
-	if err := h.Barrier.Dispatch(bctx); err != nil {
+	outcomes, err := h.Barrier.Dispatch(bctx)
+	if err != nil {
 		h.logf("prestop: checkpoint barrier dispatch: %v", err)
 	}
+	for _, o := range outcomes {
+		if o.Acked {
+			acked[o.Target.SessionID] = true
+		}
+	}
+	return acked
 }
 
 // barrierAckTimeout returns the configured per-replica barrier ACK budget,

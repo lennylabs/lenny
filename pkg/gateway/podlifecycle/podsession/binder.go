@@ -649,6 +649,16 @@ type ResumeRequest struct {
 	// asserts on Resume that the replacement pod's WorkspaceRoot
 	// matches. Empty disables the assertion. F-7.3.15.
 	ExpectedWorkspaceRoot string
+	// Chunks carries one presigned GET capability per chunk of the
+	// checkpoint being restored, in ascending index order. The gateway
+	// resolves the chunk set from the manifest row it owns and mints one
+	// capability per index in [0, chunk_count); the adapter fetches each
+	// chunk directly from object storage and concatenates them into one
+	// decompress→untar pipeline. Empty for the conversation-only and
+	// coordinator-handoff resume paths that restore no workspace.
+	//
+	// spec: §10.1 line 155 — reassembly on resume.
+	Chunks []adapterclient.ChunkGrant
 }
 
 // ResumeResult is what Binder.Resume returns alongside the BindResult:
@@ -1548,6 +1558,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 		ExpectedWorkspaceBytes:  req.ExpectedWorkspaceBytes,
 		WorkspaceSizeLimitBytes: req.WorkspaceSizeLimitBytes,
 		ExpectedWorkspaceRoot:   req.ExpectedWorkspaceRoot,
+		Chunks:                  req.Chunks,
 	})
 	if err != nil {
 		cl.Close()

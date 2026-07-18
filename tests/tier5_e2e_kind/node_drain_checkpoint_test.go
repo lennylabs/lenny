@@ -66,11 +66,10 @@ func TestNodeDrainCheckpointsActiveSession(t *testing.T) {
 	kind.InstallLenny(t)
 	t.Skip("precondition not met: the §4.4 eviction-checkpoint trigger is not wired on the " +
 		"live gateway — checkpoint.TriggerEviction (pkg/checkpoint/checkpoint.go) is defined " +
-		"but no gateway code path invokes the checkpointer with it, so draining the node under " +
-		"a bound agent pod produces no preStop Checkpoint to assert against. The production " +
-		"CheckpointSink (pkg/adapter/checkpoint.go) and Resume path (pkg/adapter/resume.go) are " +
-		"both Unimplemented, and there is no POST /v1/sessions/{id}/resume driver helper. The " +
-		"eviction-checkpoint trigger mechanism is an undecided product-design decision routed " +
-		"through the change-proposal pipeline; see the file doc-comment above for the full " +
-		"dependency list.")
+		"but no gateway code path drives the §10.1 Checkpoint stream with it, so draining the " +
+		"node under a bound agent pod produces no preStop checkpoint to assert against. The " +
+		"adapter serves the chunked Checkpoint stream (pkg/adapter/checkpoint.go) and the " +
+		"presigned-chunk Resume restore (pkg/adapter/resume.go), but the gateway-side driver " +
+		"that opens the stream and mints the per-chunk grants is not yet wired; see the file " +
+		"doc-comment above for the full dependency list.")
 }

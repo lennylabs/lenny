@@ -60,6 +60,7 @@ scripts/cloud/*/values-cloud-*.yaml
 # committed source is install.sh; the rendered file carries per-build
 # digests and stays out of git.
 tests/testinfra/kind/bootstrap-overlay.gen.yaml
+tests/testinfra/kind/minio-ca.gen.crt
 .claude/scheduled_tasks.lock
 
 # Beads / Dolt files (added by bd init)

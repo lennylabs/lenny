@@ -179,6 +179,110 @@ func CheckDNSPodSelectorParity(policies []networkingv1.NetworkPolicy) Decision {
 	return Decision{Passed: true}
 }
 
+// CheckObjectStoreEgressParity verifies the §13.2 NET-071 checkpoint
+// object-store NetworkPolicy parity invariant over every Lenny-rendered
+// NetworkPolicy. The checkpoint chunk PUT/GET path needs a matched pair:
+// the agent-namespace allow-pod-egress-objectstore egress and the
+// lenny-system allow-minio agent-namespace ingress clause. It asserts:
+//
+//	(a) both-or-neither — a rendered allow-pod-egress-objectstore whose
+//	    in-cluster arm selects the self-managed MinIO pod is paired with a
+//	    matching allow-minio agent-namespace ingress clause, and neither
+//	    renders without the other. A one-sided render leaves the reverse
+//	    direction dropped by the lenny-system default-deny, so the
+//	    checkpoint chunk transfer silently fails at runtime.
+//	(b) non-empty cloud-managed CIDRs — an allow-pod-egress-objectstore
+//	    egress rule that renders no peers admits every destination, the
+//	    fail-open outcome of an empty objectStorage.egressCIDRs list under
+//	    a cloud-managed or out-of-band provider. The chart omits the arm
+//	    in that case; a manifest that rendered it anyway fails closed here.
+//
+// The check is fail-closed at install/upgrade (§17.6): a silently broken
+// checkpoint egress pair is more dangerous than a missing one.
+//
+// spec: §13.2 line 209 (NET-047/NET-050 preflight selector audit and the
+// egress/ingress parity check); §17.6 (Checks performed, NET-071).
+func CheckObjectStoreEgressParity(policies []networkingv1.NetworkPolicy) Decision {
+	var egressInClusterArm *networkingv1.NetworkPolicy
+	var minioIngressClause *networkingv1.NetworkPolicy
+	for i := range policies {
+		p := &policies[i]
+		switch p.Name {
+		case objectStoreEgressPolicyName:
+			// (b) An egress rule with no peers admits every destination.
+			for _, rule := range p.Spec.Egress {
+				if len(rule.To) == 0 {
+					return Decision{Passed: false, Reason: fmt.Sprintf(
+						"NETWORK_POLICY_OBJECTSTORE_PARITY: NetworkPolicy %q renders an egress rule "+
+							"with no peers, admitting every destination; §13.2 (NET-071) requires the "+
+							"cloud-managed arm to render a non-empty objectStorage.egressCIDRs list, or "+
+							"the policy to be omitted entirely when the list is empty",
+						policyRef(p),
+					)}
+				}
+			}
+			if egressInClusterArm == nil && policyHasMinIOInClusterArm(p) {
+				egressInClusterArm = p
+			}
+		case minioIngressPolicyName:
+			if minioIngressClause == nil && policyHasAgentNamespaceIngressClause(p) {
+				minioIngressClause = p
+			}
+		}
+	}
+	if egressInClusterArm != nil && minioIngressClause == nil {
+		return Decision{Passed: false, Reason: fmt.Sprintf(
+			"NETWORK_POLICY_OBJECTSTORE_PARITY: NetworkPolicy %q renders an in-cluster arm "+
+				"selecting the self-managed MinIO pod, but no %q ingress clause admits "+
+				"agent-namespace pods on the TLS port; §13.2 (NET-071) requires the paired "+
+				"MinIO agent-namespace ingress clause so the checkpoint chunk return path is "+
+				"not dropped by the lenny-system default-deny",
+			policyRef(egressInClusterArm), minioIngressPolicyName,
+		)}
+	}
+	if minioIngressClause != nil && egressInClusterArm == nil {
+		return Decision{Passed: false, Reason: fmt.Sprintf(
+			"NETWORK_POLICY_OBJECTSTORE_PARITY: NetworkPolicy %q renders an agent-namespace "+
+				"ingress clause admitting checkpoint chunk sources, but no %q in-cluster arm "+
+				"is rendered; §13.2 (NET-071) requires the paired agent-pod object-store egress "+
+				"policy so neither side is rendered without the other",
+			policyRef(minioIngressClause), objectStoreEgressPolicyName,
+		)}
+	}
+	return Decision{Passed: true}
+}
+
+// policyHasMinIOInClusterArm reports whether an object-store egress
+// policy carries the in-cluster arm: an egress peer whose podSelector
+// selects the self-managed MinIO pod through the canonical component key.
+func policyHasMinIOInClusterArm(p *networkingv1.NetworkPolicy) bool {
+	for _, rule := range p.Spec.Egress {
+		for _, peer := range rule.To {
+			if selectorMatchLabels(peer.PodSelector)[canonicalComponentLabel] == minioComponentValue {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// policyHasAgentNamespaceIngressClause reports whether an allow-minio
+// policy carries the NET-071 agent-namespace ingress clause: a from-peer
+// pairing the agent-namespace namespaceSelector with the managed-pod
+// podSelector.
+func policyHasAgentNamespaceIngressClause(p *networkingv1.NetworkPolicy) bool {
+	for _, rule := range p.Spec.Ingress {
+		for _, peer := range rule.From {
+			nsLabels := selectorMatchLabels(peer.NamespaceSelector)
+			podLabels := selectorMatchLabels(peer.PodSelector)
+			if nsLabels[agentNamespaceLabel] == "true" && podLabels[managedPodLabel] == "true" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // rulePermitsDNSPort reports whether an egress rule lists UDP/53 or
 // TCP/53. A rule with no ports permits every port and therefore also
 // permits DNS, so it counts.

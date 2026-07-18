@@ -1,0 +1,33 @@
+{{- /*
+§13.2 NET-071 object-store CA trust bundle for agent pods. When a
+self-managed object store (in-cluster or out-of-band MinIO) serves TLS
+under a CA outside the node trust store, agent pods must trust that CA to
+complete the handshake during checkpoint chunk PUT/GET. minio.tls.caBundle
+carries the CA PEM directly (caBundleConfigMap holds only a name, whose
+bytes the chart never sees, so the chart cannot copy it into an agent
+namespace). This template materializes the PEM into one ConfigMap
+(lenny-objectstore-ca, key ca.crt) per agent namespace, mirroring the
+mtls.previousCA idiom. The sandbox controller projects the per-namespace
+ConfigMap read-only into every agent pod and points the adapter's
+--objectstore-ca-bundle at the mounted ca.crt (the controller learns the
+name from --objectstore-ca-configmap, rendered by controller-deployment.yaml
+under the same condition). An empty caBundle renders nothing: a cloud-managed
+endpoint chains to a public CA and needs no bundle.
+*/ -}}
+{{- $caBundle := .Values.minio.tls.caBundle | default "" }}
+{{- if $caBundle }}
+{{- range $ns := .Values.agentNamespaces }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lenny-objectstore-ca
+  namespace: {{ $ns.name }}
+  labels:
+    {{- include "lenny.labels" $ | nindent 4 }}
+    lenny.dev/component: objectstore-ca
+data:
+  ca.crt: |
+{{ $caBundle | trim | indent 4 }}
+{{- end }}
+{{- end }}

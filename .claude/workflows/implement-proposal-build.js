@@ -60,6 +60,34 @@ const coverageFloor = input.coverageFloor || 80;
 const replanEvery = input.replanEvery || 4;
 const maxReplans = input.maxReplans || 6;
 const replanStruggleAttempts = input.replanStruggleAttempts || 4;
+// skipBuild: the change is already implemented and committed on the branch — skip
+// the Plan and Build phases and run only the whole-change Verify and Review
+// against HEAD. Used to resume a fully-built proposal at the verify/review point
+// without re-walking (or re-planning) the build steps. baseRef is still computed
+// at the top of the Build phase and the build loop simply iterates zero steps.
+const skipBuild = !!input.skipBuild;
+
+// A schema'd agent occasionally completes without calling StructuredOutput
+// (returns prose after the nudge); the runtime throws and, uncaught, that one
+// transient miss aborts the whole subworkflow. Retry the agent a few times on
+// that specific error only; re-throw everything else unchanged. Used for the
+// Verify and Review phase calls, where a late abort discards hours of work.
+async function agentTry(p, o) {
+  for (let i = 0; i < 4; i++) {
+    try {
+      return await agent(p, o);
+    } catch (e) {
+      const msg = String((e && e.message) || e);
+      if (i < 3 && msg.indexOf("StructuredOutput") !== -1) {
+        try {
+          log("agent " + ((o && o.label) || "?") + ": StructuredOutput miss; retry " + (i + 1) + "/3");
+        } catch (_) {}
+        continue;
+      }
+      throw e;
+    }
+  }
+}
 
 const RULES =
   "Follow the project rules in " +
@@ -68,7 +96,7 @@ const RULES =
   repo +
   "/.claude/rules/test-coverage.md (tests across every tier the change reaches, not unit alone; tier 0 and tier 1 always plus each higher tier the change touches; 80% changed-line coverage; the `// spec:` and `// diagnosis:` test conventions). REGRESSION TEST FOR EVERY BEHAVIORAL FIX: when this step CORRECTS existing behavior — a bug, a fail-open, a wrong status or error code, a missing or wrong authz/scope gate, a cross-tenant leak, an unwired or never-called path, a mislabeled state — it MUST add a test that ASSERTS the corrected behavior and is constructed so it would FAIL against the pre-fix code. Line coverage of the changed lines by a pre-existing happy-path test does NOT satisfy this: the test must exercise the corrected OUTCOME (the new code/status returned, the gate now rejecting, the path now firing), at the tier that owns it (a security fix → tier 9, a reliability/recovery fix → tier 7a/8, a wire/contract fix → tier 3, a state-machine fix → tier 2). Name the test for the behavior and the spec section or finding it pins. This is in addition to the coverage floor, not a substitute for it. REMOVE DEAD CODE: when the proposal eliminates a surface (a mode, field, RPC, frame, metric, enum value, function, struct, or whole file), delete it together with every code path, helper, test, fixture, schema entry, chart template, and identifier that becomes unreferenced as a result; never leave a removed surface compiling-but-dead or two implementations side by side. A removal is part of the change, not a follow-up. Do not hand-edit files under spec/ — the spec is already applied and the guard hook blocks direct writes." +
   "\n\nNO PROPOSAL-INTERNAL IDENTIFIERS IN CODE, COMMENTS, TESTS, OR COMMIT MESSAGES: the proposal's own scaffolding labels name parts of the proposal document, not the shipped system, and mean nothing to someone reading the code later. NEVER write any of them into source, comments (including test-file comments and test names), or a git commit message: its change/section ids (e.g. `S1`, `S-A1`, `C-A2`, `CODE-A`, `CODE-D/D2`, `SPEC-D`), decision ids (e.g. `D1`, `D8`, `D9`, `RES-1`), review pass numbers (e.g. `Pass 7`), or a step/item/section number that exists only in the proposal's own numbering. Reference a DURABLE source instead: cite the spec section with the `// spec: §X.Y` convention, or describe the behavior directly. A numbered step or section the SPEC itself defines (for example a §5.2 scrub `step 7` that the spec numbers) IS a spec reference and may be cited by that number; the proposal's own build-sequence or change-list step (`step 3`, `S4`, `CODE-A`) is not — cite the spec section it implements instead. For a commit message, name the behavior and the spec section; the proposal file path (`proposals/NNNN_...md`) or the BUILD-GAPS finding id may be included for traceability, but never the internal change/decision/pass/step labels. This holds even when `git log -5` shows prior commits that used such labels: match the repository's format and tense, not that leak." +
-  "\n\nPER-STEP VERIFICATION — must TEST the step, avoid the 180s no-progress watchdog, AND stay MEMORY-SAFE on a 16GB host (running heavy tests in the background or concurrently accumulates orphaned processes and OOM-crashes the whole machine, including this build). DO test every step; do NOT skip tests. Follow ALL of these: (1) DEFAULT to scoped FOREGROUND verification — NEVER use `run_in_background` for `go test`/`lenny-test`/envtest/integration/e2e UNLESS the tier is a single long-running command that will exceed the 180s watchdog without emitting output (see rule (6) for that case only); never more than one heavy job alive at once. (2) SCOPE every command to the changed packages, never the whole repo: `go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`, `go test ./<changed-pkg>/... -count=1 -p 2`. Scoped runs finish well under 180s (no watchdog stall) AND keep memory bounded; do NOT pipe through `| tail`/`| head` (let output stream). (3) For a tier-2 envtest package the step changes, run it FOREGROUND and SCOPED to that one package only (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only ONE etcd+kube-apiserver pair is alive at a time; immediately after it returns, reap strays with `pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null; pkill -f kube-controller 2>/dev/null` before continuing. (4) NEVER run `go test -race ./...` over the whole repo — the race detector uses ~10x memory; if you need `-race`, run it scoped to the one changed package only. (5) NEVER run whole-repo `lenny-test --max-tier unit`/`static` per step. A pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. (6) LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely run longer than ~150s without emitting any output (a rare case for full component or integration tiers), you may launch it with `run_in_background: true` to a log file. In that case, poll for completion using the READ TOOL (read the log file path returned by the Bash tool) — do NOT use a Bash `tail -f`/`until` loop. A Bash poll loop depends on the task `.output` file remaining on disk; if the 180s watchdog kills the foreground Bash wrapper, the harness deletes that `.output` file and the poll loop hangs forever. The Read tool bypasses the task-output mechanism and reads the log file directly, making it immune to harness cleanup." +
+  "\n\nPER-STEP VERIFICATION — must TEST the step, avoid the 180s no-progress watchdog, AND stay MEMORY-SAFE on a 16GB host (running heavy tests in the background or concurrently accumulates orphaned processes and OOM-crashes the whole machine, including this build). DO test every step; do NOT skip tests. Follow ALL of these: (1) DEFAULT to scoped FOREGROUND verification — NEVER use `run_in_background` for `go test`/`lenny-test`/envtest/integration/e2e UNLESS the tier is a single long-running command that will exceed the 180s watchdog without emitting output (see rule (6) for that case only); never more than one heavy job alive at once. (2) SCOPE every command to the changed packages, never the whole repo: `go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`, `go test ./<changed-pkg>/... -count=1 -p 2`. Scoped runs finish well under 180s (no watchdog stall) AND keep memory bounded; do NOT pipe through `| tail`/`| head` (let output stream). (3) For a tier-2 envtest package the step changes, run it FOREGROUND and SCOPED to that one package only (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only ONE etcd+kube-apiserver pair is alive at a time; immediately after it returns, reap strays with `pkill -f kubebuilder-envtest 2>/dev/null` before continuing. (4) NEVER run `go test -race ./...` over the whole repo — the race detector uses ~10x memory; if you need `-race`, run it scoped to the one changed package only. (5) NEVER run whole-repo `lenny-test --max-tier unit`/`static` per step. A pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. (6) LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely run longer than ~150s without emitting any output (a rare case for full component or integration tiers), you may launch it with `run_in_background: true` to a log file. In that case, poll for completion using the READ TOOL (read the log file path returned by the Bash tool) — do NOT use a Bash `tail -f`/`until` loop. A Bash poll loop depends on the task `.output` file remaining on disk; if the 180s watchdog kills the foreground Bash wrapper, the harness deletes that `.output` file and the poll loop hangs forever. The Read tool bypasses the task-output mechanism and reads the log file directly, making it immune to harness cleanup." +
   "\n\nBRANCH SAFETY (critical): you MUST stay on the current feature branch and commit ONLY to it. NEVER run `git checkout <branch-or-commit>`, `git switch`, `git reset --hard`, or `git branch -f` — switching the checkout has caused build commits to land on the wrong branch (a real, damaging failure). To inspect a historical commit or the pre-implementation baseline, use `git diff <SHA>..HEAD`, `git diff <SHA> -- <path>`, or `git show <SHA>:<path>`, which read history WITHOUT changing the working tree. Immediately before every `git commit`, confirm `git rev-parse --abbrev-ref HEAD` prints the feature branch (not `HEAD`/detached, and never `impl/v1-initial` or any base branch); if it does not, `git checkout <feature-branch>` to return before committing.";
 
 // One build step, shared by the initial plan and the tail re-plan.
@@ -212,7 +240,7 @@ const SHA = {
 
 phase("Plan");
 log("Planning the blast radius and build sequence for " + proposal);
-let plan = await agent(
+let plan = skipBuild ? { steps: [] } : await agentTry(
   "Plan the code implementation of an applied spec proposal.\n\n" +
     "You are a read-only planner; do not edit any file. Work in " +
     repo +
@@ -229,8 +257,8 @@ let plan = await agent(
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
-for (let round = 1; round < maxPlanRounds; round++) {
-  const critique = await agent(
+for (let round = 1; !skipBuild && round < maxPlanRounds; round++) {
+  const critique = await agentTry(
     "Adversarially check whether a build plan covers the entire blast radius of an applied spec proposal.\n\n" +
       "You are a read-only critic; do not edit any file. Work in " +
       repo +
@@ -248,7 +276,7 @@ for (let round = 1; round < maxPlanRounds; round++) {
     break;
   }
   log("Plan revision " + round + ": closing " + critique.gaps.length + " gap(s)");
-  plan = await agent(
+  plan = await agentTry(
     "Revise a build plan to close the gaps a completeness critic found.\n\n" +
       "You are a read-only planner; do not edit any file. Work in " +
       repo +
@@ -297,7 +325,7 @@ phase("Build");
 // a couple of times, then fail fast rather than proceed with broken diffs.
 let baseRef = null;
 for (let b = 0; b < 3 && !baseRef; b++) {
-  const baseline = await agent(
+  const baseline = await agentTry(
     "Print the current git HEAD commit SHA in " +
       repo +
       " (run `git rev-parse HEAD`). Do not edit anything. Return it as {sha}.",
@@ -334,7 +362,7 @@ for (let i = 0; i < plan.steps.length; i++) {
 
   // HEAD at the start of this step, so the per-step verify and review see
   // only this step's commits and not the prior steps'.
-  const stepStart = await agent(
+  const stepStart = await agentTry(
     "Print the current git HEAD commit SHA in " +
       repo +
       " (`git rev-parse HEAD`). Do not edit anything. Return {sha}.",
@@ -352,7 +380,7 @@ for (let i = 0; i < plan.steps.length; i++) {
   // or the attempt cap. Each iteration is one fix attempt.
   while (attempt < maxStepAttempts && !(stepGreen && stepReviewClean)) {
     attempt++;
-    res = await agent(
+    res = await agentTry(
       attempt === 1
         ? "Implement one step of a build sequence for an applied spec proposal.\n\n" +
             "HARD CONSTRAINT: implement only this step. Do not start later steps. Do not edit spec/. Work in " +
@@ -400,7 +428,7 @@ for (let i = 0; i < plan.steps.length; i++) {
 
     // Independent verify: a different agent re-runs the step's tiers and
     // gates green. The implementer's self-report is advisory.
-    const sv = await agent(
+    const sv = await agentTry(
       "Independently verify ONE just-implemented build step of an applied spec proposal. You did not write this code.\n\n" +
         "Work in " +
         repo +
@@ -414,7 +442,7 @@ for (let i = 0; i < plan.steps.length; i++) {
         stepRef +
         "..HEAD`). Run SCOPED tier 0 (`go build ./<changed-pkg>/...`, `go vet ./<changed-pkg>/...`, `golangci-lint run ./<changed-pkg>/...`) and tier 1 (`go test ./<changed-pkg>/... -count=1`) for the changed packages, plus each higher tier this step must run: " +
         ((step.tiers || []).join(", ") || "(none beyond tier 0/1)") +
-        ". MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
+        ". MEMORY-SAFE + no-stall: DEFAULT to running every command in the FOREGROUND, one at a time, SCOPED to the changed packages — NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without output (see below). NEVER run whole-repo `go test -race ./...` or `lenny-test --max-tier unit` (orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash this 16GB host). Run the scoped tier 0/1 commands above directly (no `| tail`; they finish in seconds, streaming so no watchdog stall). For a tier-2 envtest package this step changes, run it FOREGROUND scoped to that one package (`go test ./<changed-envtest-pkg>/... -count=1 -p 1` with `KUBEBUILDER_ASSETS` set) so only one etcd+apiserver is alive, then reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) before the next. Use `-p 2` (or `-p 1` for envtest/integration) to cap memory. LONG-SILENT TIER EXCEPTION: if and only if a single tier will genuinely exceed ~150s without any output, you may run it with `run_in_background: true` to a log file path — but then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop can hang forever if the harness deletes its `.output` file after the 180s watchdog fires). Set green=true only if every tier that can run here passes (skip only a tier that genuinely needs a cloud-only resource, noting it); a pre-existing whole-repo failure unrelated to this step's changed packages is not this step's failure. List any real failures precisely so they can be fixed. Coverage is checked once over the whole change at the end, not here. BRANCH SAFETY: never `git checkout` a branch or commit to compare against a baseline — use `git diff <SHA>..HEAD` or `git show <SHA>:<path>` (you only run tests and report; do not change the checkout or the current branch).",
       { schema: VERIFY, label: "verify:" + step.id + ":r" + attempt, phase: "Build" },
     );
     stepGreen = !!(sv && sv.green);
@@ -432,7 +460,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     // Adversarial design-conformance review of THIS step's diff only.
     const reviewResults = await parallel(
       STEP_REVIEW_LENSES.map((l) => () =>
-        agent(
+        agentTry(
           "Adversarially review ONE just-implemented build step against the proposal's design.\n\n" +
             "Read the proposal at " +
             proposal +
@@ -475,7 +503,7 @@ for (let i = 0; i < plan.steps.length; i++) {
     if (!stepReviewClean) {
       issues =
         stepFindings.length > 0
-          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/), keeping the tests green:\n" +
+          ? "This step builds and its tests pass, but the design-conformance review found divergences from the proposal. Fix the code to match the proposal's design for this step (do not change scope, do not touch spec/). Each divergence is a defect the step's tests passed over, so it is also a test-coverage gap: for every finding with a runtime effect, ALSO add or strengthen an automated test that asserts the corrected behavior and would FAIL against the pre-fix code, at the tier that owns it, so this class of issue cannot recur. Keep all tests green:\n" +
             JSON.stringify(stepFindings, null, 2)
           : "This step builds and its tests pass, but a design-conformance reviewer did not return, so conformance is unconfirmed. Re-check that this step's code matches the proposal's design for its sections; fix any divergence and keep the tests green.";
     }
@@ -573,7 +601,7 @@ for (let i = 0; i < plan.steps.length; i++) {
   const triggerReplan = (completed % replanEvery === 0) || attempt >= replanStruggleAttempts;
   if (hasRemaining && replanCount < maxReplans && triggerReplan) {
     const remainingSteps = plan.steps.slice(i + 1);
-    const drift = await agent(
+    const drift = await agentTry(
       "Check whether the REMAINING build plan still matches reality after part of a build sequence has landed.\n\n" +
         "You are a read-only critic; do not edit any file. Work in " +
         repo +
@@ -602,7 +630,7 @@ for (let i = 0; i < plan.steps.length; i++) {
           maxReplans +
           "]",
       );
-      const tail = await agent(
+      const tail = await agentTry(
         "Re-plan the REMAINING steps of a build sequence for an applied spec proposal, given what has already landed.\n\n" +
           "You are a read-only planner; do not edit any file. Work in " +
           repo +
@@ -688,12 +716,12 @@ const GUARD_PROMPT =
 
 // Runs the guard and returns its verdict (or null if the agent died).
 async function runCompileGuard(label, phaseName) {
-  return await agent(GUARD_PROMPT, { schema: GUARD, label: "compile-guard:" + label, phase: phaseName });
+  return await agentTry(GUARD_PROMPT, { schema: GUARD, label: "compile-guard:" + label, phase: phaseName });
 }
 
 phase("Verify");
 const tierSet = Array.from(new Set(plan.steps.flatMap((s) => s.tiers || [])));
-let verify = await agent(
+let verify = await agentTry(
   "Verify the completed implementation of an applied spec proposal builds and its tests pass across every tier the change reached.\n\n" +
     "Work in " +
     repo +
@@ -703,7 +731,7 @@ let verify = await agent(
     stepResults.map((s) => s.commit).filter(Boolean).join(", ") +
     ".\n\nRun tier 0 and tier 1 for the changed packages, plus each higher tier the change reached: " +
     (tierSet.join(", ") || "as determined from the diff") +
-    ". MEMORY-SAFE on this 16GB host: DEFAULT to running each tier in the FOREGROUND, one at a time, SCOPED to the changed packages (`lenny-test --changed --max-tier <tier>` selects only changed packages; add go-test parallelism `-p 1`/`-p 2`). NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without emitting output (see below). NEVER run a whole-repo `go test -race ./...` — orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash the machine. Run tier-2 envtest packages one at a time and reap strays (`pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null`) between them. Stream output (no `| tail`); scoped runs stay under the 180s watchdog. LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely exceed ~150s without any output, launch it with `run_in_background: true` to a log file path — then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop hangs forever when the harness deletes its `.output` file after the 180s watchdog fires). RUN TIER-0 STATIC CHECKS DIRECTLY: do not rely solely on `lenny-test --tier static` to report all tier-0 failures at once — run `go build ./...`, `go vet ./...`, `golangci-lint run ./...`, and `bash scripts/lint-migrations.sh` as separate foreground commands so each failure is visible independently rather than short-circuiting the others. A `lint-migrations` failure on a migration number with no test reference is only a failure for the THIS change if the migration was ADDED on this branch; a pre-existing uncovered migration (present on the base ref too) is pre-existing debt, not this change's failure — note it but do not mark green=false for it alone. Bring infrastructure up as needed. Run `lenny-test coverage --diff " +
+    ". MEMORY-SAFE on this 16GB host: DEFAULT to running each tier in the FOREGROUND, one at a time, SCOPED to the changed packages (`lenny-test --changed --max-tier <tier>` selects only changed packages; add go-test parallelism `-p 1`/`-p 2`). NEVER use `run_in_background` for tests unless a single long-running tier will exceed the 180s watchdog without emitting output (see below). NEVER run a whole-repo `go test -race ./...` — orphaned/concurrent envtest etcd+kube-apiserver and the race detector OOM-crash the machine. Run tier-2 envtest packages one at a time and reap strays (`pkill -f kubebuilder-envtest 2>/dev/null`) between them. Stream output (no `| tail`); scoped runs stay under the 180s watchdog. LONG-SILENT TIER EXCEPTION: if and only if a single tier command will genuinely exceed ~150s without any output, launch it with `run_in_background: true` to a log file path — then poll by reading that log file with the Read tool (not with a Bash `tail`/`until` loop; a Bash poll loop hangs forever when the harness deletes its `.output` file after the 180s watchdog fires). RUN TIER-0 STATIC CHECKS DIRECTLY: do not rely solely on `lenny-test --tier static` to report all tier-0 failures at once — run `go build ./...`, `go vet ./...`, `golangci-lint run ./...`, and `bash scripts/lint-migrations.sh` as separate foreground commands so each failure is visible independently rather than short-circuiting the others. A `lint-migrations` failure on a migration number with no test reference is only a failure for the THIS change if the migration was ADDED on this branch; a pre-existing uncovered migration (present on the base ref too) is pre-existing debt, not this change's failure — note it but do not mark green=false for it alone. Bring infrastructure up as needed. Run `lenny-test coverage --diff " +
     baseRef +
     "` and report the changed-line coverage. COVERAGE GATE: green=true requires BOTH that every reached tier passes AND that changed-line coverage is at least " +
     coverageFloor +
@@ -726,7 +754,7 @@ while (
 ) {
   vround++;
   log("Verify round " + vround + "/" + maxVerifyRounds + ": fixing " + verify.failures.length + " failure(s)");
-  await agent(
+  await agentTry(
     "Fix the test failures from the verification of an applied spec proposal's implementation.\n\n" +
       "Work in " +
       repo +
@@ -738,12 +766,12 @@ while (
       RULES,
     { label: "verify-fix:r" + vround, phase: "Verify" },
   );
-  verify = await agent(
+  verify = await agentTry(
     "Re-run the reached tiers for the implementation in " +
       repo +
       " and report whether everything is now green. Tiers: " +
       (tierSet.join(", ") || "from the diff") +
-      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kube-apiserver 2>/dev/null; pkill -f 'etcd' 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
+      ". MEMORY-SAFE: run each tier in the FOREGROUND, scoped to the changed packages, one at a time (no `run_in_background` for tests; no whole-repo `go test -race ./...`); reap stray envtest processes (`pkill -f kubebuilder-envtest 2>/dev/null`) between tier-2 packages; pass `-p 1`/`-p 2` to cap memory; stream output (no `| tail`). Bring infrastructure up as needed. Apply the same coverage gate: green=true requires every reached tier to pass AND changed-line coverage (via `lenny-test coverage --diff " +
       baseRef +
       "`) at least " +
       coverageFloor +
@@ -801,6 +829,14 @@ const REVIEW_LENSES = [
   },
 ];
 
+// A design-conformance review finding is, by construction, a defect the
+// automated tests passed over — the build was green when the review ran. So a
+// review that fixes only the code leaves the same class of issue able to fall
+// through next time. The review-fix agents below therefore MUST add a
+// regression test that would fail against the pre-fix code for every finding
+// with a runtime effect, the reviewer names the tier that test belongs at, and
+// verify-postreview gates on those tests existing. The same rule applies to the
+// per-step review (issues message in the Build loop) and is enforced there too.
 const REVIEW_RULES =
   "Read the proposal at " +
   proposal +
@@ -808,7 +844,7 @@ const REVIEW_RULES =
   baseRef +
   "..HEAD`) in " +
   repo +
-  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a test gap (coverage is handled separately). Cite file:line and the proposal section. Report an empty array when the code conforms.";
+  ". You are read-only; report findings only. A finding is a place the landed code diverges from the proposal's design — not a style preference, not new scope the proposal does not contain, and not a bare coverage percentage (the coverage floor is handled separately). Cite file:line and the proposal section. For each finding, also name the tier at which an automated regression test should assert the corrected behavior (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1): you are catching what the automated tests passed over, so the fix must close that test gap, not only the code. Report an empty array when the code conforms.";
 
 let reviewClean = false;
 let reviewRound = 0;
@@ -820,7 +856,7 @@ if (green) {
     reviewRound++;
     const reviewResults = await parallel(
       REVIEW_LENSES.map((l) => () =>
-        agent(REVIEW_RULES + "\n\n" + l.text, {
+        agentTry(REVIEW_RULES + "\n\n" + l.text, {
           schema: REVIEW,
           label: "review:" + l.key + ":r" + reviewRound,
           phase: "Review",
@@ -851,12 +887,12 @@ if (green) {
       continue;
     }
     reviewFixApplied = true;
-    await agent(
+    await agentTry(
       "Fix design-conformance divergences between the landed implementation and the proposal at " +
         proposal +
         ".\n\nWork in " +
         repo +
-        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design, add or correct tests for the corrected behavior, run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit. " +
+        ". The proposal's spec edits are applied; do not edit spec/. Apply each finding so the code matches the proposal's design. EACH FINDING IS A COVERAGE GAP BY DEFINITION: the automated tests passed, yet this review caught the defect — so fixing the code alone lets the same class of issue fall through next time. Therefore, for EVERY finding with a runtime effect (a wrong value, a broken invariant, a mis-wired or missing path, a wrong status/error code/label/metric, a fail-open), you MUST also add or strengthen an automated test that asserts the corrected behavior and is CONSTRUCTED SO IT FAILS against the pre-fix code and PASSES after your fix, at the tier that owns it (security → 9, reliability/recovery → 7a/8, wire/contract → 3, state-machine → 2, pure logic → 1). Line-covering the changed lines does not satisfy this — the assertion must target the corrected outcome, and you should confirm the would-have-caught property (e.g. by checking the test fails at the pre-fix revision). A finding whose code is fixed with no such regression test is NOT done. Run tier 0 and tier 1 (plus the higher tiers the change reaches) to green, and commit each fix together with its regression test. " +
         RULES +
         "\n\nFindings to fix:\n" +
         JSON.stringify(findings, null, 2),
@@ -880,7 +916,7 @@ if (green) {
 // found and fixed a divergence then converged clean still changed the tree.
 let finalGreen = green;
 if (green && reviewFixApplied) {
-  const recheck = await agent(
+  const recheck = await agentTry(
     "Re-run the reached tiers for the implementation in " +
       repo +
       " after the design-conformance fixes and report whether everything is still green. Tiers: " +
@@ -889,7 +925,7 @@ if (green && reviewFixApplied) {
       coverageFloor +
       "% via `lenny-test coverage --diff " +
       baseRef +
-      "`, refactors exempt). Report green, the tiers run, the coverage, and any remaining failures.",
+      "`, refactors exempt). REGRESSION-TEST GATE FOR REVIEW FIXES: the design-conformance review just caught defects the automated tests had passed over. Inspect the commits made during the review rounds (`git log` since the review began) and confirm each code fix with a runtime effect is pinned by a test that asserts the corrected outcome and would fail against the pre-fix code — not merely line-covered by a pre-existing happy-path test. If any review-driven fix landed with no such regression test, set green=false and name the fix (file:line), the corrected behavior, and the missing test so the gap is closed before this returns. Report green, the tiers run, the coverage, and any remaining failures.",
     { schema: VERIFY, label: "verify-postreview", phase: "Review" },
   );
   finalGreen = !!(recheck && recheck.green);

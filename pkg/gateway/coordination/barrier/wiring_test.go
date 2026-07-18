@@ -7,9 +7,12 @@ import (
 	"errors"
 	"net"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
@@ -68,10 +71,20 @@ func fencedAdapter(t *testing.T) (*adapter.Server, *adapterclient.Client) {
 	return srv, cl
 }
 
-// spec: §10.1 lines 165-167 — PodDispatcher routes the barrier through the
-// live in-replica connection and returns the ack carrying the
-// best-effort checkpoint_ref.
-func TestPodDispatcherSendThroughLiveConn_spec_10_1_167(t *testing.T) {
+// spec: §10.1 lines 165-169 — PodDispatcher routes the barrier through the
+// live in-replica connection, and under quiesce-and-hold the adapter holds
+// the ack open until the gateway drives the Checkpoint stream to
+// termination. With a matching generation and no gateway-driven stream,
+// Send therefore holds quiescence for the whole ack window and returns the
+// window's deadline rather than a self-checkpointed ack. The
+// concurrent-stream happy path (the barrier opens the stream itself and
+// the ack completes it) is covered at the Coordinator level in
+// checkpoint_drive_test.go.
+//
+// Against the pre-quiesce-and-hold adapter, which self-checkpointed and
+// acked immediately, Send returned a nil error before the window; this
+// test would fail there because it now asserts the held-window deadline.
+func TestPodDispatcherSendHoldsUntilWindow_spec_10_1_169(t *testing.T) {
 	_, cl := fencedAdapter(t)
 
 	d := &barrier.PodDispatcher{
@@ -82,11 +95,21 @@ func TestPodDispatcherSendThroughLiveConn_spec_10_1_167(t *testing.T) {
 			return nil, false
 		},
 	}
-	_, err := d.Send(context.Background(), barrier.Target{
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	_, err := d.Send(ctx, barrier.Target{
 		TenantID: "acme", SessionID: "s1", CoordinationGeneration: 9,
 	}, "b-1")
-	if err != nil {
-		t.Fatalf("Send: %v", err)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("Send returned an ack with no gateway-driven stream; the barrier no longer holds quiescence")
+	}
+	if status.Code(err) != codes.DeadlineExceeded {
+		t.Fatalf("Send error = %v, want DeadlineExceeded (the held ack window closed)", err)
+	}
+	if elapsed < 400*time.Millisecond {
+		t.Fatalf("Send returned after %s; the barrier did not hold quiescence for the window", elapsed)
 	}
 }
 

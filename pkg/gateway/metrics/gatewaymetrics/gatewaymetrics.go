@@ -19,6 +19,8 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 )
 
 // Metrics holds the registered §16.1 gateway metric vectors. The vectors are
@@ -337,9 +339,10 @@ func mergeBuckets(in []bucketSample) []bucketSample {
 
 // IncCheckpointOrphanedObjects increments the §4.4 line 248
 // `lenny_checkpoint_orphaned_objects_total` counter labeled by pool
-// and trigger. Called from the adapter Checkpoint RPC when a
-// CheckpointAborter.AbortPartial call failed to delete a partially
-// uploaded chunk object.
+// and trigger. Called from the gateway checkpointer's chunk-release
+// path when a chunk object's per-key delete fails and no reclaimer
+// will retry it (the rotation-side release of a completed checkpoint,
+// which the §12.5 backstop sweep never re-selects).
 // spec: §4.4 line 248.
 func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
 	if m == nil {
@@ -348,11 +351,12 @@ func (m *Metrics) IncCheckpointOrphanedObjects(pool, trigger string) {
 	m.checkpointOrphanedObjects.WithLabelValues(pool, trigger).Inc()
 }
 
-// IncCheckpointSizeExceeded increments the §4.4 line 254
+// IncCheckpointSizeExceeded increments the §4.4 line 255
 // `lenny_checkpoint_size_exceeded_total` counter labeled by pool and
-// level. Called from the adapter Checkpoint RPC when the
-// pre-checkpoint workspace-size probe rejects the run.
-// spec: §4.4 line 254.
+// level. Called from the gateway upload driver when the adapter
+// rejects the run at its pre-checkpoint workspace-size probe, reported
+// over the Checkpoint stream as a FailedPrecondition status.
+// spec: §4.4 line 255.
 func (m *Metrics) IncCheckpointSizeExceeded(pool, level string) {
 	if m == nil {
 		return
@@ -586,8 +590,11 @@ func (m *Metrics) IncInjectionGateFailClosed(cause string) {
 // ObserveWorkspaceSealDuration records the §7.1 line 112
 // `lenny_workspace_seal_duration_seconds{pool,outcome}` histogram for one
 // terminal session's seal-and-export. outcome is "success" when the seal
-// completed or "timeout" when the retry window was exhausted. The §16.5
-// WorkspaceSealStuck alert fires on a nonzero outcome="timeout" count.
+// completed, "timeout" when the retry window was exhausted, or
+// "permanent" when the seal failed on an export error the adapter
+// reported as permanent and returned immediately without retrying. The
+// §16.5 WorkspaceSealStuck alert fires on a nonzero outcome="timeout"
+// count alone.
 // spec: §7.1 line 112.
 func (m *Metrics) ObserveWorkspaceSealDuration(pool, outcome string, seconds float64) {
 	if m == nil {
@@ -1257,16 +1264,21 @@ func (m *Metrics) IncRetirement(reason, pool, runtimeClass string) {
 	m.podRetirement.WithLabelValues(reason, pool, runtimeClass).Inc()
 }
 
-// IncCheckpointPartial increments the §4.4 line 234
-// `lenny_checkpoint_partial_total` counter labeled by pool. Called
-// once per partial-manifest row written by the §10.1
-// chunk-upload pipeline.
-// spec: §4.4 line 234.
-func (m *Metrics) IncCheckpointPartial(pool string) {
+// IncCheckpointPartial increments the §16.1 line 195
+// `lenny_checkpoint_partial_total` counter labeled by pool, recovered,
+// manifest_reason, and trigger. The write path calls it once per
+// partial-manifest row finalised on a terminal abort arm (recovered =
+// false, the manifest_reason that named the arm, and the trigger the
+// attempt was started with); the resume path calls it once per
+// above-threshold reassembly (recovered = true). trigger is a
+// checkpoint.Trigger so no value outside the closed §4.4 enum can be
+// stamped onto the series.
+// spec: §16.1 line 195.
+func (m *Metrics) IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger) {
 	if m == nil {
 		return
 	}
-	m.checkpointPartialTotal.WithLabelValues(pool).Inc()
+	m.checkpointPartialTotal.WithLabelValues(pool, strconv.FormatBool(recovered), manifestReason, string(trigger)).Inc()
 }
 
 // IncPreStopCapSelection increments the §10.1

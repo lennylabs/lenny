@@ -3,6 +3,7 @@
 package miniostore
 
 import (
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -60,7 +61,7 @@ func TestObjectKeyHonoursObjectType(t *testing.T) {
 		want string
 	}{
 		{blobstore.ObjectTypeWorkspace, "acme/workspace/s_1/p"},
-		{blobstore.ObjectTypeCheckpoint, "acme/checkpoint/s_1/p"},
+		{blobstore.ObjectTypeCheckpoint, "acme/checkpoints/s_1/p"},
 		{blobstore.ObjectTypeTranscript, "acme/transcript/s_1/p"},
 		{blobstore.ObjectTypeUpload, "acme/upload/s_1/p"},
 		{blobstore.ObjectTypeEviction, "acme/eviction/s_1/p"},
@@ -77,6 +78,58 @@ func TestObjectKeyHonoursObjectType(t *testing.T) {
 		if got != tc.want {
 			t.Errorf("objectKey(%q) = %q, want %q", tc.ot, got, tc.want)
 		}
+	}
+}
+
+func TestObjectKeyConcatenatesNestedCheckpointChunkPartID(t *testing.T) {
+	// spec: §10.1 — the chunked checkpoint key nests
+	// {checkpoint_id}/chunk-{n}.{enc} under the checkpoints prefix, and
+	// objectKey concatenates the part id verbatim so the nested path is
+	// preserved in the MinIO object key.
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "sess_1",
+		PartID:     "ck_9f2a/chunk-00000.tar",
+	}
+	if got, want := objectKey(u), "acme/checkpoints/sess_1/ck_9f2a/chunk-00000.tar"; got != want {
+		t.Errorf("objectKey = %q, want %q", got, want)
+	}
+}
+
+// TestPresignPutFailsClosedWhenT4KeyUnavailable pins the §12.5 / §13.2
+// mint-time fail-closed contract: PresignPut for a T4 tenant whose
+// per-tenant SSE-KMS key is unreachable returns
+// CLASSIFICATION_CONTROL_VIOLATION and fires the KMS-unavailable hook
+// before signing anything, so the gateway never hands a pod a
+// capability that would persist restricted data under a weaker key. The
+// resolver fails before any network call, so the assertion is pure.
+//
+// spec: §12.5 ll. 303 (T4 fail-closed); §13.2 (capability model).
+func TestPresignPutFailsClosedWhenT4KeyUnavailable(t *testing.T) {
+	s, err := New(Config{
+		Endpoint: "minio:9000",
+		Bucket:   "lenny-artifacts",
+		SSEKeyResolver: func(string) (string, bool, error) {
+			return "", true, errors.New("kms backend unreachable")
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	var fired string
+	s.SetOnKMSUnavailable(func(tenantID string) { fired = tenantID })
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "sess_1",
+		PartID:     "ck_9f2a/chunk-00000.tar",
+	}
+	if _, err := s.PresignPut(u, 4096, 30*time.Second); !errors.Is(err, blobstore.ErrClassificationControlViolation) {
+		t.Fatalf("PresignPut err = %v, want CLASSIFICATION_CONTROL_VIOLATION", err)
+	}
+	if fired != "acme" {
+		t.Errorf("KMS-unavailable hook fired for %q, want acme", fired)
 	}
 }
 

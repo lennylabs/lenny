@@ -35,9 +35,12 @@ type podLifecycleMetrics struct {
 	// maxSessionsPerPod drain on a concurrent non-`vm-restart` pool.
 	// spec: §16.1, §16.1.1.
 	podRetirement *prometheus.CounterVec
-	// checkpointPartialTotal counts the §4.4 line 234 / §10.1 partial-
-	// manifest row writes. Labels: `pool` (finite, sandbox-warm-pool
-	// registry).
+	// checkpointPartialTotal counts the §16.1 line 195 partial-manifest
+	// rows finalised on a terminal abort arm and reassembled on resume.
+	// Labels: `pool` (finite, sandbox-warm-pool registry), `recovered`
+	// (`true` | `false`), `manifest_reason` (`timeout` | `stream_truncated`
+	// | `superseded` | `quota_exceeded`), and `trigger` (the closed §4.4
+	// checkpoint.Trigger enum: `periodic` | `pre_scale_down` | `eviction`).
 	checkpointPartialTotal *prometheus.CounterVec
 	// prestopCapSelection counts the §10.1 preStop tiered-cap
 	// selection by source. Labels: `pool`, `service_instance_id`,
@@ -109,12 +112,20 @@ func newPodLifecycleMetrics(reg *prometheus.Registry) (podLifecycleMetrics, erro
 	if err != nil {
 		return m, err
 	}
-	// §4.4 line 234 — `lenny_checkpoint_partial_total` counts the
-	// partial-manifest row writes. Labels: `pool` (finite).
+	// §16.1 line 195 — `lenny_checkpoint_partial_total` counts partial-
+	// manifest rows once per finalised terminal abort arm (`recovered =
+	// false`) and once per above-threshold reassembly on resume (`recovered
+	// = true`). §16.1 line 195 is the single source of the label domains,
+	// which §10.1 cross-references rather than re-enumerating. `pool`,
+	// `recovered`, and `trigger` are finite; `manifest_reason` mirrors the
+	// §10.1 manifest column and its partial-only sub-domain (`timeout` |
+	// `stream_truncated` | `superseded` | `quota_exceeded`). `trigger` is
+	// the §4.4 checkpoint.Trigger enum, so it can only carry `periodic` |
+	// `pre_scale_down` | `eviction`.
 	checkpointPartialTotal, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_checkpoint_partial_total",
-		Help: "Partial-manifest checkpoint writes (§4.4 line 234).",
-	}, []string{"pool"})
+		Help: "Partial-manifest checkpoint rows finalised on abort and reassembled on resume (§16.1 line 195).",
+	}, []string{"pool", "recovered", "manifest_reason", "trigger"})
 	if err != nil {
 		return m, err
 	}

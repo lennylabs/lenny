@@ -578,6 +578,25 @@ spec:
           protocol: TCP
         - port: 9090
           protocol: TCP
+    # §13.2 NET-071 — admit agent-namespace checkpoint chunk PUT/GET on the
+    # MinIO API port. The chart's allow-pod-egress-objectstore out-of-band arm
+    # opens agent-pod egress to the store CIDR, but the store pod lives in
+    # lenny-system under this namespace's default-deny, so the agent-namespace
+    # ingress must be re-admitted here. The from clause pairs the
+    # agent-namespace namespaceSelector with the managed-pod podSelector, the
+    # same label pair the chart's self-managed MinIO ingress clause uses. A
+    # production out-of-band store is external to the cluster and needs no such
+    # in-cluster ingress clause; this is the e2e fixture analog.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              lenny.dev/agent-namespace: "true"
+          podSelector:
+            matchLabels:
+              lenny.dev/managed: "true"
+      ports:
+        - port: 9000
+          protocol: TCP
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

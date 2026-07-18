@@ -33,6 +33,8 @@ A workspace seal operation (the finalization step that snapshots and uploads the
 - `WorkspaceSealStuck` alert.
 - Session in state `sealing` past the configured max duration.
 
+The `WorkspaceSealStuck` alert fires on the `outcome="timeout"` arm of `lenny_workspace_seal_duration_seconds` alone. A seal that fails on a permanent adapter error records `outcome="permanent"` and returns immediately without retrying, so it does not fire this alert and does not hold the pod in `draining`. A `permanent`-outcome seal fails the session fast rather than retrying past the deadline; investigate it through the session's failure record and adapter logs instead of this runbook.
+
 ## Diagnosis
 
 ### Step 1 — Affected sessions

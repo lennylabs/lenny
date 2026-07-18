@@ -159,6 +159,14 @@ type PoolMatch struct {
 	// queue-wait bound applied when OnPoolExhausted is "queue". Zero falls
 	// back to the platform default. spec: §5.2, §4.6.1.
 	MaxQueueWaitSeconds int
+	// CheckpointGrantWindow is the §5.2 per-pool override of the
+	// deployment-wide checkpointGrantWindow: the number of chunk-upload
+	// capabilities the gateway keeps outstanding while draining this pool's
+	// workspace checkpoints. It is copied from the SandboxTemplate's
+	// checkpointGrantWindow field. Nil leaves the driver on the
+	// deployment-wide default. spec: §10.1 line 131 chunk-grant window;
+	// §17.8.1 checkpointGrantWindow default 4; §5.2 (per-pool override).
+	CheckpointGrantWindow *int32
 }
 
 // PoolPolicyMirror is the gateway-enforced subset of a pool's §5.2
@@ -201,6 +209,11 @@ type PoolPolicyMirror struct {
 	// MaxQueueWaitSeconds is sessionPolicy.maxQueueWaitSeconds, the §5.2
 	// queue-wait bound when OnPoolExhausted is "queue". spec: §5.2.
 	MaxQueueWaitSeconds int
+	// CheckpointGrantWindow is the §5.2 per-pool checkpointGrantWindow
+	// override read from the poolstore mirror. Nil leaves the checkpoint
+	// driver on the deployment-wide default. spec: §10.1 line 131; §5.2
+	// (per-pool override of the deployment-wide default).
+	CheckpointGrantWindow *int32
 }
 
 // PoolPolicyReader reads a pool's gateway-enforced §5.2 sessionPolicy
@@ -309,6 +322,11 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 		if tmpl.Spec.WorkspaceSizeLimitBytes != nil {
 			m.WorkspaceSizeLimitBytes = *tmpl.Spec.WorkspaceSizeLimitBytes
 		}
+		// spec: §10.1 line 131 / §5.2 — copy the per-pool
+		// checkpointGrantWindow override from the SandboxTemplate so the
+		// checkpoint driver can prefer it over the deployment-wide default.
+		// foldPoolPolicy lets a poolstore mirror row override it further.
+		m.CheckpointGrantWindow = tmpl.Spec.CheckpointGrantWindow
 		matches = append(matches, m)
 	}
 
@@ -375,6 +393,12 @@ func foldPoolPolicy(ctx context.Context, policy PoolPolicyReader, m *PoolMatch) 
 	// mirror is authoritative. A session-mode pool leaves it zero.
 	if mirror.MaxConcurrent > 0 {
 		m.MaxConcurrent = mirror.MaxConcurrent
+	}
+	// spec: §10.1 line 131 / §5.2 — a poolstore mirror row that carries a
+	// checkpointGrantWindow override wins over the CRD-derived value; a
+	// mirror without the override leaves the CRD value in place.
+	if mirror.CheckpointGrantWindow != nil {
+		m.CheckpointGrantWindow = mirror.CheckpointGrantWindow
 	}
 	return nil
 }

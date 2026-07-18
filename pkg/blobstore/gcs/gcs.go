@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -39,6 +40,7 @@ type objectClient interface {
 	Update(ctx context.Context, key string, metadata map[string]string) error
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context) ([]string, error)
+	SignedURL(object, method string, expires time.Time) (string, error)
 }
 
 type writeCloser interface {
@@ -176,6 +178,7 @@ func containsAny(s string, needles ...string) bool {
 var (
 	_ blobstore.Store      = (*Store)(nil)
 	_ blobstore.Tombstoner = (*Store)(nil)
+	_ blobstore.Presigner  = (*Store)(nil)
 )
 
 // New returns a Store. Returns an error when cfg.Bucket is empty or
@@ -246,6 +249,36 @@ func (s *Store) Put(u blobstore.URI, mimeType string, data io.Reader) (string, e
 		return "", fmt.Errorf("blobstore/gcs: writer close: %w", err)
 	}
 	return u.String(), nil
+}
+
+// PresignPut implements blobstore.Presigner. It mints a V4 signed PUT
+// URL. The V4 signing path cannot bind a per-request CMEK or
+// Content-Length, so T4 encryption rests on the bucket-default CMEK of
+// a per-tenant bucket (§12.5) rather than on the grant, and
+// Grant.Headers is empty.
+//
+// spec: §13.2 (capability model); §12.5 (per-provider T4 mechanism).
+func (s *Store) PresignPut(u blobstore.URI, _ int64, ttl time.Duration) (blobstore.Grant, error) {
+	return s.signedGrant(u, http.MethodPut, ttl)
+}
+
+// PresignGet implements blobstore.Presigner. It mints a V4 signed
+// read-only GET URL with an empty Grant.Headers.
+//
+// spec: §13.2 (capability model).
+func (s *Store) PresignGet(u blobstore.URI, ttl time.Duration) (blobstore.Grant, error) {
+	return s.signedGrant(u, http.MethodGet, ttl)
+}
+
+// signedGrant mints a single-key V4 signed-URL capability for u.
+func (s *Store) signedGrant(u blobstore.URI, method string, ttl time.Duration) (blobstore.Grant, error) {
+	key := objectKey(u)
+	expires := time.Now().UTC().Add(ttl)
+	signed, err := s.client.SignedURL(key, method, expires)
+	if err != nil {
+		return blobstore.Grant{}, fmt.Errorf("blobstore/gcs: presign %s %s: %w", method, key, err)
+	}
+	return blobstore.Grant{URL: signed, Headers: map[string]string{}, ExpiresAt: expires}, nil
 }
 
 // Get implements blobstore.Store.
@@ -490,6 +523,14 @@ func (a *clientAdapter) Update(ctx context.Context, key string, metadata map[str
 
 func (a *clientAdapter) Delete(ctx context.Context, key string) error {
 	return a.cli.Bucket(a.bucket).Object(key).Delete(ctx)
+}
+
+func (a *clientAdapter) SignedURL(object, method string, expires time.Time) (string, error) {
+	return a.cli.Bucket(a.bucket).SignedURL(object, &storage.SignedURLOptions{
+		Method:  method,
+		Expires: expires,
+		Scheme:  storage.SigningSchemeV4,
+	})
 }
 
 func (a *clientAdapter) List(ctx context.Context) ([]string, error) {

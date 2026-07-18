@@ -74,6 +74,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
@@ -1076,14 +1077,45 @@ func hardPrunePartialManifests(ctx context.Context, store partialmanifeststore.S
 	}
 	pruned := 0
 	for _, r := range expired {
-		if derr := store.HardDelete(ctx, r.TenantID, r.SessionID, r.Generation); derr != nil {
-			log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune row %s/%s gen=%d: %v",
-				r.TenantID, r.SessionID, r.Generation, derr)
+		if derr := store.HardDelete(ctx, r.TenantID, r.CheckpointID); derr != nil {
+			log.Printf("lenny-gateway: §12.5 partial-manifest hard-prune row %s/%s checkpoint=%s: %v",
+				r.TenantID, r.SessionID, r.CheckpointID, derr)
 			continue
 		}
 		pruned++
 	}
 	return pruned, nil
+}
+
+// reclaimAbandonedManifests runs the §12.5 partial-manifest backstop sweep: it
+// selects every abandoned active row via ListReclaimable (the row whose gateway
+// died between Reserve and Finalise, or whose session was never resumed within
+// its resume window) and reclaims each one through the same three-step release
+// (guarded catalog soft-delete, per-key DeleteObject, guarded exactly-once
+// reservation decrement, manifest soft-delete after a final empty prefix list)
+// the abort and supersede arms run. The sweep is the sibling of the tombstone
+// hard-prune and runs on the same GC cycle. Per-row reclaim failures are logged
+// and skipped — ListReclaimable re-selects the row so the next cycle retries it;
+// a select failure returns the error with no rows reclaimed. Returns the number
+// of rows reclaimed.
+//
+// spec: §12.5 partial-manifest backstop and GC rule 6; §11.2 reservation
+// release is exactly-once and guarded.
+func reclaimAbandonedManifests(ctx context.Context, release checkpointer.BackstopReclaim, maxResumeWindow time.Duration) (int, error) {
+	rows, err := release.Manifests.ListReclaimable(ctx, maxResumeWindow)
+	if err != nil {
+		return 0, err
+	}
+	reclaimed := 0
+	for _, r := range rows {
+		if rerr := checkpointer.ReclaimAbandonedManifest(ctx, release, r); rerr != nil {
+			log.Printf("lenny-gateway: §12.5 partial-manifest backstop reclaim row %s/%s checkpoint=%s: %v",
+				r.TenantID, r.SessionID, r.CheckpointID, rerr)
+			continue
+		}
+		reclaimed++
+	}
+	return reclaimed, nil
 }
 
 // runStartupChainContinuityCheck implements the §12.3 line 101 startup
@@ -2484,15 +2516,19 @@ func envInt64(name string, def int64) int64 {
 }
 
 // barrierCoordinatorDispatch adapts a *barrier.Coordinator to the
-// prestop.BarrierDispatcher interface: the staged drain only needs the
-// pass to fire under its ACK budget, so the DispatchSummary is discarded
-// and any enumeration error is surfaced for the hook to log.
+// prestop.BarrierDispatcher interface. It surfaces the pass's per-session
+// Outcome set (not just the error) so the preStop hook can skip every
+// barrier-acked session in its post-barrier per-session loop: under the
+// §10.1 line 169 quiesce-and-hold contract the barrier already drives a
+// full gateway-side checkpoint for every session it acks, so a loop that
+// re-checkpointed those sessions would open a second manifest row and
+// duplicate catalog rows for one (session, coordination_generation).
 // spec: §10.1 lines 163-181.
 type barrierCoordinatorDispatch struct{ c *barrier.Coordinator }
 
-func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) error {
-	_, err := d.c.Dispatch(ctx)
-	return err
+func (d barrierCoordinatorDispatch) Dispatch(ctx context.Context) ([]barrier.Outcome, error) {
+	sum, err := d.c.Dispatch(ctx)
+	return sum.Outcomes, err
 }
 
 // parseTerminationGrace returns the §4.4 line 263 termination grace

@@ -166,7 +166,6 @@
       "spec_file": "spec/04_system-components.md",
       "tests": [
         "pkg/session/...",
-        "tests/tier2_component/stores/partial_manifest_terminated_during_resume_test.go::TestPartialManifestTerminatedDuringResume",
         "tests/tier3_contract/oauth_token/oauth_token_test.go",
         "tests/tier3_contract/rest_idempotency/idempotency_test.go",
         "tests/tier3_contract/rest_sessions/sessions_test.go",
@@ -234,7 +233,8 @@
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
-        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles"
+        "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace"
       ],
       "packages": [
         "pkg/store/event",
@@ -771,7 +771,8 @@
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
         "pkg/checkpoint/...",
-        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace"
       ],
       "packages": [
         "pkg/session/resume",
@@ -1155,9 +1156,14 @@
         "tests/tier2_component/coordination/...",
         "tests/tier2_component/stores/coordleasestore_test.go",
         "tests/tier3_contract/adapter_checkpointbarrier/...",
+        "tests/tier3_contract/checkpoint_stream/...",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
-        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss"
+        "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
+        "tests/tier7a_load_local/checkpoint_grant_window_test.go",
+        "tests/tier7a_load_local/prestop_no_double_checkpoint_test.go",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0178",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
       ],
       "packages": [
         "pkg/gateway"
@@ -1480,7 +1486,8 @@
         "tests/tier9_security/token_usage_anomaly_test.go::TestDirectModeInterspersedNonZeroResetsZeroRun_spec_11_2",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecReportUsageDirectionIsGatewayPull_F15_3_7",
         "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecPodReportedCumulativeCitesSection47_F11_2_20",
-        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecAnomalyMetricNotLabeledBySessionID_F11_2_20"
+        "tests/tier11_docs/direct_usage_reportusage_consistency_test.go::TestSpecAnomalyMetricNotLabeledBySessionID_F11_2_20",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestStorageRehydrateReservationTermReadsIdenticallyAcrossSpec"
       ],
       "packages": [
         "pkg/quota",
@@ -1748,7 +1755,8 @@
         "tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO",
         "tests/tier6_e2e_cloud/sandbox_proxy_testbed_test.go::TestT4SandboxKMSFailClosedTestbed",
         "tests/tier2_component/preflight/minio_sse_test.go",
-        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestBackstopSweepPredicateReadsIdenticallyAcrossSpec12"
       ],
       "packages": [
         "pkg/store/artifact"
@@ -1805,6 +1813,7 @@
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
         "tests/tier4_integration/erasure_job_test.go",
+        "tests/tier2_component/legalholdreconciler/reconciler_test.go",
         "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable"
       ],
       "packages": [
@@ -1931,7 +1940,8 @@
         "tests/tier9_security/admission_security_test.go",
         "tests/tier9_security/image_signing_test.go",
         "tests/tier9_security/credential_file_contract_test.go::TestCredentialFileDeliveryContract",
-        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation"
+        "tests/tier6_e2e_cloud/cluster_assertions_test.go::TestGvisorIsolation",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointDocsMirrorsAgreeWithSpec131"
       ],
       "packages": [
         "pkg/podsecurity"
@@ -1952,7 +1962,10 @@
         "tests/tier6_e2e_cloud/managed_cloudsql_test.go",
         "tests/tier6_e2e_cloud/managed_memorystore_test.go",
         "tests/tier6_e2e_cloud/managed_azuredb_test.go",
-        "tests/tier6_e2e_cloud/managed_azurecache_test.go"
+        "tests/tier6_e2e_cloud/managed_azurecache_test.go",
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodReachesObjectStoreButNoOtherLennySystemPort_spec_13_2",
+        "tests/tier9_security/ops_agent_pod_boundary_test.go::TestAgentPodTrustsObjectStoreCA_spec_13_2",
+        "tests/tier6_e2e_cloud/agent_objectstore_egress_test.go::TestAgentPodObjectStoreEgressIsPortScoped_spec_13_2"
       ],
       "packages": [
         "pkg/admission/labelimmutability"
@@ -2480,7 +2493,8 @@
         "pkg/gateway/session/recycle/scrubreporter_seams_test.go::TestRetirementMetricsMapsReasonToLabel_spec_16_1",
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
       ],
       "packages": [
         "pkg/observability/metrics",

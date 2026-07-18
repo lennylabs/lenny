@@ -6,6 +6,9 @@ import (
 	"context"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
@@ -34,12 +37,36 @@ const (
 	sealBackoffCap     = 60 * time.Second
 )
 
-// sealOutcomeSuccess and sealOutcomeTimeout are the §7.1 line 112
-// `outcome` label values on lenny_workspace_seal_duration_seconds.
+// sealOutcomeSuccess, sealOutcomeTimeout, and sealOutcomePermanent are
+// the §7.1 line 112 `outcome` label values on
+// lenny_workspace_seal_duration_seconds. `permanent` records a seal that
+// failed on an export error the adapter reported as permanent and
+// returned immediately without retrying; only the `timeout` arm fires
+// the WorkspaceSealStuck alert.
 const (
-	sealOutcomeSuccess = "success"
-	sealOutcomeTimeout = "timeout"
+	sealOutcomeSuccess   = "success"
+	sealOutcomeTimeout   = "timeout"
+	sealOutcomePermanent = "permanent"
 )
+
+// isPermanentSealError reports whether err is a gRPC status the seal
+// adapter reports as permanent: FailedPrecondition (the §4.4 line 255
+// workspace-size probe rejection, which re-probes identically on every
+// retry), InvalidArgument, or Unimplemented. A permanent error
+// re-produces identically on each attempt, so retrying it for the full
+// §7.1 window only delays the identical terminal state.
+//
+// spec: §7.1 line 112 — "an export failure the adapter reports as
+// permanent ends the window on its first observation with the same
+// terminal outcome".
+func isPermanentSealError(err error) bool {
+	switch status.Code(err) {
+	case codes.FailedPrecondition, codes.InvalidArgument, codes.Unimplemented:
+		return true
+	default:
+		return false
+	}
+}
 
 // sleepWithContext is the production seal-retry wait: it blocks for d or
 // until ctx is cancelled, returning true when the full delay elapsed and
@@ -94,6 +121,17 @@ func (s *Server) sealWorkspace(ctx context.Context, sess sessionstore.Session) (
 			return nil
 		}
 		lastErr = err
+		// spec: §7.1 line 112 — an export failure the adapter reports as
+		// permanent ends the window on its first observation with the same
+		// terminal outcome. The workspace-size probe rejection re-produces
+		// identically on every retry, so retrying it for the full window
+		// only delays the identical failed/workspace_seal_timeout state and
+		// would fire the WorkspaceSealStuck MinIO-unavailability alert on a
+		// tenant configuration condition with no MinIO involvement.
+		if isPermanentSealError(err) {
+			s.observeWorkspaceSeal(sess, start, sealOutcomePermanent)
+			return lastErr
+		}
 		// Stop when the next attempt would start at or past the window;
 		// retrying past maxWorkspaceSealDurationSeconds is forbidden so a
 		// permanent MinIO outage cannot hold the pod in draining forever.

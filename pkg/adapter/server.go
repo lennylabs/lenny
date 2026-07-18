@@ -211,52 +211,24 @@ type Server struct {
 	// Runtime manages the pod's runtime process. StartSession starts it
 	// once the workspace is prepared.
 	Runtime RuntimeProcess
-	// Checkpoints stores the §4.4 workspace checkpoints the Checkpoint
-	// RPC produces. Nil leaves Checkpoint Unimplemented.
-	Checkpoints CheckpointSink
-	// CheckpointAborter cleans up partially-uploaded MinIO objects when
-	// a checkpoint is aborted per §4.4 line 248. Nil leaves the abort
-	// path a no-op — the dev-mode adapter relies on `lenny-ctl` /
-	// admin tooling for storage cleanup.
-	CheckpointAborter CheckpointAborter
-	// CheckpointMetrics receives the §4.4 lines 248 / 254 counter
-	// increments (`lenny_checkpoint_orphaned_objects_total` on abort
-	// cleanup failure; `lenny_checkpoint_size_exceeded_total` on
-	// pre-checkpoint workspace-size probe exceed). Nil makes every
-	// metric call a no-op.
-	CheckpointMetrics CheckpointMetrics
-	// CheckpointEvents publishes the §4.4 line 254 `checkpoint.skipped`
-	// session event when the pre-checkpoint workspace-size probe
-	// rejects the run. Nil makes the emission a no-op.
-	CheckpointEvents CheckpointEventEmitter
-	// CheckpointPoolLabel is the pool label stamped onto the §4.4
-	// metric increments (e.g., `claude-code-pool`). Empty omits the
-	// label per metric-emit advisory.
+	// CheckpointTransport issues the object-store PUT for each checkpoint
+	// chunk and the GET for each restore chunk against the gateway-minted
+	// presigned capability the gateway hands the pod on the Checkpoint and
+	// Resume paths. The adapter holds no standing object-store credential
+	// (§13.2); the capability in each grant is its only authorization. Nil
+	// leaves the Checkpoint stream and the chunked Resume restore
+	// FailedPrecondition.
+	CheckpointTransport CheckpointTransport
+	// CheckpointPoolLabel is the pool label stamped onto the §4.7
+	// credential-rotation metrics (e.g., `claude-code-pool`). Empty omits
+	// the label per metric-emit advisory.
 	CheckpointPoolLabel string
-	// CheckpointLevelLabel is the runtime-integration-level label
-	// stamped onto `lenny_checkpoint_size_exceeded_total` per §4.4
-	// line 254 (one of `basic`, `standard`, `full`, `embedded`).
-	// Empty omits the label.
-	CheckpointLevelLabel string
-	// CheckpointTriggerLabel is the trigger label stamped onto
-	// `lenny_checkpoint_orphaned_objects_total` per §4.4 line 248
-	// (one of `periodic`, `pre_scale_down`, `eviction`). Empty omits
-	// the label.
-	CheckpointTriggerLabel string
-	// WorkspaceSize returns the on-disk byte count of the session's
-	// workspace root. Nil disables the §4.4 line 254 pre-checkpoint
-	// workspace-size probe — the kubelet `emptyDir.sizeLimit` is the
-	// backstop. Production wires this against
-	// `pkg/adapter/workspace.Size`.
-	WorkspaceSize WorkspaceSizeFunc
-	// WorkspaceSizeLimitBytes is the §4.4 line 254
-	// `workspaceSizeLimitBytes` per-pool cap. Zero or negative
-	// disables the probe; production sets this to the pool's
-	// configured limit (default 512Mi).
+	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size limit. When
+	// greater than zero, a checkpoint whose probed workspace exceeds it
+	// terminates the Checkpoint stream with FailedPrecondition before any
+	// grant is minted (§4.4 line 255). Zero disables the limit — the
+	// kubelet emptyDir guard is the backstop.
 	WorkspaceSizeLimitBytes int64
-	// Restorer loads the §4.4 workspace checkpoints the Resume RPC
-	// restores from. Nil leaves Resume Unimplemented.
-	Restorer CheckpointSource
 	// Usage reports the session's token and wall-clock accounting the
 	// ReportUsage RPC returns. Nil leaves ReportUsage Unimplemented.
 	Usage UsageMeter
@@ -336,6 +308,13 @@ type Server struct {
 	// enters when the gateway control stream drops while a session is
 	// live. See pkg/adapter/holdstate.go.
 	hold holdState
+
+	// barrier coordinates the §10.1 quiesce-and-hold CheckpointBarrier RPC
+	// with the gateway-driven Checkpoint stream: the barrier holds
+	// quiescence and blocks until the stream the gateway drives against
+	// the held pod terminates, echoing that stream's checkpoint_id. See
+	// pkg/adapter/coordination.go.
+	barrier barrierGate
 
 	// controlMu guards controlSink.
 	controlMu sync.Mutex

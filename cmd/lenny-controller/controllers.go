@@ -68,6 +68,10 @@ func (w *controllerWiring) registerCoreControllers() {
 		SATokenAudience:         f.saTokenAudience,
 		AgentServiceAccountName: f.agentServiceAccount,
 		DedicatedDNSClusterIP:   f.dedicatedDNSClusterIP,
+		// spec: §13.2 — the per-agent-namespace object-store CA ConfigMap
+		// projected into agent pods so the adapter trusts a self-managed object
+		// store's non-public CA during checkpoint upload.
+		ObjectStoreCAConfigMap: f.objectStoreCAConfigMap,
 		// spec: §13.2 — the dedicated CoreDNS Service lives in the release
 		// namespace (lenny-system); it is the first dnsConfig search domain.
 		ReleaseNamespace:          f.leaderElectNS,

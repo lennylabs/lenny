@@ -165,6 +165,68 @@ func TestSoftDeleteSessionWithoutReleaserDoesNotPanic(t *testing.T) {
 	}
 }
 
+// spec: §12.5 rule 4 — SoftDeleteRow soft-deletes a chunk's artifact_store
+// row and releases its bytes exactly once, without tombstoning the bucket
+// object (the §12.5 checkpoint chunk-release path hard-deletes the object
+// per key itself). A replay over the already-soft-deleted row issues no
+// second decrement.
+func TestSoftDeleteRowReleasesBytesOnceWithoutTombstone(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	quota := newFakeQuota()
+	store := New(inner, cat, Options{QuotaReleaser: quota})
+
+	u := blobstore.URI{
+		TenantID:   "acme",
+		ObjectType: blobstore.ObjectTypeCheckpoint,
+		SessionID:  "s_1",
+		PartID:     "cp-1/chunk-00000.tar",
+		TTL:        time.Hour,
+	}
+	ref, err := store.Put(u, "application/x-tar", strings.NewReader("chunkbytes")) // 10
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := store.SoftDeleteRow(ctx, ref, time.Hour); err != nil {
+		t.Fatalf("SoftDeleteRow #1: %v", err)
+	}
+	if got := quota.get("acme"); got != -10 {
+		t.Errorf("storage-quota delta = %d, want -10", got)
+	}
+	// SoftDeleteRow does not tombstone the bucket object: it leaves it for
+	// the caller's per-key hard delete, so the object is still live here.
+	if _, err := inner.Stat(u); err != nil {
+		t.Errorf("object must stay live after SoftDeleteRow (no bucket tombstone): %v", err)
+	}
+	// Replay over the already-soft-deleted row: no second decrement.
+	if err := store.SoftDeleteRow(ctx, ref, time.Hour); err != nil {
+		t.Fatalf("SoftDeleteRow #2: %v", err)
+	}
+	if got := quota.get("acme"); got != -10 {
+		t.Errorf("storage-quota delta after replay = %d, want -10 (exactly once)", got)
+	}
+}
+
+// spec: §12.5 rule 4 — a chunk with no catalog row (written before the
+// cataloging wiring, or an uncounted straggler an outstanding grant landed)
+// is a no-op for SoftDeleteRow: no error, no decrement.
+func TestSoftDeleteRowOnMissingRowIsNoOp(t *testing.T) {
+	inner := blobstore.NewMemoryStore(nil)
+	cat := newFakeCatalog()
+	quota := newFakeQuota()
+	store := New(inner, cat, Options{QuotaReleaser: quota})
+
+	if err := store.SoftDeleteRow(context.Background(),
+		"lenny-blob://acme/checkpoints/s_1/cp-1%2Fchunk-00000.tar?ttl=3600&enc=aes256gcm", time.Hour); err != nil {
+		t.Fatalf("SoftDeleteRow on absent row: %v", err)
+	}
+	if got := quota.get("acme"); got != 0 {
+		t.Errorf("storage-quota delta = %d, want 0 for a missing row", got)
+	}
+}
+
 // spec: §11 line 37 — SetQuotaReleaser installs the counter after
 // construction (the gateway resolves the Redis-backed counter after the
 // decorator is built). A delete after the setter decrements.

@@ -586,6 +586,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	adminTokenSecretName := f.adminTokenSecretName
 	adminTokenTenant := f.adminTokenTenant
 	adminTokenReclaimIntervalSeconds := f.adminTokenReclaimIntervalSeconds
+	maxResumePendingSeconds := f.maxResumePendingSeconds
 	// ----- §12.5 gateway-leader election (lenny-gateway-leader Lease) -----
 	// spec: §12.5 lines 317, 332 — the artifact-GC orchestrator and the
 	// other gateway-singleton sweeps below (tombstone hard-prune,
@@ -846,6 +847,53 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 			})
 		}
 
+		// §12.5 partial-manifest backstop sweep: co-located with the
+		// tombstone hard-prune above, it runs on the same GC cycle and
+		// reclaims abandoned active partial-manifest rows — the rows a
+		// gateway crash between the §11.2 reservation and Finalise leaves
+		// behind, and the rows of a session that never resumed within its
+		// resume window. Each reclaim runs the same three-step release the
+		// abort and supersede arms run (guarded catalog soft-delete, per-key
+		// object delete, guarded exactly-once reservation decrement, manifest
+		// soft-delete after a final empty prefix list). Without it the §11.2
+		// reservation leaks permanently on every such crash and the abandoned
+		// rows are never finalised or swept. Active only when the durable
+		// catalog, object store, and manifest store are all wired (Postgres
+		// mode); the in-memory dev gateway has no catalog and skips it.
+		if w.partialManifests != nil && w.blobsCataloged != nil && w.minioStore != nil {
+			backstopRelease := checkpointer.BackstopReclaim{
+				Manifests:          w.partialManifests,
+				Catalog:            w.blobsCataloged,
+				Objects:            w.minioStore,
+				Quota:              w.storageCounter,
+				TombstoneRetention: gcTombstoneRetention,
+				Metrics:            w.gwMetrics,
+			}
+			backstopResumeWindow := time.Duration(*maxResumePendingSeconds) * time.Second
+			log.Printf("lenny-gateway: §12.5 partial-manifest backstop sweep cadence %s (maxResumeWindow %s)",
+				gcInterval, backstopResumeWindow)
+			leaderGate.Add("partial-manifest-backstop", func(ctx context.Context) {
+				ticker := time.NewTicker(gcInterval)
+				defer ticker.Stop()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case <-ticker.C:
+						reclaimed, err := reclaimAbandonedManifests(ctx, backstopRelease, backstopResumeWindow)
+						if err != nil {
+							log.Printf("lenny-gateway: §12.5 partial-manifest backstop sweep error: %v", err)
+							continue
+						}
+						if reclaimed > 0 {
+							log.Printf("lenny-gateway: §12.5 partial-manifest backstop reclaimed %d abandoned active manifest row(s)",
+								reclaimed)
+						}
+					}
+				}
+			})
+		}
+
 		// §12.8 line 739 legal-hold reconciler: co-located with the
 		// retention-GC sweep. On the same cadence it scans for
 		// (tenant, session) pairs under legal_hold=true with one or
@@ -857,7 +905,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		// wired (Postgres mode); the in-memory dev gateway has no
 		// catalog and skips it.
 		if w.artifactCatalog != nil && w.auditAppender != nil {
-			recon := legalholdreconciler.New(w.artifactCatalog, w.auditAppender, w.gwMetrics, legalholdreconciler.Options{
+			recon := legalholdreconciler.New(w.artifactCatalog, w.auditAppender, w.gwMetrics, w.partialManifests, legalholdreconciler.Options{
 				Clock: clockinject.Now,
 			})
 			leaderGate.Add("legal-hold-reconciler", func(ctx context.Context) {

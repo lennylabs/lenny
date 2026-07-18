@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"sort"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -14,14 +15,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
-
-// CheckpointSource loads a stored §4.4 workspace checkpoint archive
-// from the artifact store. It is the read counterpart of CheckpointSink.
-type CheckpointSource interface {
-	// LoadCheckpoint opens the gzip-tar workspace archive for the
-	// checkpoint. The caller closes the returned reader.
-	LoadCheckpoint(ctx context.Context, checkpointID string) (io.ReadCloser, error)
-}
 
 // Resume implements the §4.7 / §7.1 Resume RPC: it restores a session's
 // workspace from a checkpoint on a replacement pod. It claims the pod
@@ -41,9 +34,14 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Error(codes.FailedPrecondition,
 			"adapter is not configured with a workspace root and runtime")
 	}
-	if s.Restorer == nil {
-		return nil, status.Error(codes.Unimplemented,
-			"adapter is not configured with a checkpoint source")
+	// spec: §10.1 line 155 — the gateway resolves the checkpoint's chunk
+	// set and hands the adapter one presigned single-key GET capability per
+	// chunk on ResumeRequest.chunks; the adapter fetches them directly from
+	// object storage. A restore that carries chunks needs the transport; a
+	// conversation-only or coordinator-handoff resume carries none.
+	if len(req.GetChunks()) > 0 && s.CheckpointTransport == nil {
+		return nil, status.Error(codes.FailedPrecondition,
+			"adapter is not configured with a checkpoint transport")
 	}
 
 	if err := s.claimSession(sessionID); err != nil {
@@ -85,21 +83,16 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		return nil, status.Errorf(codes.Internal, "workspace size precheck: %v", err)
 	}
 
-	rc, err := s.Restorer.LoadCheckpoint(ctx, req.GetCheckpointId())
-	if err != nil {
-		s.releaseSession()
-		return nil, status.Errorf(codes.Internal, "load checkpoint %s: %v", req.GetCheckpointId(), err)
-	}
 	// spec: §7.3 line 408 step (e) "Replay latest workspace checkpoint" +
-	// line 409 step (f) "Restore session file to expected path". The
-	// checkpoint bundle carries the workspace under workspace.WorkspacePrefix
-	// and the §6.4 line 380 /sessions session file under
-	// workspace.SessionsPrefix; ExtractTree replays each to its own root so
-	// the runtime's native SDK session state is rehydrated, not lost. A
-	// checkpoint written before the bundle change, or one without a
-	// /sessions tree, restores workspace-only.
-	restored, extractErr := workspace.ExtractTree(s.checkpointRoots(), rc)
-	_ = rc.Close()
+	// line 409 step (f) "Restore session file to expected path" + §10.1
+	// line 155 reassembly. The gateway resolved the checkpoint's chunk set
+	// and passed one presigned GET capability per index; the adapter
+	// fetches them in ascending index order, concatenates the chunk bodies
+	// into a single tar (or tar.gz) byte stream, and ExtractTree replays
+	// the workspace under workspace.WorkspacePrefix and the §6.4 line 380
+	// /sessions session file under workspace.SessionsPrefix. A resume that
+	// carries no chunks (conversation-only) restores nothing.
+	restored, extractErr := s.restoreChunks(ctx, req.GetChunks())
 	if extractErr != nil {
 		s.releaseSession()
 		return nil, status.Errorf(codes.Internal, "restore workspace from checkpoint %s: %v",
@@ -146,4 +139,45 @@ func (s *Server) Resume(ctx context.Context, req *adapterv1.ResumeRequest) (*ada
 		Mode:               mode,
 		RecoveryGeneration: req.GetRecoveryGeneration(),
 	}, nil
+}
+
+// restoreChunks fetches each presigned GET capability in ascending index
+// order, concatenates the chunk bodies into one byte stream, and extracts
+// the checkpoint bundle into the checkpoint roots. It returns the
+// uncompressed bytes restored. An empty chunk set restores nothing (a
+// conversation-only or coordinator-handoff resume), which is not an error.
+//
+// spec: §10.1 line 155 — the concatenation of all chunks in index order is
+// consumed as a single tar (or tar.gz) stream fed end-to-end into one
+// decompress→untar pipeline; chunk boundaries are never parsed in
+// isolation.
+func (s *Server) restoreChunks(ctx context.Context, chunks []*adapterv1.ChunkGrant) (int64, error) {
+	if len(chunks) == 0 {
+		return 0, nil
+	}
+	ordered := make([]*adapterv1.ChunkGrant, len(chunks))
+	copy(ordered, chunks)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].GetIndex() < ordered[j].GetIndex() })
+
+	pr, pw := io.Pipe()
+	go func() {
+		for _, ch := range ordered {
+			rc, err := s.CheckpointTransport.GetChunk(ctx, ch.GetUrl(), ch.GetHeaders())
+			if err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			_, cerr := io.Copy(pw, rc)
+			_ = rc.Close()
+			if cerr != nil {
+				_ = pw.CloseWithError(cerr)
+				return
+			}
+		}
+		_ = pw.Close()
+	}()
+
+	restored, extractErr := workspace.ExtractTree(s.checkpointRoots(), pr)
+	_ = pr.Close()
+	return restored, extractErr
 }

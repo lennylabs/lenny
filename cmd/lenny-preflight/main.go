@@ -599,6 +599,20 @@ func main() {
 		"value of the objectStorage.bucket chart value for the §17.9.4 cloud lifecycle audit.")
 	objectStorageRegion := flag.String("object-storage-region", "",
 		"value of the objectStorage.region chart value (AWS region) for the §17.9.4 cloud lifecycle audit.")
+	// §17.6 Checkpoint T4 default-encryption gate — the GCS V4 signed-URL
+	// and Azure SAS checkpoint PUT paths sign no encryption header, so a
+	// workspaceTier T4 tenant's per-tenant encryption rests on a backend
+	// default the mint cannot bind per request. These flags carry the same
+	// objectStorage.{gcs,azure} configuration the gateway-startup assertion
+	// reads, so the two enforcement points stay in lock-step.
+	objectStorageServesT4Tenant := flag.Bool("object-storage-serves-t4-tenant", false,
+		"whether the deployment serves any workspaceTier T4 tenant; gates the §17.6 checkpoint T4 default-encryption check for gcs/azure backends.")
+	objectStorageGCSBucketDefaultCMEK := flag.String("object-storage-gcs-bucket-default-cmek", "",
+		"value of objectStorage.gcs.bucketDefaultCmek; the §17.6 checkpoint T4 default-encryption check requires it for a gcs backend serving a T4 tenant.")
+	objectStorageAzureDefaultEncryptionScope := flag.String("object-storage-azure-default-encryption-scope", "",
+		"value of objectStorage.azure.defaultEncryptionScope; the §17.6 checkpoint T4 default-encryption check requires it for an azure backend serving a T4 tenant.")
+	objectStorageAzureDenyEncryptionScopeOverride := flag.Bool("object-storage-azure-deny-encryption-scope-override", false,
+		"value of objectStorage.azure.denyEncryptionScopeOverride; the §17.6 checkpoint T4 default-encryption check requires it for an azure backend serving a T4 tenant.")
 	siemEndpoint := flag.String("siem-endpoint", "",
 		"value of the audit.siem.endpoint chart value for the §17.6 line 517 SIEM advisory. Empty in a production environment emits a non-blocking warning.")
 	opsIngressClusterIssuer := flag.String("ops-ingress-cluster-issuer", "",
@@ -756,6 +770,12 @@ func main() {
 		ObjectStorage: preflight.ObjectStorageConfig{
 			Provider: *objectStorageProvider,
 			Bucket:   *objectStorageBucket,
+		},
+		ObjectStorageT4: preflight.ObjectStorageT4Config{
+			ServesT4Tenant:                   *objectStorageServesT4Tenant,
+			GCSBucketDefaultCMEK:             *objectStorageGCSBucketDefaultCMEK,
+			AzureDefaultEncryptionScope:      *objectStorageAzureDefaultEncryptionScope,
+			AzureDenyEncryptionScopeOverride: *objectStorageAzureDenyEncryptionScopeOverride,
 		},
 		CloudObjectStorageLifecycleProber: cloudLifecycleProber(*objectStorageProvider, *objectStorageRegion),
 		KubernetesVersion:                 kubernetesVersion,

@@ -67,6 +67,47 @@ tests:
       - isAPIVersion:
           of: networking.k8s.io/v1
 
+  # spec: §13.2 (NET-071) — when the chart deploys MinIO, allow-minio admits
+  # agent-namespace checkpoint chunk PUT/GET on the MinIO TLS port, paired
+  # with the allow-pod-egress-objectstore in-cluster arm rendered under the
+  # same minio.deploy condition. Without this ingress clause the lenny-system
+  # default-deny drops the agent-namespace egress on the MinIO side.
+  - it: admits agent namespaces on the MinIO TLS port when minio.deploy is true
+    documentSelector:
+      path: metadata.name
+      value: allow-minio
+    set:
+      minio:
+        deploy: true
+    asserts:
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["lenny.dev/agent-namespace"]
+          value: "true"
+      - equal:
+          path: spec.ingress[1].from[0].podSelector.matchLabels["lenny.dev/managed"]
+          value: "true"
+      - equal:
+          path: spec.ingress[1].ports[0].port
+          value: 9443
+      - equal:
+          path: spec.ingress[1].ports[0].protocol
+          value: TCP
+
+  # The agent-namespace ingress clause is self-managed-profile-only: a
+  # cloud-managed deployment (minio.deploy false) has no MinIO pod and no
+  # ingress-side row, so allow-minio carries only the gateway ingress clause.
+  - it: omits the agent-namespace MinIO ingress clause when minio is not deployed
+    documentSelector:
+      path: metadata.name
+      value: allow-minio
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels["lenny.dev/component"]
+          value: gateway
+
   - it: scopes allow-gateway-ingress to the gateway component, ingress-only
     documentSelector:
       path: metadata.name

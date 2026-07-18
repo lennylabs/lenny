@@ -29,8 +29,10 @@ type TenantLister func(ctx context.Context) ([]string, error)
 // It probes Redis reachability on a fixed interval and, on a
 // down-to-up edge (Redis was unreachable on the prior tick and is
 // reachable now), reconstructs every tenant's storage_bytes_used counter
-// from the authoritative sum of artifact_size_bytes in Postgres and Sets
-// it back into Redis via Rehydrate. Without this, a Redis restart mid-run
+// from the authoritative Postgres byte total (live artifact_size_bytes plus
+// outstanding checkpoint reservations, through the reservation-aware SizeOf
+// seam) and Sets it back into Redis via Rehydrate. Without this, a Redis
+// restart mid-run
 // (which empties the counter) would leave the fast path enforcing against
 // a stale-zero value until the counter naturally re-grew, silently
 // un-enforcing the quota — the same failure the startup rehydration
@@ -51,8 +53,12 @@ type RecoveryReconciler struct {
 	Primary Counter
 	// Tenants enumerates the tenants to rehydrate. Required.
 	Tenants TenantLister
-	// SizeOf reads each tenant's authoritative live byte sum from
-	// Postgres. Required.
+	// SizeOf reads each tenant's authoritative durable byte total from
+	// Postgres. In production it is the reservation-aware seam
+	// ReservationAwareLiveBytes composes (live artifact_store bytes plus
+	// outstanding checkpoint reservations), so the recovery-edge rebuild
+	// re-adds every unreleased reservation the guarded relative Adjust will
+	// later release. Required.
 	SizeOf LiveBytesSource
 	// Interval is the probe cadence. Zero selects
 	// DefaultRecoveryProbeInterval.

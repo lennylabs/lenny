@@ -131,6 +131,16 @@ type SandboxTemplateSpec struct {
 	// +optional
 	MaxConcurrent int32 `json:"maxConcurrent,omitempty"`
 
+	// CheckpointGrantWindow is the per-pool override for the number of
+	// chunk-upload capabilities the gateway keeps outstanding at once
+	// while draining this pool's workspace checkpoints. When unset the
+	// gateway falls back to its deployment-wide checkpointGrantWindow
+	// default. spec: §10.1 line 131 chunk-grant window; §17.8.1
+	// checkpointGrantWindow default 4.
+	// +kubebuilder:validation:Minimum=1
+	// +optional
+	CheckpointGrantWindow *int32 `json:"checkpointGrantWindow,omitempty"`
+
 	// DeliveryMode is the §4.9 credential delivery mode for the pool.
 	// +kubebuilder:validation:Enum=proxy;direct
 	// +optional

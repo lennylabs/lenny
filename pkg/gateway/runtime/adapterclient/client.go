@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -472,35 +473,37 @@ func (c *Client) SignalDeadline(ctx context.Context, sessionID string, remaining
 	return resp.GetDelivered(), nil
 }
 
-// CheckpointResult reports the §4.4 checkpoint a pod's adapter stored.
-type CheckpointResult struct {
-	// CheckpointID identifies the stored checkpoint.
-	CheckpointID string
-	// SizeBytes is the compressed size of the stored checkpoint.
-	SizeBytes int64
-}
+// CheckpointStream is the gateway-driven bidirectional Checkpoint
+// exchange (§4.7 RPC table, §10.1): the gateway sends CheckpointStart /
+// CheckpointGrant / CheckpointAbort and receives CheckpointProbe /
+// ChunkReady / ChunkCommitted / CheckpointSummary / CheckpointFailed. The
+// gateway-side grant/confirm driver in pkg/gateway/checkpoint consumes
+// it.
+type CheckpointStream = adapterv1.Adapter_CheckpointClient
 
-// Checkpoint asks the pod's adapter to snapshot the session workspace
-// and store it as a §4.4 checkpoint. deadline bounds the checkpoint; a
-// zero deadline lets the adapter apply its default.
-func (c *Client) Checkpoint(ctx context.Context, sessionID string, deadline time.Duration) (CheckpointResult, error) {
-	resp, err := c.rpc.Checkpoint(ctx, &adapterv1.CheckpointRequest{
-		SessionId:  &adapterv1.SessionId{Value: sessionID},
-		DeadlineMs: int32(deadline.Milliseconds()),
-	})
+// Checkpoint opens the §4.7 / §10.1 bidirectional Checkpoint stream to
+// the pod's adapter. The gateway is the gRPC client and drives the
+// grant/confirm loop over the returned stream: it mints the
+// `checkpoint_id`, signs per-chunk PUT capabilities, and confirms each
+// committed chunk while the adapter streams the workspace archive
+// directly to object storage. This is the single upload path for every
+// checkpoint trigger; the adapter no longer mints a checkpoint id.
+//
+// spec: §10.1 line 130 — the gateway mints the checkpoint_id.
+func (c *Client) Checkpoint(ctx context.Context) (CheckpointStream, error) {
+	stream, err := c.rpc.Checkpoint(ctx)
 	if err != nil {
-		return CheckpointResult{}, err
+		return nil, fmt.Errorf("adapterclient: open checkpoint stream: %w", err)
 	}
-	return CheckpointResult{
-		CheckpointID: resp.GetCheckpointId(),
-		SizeBytes:    resp.GetSizeBytes(),
-	}, nil
+	return stream, nil
 }
 
 // CheckpointBarrierResult mirrors the §10.1 CheckpointBarrierAck the
 // pod's adapter emits in response to a graceful-drain barrier: the
-// echoed barrier id, the best-effort checkpoint ref (empty when the
-// flush produced none), and the wall-clock the adapter spent quiescing.
+// echoed barrier id, the checkpoint ref (the gateway-minted
+// `checkpoint_id` the adapter received in the barrier-window Checkpoint
+// stream; empty when the gateway drove no stream), and the
+// time-to-quiescence measured inside the ack window.
 type CheckpointBarrierResult struct {
 	BarrierID     string
 	CheckpointRef string
@@ -510,10 +513,12 @@ type CheckpointBarrierResult struct {
 // CheckpointBarrier dispatches the §10.1 lines 163-181 graceful-drain
 // barrier to the pod's adapter. The adapter validates generation
 // against its last fenced value (rejecting with FailedPrecondition
-// when stale), quiesces tool-call dispatch, flushes a best-effort
-// checkpoint, and acknowledges. The synchronous return mirrors the
-// CheckpointBarrierAck the adapter also emits on the LifecycleChannel
-// control stream.
+// when stale), quiesces tool-call dispatch, and holds the quiesced state
+// open while the gateway drives the Checkpoint stream against the held
+// pod. The adapter acknowledges only after that gateway-driven stream
+// terminates; the ack echoes the gateway-minted checkpoint id. The
+// synchronous return mirrors the CheckpointBarrierAck the adapter also
+// emits on the LifecycleChannel control stream.
 //
 // spec: §10.1 lines 163-181.
 func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordinationGeneration int64, barrierID string) (CheckpointBarrierResult, error) {
@@ -617,6 +622,37 @@ type ResumeParams struct {
 	// the adapter without a hint (the §7.3 line 408 invariant is then
 	// upheld by construction only). F-7.3.15.
 	ExpectedWorkspaceRoot string
+	// Chunks carries one presigned GET capability per chunk of the
+	// checkpoint being restored, in ascending index order. The gateway
+	// resolves the chunk set from the manifest row it owns and mints one
+	// capability per index in [0, chunk_count); the adapter fetches each
+	// chunk directly from object storage and concatenates them into the
+	// single tar (or tar.gz) byte stream. Empty for the conversation-only
+	// and coordinator-handoff resume paths that restore no workspace.
+	//
+	// spec: §10.1 line 155 — reassembly on resume.
+	Chunks []ChunkGrant
+}
+
+// ChunkGrant is one presigned GET capability for a single checkpoint
+// chunk on the Resume path. It is the gateway's only means of handing the
+// adapter a chunk's bytes: the gateway has no byte channel to the adapter
+// on resume, so it signs a per-key capability the adapter fetches
+// directly from object storage.
+type ChunkGrant struct {
+	// Index is the chunk's zero-based position in the reassembly order.
+	Index uint32
+	// Length is the chunk's byte count.
+	Length int64
+	// URL is the presigned GET capability. Bearer-sensitive.
+	URL string
+	// Headers carries any header the gateway signed into the capability,
+	// replayed verbatim by the adapter on the GET. Normally empty on the
+	// read path because a GET capability signs no SSE-KMS headers.
+	Headers map[string]string
+	// ExpiresAt is the capability's expiry; a fetch that outlives it is
+	// re-driven by re-calling Resume, which re-mints.
+	ExpiresAt time.Time
 }
 
 // ResumeResult is the adapter's response to a Resume call. The §4.4 /
@@ -648,6 +684,7 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		ExpectedWorkspaceBytes:  p.ExpectedWorkspaceBytes,
 		WorkspaceSizeLimitBytes: p.WorkspaceSizeLimitBytes,
 		ExpectedWorkspaceRoot:   p.ExpectedWorkspaceRoot,
+		Chunks:                  resumeChunksToProto(p.Chunks),
 	})
 	if err != nil {
 		return ResumeResult{}, err
@@ -657,6 +694,30 @@ func (c *Client) Resume(ctx context.Context, p ResumeParams) (ResumeResult, erro
 		Mode:               resp.GetMode(),
 		RecoveryGeneration: resp.GetRecoveryGeneration(),
 	}, nil
+}
+
+// resumeChunksToProto maps the caller's presigned GET capabilities onto
+// the wire ChunkGrant set the adapter fetches on resume, preserving the
+// caller's ascending index order. It returns nil for an empty set so a
+// conversation-only or coordinator-handoff Resume carries no chunks.
+func resumeChunksToProto(chunks []ChunkGrant) []*adapterv1.ChunkGrant {
+	if len(chunks) == 0 {
+		return nil
+	}
+	out := make([]*adapterv1.ChunkGrant, len(chunks))
+	for i, c := range chunks {
+		g := &adapterv1.ChunkGrant{
+			Index:   c.Index,
+			Length:  c.Length,
+			Url:     c.URL,
+			Headers: c.Headers,
+		}
+		if !c.ExpiresAt.IsZero() {
+			g.ExpiresAt = timestamppb.New(c.ExpiresAt)
+		}
+		out[i] = g
+	}
+	return out
 }
 
 // UsageReport is the §4.7 token and wall-clock accounting a pod's

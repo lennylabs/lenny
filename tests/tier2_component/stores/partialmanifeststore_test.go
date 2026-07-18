@@ -2,14 +2,17 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §4.4 partial-checkpoint manifest store,
-// exercising the Postgres-backed
-// pkg/gateway/partialmanifeststore/pgstore against a real container
-// with the production migrations applied. Covers Put + Get round-trip,
-// the §4.4 line 236 soft-delete idempotency guard, the LatestActive
-// resume selector under the `deleted_at IS NULL` predicate, the
-// §12.5 hard-prune sweep walker, the §12.8 erasure interface, and
-// cross-tenant RLS isolation under migration 0062.
+// Contract test for the §10.1 checkpoint_manifest store, exercising the
+// Postgres-backed pkg/gateway/checkpoint/partialmanifeststore/pgstore
+// against a real container with the production migrations (0178)
+// applied. Covers the intent-row Put + Get round-trip on the
+// (tenant_id, checkpoint_id) key, the supersede-on-write and fencing
+// invariants under the real partial_manifest_active_uniq index, the
+// §10.1 line 131 monotonic ConfirmChunk counter, Finalise, the
+// exactly-once ReleaseReservation guard, SumOutstandingReservations,
+// the §12.5 ListReclaimable backstop predicate with its terminal-state
+// join, the soft-delete idempotency guard, and cross-tenant RLS
+// isolation.
 package stores_test
 
 import (
@@ -18,146 +21,388 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 )
 
-// spec: §4.4 line 234 — the partial-checkpoint manifest table is
-// created by migration 0062 and the pgstore round-trips every
-// spec-mandated field through it.
-// diagnosis: a failure means the partial-checkpoint manifest store does
-// not round-trip a spec-mandated field, so a partial checkpoint's
-// manifest would be lost or corrupted on read-back.
-func TestPartialManifestStoreContract(t *testing.T) {
+// manifestRow returns a valid intent-row Record for the supplied ids.
+func manifestRow(now time.Time, tenant, checkpointID, session string, gen int64) partialmanifeststore.Record {
+	return partialmanifeststore.Record{
+		TenantID:               tenant,
+		CheckpointID:           checkpointID,
+		SessionID:              session,
+		CoordinationGeneration: gen,
+		RecoveryGeneration:     gen,
+		ChunkObjectKeyPrefix:   "/" + tenant + "/checkpoints/" + session + "/" + checkpointID + "/",
+		ChunkSizeBytes:         16 << 20,
+		ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
+		CheckpointStartedAt:    now,
+		CheckpointTimeoutAt:    now.Add(90 * time.Second),
+	}
+}
+
+// seedSessionInState creates a session row in the given state so the
+// ListReclaimable terminal-state join has a row to match against.
+func seedSessionInState(t *testing.T, ctx context.Context, sess *sessionpg.Store, tenant string, state session.State) string {
+	t.Helper()
+	id := newUUID(t)
+	if err := sess.Create(ctx, sessionstore.Session{
+		ID: id, TenantID: tenant, State: state, RuntimeRef: "echo",
+	}); err != nil {
+		t.Fatalf("seed session (%s): %v", state, err)
+	}
+	return id
+}
+
+// spec: §10.1 (checkpoint_manifest column set and store methods), §11.2
+// (reservation accounting), §12.5 (GC rules)
+// diagnosis: the partial-manifest store's put/get, supersede-on-write,
+// confirm, finalise, reservation-release, and reclaim contract regressed,
+// so the checkpoint manifest persistence layer no longer matches the
+// column set and GC rules it backs.
+func TestCheckpointManifestStoreContract(t *testing.T) {
 	t.Parallel()
-	_, pg := startStore(t)
+	sessStore, pg := startStore(t)
 	store := partialmanifestpg.New(pg.Pool, nil)
 	ctx := context.Background()
 
-	t.Run("put and get round-trip", func(t *testing.T) {
+	t.Run("put and get round-trip on the checkpoint_id key", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		want := partialmanifeststore.Record{
-			TenantID:               tenant,
-			SessionID:              newUUID(t),
-			Generation:             3,
-			PartialObjectKeyPrefix: "/" + tenant + "/checkpoints/sess/partial/ck-3/",
-			ChunkEncoding:          partialmanifeststore.ChunkEncodingTarGz,
-		}
+		checkpointID := newUUID(t)
+		baseline := int64(4096)
+		want := manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 3)
+		want.ChunkEncoding = partialmanifeststore.ChunkEncodingTarGz
+		want.ReservedBytes = 1 << 20
+		want.BaselineFullCheckpointBytes = &baseline
 		if err := store.Put(ctx, want); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		got, err := store.Get(ctx, tenant, want.SessionID, 3)
+		got, err := store.Get(ctx, tenant, checkpointID)
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		if got.PartialObjectKeyPrefix != want.PartialObjectKeyPrefix {
-			t.Errorf("prefix = %q, want %q", got.PartialObjectKeyPrefix, want.PartialObjectKeyPrefix)
+		if got.ChunkObjectKeyPrefix != want.ChunkObjectKeyPrefix {
+			t.Errorf("prefix = %q, want %q", got.ChunkObjectKeyPrefix, want.ChunkObjectKeyPrefix)
 		}
 		if got.ChunkEncoding != partialmanifeststore.ChunkEncodingTarGz {
 			t.Errorf("chunk_encoding = %q, want tar.gz", got.ChunkEncoding)
 		}
+		if got.SlotID != partialmanifeststore.SlotDefault {
+			t.Errorf("slot_id = %q, want default", got.SlotID)
+		}
+		if !got.Partial || got.ManifestReason != partialmanifeststore.ReasonInProgress {
+			t.Errorf("intent row = partial %v reason %q, want true/in_progress", got.Partial, got.ManifestReason)
+		}
+		if got.BaselineFullCheckpointBytes == nil || *got.BaselineFullCheckpointBytes != 4096 {
+			t.Errorf("baseline = %v, want 4096", got.BaselineFullCheckpointBytes)
+		}
 		if got.CreatedAt.IsZero() {
 			t.Error("CreatedAt should be stamped on insert")
 		}
-		if !got.DeletedAt.IsZero() {
-			t.Error("DeletedAt should be zero on an active row")
+		if !got.DeletedAt.IsZero() || !got.ReservationReleasedAt.IsZero() {
+			t.Error("an active, unreleased intent row must have zero deleted_at and reservation_released_at")
 		}
 	})
 
 	t.Run("get missing returns ErrNotFound", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		if _, err := store.Get(ctx, tenant, newUUID(t), 1); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		if _, err := store.Get(ctx, tenant, newUUID(t)); !errors.Is(err, partialmanifeststore.ErrNotFound) {
 			t.Errorf("Get missing: got %v, want ErrNotFound", err)
 		}
 	})
 
-	t.Run("soft-delete is idempotent under deleted_at IS NULL", func(t *testing.T) {
-		tenant := freshTenant(t, ctx, pg)
-		sessID := newUUID(t)
-		if err := store.Put(ctx, partialmanifeststore.Record{
-			TenantID: tenant, SessionID: sessID, Generation: 1,
-			PartialObjectKeyPrefix: "/" + tenant + "/x/",
-			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
-		}); err != nil {
-			t.Fatalf("Put: %v", err)
-		}
-		if err := store.SoftDelete(ctx, tenant, sessID, 1); err != nil {
-			t.Fatalf("SoftDelete: %v", err)
-		}
-		first, _ := store.Get(ctx, tenant, sessID, 1)
-		if first.DeletedAt.IsZero() {
-			t.Fatal("SoftDelete did not stamp DeletedAt")
-		}
-		// Replay does not mutate the row again.
-		time.Sleep(2 * time.Millisecond)
-		if err := store.SoftDelete(ctx, tenant, sessID, 1); err != nil {
-			t.Fatalf("Replay SoftDelete: %v", err)
-		}
-		second, _ := store.Get(ctx, tenant, sessID, 1)
-		if !second.DeletedAt.Equal(first.DeletedAt) {
-			t.Errorf("DeletedAt = %v, want stable %v across replays", second.DeletedAt, first.DeletedAt)
-		}
-	})
-
 	// spec: §10.1 lines 137, 143-151, 155 — supersede-on-write collapses
-	// the active set to one row (enforced by partial_manifest_active_uniq,
-	// migration 0150), a fenced stale lower-generation write is rejected,
-	// and soft-deleting the sole active row leaves nothing active.
-	t.Run("supersede-on-write keeps one active row under the partial unique index", func(t *testing.T) {
+	// the active partial set to one row under the real
+	// partial_manifest_active_uniq index (two same-generation attempts on
+	// one coordinator), and a fenced strictly-lower write is rejected.
+	t.Run("supersede-on-write and fencing under the partial unique index", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		sessID := newUUID(t)
-		// Monotonic generations: each write supersedes the prior active row.
-		for _, gen := range []int64{1, 3, 5} {
-			if err := store.Put(ctx, partialmanifeststore.Record{
-				TenantID: tenant, SessionID: sessID, Generation: gen,
-				PartialObjectKeyPrefix: "/" + tenant + "/x/",
-				ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
-			}); err != nil {
-				t.Fatalf("Put gen %d: %v", gen, err)
-			}
+		session := newUUID(t)
+		first := newUUID(t)
+		second := newUUID(t)
+		// Two attempts share coordination_generation 5 (one coordinator).
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, first, session, 5)); err != nil {
+			t.Fatalf("Put first: %v", err)
 		}
-		got, err := store.LatestActive(ctx, tenant, sessID)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, second, session, 5)); err != nil {
+			t.Fatalf("Put second: %v", err)
+		}
+		f, _ := store.Get(ctx, tenant, first)
+		if f.DeletedAt.IsZero() {
+			t.Error("first attempt should be superseded (soft-deleted)")
+		}
+		if f.ManifestReason != partialmanifeststore.ReasonSuperseded {
+			t.Errorf("superseded reason = %q, want superseded", f.ManifestReason)
+		}
+		active, err := store.LatestActive(ctx, tenant, session)
 		if err != nil {
 			t.Fatalf("LatestActive: %v", err)
 		}
-		if got.Generation != 5 {
-			t.Errorf("LatestActive.Generation = %d, want 5", got.Generation)
-		}
-		// gen 3 was superseded by the gen-5 write.
-		if g3, err := store.Get(ctx, tenant, sessID, 3); err != nil {
-			t.Fatalf("Get gen 3: %v", err)
-		} else if g3.DeletedAt.IsZero() {
-			t.Error("gen 3 should be superseded (soft-deleted)")
+		if active.CheckpointID != second {
+			t.Errorf("LatestActive = %q, want the second attempt", active.CheckpointID)
 		}
 
-		// A fenced stale lower-generation write is rejected, not persisted.
-		if err := store.Put(ctx, partialmanifeststore.Record{
-			TenantID: tenant, SessionID: sessID, Generation: 4,
-			PartialObjectKeyPrefix: "/" + tenant + "/x/",
-			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
-		}); !errors.Is(err, partialmanifeststore.ErrStaleGeneration) {
+		// A strictly-lower-generation write is a fenced stale coordinator.
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, newUUID(t), session, 4)); !errors.Is(err, partialmanifeststore.ErrStaleGeneration) {
 			t.Errorf("stale Put gen 4: got %v, want ErrStaleGeneration", err)
 		}
+	})
 
-		// Soft-delete the sole active row; nothing remains active.
-		_ = store.SoftDelete(ctx, tenant, sessID, 5)
-		if _, err := store.LatestActive(ctx, tenant, sessID); !errors.Is(err, partialmanifeststore.ErrNotFound) {
-			t.Errorf("LatestActive after soft-deleting the sole active row: got %v, want ErrNotFound", err)
+	// spec: §10.1 line 137 — LatestActiveForSlot returns the active partial
+	// row for the exact (session, slot) the supersede path scopes on, not the
+	// session-wide highest-generation winner LatestActive returns.
+	t.Run("latest active is scoped to the slot", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		session := newUUID(t)
+		target := newUUID(t)
+		other := newUUID(t)
+		targetRow := manifestRow(time.Now().UTC(), tenant, target, session, 0)
+		targetRow.SlotID = "slot-0"
+		if err := store.Put(ctx, targetRow); err != nil {
+			t.Fatalf("Put slot-0: %v", err)
+		}
+		otherRow := manifestRow(time.Now().UTC(), tenant, other, session, 9)
+		otherRow.SlotID = "slot-1"
+		if err := store.Put(ctx, otherRow); err != nil {
+			t.Fatalf("Put slot-1: %v", err)
+		}
+		// The session-wide selector returns the higher-generation slot-1 row.
+		if latest, err := store.LatestActive(ctx, tenant, session); err != nil {
+			t.Fatalf("LatestActive: %v", err)
+		} else if latest.CheckpointID != other {
+			t.Fatalf("LatestActive = %q, want the higher-generation slot-1 row", latest.CheckpointID)
+		}
+		// The slot-scoped selector returns slot-0's own row.
+		got, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-0")
+		if err != nil {
+			t.Fatalf("LatestActiveForSlot slot-0: %v", err)
+		}
+		if got.CheckpointID != target {
+			t.Errorf("LatestActiveForSlot(slot-0) = %q, want the slot-0 row", got.CheckpointID)
+		}
+		if _, err := store.LatestActiveForSlot(ctx, tenant, session, "slot-2"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActiveForSlot(empty slot): got %v, want ErrNotFound", err)
+		}
+	})
+
+	// spec: §10.1 line 154 — LatestActiveAny is the resume-reassembly
+	// selector: the highest-coordination_generation active row regardless of
+	// partial. A completed checkpoint is returned when it is the only active
+	// row (unlike LatestActive, which is partial-scoped), and a newer partial
+	// drain attempt at a higher generation wins over it.
+	t.Run("latest active any ignores the partial predicate", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		session := newUUID(t)
+		full := newUUID(t)
+		drain := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, full, session, 2)); err != nil {
+			t.Fatalf("Put full intent: %v", err)
+		}
+		// A confirmed chunk keeps the completed row active (a zero-chunk row
+		// is soft-deleted by Finalise, §10.1 line 132).
+		if err := store.ConfirmChunk(ctx, tenant, full, 0, 4096); err != nil {
+			t.Fatalf("ConfirmChunk full: %v", err)
+		}
+		if err := store.Finalise(ctx, tenant, full, false, partialmanifeststore.ReasonComplete); err != nil {
+			t.Fatalf("Finalise full: %v", err)
+		}
+		// The partial-only selector skips the completed row; LatestActiveAny
+		// returns it because it is the sole active row.
+		if _, err := store.LatestActive(ctx, tenant, session); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+			t.Errorf("LatestActive with only a completed row: got %v, want ErrNotFound", err)
+		}
+		got, err := store.LatestActiveAny(ctx, tenant, session)
+		if err != nil {
+			t.Fatalf("LatestActiveAny with only a completed row: %v", err)
+		}
+		if got.CheckpointID != full {
+			t.Errorf("LatestActiveAny = %q, want the completed checkpoint", got.CheckpointID)
+		}
+		// A newer partial drain attempt at gen 3 wins the generation fence.
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, drain, session, 3)); err != nil {
+			t.Fatalf("Put drain intent: %v", err)
+		}
+		got, err = store.LatestActiveAny(ctx, tenant, session)
+		if err != nil {
+			t.Fatalf("LatestActiveAny: %v", err)
+		}
+		if got.CheckpointID != drain {
+			t.Errorf("LatestActiveAny = %q, want the higher-generation drain partial", got.CheckpointID)
+		}
+	})
+
+	// spec: §10.1 line 131 — ConfirmChunk advances the counters
+	// monotonically under the `chunk_count < n + 1` guard.
+	t.Run("confirm chunk is monotonic", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		checkpointID := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 1)); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := store.ConfirmChunk(ctx, tenant, checkpointID, 2, 300); err != nil {
+			t.Fatalf("ConfirmChunk 2: %v", err)
+		}
+		// A late index-1 ack must not decrement.
+		if err := store.ConfirmChunk(ctx, tenant, checkpointID, 1, 200); err != nil {
+			t.Fatalf("ConfirmChunk 1: %v", err)
+		}
+		got, _ := store.Get(ctx, tenant, checkpointID)
+		if got.ChunkCount != 3 || got.WorkspaceBytesUploaded != 300 {
+			t.Errorf("chunk_count=%d bytes=%d, want 3/300", got.ChunkCount, got.WorkspaceBytesUploaded)
+		}
+	})
+
+	// spec: §10.1 line 141 — Finalise stamps the terminal disposition.
+	t.Run("finalise flips partial and reason", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		checkpointID := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 1)); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := store.Finalise(ctx, tenant, checkpointID, false, partialmanifeststore.ReasonComplete); err != nil {
+			t.Fatalf("Finalise: %v", err)
+		}
+		got, _ := store.Get(ctx, tenant, checkpointID)
+		if got.Partial || got.ManifestReason != partialmanifeststore.ReasonComplete {
+			t.Errorf("finalised = partial %v reason %q, want false/complete", got.Partial, got.ManifestReason)
+		}
+	})
+
+	// spec: §11.2 / §12.5 GC rule 4 — ReleaseReservation reports
+	// rows_affected == 1 on the first release and 0 on every retry, so
+	// the reservation decrement fires exactly once.
+	t.Run("release reservation is exactly-once", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		checkpointID := newUUID(t)
+		r := manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 1)
+		r.ReservedBytes = 2048
+		if err := store.Put(ctx, r); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if n, err := store.ReleaseReservation(ctx, tenant, checkpointID); err != nil || n != 1 {
+			t.Fatalf("first ReleaseReservation = (%d, %v), want (1, nil)", n, err)
+		}
+		if n, err := store.ReleaseReservation(ctx, tenant, checkpointID); err != nil || n != 0 {
+			t.Fatalf("second ReleaseReservation = (%d, %v), want (0, nil)", n, err)
+		}
+	})
+
+	// spec: §11.2 — SumOutstandingReservations sums the tenant's
+	// unreleased reservation headroom over active rows.
+	t.Run("sum outstanding reservations", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		a := newUUID(t)
+		ra := manifestRow(time.Now().UTC(), tenant, a, newUUID(t), 1)
+		ra.ReservedBytes = 1000
+		if err := store.Put(ctx, ra); err != nil {
+			t.Fatalf("Put a: %v", err)
+		}
+		if err := store.ConfirmChunk(ctx, tenant, a, 0, 400); err != nil { // 600 outstanding
+			t.Fatalf("ConfirmChunk: %v", err)
+		}
+		b := newUUID(t)
+		rb := manifestRow(time.Now().UTC(), tenant, b, newUUID(t), 1)
+		rb.ReservedBytes = 2000 // 2000 outstanding
+		if err := store.Put(ctx, rb); err != nil {
+			t.Fatalf("Put b: %v", err)
+		}
+		// A released row contributes nothing.
+		c := newUUID(t)
+		rc := manifestRow(time.Now().UTC(), tenant, c, newUUID(t), 1)
+		rc.ReservedBytes = 5000
+		if err := store.Put(ctx, rc); err != nil {
+			t.Fatalf("Put c: %v", err)
+		}
+		if _, err := store.ReleaseReservation(ctx, tenant, c); err != nil {
+			t.Fatalf("ReleaseReservation c: %v", err)
+		}
+		sum, err := store.SumOutstandingReservations(ctx, tenant)
+		if err != nil {
+			t.Fatalf("SumOutstandingReservations: %v", err)
+		}
+		if sum != 2600 {
+			t.Errorf("sum = %d, want 2600 (600 + 2000)", sum)
+		}
+	})
+
+	// spec: §12.5 GC rule 6 — ListReclaimable returns an abandoned active
+	// row whose session has reached a terminal state and whose
+	// checkpoint_timeout_at has passed, and holds off on a live
+	// in_progress row inside its timeout on a running session.
+	t.Run("list reclaimable joins terminal session state", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+
+		// A terminal (completed) session with an in_progress row past its
+		// checkpoint_timeout_at: reclaimable.
+		terminalSess := seedSessionInState(t, ctx, sessStore, tenant, session.StateCompleted)
+		reclaimable := newUUID(t)
+		past := time.Now().UTC().Add(-2 * time.Hour)
+		rr := manifestRow(past, tenant, reclaimable, terminalSess, 1)
+		rr.CheckpointTimeoutAt = past.Add(time.Minute) // already elapsed
+		if err := store.Put(ctx, rr); err != nil {
+			t.Fatalf("Put reclaimable: %v", err)
+		}
+
+		// A running session with an in_progress row inside its timeout:
+		// NOT reclaimable.
+		liveSess := seedSessionInState(t, ctx, sessStore, tenant, session.StateRunning)
+		live := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, live, liveSess, 1)); err != nil {
+			t.Fatalf("Put live: %v", err)
+		}
+
+		got, err := store.ListReclaimable(ctx, time.Hour)
+		if err != nil {
+			t.Fatalf("ListReclaimable: %v", err)
+		}
+		seen := map[string]bool{}
+		for _, r := range got {
+			seen[r.CheckpointID] = true
+		}
+		if !seen[reclaimable] {
+			t.Errorf("reclaimable row (terminal session, past timeout) not returned: got %+v", got)
+		}
+		if seen[live] {
+			t.Error("live in_progress row on a running session must not be reclaimable")
+		}
+	})
+
+	// spec: §12.5 hard-prune — SoftDelete is idempotent under the
+	// deleted_at IS NULL guard, re-keyed on checkpoint_id.
+	t.Run("soft-delete idempotent under deleted_at IS NULL", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		checkpointID := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), tenant, checkpointID, newUUID(t), 1)); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		if err := store.SoftDelete(ctx, tenant, checkpointID); err != nil {
+			t.Fatalf("SoftDelete: %v", err)
+		}
+		first, _ := store.Get(ctx, tenant, checkpointID)
+		if first.DeletedAt.IsZero() {
+			t.Fatal("SoftDelete did not stamp deleted_at")
+		}
+		time.Sleep(2 * time.Millisecond)
+		if err := store.SoftDelete(ctx, tenant, checkpointID); err != nil {
+			t.Fatalf("Replay SoftDelete: %v", err)
+		}
+		second, _ := store.Get(ctx, tenant, checkpointID)
+		if !second.DeletedAt.Equal(first.DeletedAt) {
+			t.Errorf("deleted_at = %v, want stable %v across replays", second.DeletedAt, first.DeletedAt)
 		}
 	})
 
 	t.Run("cross-tenant get returns ErrNotFound under RLS", func(t *testing.T) {
 		a := freshTenant(t, ctx, pg)
 		b := freshTenant(t, ctx, pg)
-		sessID := newUUID(t)
-		if err := store.Put(ctx, partialmanifeststore.Record{
-			TenantID: a, SessionID: sessID, Generation: 1,
-			PartialObjectKeyPrefix: "/" + a + "/x/",
-			ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
-		}); err != nil {
+		checkpointID := newUUID(t)
+		if err := store.Put(ctx, manifestRow(time.Now().UTC(), a, checkpointID, newUUID(t), 1)); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		if _, err := store.Get(ctx, b, sessID, 1); !errors.Is(err, partialmanifeststore.ErrNotFound) {
+		if _, err := store.Get(ctx, b, checkpointID); !errors.Is(err, partialmanifeststore.ErrNotFound) {
 			t.Errorf("cross-tenant Get: got %v, want ErrNotFound", err)
 		}
 	})
@@ -165,22 +410,22 @@ func TestPartialManifestStoreContract(t *testing.T) {
 	t.Run("DeleteByTenant clears the tenant's rows", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		other := freshTenant(t, ctx, pg)
-		for _, tid := range []string{tenant, tenant, other} {
-			if err := store.Put(ctx, partialmanifeststore.Record{
-				TenantID: tid, SessionID: newUUID(t), Generation: 1,
-				PartialObjectKeyPrefix: "/" + tid + "/x/",
-				ChunkEncoding:          partialmanifeststore.ChunkEncodingTar,
-			}); err != nil {
+		keep := newUUID(t)
+		for _, tid := range []struct{ tenant, checkpoint string }{
+			{tenant, newUUID(t)}, {tenant, newUUID(t)}, {other, keep},
+		} {
+			if err := store.Put(ctx, manifestRow(time.Now().UTC(), tid.tenant, tid.checkpoint, newUUID(t), 1)); err != nil {
 				t.Fatalf("Put: %v", err)
 			}
 		}
 		if err := store.DeleteByTenant(ctx, tenant); err != nil {
 			t.Fatalf("DeleteByTenant: %v", err)
 		}
-		// LatestActive on tenant returns ErrNotFound; on other it
-		// still returns the surviving row.
 		if _, err := store.LatestActive(ctx, tenant, "any"); !errors.Is(err, partialmanifeststore.ErrNotFound) {
 			t.Error("tenant rows should be deleted")
+		}
+		if _, err := store.Get(ctx, other, keep); err != nil {
+			t.Errorf("the other tenant's row should survive: %v", err)
 		}
 	})
 }

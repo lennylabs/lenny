@@ -197,6 +197,15 @@ type Config struct {
 	// `minio` Provider skips the cloud-object-storage-lifecycle check
 	// (MinIO lifecycle is configured by the post-install Job). F-17.9.3.
 	ObjectStorage ObjectStorageConfig
+	// ObjectStorageT4 carries the §17.6 Checkpoint T4 default-encryption
+	// inputs the checkpoint-t4-default-encryption check evaluates: the
+	// per-tenant GCS bucket-default CMEK and the Azure container default
+	// encryption scope with override prevention that the presigned PUT
+	// cannot bind per request. The check is a no-op unless a gcs or azure
+	// backend serves a workspaceTier T4 tenant.
+	//
+	// spec: §12.5 line 315; §17.9.7; §17.6.
+	ObjectStorageT4 ObjectStorageT4Config
 	// CloudObjectStorageLifecycleProber, when non-nil and ObjectStorage
 	// names a cloud provider, reads the live §17.9.4 lifecycle posture
 	// through the provider SDK. A nil prober (skip-network-probes, or a
@@ -321,6 +330,26 @@ type ObjectStorageConfig struct {
 	Bucket string
 }
 
+// ObjectStorageT4Config carries the §17.6 Checkpoint T4
+// default-encryption chart values the checkpoint-t4-default-encryption
+// check evaluates against a gcs or azure backend serving a workspaceTier
+// T4 tenant.
+//
+// spec: §12.5 line 315; §17.9.7; §17.6.
+type ObjectStorageT4Config struct {
+	// ServesT4Tenant is true when the deployment serves any workspaceTier
+	// T4 tenant. False leaves the T4 default-encryption check a no-op.
+	ServesT4Tenant bool
+	// GCSBucketDefaultCMEK is the objectStorage.gcs.bucketDefaultCmek value.
+	GCSBucketDefaultCMEK string
+	// AzureDefaultEncryptionScope is the
+	// objectStorage.azure.defaultEncryptionScope value.
+	AzureDefaultEncryptionScope string
+	// AzureDenyEncryptionScopeOverride is the
+	// objectStorage.azure.denyEncryptionScopeOverride value.
+	AzureDenyEncryptionScopeOverride bool
+}
+
 // CheckResult pairs a §17.9 check name with its outcome.
 type CheckResult struct {
 	// Name identifies the check.
@@ -358,6 +387,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		runNetworkPolicyChecks,
 		runDeploymentIdentityChecks,
 		runStorageChecks,
+		runObjectStoreT4EncryptionChecks,
 		runRuntimeClassChecks,
 		runPoolGracePeriodChecks,
 		runCredentialDeliveryChecks,
@@ -535,6 +565,7 @@ func runNetworkPolicyChecks(ctx context.Context, reader client.Reader, _ Config)
 		"networkpolicy-ssrf-private-range-parity",
 		"networkpolicy-cluster-cidr-symmetry",
 		"networkpolicy-ops-egress-selector-parity",
+		"networkpolicy-objectstore-egress-parity",
 	}
 	policies, err := gatherNetworkPolicies(ctx, reader)
 	if err != nil {
@@ -554,6 +585,7 @@ func runNetworkPolicyChecks(ctx context.Context, reader client.Reader, _ Config)
 		{Name: "networkpolicy-ssrf-private-range-parity", Decision: CheckSSRFPrivateRangeParity(policies)},
 		{Name: "networkpolicy-cluster-cidr-symmetry", Decision: CheckClusterCIDRSymmetry(policies)},
 		{Name: "networkpolicy-ops-egress-selector-parity", Decision: CheckOpsEgressSelectorParity(policies)},
+		{Name: "networkpolicy-objectstore-egress-parity", Decision: CheckObjectStoreEgressParity(policies)},
 	}
 }
 
@@ -629,6 +661,31 @@ func runStorageChecks(ctx context.Context, _ client.Reader, cfg Config) []CheckR
 	})
 
 	return report
+}
+
+// runObjectStoreT4EncryptionChecks runs the §17.6 Checkpoint T4
+// default-encryption gate. On the gcs and azure backends the presigned
+// checkpoint PUT signs no encryption header, so a workspaceTier T4
+// tenant's per-tenant encryption rests on a backend default (a GCS
+// bucket-default CMEK or an Azure container default encryption scope with
+// override prevention) the mint cannot bind per request. The gate fails
+// the install/upgrade closed when that default is absent, the fail-closed
+// backstop to the gateway-startup assertion. The check is a pure function
+// over the chart values; it is a no-op unless a gcs/azure backend serves
+// a T4 tenant.
+//
+// spec: §12.5 line 315; §17.9.7; §17.6.
+func runObjectStoreT4EncryptionChecks(_ context.Context, _ client.Reader, cfg Config) []CheckResult {
+	return []CheckResult{{
+		Name: "checkpoint-t4-default-encryption",
+		Decision: T4DefaultEncryptionCheck{
+			Provider:                         cfg.ObjectStorage.Provider,
+			ServesT4Tenant:                   cfg.ObjectStorageT4.ServesT4Tenant,
+			GCSBucketDefaultCMEK:             cfg.ObjectStorageT4.GCSBucketDefaultCMEK,
+			AzureDefaultEncryptionScope:      cfg.ObjectStorageT4.AzureDefaultEncryptionScope,
+			AzureDenyEncryptionScopeOverride: cfg.ObjectStorageT4.AzureDenyEncryptionScopeOverride,
+		}.Decide(),
+	}}
 }
 
 // runRuntimeClassChecks runs the §5.3 line 676 required-RuntimeClass

@@ -87,16 +87,119 @@ func TestURIRoundTrip_LegacyForm(t *testing.T) {
 //
 // spec: §12.5 ll. 295.
 func TestURIRoundTrip_CanonicalForm(t *testing.T) {
-	original := "lenny-blob://acme/checkpoint/sess_1/part_xyz?ttl=300&enc=aes256gcm"
+	original := "lenny-blob://acme/checkpoints/sess_1/part_xyz?ttl=300&enc=aes256gcm"
 	u, err := blobstore.ParseURI(original)
 	if err != nil {
 		t.Fatalf("ParseURI: %v", err)
 	}
 	if u.ObjectType != blobstore.ObjectTypeCheckpoint {
-		t.Errorf("ObjectType: got %q, want checkpoint", u.ObjectType)
+		t.Errorf("ObjectType: got %q, want checkpoints", u.ObjectType)
 	}
 	if u.String() != original {
 		t.Errorf("round-trip: got %q, want %q", u.String(), original)
+	}
+}
+
+// TestURIRoundTrip_NestedCheckpointChunkKey pins the §10.1 chunked-
+// checkpoint key grammar: the part id is the nested
+// `{checkpoint_id}/chunk-{n}.{enc}` path, so ParseURI must treat every
+// segment after the session as the part id and String() must preserve
+// the separators. The previous parser that split on a fixed 4-segment
+// form rejected this URI as a 5-segment path, and String() collapsed the
+// slash into `%2F`.
+//
+// spec: §10.1 (chunked checkpoint object key); §12.5 ll. 295.
+func TestURIRoundTrip_NestedCheckpointChunkKey(t *testing.T) {
+	original := "lenny-blob://acme/checkpoints/sess_1/ck_9f2a/chunk-00000.tar?ttl=300&enc=aes256gcm"
+	u, err := blobstore.ParseURI(original)
+	if err != nil {
+		t.Fatalf("ParseURI: %v", err)
+	}
+	if u.ObjectType != blobstore.ObjectTypeCheckpoint {
+		t.Errorf("ObjectType: got %q, want checkpoints", u.ObjectType)
+	}
+	if u.SessionID != "sess_1" {
+		t.Errorf("SessionID: got %q, want sess_1", u.SessionID)
+	}
+	if u.PartID != "ck_9f2a/chunk-00000.tar" {
+		t.Errorf("PartID: got %q, want ck_9f2a/chunk-00000.tar", u.PartID)
+	}
+	if u.String() != original {
+		t.Errorf("round-trip: got %q, want %q", u.String(), original)
+	}
+}
+
+// fakePresigner is a blobstore.Store that also implements Presigner and
+// records the URIs its mint methods were reached with, so the
+// TenantScoped gating tests can assert a cross-tenant call never reaches
+// the inner presigner.
+type fakePresigner struct {
+	*blobstore.MemoryStore
+	putURIs []blobstore.URI
+	getURIs []blobstore.URI
+}
+
+func (f *fakePresigner) PresignPut(u blobstore.URI, _ int64, _ time.Duration) (blobstore.Grant, error) {
+	f.putURIs = append(f.putURIs, u)
+	return blobstore.Grant{URL: "https://store.example/put/" + u.PartID}, nil
+}
+
+func (f *fakePresigner) PresignGet(u blobstore.URI, _ time.Duration) (blobstore.Grant, error) {
+	f.getURIs = append(f.getURIs, u)
+	return blobstore.Grant{URL: "https://store.example/get/" + u.PartID}, nil
+}
+
+// TestTenantScopedPresignerGatesCrossTenant pins the §13.2 mint-time
+// tenant-prefix gate: a scoped handle bound to one tenant refuses to
+// mint a capability for a foreign tenant's key and never reaches the
+// inner presigner. Without the gate a pod's foreign-tenant URI would be
+// signed against the other tenant's prefix.
+//
+// spec: §13.2 (capability model); §12.5 ll. 295.
+func TestTenantScopedPresignerGatesCrossTenant(t *testing.T) {
+	inner := &fakePresigner{MemoryStore: blobstore.NewMemoryStore(nil)}
+	scoped := blobstore.NewTenantScoped("acme", inner)
+
+	foreign := blobstore.URI{TenantID: "globex", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s", PartID: "ck/chunk-00000.tar", TTL: time.Hour}
+	if _, err := scoped.PresignPut(foreign, 10, time.Minute); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Fatalf("PresignPut(foreign) err = %v, want ErrCrossTenant", err)
+	}
+	if _, err := scoped.PresignGet(foreign, time.Minute); !errors.Is(err, blobstore.ErrCrossTenant) {
+		t.Fatalf("PresignGet(foreign) err = %v, want ErrCrossTenant", err)
+	}
+	if len(inner.putURIs) != 0 || len(inner.getURIs) != 0 {
+		t.Fatalf("inner presigner was reached on a cross-tenant call: put=%v get=%v", inner.putURIs, inner.getURIs)
+	}
+
+	own := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s", PartID: "ck/chunk-00000.tar", TTL: time.Hour}
+	if _, err := scoped.PresignPut(own, 10, time.Minute); err != nil {
+		t.Fatalf("PresignPut(own) err = %v, want nil", err)
+	}
+	if _, err := scoped.PresignGet(own, time.Minute); err != nil {
+		t.Fatalf("PresignGet(own) err = %v, want nil", err)
+	}
+	if len(inner.putURIs) != 1 || len(inner.getURIs) != 1 {
+		t.Fatalf("same-tenant mint did not forward to inner: put=%v get=%v", inner.putURIs, inner.getURIs)
+	}
+}
+
+// TestTenantScopedPresignerRejectsNonPresigningInner pins that a store
+// which deliberately omits Presigner (the in-memory dev store) cannot be
+// coaxed into minting a capability through the TenantScoped decorator.
+//
+// spec: §13.2 (capability model).
+func TestTenantScopedPresignerRejectsNonPresigningInner(t *testing.T) {
+	scoped := blobstore.NewTenantScoped("acme", blobstore.NewMemoryStore(nil))
+	own := blobstore.URI{TenantID: "acme", ObjectType: blobstore.ObjectTypeCheckpoint, SessionID: "s", PartID: "ck/chunk-00000.tar", TTL: time.Hour}
+	if _, err := scoped.PresignPut(own, 10, time.Minute); err == nil {
+		t.Fatal("PresignPut against a non-presigning inner store returned nil error")
+	}
+	if _, err := scoped.PresignGet(own, time.Minute); err == nil {
+		t.Fatal("PresignGet against a non-presigning inner store returned nil error")
+	}
+	// The in-memory store must not satisfy the Presigner interface.
+	if _, ok := interface{}(blobstore.NewMemoryStore(nil)).(blobstore.Presigner); ok {
+		t.Error("MemoryStore unexpectedly implements Presigner; it must stay credential-free")
 	}
 }
 

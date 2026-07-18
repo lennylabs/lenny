@@ -35,9 +35,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -281,9 +284,28 @@ type Server struct {
 	// session.resumed event surfaces the correct ResumeMode per
 	// §10.1 partial-manifest path.
 	partialManifestLookup PartialManifestLookup
-	treeArchive           treearchive.Store
-	taskUsage             *resultrollup.Builder
-	treeBudgetReturner    TreeBudgetReturner
+	// resumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// chunk set the resume path hands the adapter on ResumeRequest.Chunks.
+	// Nil leaves the resume carrying no chunks (dev mode, or a checkpoint
+	// that predates the chunked-object model), so the adapter restores
+	// nothing beyond what a snapshotless rebuild recovers.
+	resumeChunkResolver ResumeChunkResolver
+	// checkpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// lenny_checkpoint_partial_total{recovered=true} emission once per
+	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
+	// satisfies it. Nil leaves the resume recovering without observability.
+	checkpointRecoveryMetrics CheckpointRecoveryMetrics
+	// checkpointManifests, when set, reads §10.1 checkpoint_manifest rows
+	// for the resume fallback (LatestFull) and the workspace-download path
+	// (Get, to resolve chunk_count / chunk_encoding).
+	checkpointManifests CheckpointManifestReader
+	// checkpointManifestWriter, when set, writes the §7.1 derived-session
+	// manifest row after the derive path copies the parent's chunks into
+	// the derived prefix.
+	checkpointManifestWriter CheckpointManifestWriter
+	treeArchive              treearchive.Store
+	taskUsage                *resultrollup.Builder
+	treeBudgetReturner       TreeBudgetReturner
 	// leaseRegistrar, when set, registers a newly created root session
 	// with the §8.6 lease-extension budget source so a later in-process
 	// budget-exhaustion extension (the gateway LLM Proxy's ExtendForBudget
@@ -635,7 +657,7 @@ type Sealer interface {
 // cleanup after the resume path completes, regardless of whether the
 // reassembly succeeded or failed. An implementation walks the latest
 // active partial manifest for (tenant, session), deletes the chunks
-// under its `partial_object_key_prefix`, and soft-deletes the row.
+// under its `chunk_object_key_prefix`, and soft-deletes the row.
 // Best-effort: a failure leaves the row active for the §12.5
 // backstop sweep to clean up on the next cycle.
 type PartialManifestCleaner interface {
@@ -680,6 +702,66 @@ type PartialManifestLookup interface {
 	// exists; a store error returns the error so the resume path can
 	// degrade gracefully (falls back to ResumeFull).
 	HasActivePartialManifest(ctx context.Context, tenantID, sessionID string) (bool, error)
+}
+
+// ResumeChunkResolver resolves the §10.1 line 155 reassembly chunk set for
+// a checkpoint the resume path restores. It lists the committed chunk
+// objects under the manifest row's chunk_object_key_prefix, verifies
+// contiguity of the prefix [0, chunk_count), and mints one presigned
+// single-key GET capability per index. The gateway is the sole authority
+// that resolves, lists, validates, and signs the keys; the pod fetches the
+// capabilities and concatenates the bodies. resumechunks.Resolver
+// implements it.
+//
+// spec: §10.1 line 155.
+type ResumeChunkResolver interface {
+	// Resolve returns one presigned GET capability per chunk of the named
+	// checkpoint in ascending index order together with the §16.1 line 195
+	// recovered signal, or resumechunks.ErrReassemblyContiguity when the
+	// committed objects do not form a contiguous [0, chunk_count) prefix.
+	Resolve(ctx context.Context, tenantID, sessionID, checkpointID string) (resumechunks.ResolveResult, error)
+}
+
+// CheckpointRecoveryMetrics is the narrow slice of §16.1 checkpoint
+// telemetry the resume path emits when it reassembles an above-threshold
+// partial checkpoint. *gatewaymetrics.Metrics satisfies it, so the resume's
+// recovered = true emission lands on the same lenny_checkpoint_partial_total
+// series the upload driver's recovered = false abort arms write, without a
+// sessionserver → concrete-metrics import. trigger is a checkpoint.Trigger,
+// so the resume path can only stamp a value inside the closed §4.4 enum.
+//
+// spec: §16.1 line 195.
+type CheckpointRecoveryMetrics interface {
+	IncCheckpointPartial(pool string, recovered bool, manifestReason string, trigger checkpoint.Trigger)
+}
+
+// CheckpointManifestReader reads §10.1 checkpoint_manifest rows for the
+// resume and workspace-download paths: Get resolves one checkpoint by id
+// (for its chunk_count / chunk_encoding), LatestActiveAny resolves the
+// active row at MAX(coordination_generation) regardless of partial (the
+// §10.1 line 154 resume-reassembly selector), and LatestFull resolves the
+// last successful full checkpoint the resume path falls back to when
+// reassembly of the selected manifest fails its contiguity or recovery-
+// threshold check. The Postgres and in-memory checkpoint_manifest stores
+// implement it.
+type CheckpointManifestReader interface {
+	Get(ctx context.Context, tenantID, checkpointID string) (partialmanifeststore.Record, error)
+	LatestActiveAny(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
+	LatestFull(ctx context.Context, tenantID, sessionID string) (partialmanifeststore.Record, error)
+}
+
+// CheckpointManifestWriter writes a §10.1 checkpoint_manifest row for the
+// derived session after the §7.1 derive path copies the parent's chunks
+// into the derived prefix, so the derived session owns a resumable /
+// downloadable checkpoint independent of the parent's GC. The store models
+// a manifest as an intent row (Put, always partial) advanced by
+// ConfirmChunk and stamped terminal by Finalise, so recording a complete
+// derived checkpoint is Put → ConfirmChunk → Finalise(partial=false). The
+// Postgres and in-memory checkpoint_manifest stores implement it.
+type CheckpointManifestWriter interface {
+	Put(ctx context.Context, r partialmanifeststore.Record) error
+	ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, workspaceBytesUploaded int64) error
+	Finalise(ctx context.Context, tenantID, checkpointID string, partial bool, manifestReason string) error
 }
 
 // TreeBudgetReturner releases the §12.4 delegation tree budget a
@@ -1279,6 +1361,30 @@ type Options struct {
 	// defaulting to ResumeFull when a workspace snapshot is present.
 	PartialManifestLookup PartialManifestLookup
 
+	// ResumeChunkResolver, when set, resolves the §10.1 line 155 reassembly
+	// chunk set the resume path hands the adapter. Nil leaves the resume
+	// carrying no chunks.
+	ResumeChunkResolver ResumeChunkResolver
+
+	// CheckpointRecoveryMetrics, when set, receives the §16.1 line 195
+	// lenny_checkpoint_partial_total{recovered=true} emission once per
+	// above-threshold partial reassembly on resume. *gatewaymetrics.Metrics
+	// satisfies it. Nil leaves the resume recovering without observability.
+	// spec: §16.1 line 195.
+	CheckpointRecoveryMetrics CheckpointRecoveryMetrics
+
+	// CheckpointManifestReader, when set, reads §10.1 checkpoint_manifest
+	// rows for the resume fallback (LatestFull) and the workspace-download
+	// path (Get). Nil disables the contiguity fallback and serves the
+	// workspace download from the legacy single-snapshot ref.
+	CheckpointManifestReader CheckpointManifestReader
+
+	// CheckpointManifestWriter, when set, writes the §7.1 derived-session
+	// manifest row after the derive path copies the parent's chunks into
+	// the derived prefix. Nil leaves the derive on the legacy
+	// single-snapshot copy.
+	CheckpointManifestWriter CheckpointManifestWriter
+
 	// TreeArchive, when set, receives a §8.10 archive record for every
 	// child session (a session with a parent) that reaches a terminal
 	// state, so a resumed parent can replay the outcome. Nil disables
@@ -1688,6 +1794,10 @@ func New(store sessionstore.Store, opts Options) *Server {
 		partialManifestCleaner:     opts.PartialManifestCleaner,
 		evictionStateLookup:        opts.EvictionStateLookup,
 		partialManifestLookup:      opts.PartialManifestLookup,
+		resumeChunkResolver:        opts.ResumeChunkResolver,
+		checkpointRecoveryMetrics:  opts.CheckpointRecoveryMetrics,
+		checkpointManifests:        opts.CheckpointManifestReader,
+		checkpointManifestWriter:   opts.CheckpointManifestWriter,
 		treeArchive:                opts.TreeArchive,
 		taskUsage:                  opts.TaskUsage,
 		treeBudgetReturner:         opts.TreeBudgetReturner,
@@ -2330,6 +2440,22 @@ func (s *Server) poolPolicyReader() podsession.PoolPolicyReader {
 	return poolPolicyMirror{pools: s.pools}
 }
 
+// NewPoolPolicyReader adapts a §5.2 poolstore onto the
+// podsession.PoolPolicyReader the CRD resolver and the checkpoint driver
+// read the gateway-enforced sessionPolicy mirror through. It returns nil
+// when no pool store is wired so callers keep their CRD-derived defaults.
+// The gateway wiring shares one reader between ResolvePool and the
+// Checkpointer's per-pool checkpointGrantWindow lookup.
+//
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset); §10.1
+// (per-pool checkpointGrantWindow override).
+func NewPoolPolicyReader(pools poolstore.Store) podsession.PoolPolicyReader {
+	if pools == nil {
+		return nil
+	}
+	return poolPolicyMirror{pools: pools}
+}
+
 // poolPolicyMirror reads a pool's gateway-enforced §5.2 sessionPolicy
 // fields (maxConcurrentSessions, the service-mode maxConcurrent,
 // recycle.allowCrossTenantReuse, and recycle.maxPodUptimeSeconds) from
@@ -2353,6 +2479,14 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		return podsession.PoolPolicyMirror{}, false, fmt.Errorf("sessionserver: get pool %s: %w", name, err)
 	}
 	mirror := podsession.PoolPolicyMirror{MaxConcurrent: int32(p.MaxConcurrent)}
+	// spec: §10.1 line 131 / §5.2 — surface the per-pool
+	// checkpointGrantWindow override so the checkpoint driver's per-pool
+	// lookup reads the gateway-enforced value; nil leaves the driver on the
+	// deployment-wide default.
+	if p.CheckpointGrantWindow != nil {
+		w := int32(*p.CheckpointGrantWindow)
+		mirror.CheckpointGrantWindow = &w
+	}
 	if sp := p.SessionPolicy; sp != nil {
 		mirror.MaxConcurrentSessions = int32(sp.MaxConcurrentSessions)
 		// §5.2 / §4.6.1 pool-exhaustion disposition: fold the queue-vs-reject

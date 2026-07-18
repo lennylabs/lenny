@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -28,7 +27,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
@@ -42,23 +40,6 @@ import (
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
-
-// stubRestorer is an adapter.CheckpointSource serving a fixed archive.
-type stubRestorer struct{ archive []byte }
-
-func (s stubRestorer) LoadCheckpoint(context.Context, string) (io.ReadCloser, error) {
-	return io.NopCloser(bytes.NewReader(s.archive)), nil
-}
-
-// emptyArchive returns a valid gzip-tar of an empty workspace.
-func emptyArchive(t *testing.T) []byte {
-	t.Helper()
-	var buf bytes.Buffer
-	if _, err := workspace.Archive(t.TempDir(), &buf); err != nil {
-		t.Fatalf("build archive: %v", err)
-	}
-	return buf.Bytes()
-}
 
 const (
 	testNS   = "lenny-agents"
@@ -504,7 +485,6 @@ func TestResumeClaimsAndRestoresTheSession(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = rt
-	srv.Restorer = stubRestorer{archive: emptyArchive(t)}
 
 	c := k8sClient(t, idleSandbox("sbx-1", "10.244.1.7"))
 	binder := newBinder(c, adapterDialer(t, srv))
@@ -1668,7 +1648,6 @@ func TestResumeFallsBackToPostgresWhenKubeClaimFindsNoIdlePod(t *testing.T) {
 	srv := adapter.New("adapter-test")
 	srv.WorkspaceRoot = t.TempDir()
 	srv.Runtime = rt
-	srv.Restorer = stubRestorer{archive: emptyArchive(t)}
 
 	c := k8sClient(t, unlabeledSandbox("sbx-fb", "10.244.2.9"))
 	binder := newBinder(c, adapterDialer(t, srv))

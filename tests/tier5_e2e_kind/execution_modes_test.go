@@ -21,10 +21,12 @@
 // tests/testinfra/kind/install.sh warms in the lenny-agents namespace
 // (task-mode-echo-pool and concurrent-echo-pool), closing the §14.9
 // coverage gap for concurrent per-slot directories on a real sandbox.
-// TestTaskModeRecycleScrubsWorkspaceBetweenSessions is written against
-// the same real-pod path for the task-mode workspace-scrub half of the
-// gap but currently skips: see its doc comment for the blocking
-// precondition.
+// TestTaskModeRecycleScrubsWorkspaceBetweenSessions exercises the same
+// real-pod path for the task-mode workspace-scrub half of the gap. The
+// gateway-side checkpoint driver that opens the §10.1 Checkpoint stream
+// against the pod and mints per-chunk presigned grants is now wired, so
+// the §7.1 seal-and-export step on /terminate completes end to end and a
+// completed session reaches the §6.2 occupancy-zero recycle branch.
 //
 // Both echo-runtime-task-mode and echo-runtime-concurrent are
 // distroless (no shell), so workspace content is inspected through a
@@ -107,20 +109,6 @@ func TestTaskModeRecycleScrubsWorkspaceBetweenSessions(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})
 	c := d.Cluster()
 	requirePoolReadyPods(t, c, taskModePoolName, 1)
-	t.Skip("precondition not met: cmd/lenny-adapter never wires a CheckpointSink (pkg/adapter/server.go " +
-		"Server.Checkpoints is left nil in every deployment, not only this Kind overlay), so every adapter " +
-		"Checkpoint RPC returns Unimplemented. The §7.1 seal-and-export step on /terminate calls Checkpoint " +
-		"for any session that ran on a bound pod (checkpointer.Seal no-ops only when this replica holds no " +
-		"live binding for the session at all) and, on exhausting its retry window, relabels the session " +
-		"failed/workspace_seal_timeout. §6.2 requires a failed session to always retire its pod regardless of " +
-		"sessionPolicy.recycle, so occupancy-zero recycling can never be observed end to end until a " +
-		"checkpoint sink is wired into the adapter binary — the same precondition gap " +
-		"tests/tier5_e2e_kind/checkpoint_resume_test.go already names for the eviction-checkpoint path. " +
-		"Verified directly: with sessionPolicy.recycle folding fixed (podsession.PoolPolicyMirror.Recycle), " +
-		"a session's own sessionIsolationLevel.podReuse correctly reports true, but Release still sends a " +
-		"plain Shutdown (not ShutdownRecycle) because the session's disposition is \"failed\", not " +
-		"\"completed\". The rest of this test is written against the spec and is ready to run once the " +
-		"checkpoint sink lands.")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()

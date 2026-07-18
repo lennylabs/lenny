@@ -15,6 +15,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -291,6 +293,17 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// spec: §10.1 line 155, §15.1 line 671 — a chunked checkpoint stores no
+	// single snapshot object; the workspace archive is the concatenation of
+	// the manifest row's chunks in index order. The gateway reads the chunk
+	// bodies directly (the caller is the API client, not a pod) and streams
+	// them in order. When no manifest row resolves — a checkpoint that
+	// predates the chunked model, or a gateway without the manifest reader
+	// wired — the handler falls through to the legacy single-snapshot path.
+	if s.streamChunkedWorkspace(w, r, row, tenantID) {
+		return
+	}
+
 	uri, ok := parseSnapshotRef(row.WorkspaceSnapshot.Ref, tenantID)
 	if !ok {
 		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
@@ -326,6 +339,128 @@ func (s *Server) handleWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.Copy(w, body)
+}
+
+// checkpointIDFromSnapshotRef extracts the checkpoint_id (the checkpoint
+// manifest primary key) from a stored WorkspaceSnapshot.Ref. spec: §10.1
+// line 155 — the ref is the four-segment object-path form the parsers accept
+// (/{tenant}/checkpoints/{session}/{checkpoint_id}) whose last segment is
+// the checkpoint_id the manifest row is keyed by. A ref carrying only the
+// bare checkpoint_id (no path segments) is returned unchanged, so both
+// forms resolve to the same manifest key.
+func checkpointIDFromSnapshotRef(ref string) string {
+	trimmed := strings.TrimSuffix(ref, "/")
+	if i := strings.LastIndex(trimmed, "/"); i >= 0 {
+		return trimmed[i+1:]
+	}
+	return trimmed
+}
+
+// streamChunkedWorkspace serves GET /v1/sessions/{id}/workspace from a
+// §10.1 chunked checkpoint: it resolves the manifest row from the
+// checkpoint_id carried in WorkspaceSnapshot.Ref (the last segment of the
+// four-segment object-path form), then streams each chunk object in
+// ascending index order [0, chunk_count) as one continuous archive. The
+// gateway reads the bodies itself — the caller is the API client, so no
+// presigned capability is minted. It reports handled=true when it wrote a
+// response (success or a terminal error), and handled=false when no chunked
+// manifest resolved so the caller should fall through to the legacy
+// single-snapshot path.
+//
+// spec: §10.1 line 155 — reassembly in index order; §15.1 line 671.
+// chunkReadTTL is the read-time TTL the gateway-direct workspace download
+// applies to a chunk object. A blob backend that derives expiry from the
+// read URI (miniostore) would otherwise treat a TTL-less read as already
+// expired; the checkpoint chunk's real lifetime is governed by §12.5 GC, so
+// the read serves any physically-present object.
+const chunkReadTTL = 100 * 365 * 24 * time.Hour
+
+func (s *Server) streamChunkedWorkspace(w http.ResponseWriter, r *http.Request, row sessionstore.Session, tenantID string) bool {
+	if s.checkpointManifests == nil {
+		return false
+	}
+	checkpointID := checkpointIDFromSnapshotRef(row.WorkspaceSnapshot.Ref)
+	rec, err := s.checkpointManifests.Get(r.Context(), tenantID, checkpointID)
+	if err != nil {
+		// No manifest row for this ref (a checkpoint predating the chunked
+		// model, or a legacy single-snapshot ref): fall through.
+		return false
+	}
+	if rec.ChunkCount <= 0 {
+		// An empty manifest holds no bytes; there is nothing to stream and
+		// no single-snapshot object to fall back to.
+		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+			"session checkpoint has no workspace bytes", nil)
+		return true
+	}
+	encoding := rec.ChunkEncoding
+	if encoding == "" {
+		encoding = partialmanifeststore.ChunkEncodingTar
+	}
+
+	scoped := blobstore.NewTenantScoped(tenantID, s.blobs)
+	// Resolve every chunk object before writing any byte so a missing chunk
+	// yields a clean error status rather than a truncated 200 body.
+	bodies := make([]io.ReadCloser, 0, rec.ChunkCount)
+	closeAll := func() {
+		for _, b := range bodies {
+			_ = b.Close()
+		}
+	}
+	for n := 0; n < rec.ChunkCount; n++ {
+		uri := resumechunks.ChunkObjectURI(row.TenantID, row.ID, checkpointID, uint32(n), encoding)
+		// The gateway-direct read serves any physically-present chunk, the
+		// same liveness signal the presigned-GET resume path uses; §12.5 GC
+		// is the sole authority on a chunk's lifetime, so the read-time TTL
+		// is set wide rather than re-deriving a retention deadline here.
+		uri.TTL = chunkReadTTL
+		_, body, gerr := scoped.Get(uri)
+		if gerr != nil {
+			closeAll()
+			if errors.Is(gerr, blobstore.ErrCrossTenant) {
+				s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+					"caller has no read access to this workspace checkpoint", nil)
+				return true
+			}
+			if errors.Is(gerr, blobstore.ErrNotFound) {
+				s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND",
+					"workspace checkpoint chunk not found or expired", nil)
+				return true
+			}
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", gerr.Error(), nil)
+			return true
+		}
+		bodies = append(bodies, body)
+	}
+	defer closeAll()
+
+	mime := "application/gzip"
+	if encoding == partialmanifeststore.ChunkEncodingTar {
+		mime = "application/x-tar"
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Content-Disposition", `attachment; filename="`+row.ID+`-workspace.tar`+chunkArchiveSuffix(encoding)+`"`)
+	if hash := row.WorkspaceSnapshot.ContentHash; hash != "" {
+		w.Header().Set("X-Lenny-Workspace-Content-Hash", hash)
+	}
+	w.WriteHeader(http.StatusOK)
+	for _, body := range bodies {
+		if _, cerr := io.Copy(w, body); cerr != nil {
+			// The response is already committed; the client observes a
+			// truncated stream. Nothing further to write.
+			return true
+		}
+	}
+	return true
+}
+
+// chunkArchiveSuffix maps a §10.1 chunk_encoding to the archive filename
+// suffix after `.tar` (`.gz` for tar.gz, empty for tar).
+func chunkArchiveSuffix(encoding partialmanifeststore.ChunkEncoding) string {
+	if encoding == partialmanifeststore.ChunkEncodingTarGz {
+		return ".gz"
+	}
+	return ""
 }
 
 // parseSnapshotRef resolves a stored workspace-snapshot reference into a

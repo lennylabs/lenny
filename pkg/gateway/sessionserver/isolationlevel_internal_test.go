@@ -115,6 +115,19 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		t.Fatalf("create standard-reuse pool: %v", err)
 	}
 
+	// §10.1 line 131 / §5.2 per-pool checkpointGrantWindow override: the
+	// gateway-enforced value the checkpoint driver prefers over the
+	// deployment-wide default.
+	grantWindow := 8
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:                  "cp-pool",
+		RuntimeRef:            "cp-runtime",
+		ExecutionMode:         runtimestore.ExecutionModeSession,
+		CheckpointGrantWindow: &grantWindow,
+	}); err != nil {
+		t.Fatalf("create checkpoint-grant-window pool: %v", err)
+	}
+
 	m := poolPolicyMirror{pools: store}
 
 	got, found, err := m.PoolPolicy(ctx, "conc-pool")
@@ -167,10 +180,62 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 		t.Errorf("queue-pool mirror = %+v, want onPoolExhausted=queue / maxQueueWaitSeconds=45", got)
 	}
 
+	// §10.1 line 131 / §5.2 — the per-pool checkpointGrantWindow override
+	// surfaces on the mirror so the checkpoint driver's per-pool lookup
+	// reads the gateway-enforced value.
+	got, found, err = m.PoolPolicy(ctx, "cp-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(cp-pool): found=%v err=%v", found, err)
+	}
+	if got.CheckpointGrantWindow == nil || *got.CheckpointGrantWindow != 8 {
+		t.Errorf("cp-pool mirror.CheckpointGrantWindow = %v, want 8", got.CheckpointGrantWindow)
+	}
+	// A pool with no override leaves the mirror field nil so the driver
+	// falls back to the deployment-wide default.
+	got, found, err = m.PoolPolicy(ctx, "conc-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(conc-pool) recheck: found=%v err=%v", found, err)
+	}
+	if got.CheckpointGrantWindow != nil {
+		t.Errorf("conc-pool mirror.CheckpointGrantWindow = %d, want nil (no override)", *got.CheckpointGrantWindow)
+	}
+
 	// A missing pool reports found=false with no error so ResolvePool
 	// keeps the CRD-derived defaults rather than failing the resolve.
 	if _, found, err = m.PoolPolicy(ctx, "absent"); err != nil || found {
 		t.Errorf("PoolPolicy(absent): found=%v err=%v, want found=false / no error", found, err)
+	}
+}
+
+// spec: §5.2 (sessionPolicy block, gateway-enforced subset); §5.2
+// NewPoolPolicyReader shares one poolstore-backed reader between
+// ResolvePool and the Checkpointer's per-pool checkpointGrantWindow
+// lookup. It returns nil for a nil store so the caller keeps its defaults.
+func TestNewPoolPolicyReader(t *testing.T) {
+	if r := NewPoolPolicyReader(nil); r != nil {
+		t.Errorf("NewPoolPolicyReader(nil) = %v, want nil", r)
+	}
+	store := poolstore.NewMemory()
+	grantWindow := 6
+	ctx := context.Background()
+	if err := store.Create(ctx, poolstore.Pool{
+		Name:                  "cp-pool",
+		RuntimeRef:            "cp-runtime",
+		ExecutionMode:         runtimestore.ExecutionModeSession,
+		CheckpointGrantWindow: &grantWindow,
+	}); err != nil {
+		t.Fatalf("create pool: %v", err)
+	}
+	r := NewPoolPolicyReader(store)
+	if r == nil {
+		t.Fatal("NewPoolPolicyReader(store) = nil, want a reader")
+	}
+	got, found, err := r.PoolPolicy(ctx, "cp-pool")
+	if err != nil || !found {
+		t.Fatalf("PoolPolicy(cp-pool): found=%v err=%v", found, err)
+	}
+	if got.CheckpointGrantWindow == nil || *got.CheckpointGrantWindow != 6 {
+		t.Errorf("mirror.CheckpointGrantWindow = %v, want 6", got.CheckpointGrantWindow)
 	}
 }
 
