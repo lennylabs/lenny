@@ -92,7 +92,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-02 — Operational event-stream read source, tenant filtering, and MCP subscription — §25.5/§25.12
-- **status:** open
+- **status:** claimed:proposal-A@2026-07-18T18:21:06Z
 - **assigned:** proposal-A
 - **findings:** T-25.5.1, T-25.5.5, T-25.5.6, T-25.5.7, T-25.12.6
 - **root spec gap:** The §25.5 read side never consumes the Redis `ops:events:stream`, so the transparent Redis→gateway-buffer fallback, delivery-time tenant filtering, gap-detection on real eviction, the full `EventStreamService` interface (caller identity, `UpdateSubscription`/`ListDeliveries` cursor), and MCP-native subscription have no data source or defined caller-tenant/RBAC plumbing.
