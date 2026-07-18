@@ -157,7 +157,7 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [§25.5 Operational Event Stream](#t-25.5) — 7H 8M 6L 1I — No tier3/4/5/6/8/9 test exercises the event stream; SSE/poll still lacks a Redis source (retention purge now resolved); read endpoints are platform-admin-only vs the tenant-scoped-caller rule, and UpdateSubscription filter patching is unasserted.
 - [§25.6 Diagnostic Endpoints](#t-25.6) — 5H 11M 6L 0I — Auto-remediation now implemented+unit-tested (was High); tier4/5 live-service, REST scope, degradation-matrix gaps remain High; new: /healthz-vs-health-summary probe, unimplemented pool K8s fallback + MetricSource wiring, stale audit-stub comments, and the metricsSource-field spec contradiction
 - [§25.7 Operational Runbooks Engine](#t-25.7) — 2H 4M 2L 1I — MCP runbook tools now drop all 5 Path A filters (openapi.json declares no query params); still no inventory/authz test
-- [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 5L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs
+- [§25.8 Platform Lifecycle Management](#t-25.8) — 6H 10M 7L 3I — Platform-upgrade endpoints (start/proceed/rollback/etc.) still lack any tier3-6 contract/integration/chaos test; new gaps: status progress omits the §25.2 canonical envelope, version/full drops CRD/Helm sources, no compiled-in release-channel key, TESTING.md change-graph example dangling refs, spec cites a nonexistent chart path, five spec_16_7 tests unregistered
 - [§25.9-25.10 Audit Log Query API and Config Drift Detection](#t-25.9-25.10) — 5H 9M 3L 1I — §25.9 audit query endpoints and drift reconcile/deferred-write reconciliation still lack real-Postgres/gateway integration tests
 - [§25.11 Backup and Restore API](#t-25.11) — 5H 9M 6L 2I — Backup/restore round-trip, tier3/4/5/6/8/9 gaps remain open; two findings downgraded by new component tests.
 - [§25.12 MCP Management Server](#t-25.12) — 7H 9M 3L 2I — Build-time openapi-to-mcp generator landed (T-25.12.1 resolved); gateway-proxy routing still absent so new admin tools can't dispatch
@@ -189,7 +189,7 @@ Across 132 audited units: **1679 findings** — 504 High, 756 Medium, 269 Low, 1
 - [Theme — Real End-to-End User Journeys](#t-theme-user-journeys) — 6H 4M 1L 1I — All 12 user-journey e2e gaps still open; none of the 13 suggested test files exist on disk.
 - [Theme — Deployment Combination Coverage](#t-theme-deployment-matrix) — 2H 0M 1L 1I — 9 of 14 findings resolved; open: sandboxed-isolation infra (T-DEP.1), CheckpointSink wiring (T-DEP.5), a discovered kube(t) nil-panic gap (T-DEP.14), and the tier-6 cross-provider vacuous-pass observation (T-DEP.13), all needs-human or observational
 - [Theme — Adversarial and Abuse Scenarios](#t-theme-adversarial) — 4H 6M 2L 1I — Adversarial theme: none of the 12 suggested tests landed on disk; all 13 findings remain OPEN verbatim.
-- [Theme — Integrated Testbed Scenarios](#t-theme-testbed) — 6H 6M 6L 1I — T-BED.6 resolved (048e279d conformance battery+fidelity matrix now live); 11 testbed-combination gaps remain open
+- [Theme — Integrated Testbed Scenarios](#t-theme-testbed) — 6H 6M 7L 1I — T-BED.6 resolved (048e279d conformance battery+fidelity matrix now live); 11 testbed-combination gaps remain open
 
 ### Coverage meta-analysis
 - [Coverage meta-analysis](#t-meta)
@@ -506,6 +506,7 @@ The tenant-isolation machinery in §4.2 has strong component coverage: RLS hard-
 - **Gap:** Rerunning the 8 tests that failed in `lenny-test run --since <sha> --continue-on-failure` in isolation against an unmodified copy of the same kind cluster reproduced identical failures, for example `status 403 ... TENANT_NOT_ACTIVE ... state:"deleting"` for tenant scaffold-concurrent-modes-tenant/scaffold-live-session-tenant, and `pool preconnect-echo-pool declares no recognized §4.7 deployment model` / `backing Sandbox phase = "claimed", want "idle"` in `TestPodLifecycle`. None of the 8 failing tests reference backup, restore-test, or NetworkPolicy resources, and the failures are independent of the app under review. Discovered while closing T-25.11.21.
 - **Dependencies:** none — reproducible today against the standing kind cluster.
 - **Suggested test:** Add cross-suite isolation to `tests/tier5_e2e_kind` (a dedicated tenant/pool per test binary or a barrier/reset between suites) so the eight tests stop colliding on shared tenant, cert-manager, and warm-pool state, then re-run them concurrently and confirm the failures no longer reproduce.
+- **Also observed** (2026-07-18, while closing T-25.7.9): reproduced again — `TestNodeDrainDuringActiveSession` fails with `TENANT_NOT_ACTIVE`/`state:"deleting"` for `scaffold-live-session-tenant` on a reused Kind cluster.
 
 ## §4.3 Token Service <a id="t-4.3"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -9719,6 +9720,20 @@ Counts: 6 High, 7 Medium, 3 Low, 2 Info.
 ### - [x] T-25.8.25 — `pkg/ops/configservice/configservice_test.go`'s `_spec_25_8`-suffixed tests are absent from `tests/spec-map.json`'s "25.8" section [Low] — RESOLVED 4c40dde40e268dc7a1fcbd3a5c1edab2bcbbb286
 - **Resolution:** Registered `pkg/ops/configservice/configservice_test.go`'s ten `_spec_25_8`-suffixed tests (`TestDiff_InSync_spec_25_8`, `TestDiff_Changes_spec_25_8`, `TestDiff_GatewayUnavailable_spec_25_8`, `TestApply_ValidationFailed_spec_25_8`, `TestApply_DryRun_spec_25_8`, `TestApply_Confirm_spec_25_8`, `TestApply_ConfirmRestartRequired_spec_25_8`, `TestApply_GatewayApplyError_spec_25_8`, `TestApply_LowerMinimumWarning_spec_25_8`, `TestNew_NilGatewayPanics_spec_25_8`) and the `pkg/ops/configservice` package in `tests/spec-map.json`'s "25.8" section `tests[]`/`packages[]` arrays. These tests already exercise the `GET /v1/admin/platform/config/diff` and `PUT /v1/admin/platform/config` behavior described in spec/25_agent-operability.md §25.8 (line 3572: "GET /v1/admin/platform/config/diff accepts a {"desired": {...}} body and returns a structured diff between the desired state and the running config (fetched from the gateway via GatewayClient.GetConfig()). Used for GitOps reconciliation."; lines 3574-3578: PUT /v1/admin/platform/config schema validation, dry-run impact preview, and confirmed apply with restart-required signaling) and pass unmodified against current code. `lenny-test validate-maps` is clean after the edit.
 
+### - [ ] T-25.8.26 — Spec §25.8 names the wrong repository path for the canonical values.yaml [Low] — OPEN
+- **Spec/Doc:** "The full canonical values.yaml reference is maintained at `deploy/helm/lenny/values.yaml` in the repository" (spec/25_agent-operability.md:807), which also cites `deploy/helm/lenny/values-tier1.yaml` and siblings.
+- **Existing tests:** None identified that assert the spec's cited chart path resolves to a real file.
+- **Gap:** `deploy/helm/lenny/` does not exist in this repository (confirmed via `ls`/`find`). The actual chart lives at `charts/lenny/values.yaml`, with tier presets at `charts/lenny/presets/values-tier1.yaml`, `values-tier2.yaml`, and `values-tier3.yaml`. An operator or agent following the spec's citation lands on a nonexistent path. This is the same class of spec-versus-artifact path drift as T-17.8.4.1/T-17.8.4.2, but on a distinct citation in spec/25_agent-operability.md rather than spec/17_deployment-topology.md. Discovered while closing T-25.8.24.
+- **Dependencies:** None — buildable today. The fix corrects the cited path in spec/25_agent-operability.md to `charts/lenny/values.yaml` and `charts/lenny/presets/values-tierN.yaml`.
+- **Suggested test:** Correct the spec/25_agent-operability.md:807 citation, and add (or extend) a tier11 docs check that every chart path cited in spec/25_agent-operability.md resolves to a file in the repository.
+
+### - [ ] T-25.8.27 — `configservice_test.go`'s five `_spec_16_7`-suffixed tests are also absent from `tests/spec-map.json` [Low] — OPEN
+- **Spec/Doc:** §16.7's `platform.config_changed` audit-event emission (F-16.7.1), exercised by `pkg/ops/configservice/configservice_test.go` lines 203-302.
+- **Existing tests:** `grep -n 'spec_16_7' tests/spec-map.json` has no match for `TestApply_ConfirmEmitsConfigChanged_spec_16_7`, `TestApply_DryRunNoConfigChanged_spec_16_7`, `TestApply_ValidationFailureNoConfigChanged_spec_16_7`, `TestApply_GatewayErrorNoConfigChanged_spec_16_7`, or `TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7`.
+- **Gap:** These five tests already exercise `platform.config_changed` audit-event emission on confirmed config apply and its absence on dry-run, validation failure, and gateway error, but are unregistered in `tests/spec-map.json`, so a coverage query for this behavior would not find them. T-25.8.25's registration pass was scoped to the `_spec_25_8`-suffixed tests in the same file only, leaving these five unregistered. Discovered while closing T-25.8.25.
+- **Dependencies:** None — buildable today.
+- **Suggested test:** Register the five `_spec_16_7`-suffixed tests in `tests/spec-map.json`'s relevant §16.7 (or §25.8, if platform.config_changed is tracked there) `tests[]`/`packages[]` arrays, and confirm `lenny-test validate-maps` passes.
+
 ## §25.9-25.10 Audit Log Query API and Config Drift Detection <a id="t-25.9-25.10"></a>
 **Spec file:** `spec/25_agent-operability.md`
 **Reviewed:** 2026-07-06
@@ -12169,6 +12184,13 @@ Counts: 6 High, 5 Medium, 4 Low, 1 Info.
 - **Dependencies:** Requires provisioning a C toolchain (gcc, cc, or clang) in this sandbox image, or a documented `CGO_ENABLED=0` fallback path for the unit tier when no C toolchain is present.
 - **Suggested test:** After the toolchain is provisioned (or a fallback mode is added), confirm `lenny-test run --tier unit` (or `go test -race ./...`) actually executes the unit suite in this environment instead of failing immediately on the cgo requirement.
 
+### - [ ] T-BED.23 — `change-graph.json` cannot map root-level packaging files (e.g. `Dockerfile`) to their reached test tiers, so `lenny-test run --since` underselects the regression surface for container-build changes [Low] — OPEN
+- **Spec/Doc:** TESTING.md's change-impact model (`tests/change-graph.json`), which `lenny-test run --since`/`--changed` consults to select the tiers a diff must exercise.
+- **Existing tests:** `tests/change-graph.json`'s validate-maps check.
+- **Gap:** `tests/change-graph.json`'s validate-maps check rejects any glob outside the canonical roots (`pkg/`, `schemas/`, `migrations/`, `charts/`, `cmd/`, `tests/`, `docs/`, `spec/`, `sdks/`, `scripts/`, `compose/`, `deploy/`, `.github/`), reporting "1 glob(s) outside the canonical roots ... Dockerfile". After committing a Dockerfile-only behavioral fix (docs/runbooks bundling), `lenny-test run --since <startSha> --dry-run` resolved only the static tier; none of the unit/component/integration/e2e_kind tiers that actually exercise the fixed behavior were auto-selected, because the diff touches `Dockerfile` (unmappable) rather than any `docs/runbooks/*.md` content. Discovered while closing T-25.7.9.
+- **Dependencies:** Requires either adding root-level files (`Dockerfile`, `Makefile`, etc.) to the canonical-roots allowlist, or a dedicated change-graph entry keying off them.
+- **Suggested test:** Extend `tests/change-graph.json`'s canonical-roots list (or add a root-level-file mapping mechanism) to cover `Dockerfile`, map it to the tiers that exercise container-build behavior (at minimum the tier5 e2e_kind suites that deploy the built image), and confirm `lenny-test run --since <sha> --dry-run` for a Dockerfile-only diff resolves beyond the static tier.
+
 ## Coverage meta-analysis <a id="t-meta"></a>
 
 **Source:** spec/ and docs/ (cross-cutting meta-review of the per-unit audit set)
@@ -12382,6 +12404,7 @@ The five theme audits each proposed integrated testbeds (T-BED.1 through T-BED.1
 - **Gap:** `lenny-test run -since 07c7cbc2f188a4342292246c23b815767fb5fe71 -tier static` (dry-run resolved tiers: static, unit, component, contract, security) fails with: "gofumpt -l . failed: gofumpt reports unformatted files: cmd/lenny-gateway/auditpipeline.go, pkg/ops/upgradeservice/upgradeservice.go, tests/tier2_component/auditstore/scatter_redis_cache_test.go, tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go (run `gofumpt -w .` to fix)". Reproduced against `git show`'d content of `cmd/lenny-gateway/auditpipeline.go` at startSha `07c7cbc2f188a4342292246c23b815767fb5fe71`, confirming the formatting drift predates this diff. Discovered while closing T-25.5.13.
 - **Dependencies:** None — buildable today with `gofumpt -w .`.
 - **Suggested test:** Run `gofumpt -w .` on `cmd/lenny-gateway/auditpipeline.go`, `pkg/ops/upgradeservice/upgradeservice.go`, `tests/tier2_component/auditstore/scatter_redis_cache_test.go`, and `tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go`, commit the result, and confirm `gofumpt -l .` reports no files.
+- **Also observed** (2026-07-18, while closing T-25.8.25): reproduced again, same four files, on `lenny-test run --since 98150040d3bd7e49ec5966a9a4e37190da34761c`.
 
 ### - [ ] T-META.28 — Pre-existing gofumpt formatting drift confirmed at a second startSha (`0413b4ff5`), same four files, independent of that finding's diff [Low] — OPEN
 - **Spec/Doc:** The repo's static CI tier runs `gofumpt -l .` as a formatting gate.
