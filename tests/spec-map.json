@@ -3439,7 +3439,8 @@
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
-        "tests/tier4_integration/runbook_discovery_test.go"
+        "tests/tier4_integration/runbook_discovery_test.go",
+        "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary"
       ],
       "packages": [
         "pkg/ops/runbooks",

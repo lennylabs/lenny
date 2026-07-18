@@ -322,7 +322,8 @@
       "component": ["tests/tier2_component/runbooks/index_load_test.go"]
     },
     "docs/runbooks": {
-      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/runbook_index_test.go"]
     },
     "pkg/releasechannel": {
       "unit": ["pkg/releasechannel/..."],
