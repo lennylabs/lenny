@@ -431,7 +431,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **relates to:** C-20 (shares the delegate-handler pre-claim insertion point; assigned to the same worker, proposal-C, to keep both on one code path and avoid cross-worker conflict)
 
 ### C-41 — §8.3 credentialPropagation deny-mode suppression + full assignment-matrix — §8.3
-- **status:** open
+- **status:** claimed:proposal-C@2026-07-18T09:25:53Z
 - **assigned:** proposal-C
 - **findings:** T-8.3.1
 - **root spec gap:** Two pieces of the T-8.3.1 umbrella remain after C-20 (0043: field/enum/validator + cross-env compatibility + inherit shared-pool assignment) and C-40 (availability pre-check): (1) deny-mode credential suppression, which needs a persisted `credentialPropagation` mode column that 0043 deliberately omitted, and (2) the full inherit→independent→deny assignment-matrix behavior. T-8.3.1 is the shared umbrella finding across C-20, C-40, and C-41 — it resolves only when all three land plus the matrix test.
