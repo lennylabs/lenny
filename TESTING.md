@@ -321,7 +321,7 @@ Conventions:
   },
   "migrations/": {
     "component": ["tests/tier2_component/stores/...", "tests/tier2_component/rls/..."],
-    "static": ["tests/tier0_static/schema_lint_test.go"]
+    "static": ["tests/tier0_static/schemas_test.go"]
   },
   "charts/lenny/": {
     "static": ["charts/lenny/tests/...", "tests/tier0_static/helm_lint_test.go"],

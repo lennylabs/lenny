@@ -120,15 +120,6 @@ exceptions:
   - section: "25.2"
     reason: non-normative
     justification: Architecture overview of the gateway and lenny-ops split; states no behavior of its own.
-  - section: "25.5"
-    reason: deferred
-    justification: The operational event stream is built in Wave 4 (Phase 13).
-  - section: "25.8"
-    reason: deferred
-    justification: Platform lifecycle management is built in Wave 4 (Phase 13).
-  - section: "25.13"
-    reason: deferred
-    justification: Bundled alerting-rule chart wiring and tier-aware defaults ship in Wave 4 and Wave 5.
   - section: "25.15"
     reason: non-normative
     justification: Failure-mode analysis table and a human total-outage recovery runbook.
