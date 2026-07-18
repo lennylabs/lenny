@@ -1348,6 +1348,48 @@ func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessio
 	return nil
 }
 
+// resolveDelegationCredentialQuery resolves the two parent-derived inputs
+// the §8.3 delegation-time credential-availability pre-check needs: the
+// parent session's owning user (the same value the §11.4 revocation gate
+// reads) and, for an inherit hop, the credential origin the check
+// constrains the eligible provider set to (the parent's stored ancestor
+// origin when present, else the parent's own id, matching the rule the
+// delegation service applies to a finalized inherit child).
+//
+// The store gates neither the pre-check nor an independent hop. An
+// inherit hop fails closed on a read error: an unresolvable origin must
+// not downgrade to an unconstrained (independent-equivalent) check
+// (code-best-practices deny-on-doubt). An independent or omitted hop
+// needs no origin and resolves the query user best-effort, exactly as
+// requireActiveDelegator does, so a store read never blocks it — the
+// §8.3 skip set is a deny hop and a nil checker alone. When no store is
+// wired the query carries an empty user and origin and the pre-check
+// still runs. spec: §8.3 line 470.
+func resolveDelegationCredentialQuery(ctx context.Context, deps Deps, tenant, parentSessionID string, mode lease.CredentialPropagation) (userID, originID string, err error) {
+	if deps.Store == nil {
+		return "", "", nil
+	}
+	if mode == lease.CredentialPropagationInherit {
+		parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
+		if err != nil {
+			return "", "", err
+		}
+		origin := parent.CredentialOriginSessionID
+		if origin == "" {
+			origin = parent.ID
+		}
+		return parent.UserID, origin, nil
+	}
+	// independent / omitted: best-effort parent-user resolution. A read
+	// error does not block the hop, since an independent check needs no
+	// origin and the §8.3 skip set excludes an unreadable parent.
+	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
+	if err != nil {
+		return "", "", nil
+	}
+	return parent.UserID, "", nil
+}
+
 // filterByEffectiveDelegationPolicy narrows a candidate agent set to
 // the runtimes every DelegationPolicy that governs the calling session
 // authorizes. Two policy layers govern a session:

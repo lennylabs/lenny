@@ -2052,47 +2052,34 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// check for an inherit or independent delegation before the
 		// child row is created, so an exhausted credential pool rejects
 		// with CREDENTIAL_POOL_EXHAUSTED before any warm pod is claimed.
-		// A deny hop needs no credential and is skipped; a nil checker
-		// skips (the minimal in-process gateway wires none), mirroring
-		// crossEnvInheritMismatch's nil-registry fall-through. The
-		// parent lookup supplies the query user for every mode and, for
-		// inherit, the origin session the check constrains the eligible
-		// provider set to (exactly as a finalized inherit child would
-		// be, per resolveCredentialPools). An independent hop leaves the
-		// origin empty so the check evaluates the child runtime
-		// supportedProviders against the tenant providerPools. The check
-		// claims no pod: it rejects before Delegate commits the child.
+		// The check is skipped only for a deny hop (which needs no
+		// credential) and when no checker is wired (the minimal
+		// in-process gateway), mirroring crossEnvInheritMismatch's
+		// nil-registry fall-through. Store availability does not gate the
+		// check: an independent hop evaluates the child runtime
+		// supportedProviders against the tenant providerPools with no
+		// origin, so it runs even when the parent cannot be read. The
+		// check claims no pod: it rejects before Delegate commits the
+		// child.
 		mode := lease.CredentialPropagation(in.CredentialPropagation)
-		if deps.CredAvailability != nil && deps.Store != nil &&
+		if deps.CredAvailability != nil &&
 			(mode == lease.CredentialPropagationInherit ||
 				mode == lease.CredentialPropagationIndependent ||
 				mode == "" /* §8.3 line 445: omitted defaults to independent */) {
-			parent, err := deps.Store.Get(ctx, tenant, in.ParentSessionID)
+			callerUserID, originID, err := resolveDelegationCredentialQuery(ctx, deps, tenant, in.ParentSessionID, mode)
 			if err != nil {
-				// Fail closed: an inherit hop whose parent origin cannot
-				// be resolved must not silently downgrade to an
-				// unconstrained (independent-equivalent) availability
-				// check, and no hop should be admitted on an unreadable
-				// parent. Credential handling denies on doubt
-				// (code-best-practices), so the lookup error propagates
-				// rather than admitting the delegation. spec: §8.3 line 470.
+				// Fail closed on an inherit hop whose parent origin cannot
+				// be resolved: an unresolvable origin must not silently
+				// downgrade to an unconstrained (independent-equivalent)
+				// availability check. Credential handling denies on doubt
+				// (code-best-practices). An independent or omitted hop
+				// never reaches this branch, so a store read cannot block
+				// it. spec: §8.3 line 470.
 				return mcp.ToolResult{}, err
-			}
-			originID := ""
-			if mode == lease.CredentialPropagationInherit {
-				// The child inherits the parent's credential origin: the
-				// stored ancestor origin when present, else the parent's
-				// own id (the origin the parent itself established). This
-				// is the same rule the delegation service applies when it
-				// constructs a finalized inherit child's origin.
-				originID = parent.CredentialOriginSessionID
-				if originID == "" {
-					originID = parent.ID
-				}
 			}
 			q := sessionserver.DelegationCredentialQuery{
 				TenantID:                  tenant,
-				UserID:                    parent.UserID,
+				UserID:                    callerUserID,
 				ChildRuntimeRef:           targetRef,
 				CredentialOriginSessionID: originID,
 			}

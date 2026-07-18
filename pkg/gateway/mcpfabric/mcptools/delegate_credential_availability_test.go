@@ -473,3 +473,92 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 		t.Error("a fail-closed inherit hop must not create a child session")
 	}
 }
+
+// spec: 8.3 (line 470) — an independent hop whose parent row cannot be read
+// still runs the pre-check rather than failing closed. The §8.3 skip set is a
+// deny hop and a nil checker alone, so a store error does not block an
+// independent hop (which needs no credential origin): the check runs and an
+// exhausted pool surfaces CREDENTIAL_POOL_EXHAUSTED. Against the pre-fix code,
+// which read the parent for every gated mode and propagated the lookup error,
+// this hop returned the raw store error and never reached the checker.
+func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T) {
+	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+	base := memstore.New()
+	runtimes := runtimestore.NewMemory()
+	wrapped := getErrStore{Store: base, errID: "sess_parent", err: errors.New("store unavailable")}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:            wrapped,
+		Executor:         executor.NewEchoExecutor(),
+		Runtimes:         runtimes,
+		CredAvailability: checker,
+		Delegation: delegation.NewService(wrapped, delegation.Options{
+			IDFunc: func() string { return "sess_child" },
+		}),
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_mcp" },
+		TenantID: "acme",
+	})
+	ctxbg := context.Background()
+	_ = runtimes.Create(ctxbg, runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	_ = base.Create(ctxbg, sessionstore.Session{
+		ID: "sess_parent", TenantID: "acme", UserID: "user_alice",
+		State:      session.StateRunning,
+		RuntimeRef: "child-agent", PoolRef: "pool-a", IsolationProfile: isolation.ProfileSandboxed,
+		CreatedAt: now, UpdatedAt: now,
+	})
+
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","credentialPropagation":"independent","task":{"input":[{"type":"text","inline":"do work"}]}}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "CREDENTIAL_POOL_EXHAUSTED" {
+		t.Fatalf("code = %v, want CREDENTIAL_POOL_EXHAUSTED (independent must run the check despite the parent-read error)", env["code"])
+	}
+	if len(checker.calls) != 1 {
+		t.Fatalf("checker calls = %d, want 1 (an independent hop is not blocked by a parent-read error)", len(checker.calls))
+	}
+	if got := checker.calls[0].CredentialOriginSessionID; got != "" {
+		t.Errorf("independent origin = %q, want empty", got)
+	}
+	if _, err := base.Get(ctxbg, "acme", "sess_child"); err == nil {
+		t.Error("an exhausted independent hop must not create a child session")
+	}
+}
+
+// spec: 8.3 (line 470) — the pre-check does not couple to store availability.
+// A wired checker with no session store still runs the gate: the §8.3 skip set
+// is a deny hop and a nil checker alone, and an independent hop needs no origin,
+// so an exhausted pool surfaces CREDENTIAL_POOL_EXHAUSTED even with a nil store.
+// Against the pre-fix code, whose gate condition required a non-nil store, a nil
+// store silently skipped the entire pre-check and admitted the delegation.
+func TestDelegateTaskNilStoreStillRunsCheck_spec_8_3(t *testing.T) {
+	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+	runtimes := runtimestore.NewMemory()
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:            nil,
+		Executor:         executor.NewEchoExecutor(),
+		Runtimes:         runtimes,
+		CredAvailability: checker,
+		Delegation: delegation.NewService(memstore.New(), delegation.Options{
+			IDFunc: func() string { return "sess_child" },
+		}),
+		Clock:    func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:   func() string { return "sess_mcp" },
+		TenantID: "acme",
+	})
+	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "child-agent", Type: runtimestore.TypeAgent})
+
+	resp := call(t, srv.Handler(), "lenny/delegate_task",
+		`{"parentSessionId":"sess_parent","target":"child-agent","poolRef":"pool-b","credentialPropagation":"independent","task":{"input":[{"type":"text","inline":"do work"}]}}`)
+	result, _ := resp["result"].(map[string]any)
+	env := readLennyErrorEnvelope(t, result)
+	if env["code"] != "CREDENTIAL_POOL_EXHAUSTED" {
+		t.Fatalf("code = %v, want CREDENTIAL_POOL_EXHAUSTED (a nil store must not skip the pre-check)", env["code"])
+	}
+	if len(checker.calls) != 1 {
+		t.Errorf("checker calls = %d, want 1 (a nil store must not skip the pre-check)", len(checker.calls))
+	}
+}
