@@ -312,7 +312,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-26 — §25.7 Path B runbook link resolution — §25.7
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.7.11, T-25.7.10
+- **findings:** T-25.7.11, T-25.7.10, T-25.7.12
 - **root spec gap:** The gateway health service links runbook slug `siem-delivery-failure` for AUDIT_SIEM_DELIVERY_DEGRADED, but no such runbook is bundled, so Path B returns RUNBOOK_NOT_FOUND; the spec permits three resolutions and mandates none.
 - **proposal scope:** Choose one: author the runbook, drop the mapping entry, or repoint to the existing audit-pipeline-degraded runbook; then enforce the whole-map convention test.
 - **severity:** High
@@ -360,7 +360,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-32 — Served OpenAPI/MCP metadata vs spec (response schemas, error taxonomy, tool naming) — §25.12/§25.4/§15.1
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.4.21, T-25.12.16
+- **findings:** T-25.4.21, T-25.12.16, T-25.12.18
 - **root spec gap:** The served OpenAPI document omits response-body schemas for the operability surface and the error-envelope taxonomy is contradictory across sections (TRANSIENT|PERMANENT|POLICY|AUTH vs UPSTREAM vs the shared §15.1 enum); separately, generated MCP tool names use `admin.{action}_{noun}` for most tools while §25.12 documents only `lenny_{domain}_{action}`.
 - **proposal scope:** Reconcile the error taxonomy and decide the response-body schema source for the operability routes; decide whether the generator emits `lenny_{domain}_{action}` everywhere or §25.12 documents two naming families, then update generator/tests.
 - **severity:** Medium
@@ -392,7 +392,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 ### C-36 — §25 alerting: WarmPoolReplenishmentSlow thresholds and alert payload labels — §25.13/§16.5/§25.17
 - **status:** open
 - **assigned:** (unassigned)
-- **findings:** T-25.13.9, T-25.17.4
+- **findings:** T-25.13.9, T-25.17.4, T-25.17.5
 - **root spec gap:** §16.5 and §25.13 define WarmPoolReplenishmentSlow with incompatible semantics (fixed 2× multiplier vs tier-dependent `ratioBelow`), and `alert_fired`/`alert_resolved` never carry the documented `labels` field, with the spec's own WarmPoolExhausted example needing firing-series labels no static `Rule.Labels` provides.
 - **proposal scope:** Pick the authoritative WarmPoolReplenishmentSlow definition and align chart/values; decide the `labels` field intent (merge static labels vs extend the ExprEvaluator/Alert contract to surface matched-series labels) and whether the contract change is in scope now.
 - **severity:** Medium
@@ -447,6 +447,14 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **proposal scope:** Reconcile the §8.2 delegate-path allocation timing: either move the warm-pod claim + credential-lease assignment inline to step 5 (making 0044's point-in-time pre-check a true pre-allocation fail-fast and enabling the post-claim assignment-race / pod-release / one-winner-of-N outcome), or amend the spec to define delegation-time allocation as deferred to session-start. Turns 0044's gate into an actual inline pod claim where step 5 is chosen.
 - **severity:** Medium
 - **relates to:** C-40 (landed 0044, the delegation-time availability pre-check this builds on); T-ADV.14 (the re-filed one-winner/N-1 + pod-release race coverage, owned by the ADV battery per the skip-ADV policy — C-42 unblocks it but does not own it); C-01/C-22 (pod/resume work to coordinate the pod-claim path with).
+
+### C-43 — §25.4 canonical RBAC block stale relative to the deployed chart — §25.4/charts
+- **status:** open
+- **assigned:** (unassigned)
+- **findings:** T-25.4.35
+- **root spec gap:** The §25.4 canonical RBAC yaml block in `spec/25_agent-operability.md` omits three rules the deployed `charts/lenny/templates/ops-rbac.yaml` actually grants `lenny-ops-sa`: `secrets` get/list/watch/delete, `cert-manager.io` `certificates` get/list/watch/patch, and `endpoints` get/list/watch. The spec's RBAC block and the chart have drifted; the spec is the stale side.
+- **proposal scope:** Reconcile the §25.4 canonical RBAC block with the deployed chart — either extend the spec block to include the three chart-granted rules (with the justification for each grant), or narrow the chart if a grant is not warranted. Self-contained spec-vs-chart reconciliation, no code beyond the chart/spec.
+- **severity:** Low
 
 ---
 
