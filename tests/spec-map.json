@@ -3511,7 +3511,9 @@
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta",
         "pkg/ops/upgradeservice/upgradeservice_test.go::TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA",
         "tests/tier0_static/upgrade_channel_key_render_test.go::TestUpgradeChannelKeyDisablesReleaseChannelURL",
-        "tests/tier11_docs/agent_operability_chart_paths_test.go::TestSpecAgentOperabilityChartPathsResolve"
+        "tests/tier11_docs/agent_operability_chart_paths_test.go::TestSpecAgentOperabilityChartPathsResolve",
+        "tests/tier6_e2e_cloud/platform_lifecycle_test.go::TestCloudPlatformVersionAggregation",
+        "tests/tier6_e2e_cloud/platform_lifecycle_test.go::TestCloudCertManagerHealthObservation"
       ],
       "packages": [
         "pkg/upgrade",

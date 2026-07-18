@@ -209,3 +209,30 @@ capabilities:
       gke: planned
       eks: planned
       aks: planned
+
+  # §25.8 version aggregation: GET /v1/admin/platform/version/full
+  # against the cloud-deployed lenny-ops, confirming the report
+  # carries the compiled-in "ops" component version. A read-only,
+  # no-op aggregation call — it starts no upgrade. Exercised by
+  # TestCloudPlatformVersionAggregation; no provider run has
+  # validated it live yet.
+  - name: platform_upgrade
+    spec_section: "25.8"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  # §25.8 cert-manager integration: GET /v1/admin/ops/health against
+  # the cloud-deployed lenny-ops, confirming the cert_manager
+  # self-health check reports one of the three documented states
+  # (healthy, degraded, unhealthy). A read-only observation of the
+  # check the CertExpiryImminent alert keys off; no certificate is
+  # rotated. Exercised by TestCloudCertManagerHealthObservation; no
+  # provider run has validated it live yet.
+  - name: cert_manager_lifecycle
+    spec_section: "25.8"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
