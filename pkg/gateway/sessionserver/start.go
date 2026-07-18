@@ -1269,6 +1269,72 @@ func (s *Server) runtimeIntegrationLevel(ctx context.Context, runtimeName string
 	return string(rt.IntegrationLevel)
 }
 
+// DelegationCredentialQuery describes the prospective delegated child
+// whose credential availability the §8.3 delegation-time pre-check
+// evaluates before the delegation is admitted. CredentialOriginSessionID
+// is the parent's resolved origin for an inherit hop and empty for an
+// independent hop, so the checker constrains the eligible provider set to
+// the origin pool exactly as a finalized inherit child would be.
+// spec: §8.3
+type DelegationCredentialQuery struct {
+	TenantID                  string
+	UserID                    string
+	ChildRuntimeRef           string
+	CredentialOriginSessionID string
+}
+
+// ErrDelegationCredentialUnavailable is the typed exhaustion result the
+// §8.3 delegation-time pre-check returns when no credential is assignable
+// for the prospective delegated child. The delegate handler branches on
+// it with errors.Is rather than a string match and maps it to the
+// CREDENTIAL_POOL_EXHAUSTED wire code.
+// spec: §8.3 line 470; §4.9
+var ErrDelegationCredentialUnavailable = errors.New("delegation credential unavailable")
+
+// ErrDelegationUserCredentialNotFound is the typed result the §8.3
+// delegation-time pre-check returns when the tenant credentialPolicy is
+// user-only for every provider in the eligible set and no pre-registered
+// user credential exists. It mirrors the distinct outcome session start
+// draws for the identical §4.9 engine error (credrouter.ErrUserCredentialNotFound),
+// so the delegate handler can surface the same USER_CREDENTIAL_NOT_FOUND
+// code rather than an opaque internal error.
+// spec: §8.3 line 470; §4.9
+var ErrDelegationUserCredentialNotFound = errors.New("delegation user credential not found")
+
+// CheckDelegationCredentialAvailability runs the §8.3 delegation-time
+// pre-claim credential-availability check for a prospective delegated
+// child. It reuses resolveCredentialPools (the §4.9 engine, including the
+// inherit origin-pool constraint) against a synthetic child row and maps
+// the engine's two typed pre-claim outcomes to sentinels: an exhausted
+// pool (credrouter.ErrNoCredentialAvailable) to
+// ErrDelegationCredentialUnavailable, and a user-only policy with no
+// registered credential (credrouter.ErrUserCredentialNotFound) to
+// ErrDelegationUserCredentialNotFound. It claims no pod and reserves no
+// lease: this is the point-in-time read the spec requires before pod
+// allocation. The synthetic row leaves ID empty, so the origin-constrained
+// branch in resolveCredentialPools selects only when the query set an
+// origin (inherit constrained; independent unconstrained).
+// spec: §8.3 line 470; §4.9
+func (s *Server) CheckDelegationCredentialAvailability(ctx context.Context, q DelegationCredentialQuery) error {
+	row := sessionstore.Session{
+		TenantID:                  q.TenantID,
+		UserID:                    q.UserID,
+		RuntimeRef:                q.ChildRuntimeRef,
+		CredentialOriginSessionID: q.CredentialOriginSessionID,
+	}
+	if _, _, _, err := s.resolveCredentialPools(ctx, row); err != nil {
+		switch {
+		case errors.Is(err, credrouter.ErrNoCredentialAvailable):
+			return ErrDelegationCredentialUnavailable
+		case errors.Is(err, credrouter.ErrUserCredentialNotFound):
+			return ErrDelegationUserCredentialNotFound
+		default:
+			return err
+		}
+	}
+	return nil
+}
+
 // resolveCredentialPools runs the §4.9 pre-claim credential
 // availability check for a session and returns the provider→pool map the
 // binder mints pool leases from plus the list of providers that resolved
