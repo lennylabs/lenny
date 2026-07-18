@@ -13,11 +13,11 @@ import (
 )
 
 // internalTrackingIDPattern matches an internal BUILD-GAPS.md finding id
-// (e.g. "F-25.4.11") or TEST-GAPS.md finding id (e.g. "T-25.4.42") of the
-// kind that must never appear in durable test code. These trackers are
-// renumbered and rewritten as findings open and close; a citation embedded
-// in test comments goes stale silently and leaks internal tracking
-// structure into code meant to outlive it.
+// (e.g. "F-<section>.<n>") or TEST-GAPS.md finding id (e.g.
+// "T-<section>.<n>.<n>") of the kind that must never appear in durable test
+// code. These trackers are renumbered and rewritten as findings open and
+// close; a citation embedded in test comments goes stale silently and
+// leaks internal tracking structure into code meant to outlive it.
 var internalTrackingIDPattern = regexp.MustCompile(`\b[FT]-\d+(?:\.\d+){1,2}\b`)
 
 // TestOpsRBACHelmTestCitesOnlyDurableSpecSections asserts that
