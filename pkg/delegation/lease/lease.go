@@ -331,3 +331,97 @@ func EffectiveApprovalMode(declared ApprovalMode) ApprovalMode {
 		return ApprovalModePolicy
 	}
 }
+
+// CredentialPropagation is the §8.3 closed enum on a delegation lease
+// that governs how a child session obtains LLM provider credentials.
+// The empty string and the three documented values are the only
+// admissible inputs; any other string is a registration-time error.
+// The empty string resolves to CredentialPropagationIndependent, the
+// §8.3 default when the field is omitted from a delegate_task call.
+//
+// spec: §8.3.
+type CredentialPropagation string
+
+const (
+	// CredentialPropagationInherit assigns the child a credential from
+	// the same pool/source as the parent. Across an environment
+	// boundary the gateway first runs the §8.3 provider-intersection
+	// compatibility check against the child runtime's supportedProviders.
+	//
+	// spec: §8.3.
+	CredentialPropagationInherit CredentialPropagation = "inherit"
+
+	// CredentialPropagationIndependent gives the child its own
+	// credential lease based on the tenant's credentialPolicy and the
+	// child runtime's supportedProviders. This is the §8.3 default when
+	// credentialPropagation is omitted from a delegate_task call.
+	//
+	// spec: §8.3.
+	CredentialPropagationIndependent CredentialPropagation = "independent"
+
+	// CredentialPropagationDeny gives the child no LLM credentials, for
+	// runtimes that do not need LLM access (for example a pure
+	// file-processing tool).
+	//
+	// spec: §8.3.
+	CredentialPropagationDeny CredentialPropagation = "deny"
+)
+
+// ValidateCredentialPropagation reports whether m is one of the §8.3
+// closed enum values (or the empty string, which resolves to
+// CredentialPropagationIndependent at evaluation time). Returns a
+// typed error so the admin ingress and the §8.5 lenny/delegate_task
+// handler can surface INVALID_LEASE_FIELD before any side effects.
+//
+// spec: §8.3.
+func ValidateCredentialPropagation(m CredentialPropagation) error {
+	switch m {
+	case "", CredentialPropagationInherit, CredentialPropagationIndependent, CredentialPropagationDeny:
+		return nil
+	}
+	return &InvalidCredentialPropagationError{Value: string(m)}
+}
+
+// InvalidCredentialPropagationError is returned by
+// ValidateCredentialPropagation when the input is outside the §8.3
+// closed enum. The gateway maps it to INVALID_LEASE_FIELD at the admin
+// / §8.5 lenny/delegate_task ingress.
+type InvalidCredentialPropagationError struct {
+	Value string
+}
+
+func (e *InvalidCredentialPropagationError) Error() string {
+	return fmt.Sprintf("delegation lease: credentialPropagation %q is not one of %q, %q, %q",
+		e.Value, CredentialPropagationInherit, CredentialPropagationIndependent, CredentialPropagationDeny)
+}
+
+// IntersectProviders returns the order-stable (a-ordered) intersection
+// of two provider lists. It is the §8.3 provider-intersection
+// primitive: the cross-environment credentialPropagation: inherit
+// compatibility check computes the intersection of the parent
+// credential pool's providers with the child runtime's
+// supportedProviders, and the independent-mode pre-claim check
+// intersects the child runtime's supportedProviders with the tenant
+// credentialPolicy's provider pools. Elements of a are emitted at most
+// once, in a's order, when they also appear in b.
+//
+// spec: §8.3.
+func IntersectProviders(a, b []string) []string {
+	inB := make(map[string]struct{}, len(b))
+	for _, p := range b {
+		inB[p] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(a))
+	out := make([]string, 0, len(a))
+	for _, p := range a {
+		if _, ok := inB[p]; !ok {
+			continue
+		}
+		if _, dup := seen[p]; dup {
+			continue
+		}
+		seen[p] = struct{}{}
+		out = append(out, p)
+	}
+	return out
+}

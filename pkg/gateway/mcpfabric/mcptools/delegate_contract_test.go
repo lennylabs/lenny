@@ -76,6 +76,54 @@ func TestDelegateTaskSchemaMatchesSection82Contract_spec_8_2(t *testing.T) {
 	}
 }
 
+// TestDelegateTaskSchemaAdvertisesCredentialPropagation asserts the
+// advertised inputSchema carries the §8.3 credentialPropagation lease
+// field as a closed enum (inherit, independent, deny), so a client can
+// discover the propagation mode from the tool contract. spec: §8.3.
+func TestDelegateTaskSchemaAdvertisesCredentialPropagation_spec_8_3(t *testing.T) {
+	srv, _ := newMCPForDelegate(t, newRecordingExecutor(), nil)
+	req := httptest.NewRequest(http.MethodPost, "/mcp",
+		bytes.NewReader([]byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	var resp map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode tools/list: %v; body=%s", err, rr.Body.String())
+	}
+	result, _ := resp["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	var schema map[string]any
+	for _, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		if tool["name"] == "lenny/delegate_task" {
+			schema, _ = tool["inputSchema"].(map[string]any)
+		}
+	}
+	if schema == nil {
+		t.Fatal("delegate_task tool or its inputSchema not found")
+	}
+	props, _ := schema["properties"].(map[string]any)
+	cp, ok := props["credentialPropagation"].(map[string]any)
+	if !ok {
+		t.Fatal("delegate_task inputSchema missing §8.3 field credentialPropagation")
+	}
+	enumRaw, _ := cp["enum"].([]any)
+	got := map[string]bool{}
+	for _, e := range enumRaw {
+		if s, ok := e.(string); ok {
+			got[s] = true
+		}
+	}
+	for _, want := range []string{"inherit", "independent", "deny"} {
+		if !got[want] {
+			t.Errorf("credentialPropagation enum missing %q; got %v", want, enumRaw)
+		}
+	}
+	if len(enumRaw) != 3 {
+		t.Errorf("credentialPropagation enum = %v, want exactly the closed §8.3 set", enumRaw)
+	}
+}
+
 // TestDelegateTaskRejectsMissingTarget asserts an omitted opaque `target`
 // is rejected with VALIDATION_ERROR before any side effect. spec: §8.2
 // line 13. F-8.2.1.

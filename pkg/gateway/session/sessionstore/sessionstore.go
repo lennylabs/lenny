@@ -157,6 +157,21 @@ type Session struct {
 	// line 101. F-8.9.7 / F-8.9.8.
 	RootSessionID string
 
+	// CredentialOriginSessionID identifies the session whose credential
+	// pool this session's `inherit` hops draw from — the origin pool the
+	// §8.3 cross-environment provider-compatibility check compares against
+	// the target runtime's supportedProviders. The delegation Service
+	// stamps it at child-row creation: an `inherit` child copies its
+	// parent's origin (tracing the same origin pool through contiguous
+	// `inherit` hops back to the last `independent` break or the root),
+	// while an `independent`, `deny`, root, or top-level session is its
+	// own origin. A read-path value equal to the row's own ID (or empty,
+	// which collapses to the row's own ID) marks a self-origin, so a
+	// session inherited iff this value is a non-empty ancestor id.
+	// spec: §8.3 line 472 (origin-pool forwarding); line 488 (independent
+	// establishes a new origin); line 474.
+	CredentialOriginSessionID string
+
 	// DelegationDepth is the session's depth in its delegation tree: 0
 	// for a root (standalone) session, parent.DelegationDepth+1 for a
 	// delegated child. The §8.2 delegation Service stamps it on every
