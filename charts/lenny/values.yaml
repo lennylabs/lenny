@@ -670,12 +670,13 @@ minio:
     # bundle that issued the MinIO serving certificate, for a self-managed
     # MinIO whose CA is outside the system trust store (§12.5 "Self-managed
     # deployments use MinIO"). When set, the chart mounts ca.crt into the
-    # gateway and the bucket-lifecycle Job and points SSL_CERT_DIR at it so
-    # the Go MinIO client (gateway) and mc (Job) verify the MinIO server
-    # certificate against this CA in addition to the system roots. Leave
-    # empty when the MinIO certificate chains to a CA the cluster already
-    # trusts (a public CA, or a cert-manager CA injected into the node
-    # trust store). Mirrors ops.tls.caBundleConfigMap.
+    # gateway, the bucket-lifecycle Job, the on-demand backup Job, and the
+    # restore-test CronJob, and points SSL_CERT_DIR at it so the Go MinIO
+    # client (gateway, lenny-backup image) and mc (bucket-lifecycle Job)
+    # verify the MinIO server certificate against this CA in addition to
+    # the system roots. Leave empty when the MinIO certificate chains to a
+    # CA the cluster already trusts (a public CA, or a cert-manager CA
+    # injected into the node trust store). Mirrors ops.tls.caBundleConfigMap.
     caBundleConfigMap: ""
   # deploy gates the §17.9.5 in-cluster MinIO workload: a distributed,
   # erasure-coded StatefulSet (≥4 nodes auto-enables erasure coding per

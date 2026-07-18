@@ -150,7 +150,7 @@ func (s *Service) ActiveTier() string {
 	return s.activeTier
 }
 
-// MemoryTierWarning returns the §25.4 line 2209 replica-local degradation
+// MemoryTierWarning returns the §25.4 line 2215 replica-local degradation
 // warning when the configured ops.locks.memoryTier is "always", or the
 // empty string otherwise. The HTTP layer attaches it to a granted lock
 // whose lockStore is memory.

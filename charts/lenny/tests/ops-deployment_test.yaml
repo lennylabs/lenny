@@ -557,6 +557,43 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
+  # spec: charts/lenny/templates/ops-deployment.yaml header comment — the
+  # lenny-ops binary reads LENNY_POSTGRES_DSN/LENNY_REDIS_URL
+  # (cmd/lenny-ops/flags.go), but unlike controller-deployment.yaml
+  # (postgres.dsn) and gateway-deployment.yaml (postgres.dsn, redis.url)
+  # this Deployment renders no values path that sets them. Setting
+  # postgres.dsn and redis.url does not add either env var here, even
+  # though the same values populate the lenny-datastore-conn Secret that
+  # the controller and gateway Deployments read from.
+  - it: renders no LENNY_POSTGRES_DSN or LENNY_REDIS_URL env even when postgres.dsn and redis.url are set
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - equal:
+          path: spec.template.spec.containers[0].env
+          value:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
   # spec: §25.4 line 903 / §25.5 line 2598 / §17.8.4 — F-17.8.1. The base
   # values render the Tier 1 self-monitor cadence (10s) and the Tier 1
   # ops:events:stream MAXLEN (10,000) as lenny-ops flags.

@@ -517,9 +517,10 @@ func cmdRestore(ctx context.Context, c *ctl.Client, args []string, stdout, stder
 // cmdMCPManagement implements the §24.15 mcp-management group: a thin
 // JSON-RPC client for the lenny-ops management MCP server mounted at
 // /mcp/management. `mcp-management tools` issues tools/list; `mcp-management
-// call <tool> [--params <json>]` issues tools/call. The raw JSON-RPC
+// call <tool> [--args <json>]` issues tools/call. The raw JSON-RPC
 // envelope is printed so operators can script against the §25.12 tool
-// surface for local testing. spec: §24.15 line 193; §25.12.
+// surface for local testing. spec: §24.15 line 193; §25.12; §25.14 line
+// 4984 (--args flag name).
 func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
 		fmt.Fprintln(stderr, "lenny-ctl: mcp-management requires a subcommand (tools|call)")
@@ -540,17 +541,19 @@ func cmdMCPManagement(ctx context.Context, c *ctl.Client, args []string, stdout,
 		tool := args[1]
 		fs := flag.NewFlagSet("mcp-management call", flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		params := fs.String("params", "", "tool arguments as a JSON object")
+		// spec: §25.14 line 4984 documents --args as the tool-arguments flag
+		// for `mcp-management tools call`.
+		toolArgs := fs.String("args", "", "tool arguments as a JSON object")
 		if err := fs.Parse(args[2:]); err != nil {
 			return 2
 		}
 		arguments := json.RawMessage("{}")
-		if strings.TrimSpace(*params) != "" {
-			if !json.Valid([]byte(*params)) {
-				fmt.Fprintln(stderr, "lenny-ctl: --params must be a JSON object")
+		if strings.TrimSpace(*toolArgs) != "" {
+			if !json.Valid([]byte(*toolArgs)) {
+				fmt.Fprintln(stderr, "lenny-ctl: --args must be a JSON object")
 				return 2
 			}
-			arguments = json.RawMessage(*params)
+			arguments = json.RawMessage(*toolArgs)
 		}
 		req := map[string]any{
 			"jsonrpc": "2.0", "id": 1, "method": "tools/call",

@@ -276,6 +276,48 @@ func TestServiceInvalidFilter_spec_25_5(t *testing.T) {
 	}
 }
 
+// spec: §25.5 error-codes table ("`INVALID_EVENT_FILTER` | `PERMANENT` |
+// 400 | Unrecognized event type or severity in filter") and §16.6
+// ("Every event is a CloudEvents v1.0.2 ... record. The CloudEvents
+// `type` attribute is `dev.lenny.<short_name>` where `<short_name>` is
+// the identifier listed below ... the catalog below is the canonical
+// enumeration."). An unrecognized Types entry on Create or Update must
+// be rejected the same way an unrecognized Severity entry already is; a
+// catalog entry (with or without the CloudEvents prefix) must still be
+// accepted.
+func TestServiceInvalidFilterType_spec_25_5(t *testing.T) {
+	svc, _ := newService()
+
+	if _, err := svc.Create(context.Background(), es.CreateRequest{
+		CallbackURL: "https://acme.example/hook", Types: []string{"dev.lenny.not_a_real_event_type"},
+	}, platformAdmin); es.CodeOf(err) != es.ErrCodeInvalidFilter {
+		t.Errorf("bad-type Create err = %v, want INVALID_EVENT_FILTER", err)
+	}
+
+	rev, err := svc.Create(context.Background(), es.CreateRequest{
+		CallbackURL: "https://acme.example/hook", Types: []string{"dev.lenny.alert_fired", "pool_state_changed"},
+	}, platformAdmin)
+	if err != nil {
+		t.Fatalf("Create with catalog types: %v", err)
+	}
+
+	badTypes := []string{"not_a_real_event_type"}
+	if _, err := svc.Update(context.Background(), rev.ID, es.UpdateRequest{Types: &badTypes}, platformAdmin); es.CodeOf(err) != es.ErrCodeInvalidFilter {
+		t.Errorf("bad-type Update err = %v, want INVALID_EVENT_FILTER", err)
+	}
+
+	// The rejected Update left the previously stored (valid) filter
+	// untouched.
+	unchanged, err := svc.Get(context.Background(), rev.ID, platformAdmin)
+	if err != nil {
+		t.Fatalf("Get after rejected update: %v", err)
+	}
+	wantTypes := []string{"dev.lenny.alert_fired", "pool_state_changed"}
+	if !reflect.DeepEqual(unchanged.Types, wantTypes) {
+		t.Errorf("rejected update mutated Types: got %v, want %v", unchanged.Types, wantTypes)
+	}
+}
+
 // spec: §25.5 line 2702 — secret entropy + fingerprint helpers.
 func TestSecretHelpers_spec_25_5(t *testing.T) {
 	a, err := es.GenerateSecret()
