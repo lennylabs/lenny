@@ -795,6 +795,53 @@ func TestSessionStoreContract(t *testing.T) {
 			t.Errorf("CredentialOriginSessionID = %q, want empty", got.CredentialOriginSessionID)
 		}
 	})
+
+	// spec: 8.3 (deny marker persistence) — credential_deny records that the
+	// delegate hop that created this child set credentialPropagation: deny, so
+	// the child receives no LLM credentials. A deny child is self-origin,
+	// byte-identical to an independent child, so this boolean is the only signal
+	// the row carries. The bit must survive a Postgres reload or the
+	// finalize-time §4.9 engine would re-credential a deny child after a
+	// restart.
+	t.Run("credential_deny round-trip through pgstore", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+			CredentialDeny: true,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if !got.CredentialDeny {
+			t.Errorf("CredentialDeny = false, want true")
+		}
+	})
+
+	// spec: 8.3 (deny marker persistence) — the column is BOOLEAN NOT NULL
+	// DEFAULT false (migration 0179), so a session created without the marker
+	// reads back false. A non-deny child (inherit, independent, root, or
+	// top-level) must never read as deny, or it would be wrongly denied
+	// credentials at finalize.
+	t.Run("credential_deny absent defaults false", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateRunning, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.CredentialDeny {
+			t.Errorf("CredentialDeny = true, want false")
+		}
+	})
 }
 
 // insertMessage writes one session_messages row under the tenant

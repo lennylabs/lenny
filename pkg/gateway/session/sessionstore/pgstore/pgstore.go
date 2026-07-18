@@ -129,7 +129,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	env, request_envelope,
 	legal_hold_set_by, legal_hold_set_at, legal_hold_note,
 	last_agent_activity_at,
-	COALESCE(credential_origin_session_id::text, '')`
+	COALESCE(credential_origin_session_id::text, ''),
+	credential_deny`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -194,7 +195,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		delegation_lease,
 		env, request_envelope,
 		last_agent_activity_at,
-		credential_origin_session_id
+		credential_origin_session_id,
+		credential_deny
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -232,7 +234,12 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		-- §8.3 line 472 credential_origin_session_id: empty string
 		-- collapses to SQL NULL (the read path COALESCEs it back to the
 		-- row's own id), matching the parent_session_id NULLIF convention.
-		NULLIF($57, '')::uuid
+		NULLIF($57, '')::uuid,
+		-- §8.3 line 443 credential_deny: the deny bit that self-origin
+		-- cannot express (an independent child and a deny child are both
+		-- self-origin). A plain BOOLEAN NOT NULL DEFAULT false; invariant
+		-- after creation, so it is absent from updateSQL.
+		$58
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -318,7 +325,15 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// origin. Empty falls back to the row's own id via the
 			// NULLIF/COALESCE convention. Invariant after creation, so it is
 			// absent from updateSQL.
-			sess.CredentialOriginSessionID)
+			sess.CredentialOriginSessionID,
+			// $58 — §8.3 line 443 credential_deny; the deny marker the
+			// delegation Service stamps at child-row creation so the
+			// finalize-time §4.9 engine fails a deny child closed at
+			// credential assignment. A deny child is self-origin
+			// (identical to an independent child), so this bit is the
+			// only signal. Invariant after creation, so it is absent
+			// from updateSQL.
+			sess.CredentialDeny)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -1082,6 +1097,12 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// scans as empty, matching the memstore convention. The finalize
 		// path treats an empty or self value as "not inherited".
 		&s.CredentialOriginSessionID,
+		// §8.3 line 443 — credential_deny from migration 0179. A plain
+		// BOOLEAN NOT NULL, so it scans directly; true iff the delegate
+		// hop set credentialPropagation: deny. The finalize-time §4.9
+		// engine fails a deny child (and an inherit hop whose origin row
+		// is deny) closed at credential assignment.
+		&s.CredentialDeny,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}
