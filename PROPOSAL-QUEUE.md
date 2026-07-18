@@ -204,7 +204,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-16 — Warm-pod PDB disruption mechanism — §4.6.1
-- **status:** in-review:0043
+- **status:** landed:0043
 - **assigned:** proposal-B
 - **findings:** T-4.6.5
 - **root spec gap:** A `maxUnavailable: 1` PDB requires the owning controller to expose a `/scale` subresource to resolve expectedPods, but Sandbox has only a status subresource, so every warm-pod PDB sits at `disruptionsAllowed: 0` and deadlocks node drains.
