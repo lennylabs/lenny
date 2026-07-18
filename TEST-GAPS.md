@@ -49,7 +49,7 @@ This file was generated on 2026-06-03 (133 units: the 132 per-subsection, per-do
 
 ## Summary counts
 
-Across 132 audited units: **1786 findings** — 515 High, 790 Medium, 327 Low, 154 Info. 386 are resolved and 1400 remain open.
+Across 132 audited units: **1789 findings** — 515 High, 790 Medium, 330 Low, 154 Info. 391 are resolved and 1398 remain open.
 
 ## Table of contents
 
