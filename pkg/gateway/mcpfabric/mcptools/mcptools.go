@@ -295,6 +295,20 @@ type SessionCreator interface {
 	CreateSessionService(ctx context.Context, tenantID string, req sessionserver.CreateSessionRequest) (sessionserver.CreateSessionResponse, *sessionserver.ServiceError)
 }
 
+// CredentialAvailabilityChecker runs the §8.3 delegation-time pre-claim
+// credential-availability check for a prospective delegated child before a
+// warm pod is allocated. *sessionserver.Server implements it (modeled on
+// the SessionCreator precedent above, so mcptools depends on the interface
+// rather than importing the concrete server and creating a cycle). The
+// check reuses the §4.9 pre-claim engine and returns a typed sentinel the
+// delegate handler maps to CREDENTIAL_POOL_EXHAUSTED / USER_CREDENTIAL_NOT_FOUND.
+// It claims no pod and reserves no lease.
+//
+// spec: §8.3 line 470; §4.9
+type CredentialAvailabilityChecker interface {
+	CheckDelegationCredentialAvailability(ctx context.Context, q sessionserver.DelegationCredentialQuery) error
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
@@ -318,6 +332,15 @@ type Deps struct {
 	// response shaping. spec: §15.2 lines 1284-1306; §15.2.1 rule 1 line
 	// 1380. F-15.2.3.
 	SessionService SessionService
+
+	// CredAvailability runs the §8.3 delegation-time pre-claim
+	// credential-availability check before lenny/delegate_task allocates a
+	// warm pod. When set, the delegate handler gates inherit / independent
+	// delegations on it and rejects with CREDENTIAL_POOL_EXHAUSTED before
+	// pod allocation. Optional — a nil checker skips the gate (the minimal
+	// in-process gateway and the mcptools unit suite leave it nil).
+	// Production wires *sessionserver.Server. spec: §8.3 line 470; §4.9.
+	CredAvailability CredentialAvailabilityChecker
 
 	// Executor routes messages to runtimes.
 	Executor executor.Executor
