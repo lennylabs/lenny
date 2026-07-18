@@ -2574,10 +2574,16 @@
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
-        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ConfirmEmitsConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_DryRunNoConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailureNoConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_GatewayErrorNoConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7"
       ],
       "packages": [
-        "pkg/observability/audit"
+        "pkg/observability/audit",
+        "pkg/ops/configservice"
       ],
       "blocked_until_phase": "14",
       "notes": "§25-mandated audit events: agent action attribution, runbook execution, policy override. pkg/observability/audit/catalog.go is the typed §16.7 audit-event-type catalog cross-checked for completeness against the §16.7 enumeration. Phase 14 wires the emitter."
