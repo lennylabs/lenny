@@ -4,10 +4,13 @@
 
 // Tier-8 chaos test for §4.6.1 PDB-mediated warm-pod eviction. The
 // §4.6.1 "Disruption protection for agent pods" contract states that the
-// per-pool PodDisruptionBudget uses maxUnavailable: 1 so a voluntary
+// per-pool PodDisruptionBudget uses an integer minAvailable of minWarm-1,
+// evaluated from the count of selected healthy idle pods with no /scale
+// subresource. At the steady state of exactly minWarm idle pods
+// (disruptionsAllowed == minWarm - (minWarm-1) == 1) a voluntary
 // disruption (node drain, cluster upgrade) evicts warm idle pods one at a
-// time, and that the WarmPoolController proactively creates a replacement
-// pod immediately to restore minWarm. The tier-2 unit test asserts the PDB
+// time, and the WarmPoolController proactively creates a replacement pod
+// immediately to restore minWarm. The tier-2 unit test asserts the PDB
 // object's fields; this test exercises the enforcement path with a real
 // eviction against the live Kind warm pool.
 
@@ -17,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -74,9 +78,9 @@ func evictPod(t *testing.T, c *kind.Cluster, ns, pod string) (evictionResult, st
 // idleReadyPodsByPool returns, per warm pool, the names of the managed
 // agent pods that carry the lenny.dev/state: idle label and are Ready.
 // These are exactly the pods the §4.6.1 PDB selects
-// (lenny.dev/pool + lenny.dev/state: idle), so a pool with two or more
-// entries has enough idle inventory to exercise the maxUnavailable: 1
-// one-at-a-time enforcement.
+// (lenny.dev/pool + lenny.dev/state: idle), so a pool whose idle count
+// equals its minWarm (>= 2) starts at disruptionsAllowed == 1 and can
+// exercise the minAvailable = minWarm-1 one-at-a-time enforcement.
 func idleReadyPodsByPool(t *testing.T, c *kind.Cluster) map[string][]string {
 	t.Helper()
 	out, err := c.KubectlOut(
@@ -104,89 +108,120 @@ func idleReadyPodsByPool(t *testing.T, c *kind.Cluster) map[string][]string {
 	return byPool
 }
 
-// pdbMaxUnavailable returns the .spec.maxUnavailable of the named
+// warmPDBMinAvailable returns the .spec.minAvailable of the named warm-pod
 // PodDisruptionBudget in the agent namespace, plus whether the PDB exists.
-func pdbMaxUnavailable(t *testing.T, c *kind.Cluster, name string) (string, bool) {
+// The value is the integer minAvailable the §4.6.1 mechanism sets; an
+// absent PDB (a pool below minWarm 2) returns ok == false.
+func warmPDBMinAvailable(t *testing.T, c *kind.Cluster, name string) (string, bool) {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
 		"-n", agentNamespace, "get", "pdb", name,
-		"-o", "jsonpath={.spec.maxUnavailable}",
+		"-o", "jsonpath={.spec.minAvailable}",
 	)
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(out), true
+	v := strings.TrimSpace(out)
+	if v == "" {
+		return "", false
+	}
+	return v, true
+}
+
+// poolMinWarm returns the .spec.minWarm of the SandboxWarmPool CR whose
+// name matches the pool label (reconcilePDB sets LabelPool to pool.Name,
+// so the pool label value is the CR name), plus whether the read
+// succeeded. minWarm is the steady-state idle target the PDB's
+// minAvailable is derived from (minAvailable = minWarm-1).
+func poolMinWarm(t *testing.T, c *kind.Cluster, pool string) (int, bool) {
+	t.Helper()
+	out, err := c.KubectlOut(
+		t,
+		"-n", agentNamespace, "get", "sandboxwarmpool", pool,
+		"-o", "jsonpath={.spec.minWarm}",
+	)
+	if err != nil {
+		return 0, false
+	}
+	n, convErr := strconv.Atoi(strings.TrimSpace(out))
+	if convErr != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // spec: 4.6.1
 // diagnosis: §4.6.1 "Disruption protection for agent pods" — the per-pool
-// PDB (maxUnavailable: 1, selector lenny.dev/state: idle) must admit a
-// voluntary eviction of a warm idle pod one at a time, and the
-// WarmPoolController must proactively create a replacement to restore
-// minWarm. The test evicts one idle pod through the eviction subresource
+// PDB (integer minAvailable = minWarm-1, selector lenny.dev/state: idle)
+// must admit a voluntary eviction of a warm idle pod one at a time at the
+// steady state of exactly minWarm idle pods (disruptionsAllowed ==
+// minWarm - (minWarm-1) == 1), and the WarmPoolController must proactively
+// create a replacement to restore minWarm. The test selects a pool whose
+// idle count equals its minWarm (>= 2) so the budget starts at exactly one
+// allowed disruption, evicts one idle pod through the eviction subresource
 // (the same path a node drain uses), asserts the PDB admits it, asserts a
 // concurrent second eviction is blocked while the first pod is
 // unavailable, and asserts the pool replenishes to its pre-eviction idle
 // count. A failure means either the PDB deadlocks warm-pod eviction (the
-// exact node-drain stall the §4.6.1 maxUnavailable: 1 choice exists to
-// avoid) or the controller did not replace the evicted pod.
+// node-drain stall a maxUnavailable budget causes because the idle pods'
+// Sandbox owner has no /scale subresource) or the controller did not
+// replace the evicted pod.
 func TestWarmPodEvictionProactiveReplacement(t *testing.T) {
 	c := kind.InstallLenny(t)
 	kind.RequireAgentWorkload(t, c)
 
-	// OPEN DEFECT (keep this test non-blocking until fixed): the §4.6.1
-	// maxUnavailable: 1 PDB currently reports disruptionsAllowed: 0 with
-	// condition SyncFailed "sandboxes.lenny.dev does not implement the
-	// scale subresource", because the agent pods are owned by a Sandbox
-	// custom resource and Kubernetes cannot resolve expectedPods for a
-	// maxUnavailable budget without a /scale subresource on the owning
-	// controller. As a result the eviction subresource rejects every
-	// warm-pod eviction with 429, deadlocking node drains of warm pods —
-	// the very failure the maxUnavailable: 1 choice was meant to avoid.
-	// Remove this Skip once the disruption mechanism admits a warm-pod
-	// eviction (for example by giving Sandbox a scale subresource or by
-	// changing the disruption budget so it does not require one).
-	t.Skip("warm-pod eviction is rejected: the maxUnavailable:1 PDB sits at disruptionsAllowed:0 " +
-		"(SyncFailed — Sandbox has no scale subresource), so §4.6.1 one-at-a-time voluntary eviction " +
-		"with proactive replacement cannot yet be exercised")
-
-	// Pick a pool with at least two Ready idle pods so the PDB has an
-	// idle floor above one and the one-at-a-time assertion is meaningful.
+	// Pick a pool that sits at its steady state: idle count == minWarm,
+	// with minWarm >= 2. At that state disruptionsAllowed ==
+	// minWarm - (minWarm-1) == 1, so the first eviction is admitted and a
+	// concurrent second is deterministically blocked. A pool holding
+	// surplus idle pods above minWarm would allow more than one concurrent
+	// eviction (§4.6.1), which would make the second-blocked assertion
+	// nondeterministic, so those pools are not selected.
 	byPool := idleReadyPodsByPool(t, c)
 	var pool string
 	var idle []string
+	var minWarm int
 	for p, pods := range byPool {
-		if len(pods) >= 2 && len(pods) > len(idle) {
-			pool, idle = p, pods
+		mw, ok := poolMinWarm(t, c, p)
+		if !ok || mw < 2 || len(pods) != mw {
+			continue
+		}
+		if len(pods) > len(idle) {
+			pool, idle, minWarm = p, pods, mw
 		}
 	}
 	if pool == "" {
-		t.Skip("precondition not met: no warm pool has two or more Ready idle pods to exercise " +
-			"maxUnavailable: 1 one-at-a-time eviction")
+		t.Skip("precondition not met: no warm pool sits at its steady state (Ready idle count == " +
+			"minWarm >= 2) to exercise minAvailable = minWarm-1 one-at-a-time eviction")
 	}
-	t.Logf("exercising pool %s with %d Ready idle pods: %v", pool, len(idle), idle)
+	t.Logf("exercising pool %s at steady state: %d Ready idle pods == minWarm %d: %v",
+		pool, len(idle), minWarm, idle)
 
-	// The §4.6.1 PDB MUST use maxUnavailable: 1. Confirm the object the
-	// eviction path is enforced against before injecting the disruption.
+	// The §4.6.1 PDB MUST use an integer minAvailable of minWarm-1. Confirm
+	// the object the eviction path is enforced against before injecting the
+	// disruption.
 	pdb := pool + "-warm"
-	if mu, ok := pdbMaxUnavailable(t, c, pdb); !ok {
+	wantMin := strconv.Itoa(minWarm - 1)
+	if ma, ok := warmPDBMinAvailable(t, c, pdb); !ok {
 		t.Skipf("precondition not met: pool %s has no PDB %s (the PDB is optional per §4.6.1)", pool, pdb)
-	} else if mu != "1" {
-		t.Fatalf("PDB %s maxUnavailable = %q, want \"1\" (§4.6.1 forbids any other value)", pdb, mu)
+	} else if ma != wantMin {
+		t.Fatalf("PDB %s minAvailable = %q, want %q (§4.6.1 mandates an integer minAvailable of minWarm-1, "+
+			"minWarm = %d)", pdb, ma, wantMin, minWarm)
 	}
 
 	preCount := countIdlePodsInPool(t, c, pool)
 
 	// Inject: evict the first idle pod through the eviction subresource.
-	// spec: §4.6.1 — "maxUnavailable: 1 allows voluntary disruptions one
-	// pod at a time." At steady state (currentHealthy == expectedPods) the
-	// budget admits exactly one, so this first eviction must be admitted.
+	// spec: §4.6.1 — an integer minAvailable of minWarm-1 admits exactly
+	// one eviction at the steady state of minWarm idle pods
+	// (disruptionsAllowed == minWarm - (minWarm-1) == 1), so this first
+	// eviction must be admitted.
 	res, out := evictPod(t, c, agentNamespace, idle[0])
 	if res != evictionAdmitted {
 		t.Fatalf("§4.6.1 violation: eviction of warm idle pod %s was not admitted (%v): %s\n"+
-			"the maxUnavailable: 1 PDB must admit a voluntary disruption one pod at a time; a rejection here "+
-			"deadlocks node drains of warm pods", idle[0], res, strings.TrimSpace(out))
+			"the minAvailable = minWarm-1 PDB must admit a voluntary disruption at steady state; a rejection "+
+			"here deadlocks node drains of warm pods", idle[0], res, strings.TrimSpace(out))
 	}
 	t.Logf("evicted warm idle pod %s (admitted by PDB %s)", idle[0], pdb)
 
@@ -194,16 +229,16 @@ func TestWarmPodEvictionProactiveReplacement(t *testing.T) {
 	// concurrent eviction must be blocked. The eviction admission
 	// decrements disruptionsAllowed to zero synchronously, so a second
 	// eviction issued before a replacement becomes Ready is rejected.
-	// spec: §4.6.1 — "one pod at a time while limiting simultaneous
-	// impact." Break on the first observed block; fail if a second
-	// eviction is instead admitted (two concurrent disruptions).
+	// spec: §4.6.1 — one-at-a-time voluntary disruption at steady state.
+	// Break on the first observed block; fail if a second eviction is
+	// instead admitted (two concurrent disruptions).
 	sawBlock := false
 	for i := 0; i < 10; i++ {
 		second, secondOut := evictPod(t, c, agentNamespace, idle[1])
 		if second == evictionAdmitted {
 			t.Fatalf("§4.6.1 violation: a second concurrent eviction of warm idle pod %s was admitted "+
-				"while %s was still unavailable; maxUnavailable: 1 must permit only one voluntary "+
-				"disruption at a time", idle[1], idle[0])
+				"while %s was still unavailable; minAvailable = minWarm-1 must permit only one voluntary "+
+				"disruption at the steady state of minWarm idle pods", idle[1], idle[0])
 		}
 		if second == evictionBlocked {
 			sawBlock = true
@@ -214,7 +249,7 @@ func TestWarmPodEvictionProactiveReplacement(t *testing.T) {
 	}
 	if !sawBlock {
 		t.Errorf("§4.6.1: expected the second concurrent eviction of %s to be blocked by the "+
-			"maxUnavailable: 1 budget while %s was unavailable, but never observed a block", idle[1], idle[0])
+			"minAvailable = minWarm-1 budget while %s was unavailable, but never observed a block", idle[1], idle[0])
 	}
 
 	// Assert proactive replacement: the WarmPoolController creates a fresh
