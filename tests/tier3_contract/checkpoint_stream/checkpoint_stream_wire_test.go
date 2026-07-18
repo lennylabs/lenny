@@ -150,6 +150,7 @@ func TestCheckpointStreamMessageContract(t *testing.T) {
 		{name: "url", number: 2},
 		{name: "content_length", number: 3},
 		{name: "headers", number: 4},
+		{name: "expires_at", number: 5},
 	})
 	if hf := grant.Fields().ByName("headers"); hf == nil || !hf.IsMap() {
 		t.Error("CheckpointGrant.headers must be a map<string,string> so the adapter replays every signed SigV4 header verbatim")
@@ -478,8 +479,20 @@ type scriptedAdapter struct {
 	presigner              *recordingPresigner
 	store                  *blobstore.MemoryStore
 
-	mu           sync.Mutex
-	checkpointID string
+	mu             sync.Mutex
+	checkpointID   string
+	receivedGrants []*adapterv1.CheckpointGrant
+}
+
+// grantsReceived returns a copy of every CheckpointGrant the scripted adapter
+// received from the gateway, so a test can assert the wire fields the gateway
+// populated (such as the capability expiry).
+func (a *scriptedAdapter) grantsReceived() []*adapterv1.CheckpointGrant {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := make([]*adapterv1.CheckpointGrant, len(a.receivedGrants))
+	copy(out, a.receivedGrants)
+	return out
 }
 
 // mintedCheckpointID returns the gateway-minted checkpoint_id the adapter
@@ -526,6 +539,9 @@ func (a *scriptedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.C
 		if grant == nil {
 			return status.Errorf(codes.Internal, "expected a grant for chunk %d", i)
 		}
+		a.mu.Lock()
+		a.receivedGrants = append(a.receivedGrants, grant)
+		a.mu.Unlock()
 		wrote := ch.putBytes
 		if wrote == 0 {
 			wrote = ch.declaredLen
@@ -569,13 +585,14 @@ func (a *scriptedAdapter) putObject(grant *adapterv1.CheckpointGrant, size int64
 // scripted adapter writes to the same key the gateway Stats, and counts the
 // PresignPut calls so a test asserts no capability was signed.
 type recordingPresigner struct {
-	mu    sync.Mutex
-	uris  map[string]blobstore.URI
-	calls int
+	mu       sync.Mutex
+	uris     map[string]blobstore.URI
+	expiries map[string]time.Time
+	calls    int
 }
 
 func newRecordingPresigner() *recordingPresigner {
-	return &recordingPresigner{uris: map[string]blobstore.URI{}}
+	return &recordingPresigner{uris: map[string]blobstore.URI{}, expiries: map[string]time.Time{}}
 }
 
 func (p *recordingPresigner) PresignPut(u blobstore.URI, contentLength int64, ttl time.Duration) (blobstore.Grant, error) {
@@ -584,7 +601,16 @@ func (p *recordingPresigner) PresignPut(u blobstore.URI, contentLength int64, tt
 	p.calls++
 	url := u.SessionID + "/" + u.PartID
 	p.uris[url] = u
-	return blobstore.Grant{URL: url, ExpiresAt: time.Now().Add(ttl)}, nil
+	exp := time.Now().Add(ttl)
+	p.expiries[url] = exp
+	return blobstore.Grant{URL: url, ExpiresAt: exp}, nil
+}
+
+func (p *recordingPresigner) expiryFor(url string) (time.Time, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	exp, ok := p.expiries[url]
+	return exp, ok
 }
 
 func (p *recordingPresigner) PresignGet(blobstore.URI, time.Duration) (blobstore.Grant, error) {
@@ -752,5 +778,52 @@ func TestCheckpointStreamAbortsOnLengthMismatch(t *testing.T) {
 	}
 	if rec.ManifestReason != partialmanifeststore.ReasonQuotaExceeded {
 		t.Errorf("manifest_reason = %q, want %q", rec.ManifestReason, partialmanifeststore.ReasonQuotaExceeded)
+	}
+}
+
+// TestCheckpointStreamGrantCarriesCapabilityExpiry pins that the gateway
+// stamps CheckpointGrant.expires_at with the presigned capability's expiry on
+// every minted grant. The adapter reads this window to re-mint a grant for a
+// PUT retry that outlives its signature instead of replaying a dead URL; a
+// grant sent without expires_at leaves the adapter's grant-expiry recovery
+// path dead, so a slow-object-store retry hits an expired-signature 403 rather
+// than requesting a fresh grant.
+//
+// spec: 4.4 lines 261-264 (grant re-mint on expiry), 13.2 (capability expiry)
+// diagnosis: The gateway upload driver minted a CheckpointGrant without
+// expires_at, so the adapter cannot tell when the presigned PUT capability has
+// expired and never re-mints. A checkpoint PUT retried past the capability TTL
+// replays a dead signature and fails instead of recovering. Re-check
+// pkg/gateway/checkpoint/checkpointer mintGrant.
+func TestCheckpointStreamGrantCarriesCapabilityExpiry(t *testing.T) {
+	sa := &scriptedAdapter{
+		probeBytes: 4096,
+		chunks:     []scriptChunk{{declaredLen: 128}, {declaredLen: 64}},
+	}
+	h := newGatewayHarness(t, sa)
+	// A short, explicit TTL so the wire expiry is bounded and the assertion
+	// does not depend on the default window.
+	h.cp.CapabilityTTL = 15 * time.Second
+
+	if err := h.cp.CheckpointWithTrigger(context.Background(), harnessTenant, harnessSession, checkpoint.TriggerPeriodic); err != nil {
+		t.Fatalf("Checkpoint: %v", err)
+	}
+
+	grants := sa.grantsReceived()
+	if len(grants) != len(sa.chunks) {
+		t.Fatalf("grants received = %d, want %d (one per declared chunk)", len(grants), len(sa.chunks))
+	}
+	for _, g := range grants {
+		ts := g.GetExpiresAt()
+		if ts == nil {
+			t.Fatalf("chunk %d grant carries no expires_at; the adapter's grant-expiry re-mint path is dead without it", g.GetIndex())
+		}
+		want, ok := h.presigner.expiryFor(g.GetUrl())
+		if !ok {
+			t.Fatalf("chunk %d grant URL %q was never minted by the presigner", g.GetIndex(), g.GetUrl())
+		}
+		if got := ts.AsTime(); !got.Equal(want) {
+			t.Errorf("chunk %d grant expires_at = %s, want the signed capability expiry %s", g.GetIndex(), got, want)
+		}
 	}
 }

@@ -12,6 +12,7 @@ import (
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
@@ -577,14 +578,22 @@ func (d *uploadDriver) mintGrant(index uint32, length int64, reMint bool) {
 			fmt.Sprintf("sign chunk %d grant: %v", index, err))
 		return
 	}
+	wireGrant := &adapterv1.CheckpointGrant{
+		Index:         index,
+		Url:           grant.URL,
+		ContentLength: length,
+		Headers:       grant.Headers,
+	}
+	// spec: §4.4 — carry the signed capability's expiry so a PUT retry that
+	// outlives it requests a fresh grant for the same index on the open
+	// stream instead of replaying a dead signature. Both a fresh mint and a
+	// re-mint set the window so the adapter's grantExpired check can fire.
+	if !grant.ExpiresAt.IsZero() {
+		wireGrant.ExpiresAt = timestamppb.New(grant.ExpiresAt)
+	}
 	send := &adapterv1.CheckpointRequest{
 		Msg: &adapterv1.CheckpointRequest_Grant{
-			Grant: &adapterv1.CheckpointGrant{
-				Index:         index,
-				Url:           grant.URL,
-				ContentLength: length,
-				Headers:       grant.Headers,
-			},
+			Grant: wireGrant,
 		},
 	}
 	if serr := d.send(send); serr != nil {

@@ -67,12 +67,8 @@ type cpChunkedAdapter struct {
 	// silent so the gateway's own attempt deadline fires.
 	stall      bool
 	stallAfter int
-	// remintFor, when non-nil, requests a fresh grant for the listed index
-	// exactly once before committing it, standing in for a grant-expiry
-	// retry. remintObserved records the grants the gateway minted per index.
-	remintFor      map[uint32]bool
+	// remintObserved records the grants the gateway minted per index.
 	remintObserved map[uint32]int
-	grantLens      map[uint32][]int64
 
 	store *cpStore
 	mu    sync.Mutex
@@ -82,12 +78,6 @@ func (a *cpChunkedAdapter) grantCount(index uint32) int {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.remintObserved[index]
-}
-
-func (a *cpChunkedAdapter) grantLengths(index uint32) []int64 {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return append([]int64(nil), a.grantLens[index]...)
 }
 
 func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
@@ -108,19 +98,6 @@ func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.
 		}
 		if aborted {
 			return nil
-		}
-		// A grant-expiry retry: re-declare the same index once and take the
-		// fresh grant, without a second PUT or reservation on the gateway.
-		if a.remintFor[idx] {
-			a.remintFor[idx] = false
-			fresh, ab, rerr := a.declareAndAwait(stream, idx, ln)
-			if rerr != nil {
-				return rerr
-			}
-			if ab {
-				return nil
-			}
-			grant = fresh
 		}
 		wrote := ln
 		if b, ok := a.putBytes[i]; ok {
@@ -180,11 +157,7 @@ func (a *cpChunkedAdapter) declareAndAwait(stream grpc.BidiStreamingServer[adapt
 	if a.remintObserved == nil {
 		a.remintObserved = map[uint32]int{}
 	}
-	if a.grantLens == nil {
-		a.grantLens = map[uint32][]int64{}
-	}
 	a.remintObserved[index]++
-	a.grantLens[index] = append(a.grantLens[index], grant.GetContentLength())
 	a.mu.Unlock()
 	return grant, false, nil
 }
@@ -222,9 +195,16 @@ func (s *cpStore) registerGrant(url string, u blobstore.URI) {
 }
 
 func (s *cpStore) putFromGrant(grant *adapterv1.CheckpointGrant, size int64) {
+	s.recordPut(grant.GetUrl(), size)
+}
+
+// recordPut records size bytes for the object the presigned url maps to, so a
+// real adapter transport that PUTs against the url makes the gateway's Stat
+// confirm observe the byte count it wrote.
+func (s *cpStore) recordPut(url string, size int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	u, ok := s.urls[grant.GetUrl()]
+	u, ok := s.urls[url]
 	if !ok {
 		return
 	}
@@ -381,9 +361,6 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 	adapter.store = store
 	if adapter.putBytes == nil {
 		adapter.putBytes = map[int]int64{}
-	}
-	if adapter.remintFor == nil {
-		adapter.remintFor = map[uint32]bool{}
 	}
 	client := cpDialAdapter(t, adapter)
 
