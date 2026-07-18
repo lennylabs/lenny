@@ -8,7 +8,7 @@ import (
 )
 
 // TestCheckpointManifestMigrationSQL asserts the static SQL surface of
-// migration 0175: the up drops the migration 0062
+// migration 0178: the up drops the migration 0062
 // session_partial_checkpoint_manifest table and the migration 0150
 // partial unique index, then creates checkpoint_manifest with the full
 // §10.1 lines 141-151 column set, the partial_manifest_active_uniq index
@@ -20,7 +20,7 @@ import (
 // spec: §10.1 lines 141-151 (manifest column set and the
 // (session_id, slot_id) partial unique index), §12.3 (RLS apparatus).
 func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
-	up := readMigration0173(t, "0175_checkpoint_manifest.up.sql")
+	up := readMigration0173(t, "0178_checkpoint_manifest.up.sql")
 
 	// The up must drop the superseded 0062 table and the 0150 index.
 	for _, want := range []string{
@@ -28,12 +28,12 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		"DROP INDEX IF EXISTS partial_manifest_active_uniq",
 	} {
 		if !strings.Contains(up, want) {
-			t.Errorf("migration 0175 up missing supersede statement %q", want)
+			t.Errorf("migration 0178 up missing supersede statement %q", want)
 		}
 	}
 
 	if !strings.Contains(up, "CREATE TABLE checkpoint_manifest") {
-		t.Fatalf("migration 0175 up must CREATE TABLE checkpoint_manifest")
+		t.Fatalf("migration 0178 up must CREATE TABLE checkpoint_manifest")
 	}
 
 	// The full §10.1 lines 141-151 column set.
@@ -60,7 +60,7 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		"deleted_at",
 	} {
 		if !strings.Contains(up, col) {
-			t.Errorf("migration 0175 up missing checkpoint_manifest column %q", col)
+			t.Errorf("migration 0178 up missing checkpoint_manifest column %q", col)
 		}
 	}
 
@@ -68,19 +68,19 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	// intent-row disposition (§10.1 line 141).
 	if !strings.Contains(up, "manifest_reason") ||
 		!strings.Contains(up, "NOT NULL DEFAULT 'in_progress'") {
-		t.Errorf("migration 0175 up must declare manifest_reason NOT NULL DEFAULT 'in_progress'")
+		t.Errorf("migration 0178 up must declare manifest_reason NOT NULL DEFAULT 'in_progress'")
 	}
 
 	// baseline_full_checkpoint_bytes is BIGINT NULL with no DEFAULT so the
 	// §10.1 line 155 IS NULL branch stays reachable and the §7.2 resume
 	// path never divides by zero.
 	if !strings.Contains(up, "baseline_full_checkpoint_bytes BIGINT      NULL") {
-		t.Errorf("migration 0175 up must declare baseline_full_checkpoint_bytes BIGINT NULL")
+		t.Errorf("migration 0178 up must declare baseline_full_checkpoint_bytes BIGINT NULL")
 	}
 
 	// The primary key leads with tenant_id per §12.3 R-01.
 	if !strings.Contains(up, "PRIMARY KEY (tenant_id, checkpoint_id)") {
-		t.Errorf("migration 0175 up must key checkpoint_manifest on (tenant_id, checkpoint_id)")
+		t.Errorf("migration 0178 up must key checkpoint_manifest on (tenant_id, checkpoint_id)")
 	}
 
 	// The partial unique index is scoped to (session_id, slot_id) over
@@ -88,7 +88,7 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 	normUp := strings.Join(strings.Fields(up), " ")
 	if !strings.Contains(normUp,
 		"CREATE UNIQUE INDEX partial_manifest_active_uniq ON checkpoint_manifest (session_id, slot_id) WHERE partial = TRUE AND deleted_at IS NULL") {
-		t.Errorf("migration 0175 up must scope partial_manifest_active_uniq to (session_id, slot_id) WHERE partial = TRUE AND deleted_at IS NULL")
+		t.Errorf("migration 0178 up must scope partial_manifest_active_uniq to (session_id, slot_id) WHERE partial = TRUE AND deleted_at IS NULL")
 	}
 
 	// The §12.3 tenant-isolation apparatus mirrors every tenant-scoped
@@ -102,11 +102,11 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON checkpoint_manifest TO lenny_app",
 	} {
 		if !strings.Contains(up, want) {
-			t.Errorf("migration 0175 up missing §12.3 apparatus %q", want)
+			t.Errorf("migration 0178 up missing §12.3 apparatus %q", want)
 		}
 	}
 
-	down := readMigration0173(t, "0175_checkpoint_manifest.down.sql")
+	down := readMigration0173(t, "0178_checkpoint_manifest.down.sql")
 	// The down drops the new table and recreates the 0062 table and the
 	// 0150 index it superseded.
 	for _, want := range []string{
@@ -114,12 +114,12 @@ func TestCheckpointManifestMigrationSQL_spec_10_1_12_3(t *testing.T) {
 		"CREATE TABLE session_partial_checkpoint_manifest",
 	} {
 		if !strings.Contains(down, want) {
-			t.Errorf("migration 0175 down missing %q", want)
+			t.Errorf("migration 0178 down missing %q", want)
 		}
 	}
 	normDown := strings.Join(strings.Fields(down), " ")
 	if !strings.Contains(normDown,
 		"CREATE UNIQUE INDEX partial_manifest_active_uniq ON session_partial_checkpoint_manifest (tenant_id, session_id) WHERE deleted_at IS NULL") {
-		t.Errorf("migration 0175 down must recreate the 0150 index scoped to (tenant_id, session_id)")
+		t.Errorf("migration 0178 down must recreate the 0150 index scoped to (tenant_id, session_id)")
 	}
 }

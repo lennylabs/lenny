@@ -5,7 +5,7 @@
 // spec, the migration, and the Go emitters, so a later edit to one site cannot
 // silently drift from the others:
 //
-//   - the §10.1 checkpoint_manifest column set matches migration 0175;
+//   - the §10.1 checkpoint_manifest column set matches migration 0178;
 //   - the closed §10.1 manifest_reason enum, the §16.1
 //     lenny_checkpoint_partial_total label domains (including recovered), and
 //     the write-path and resume-path emitters all agree, with no site naming
@@ -44,7 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
-// domainColumns are the checkpoint_manifest columns migration 0175 creates
+// domainColumns are the checkpoint_manifest columns migration 0178 creates
 // that the §10.1 line-141 manifest enumeration also names. tenant_id (the RLS
 // tenant key) and created_at (a standard audit column) are infrastructure
 // columns the §10.1 prose does not enumerate, so they are excluded from the
@@ -54,32 +54,32 @@ var infraColumns = map[string]bool{
 	"created_at": true,
 }
 
-// migrationColumnRE matches a column definition line in migration 0175, e.g.
+// migrationColumnRE matches a column definition line in migration 0178, e.g.
 // `    manifest_reason                TEXT        NOT NULL DEFAULT 'in_progress',`.
 var migrationColumnRE = regexp.MustCompile(`^\s+([a-z_]+)\s+(TEXT|UUID|BIGINT|INTEGER|BOOLEAN|TIMESTAMPTZ)\b`)
 
 // spec: 10.1
-// diagnosis: the §10.1 partial-manifest column enumeration and migration 0175
+// diagnosis: the §10.1 partial-manifest column enumeration and migration 0178
 //
 //	disagree on the checkpoint_manifest column set. §10.1 line 141 enumerates
-//	the manifest columns in prose; migration 0175 CREATEs the table. A failure
+//	the manifest columns in prose; migration 0178 CREATEs the table. A failure
 //	here means one side added, renamed, or dropped a domain column the other
 //	did not — for example the migration grows a column §10.1 never names, or
 //	§10.1 promises a field the table has no column for — leaving the schema and
 //	its normative description out of sync.
-func TestCheckpointManifestColumnSetMatchesMigration0175(t *testing.T) {
+func TestCheckpointManifestColumnSetMatchesMigration0178(t *testing.T) {
 	root := repoRoot(t)
 
-	migration, err := os.ReadFile(filepath.Join(root, "migrations", "0175_checkpoint_manifest.up.sql"))
+	migration, err := os.ReadFile(filepath.Join(root, "migrations", "0178_checkpoint_manifest.up.sql"))
 	if err != nil {
-		t.Fatalf("read migration 0175: %v", err)
+		t.Fatalf("read migration 0178: %v", err)
 	}
 	// Scope to the CREATE TABLE checkpoint_manifest body so a column named in a
 	// DROP or index statement is not mistaken for a table column.
 	body := string(migration)
 	start := strings.Index(body, "CREATE TABLE checkpoint_manifest")
 	if start < 0 {
-		t.Fatal("migration 0175 has no CREATE TABLE checkpoint_manifest")
+		t.Fatal("migration 0178 has no CREATE TABLE checkpoint_manifest")
 	}
 	createBody := body[start:]
 	if end := strings.Index(createBody, "\n);"); end >= 0 {
@@ -95,7 +95,7 @@ func TestCheckpointManifestColumnSetMatchesMigration0175(t *testing.T) {
 		migrationCols = append(migrationCols, m[1])
 	}
 	if len(migrationCols) == 0 {
-		t.Fatal("extracted no columns from migration 0175 CREATE TABLE checkpoint_manifest (regex drift?)")
+		t.Fatal("extracted no columns from migration 0178 CREATE TABLE checkpoint_manifest (regex drift?)")
 	}
 
 	s101 := specSection(t, filepath.Join(root, "spec", "10_gateway-internals.md"), "### 10.1 ")
@@ -109,7 +109,7 @@ func TestCheckpointManifestColumnSetMatchesMigration0175(t *testing.T) {
 		// TIMESTAMPTZ NULL`, `partial: true`), so accept the column name opening
 		// a code span and closed by a backtick, space, or colon.
 		if !columnNamedInCodeSpan(s101, col) {
-			t.Errorf("migration 0175 column %q is not named in §10.1; the manifest column set and its normative enumeration must agree", col)
+			t.Errorf("migration 0178 column %q is not named in §10.1; the manifest column set and its normative enumeration must agree", col)
 		}
 	}
 }

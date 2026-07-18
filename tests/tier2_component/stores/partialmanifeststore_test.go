@@ -4,7 +4,7 @@
 
 // Contract test for the §10.1 checkpoint_manifest store, exercising the
 // Postgres-backed pkg/gateway/checkpoint/partialmanifeststore/pgstore
-// against a real container with the production migrations (0175)
+// against a real container with the production migrations (0178)
 // applied. Covers the intent-row Put + Get round-trip on the
 // (tenant_id, checkpoint_id) key, the supersede-on-write and fencing
 // invariants under the real partial_manifest_active_uniq index, the

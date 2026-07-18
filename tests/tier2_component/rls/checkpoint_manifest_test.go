@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Component tests for the §10.1 checkpoint_manifest table (migration
-// 0175): the §12.3 tenant-isolation apparatus (tenant-guard trigger,
+// 0178): the §12.3 tenant-isolation apparatus (tenant-guard trigger,
 // FORCE ROW LEVEL SECURITY, cross-tenant read denial), the §10.1 lines
 // 143-151 partial_manifest_active_uniq at-most-one-active-partial
 // invariant scoped to (session_id, slot_id), and the §10.1 line 141
@@ -61,7 +61,7 @@ func insertManifest(t *testing.T, ctx context.Context, pg *containers.Postgres, 
 }
 
 // spec: 12.2.2, 12.3
-// diagnosis: the checkpoint_manifest table (migration 0175) shipped
+// diagnosis: the checkpoint_manifest table (migration 0178) shipped
 //
 //	without the tenant-guard trigger, so a write issued with no
 //	app.current_tenant set was admitted. Every §12.3 tenant-scoped

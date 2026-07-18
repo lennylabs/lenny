@@ -1,6 +1,6 @@
 # Proposal: Agent-pod eviction-checkpoint trigger and its prerequisites
 
-- **Status:** **Early draft. Not ready for review.** Blocked on prerequisites (§3) and on the checkpoint data path settling in the successor to `0036_withdrawn_gateway-mediated-checkpoint-relay.md`.
+- **Status:** **Early draft. Not ready for review.** Blocked on prerequisites (§3) and on the checkpoint data path settling in the successor to `0046_withdrawn_gateway-mediated-checkpoint-relay.md`.
 - **Date:** 2026-07-14.
 - **Scope:** The §4.4 eviction checkpoint is never driven when an individual agent pod is terminated by a node drain, the kubelet Eviction API, a cluster upgrade, or a direct pod delete. This draft records the design space and the prerequisites that must land before the trigger can be built. It carries no staged changes yet.
 

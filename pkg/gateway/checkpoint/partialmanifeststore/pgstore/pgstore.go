@@ -2,7 +2,7 @@
 
 // Package pgstore is the Postgres-backed §10.1 checkpoint_manifest
 // store. It persists rows to the checkpoint_manifest table from
-// migration 0175, with the §10.1 line 143-151 at-most-one-active-partial
+// migration 0178, with the §10.1 line 143-151 at-most-one-active-partial
 // invariant enforced by the partial_manifest_active_uniq partial unique
 // index, and applies the §12.3 tenant-context RLS guard via
 // pgtenant.InTx.

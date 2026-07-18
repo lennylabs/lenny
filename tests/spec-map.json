@@ -1148,7 +1148,7 @@
         "tests/tier5_e2e_kind/gateway_replica_continuity_test.go::TestSessionContinuesAfterCoordinatingGatewayReplicaLoss",
         "tests/tier7a_load_local/checkpoint_grant_window_test.go",
         "tests/tier7a_load_local/prestop_no_double_checkpoint_test.go",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0175",
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0178",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
       ],
       "packages": [
