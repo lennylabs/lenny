@@ -112,6 +112,22 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --namespace=NAMESPACE
 
+  # spec: §25.11 "Backup Job NetworkPolicy" — "A dedicated NetworkPolicy
+  # `lenny-backup-job` is rendered for backup Job pods (selected by label
+  # `app: lenny-backup`)". The on-demand Job runs the lenny-backup image,
+  # so its pod template must carry app: lenny-backup for the
+  # lenny-backup-job NetworkPolicy podSelector to match it; without the
+  # label the Job pod gets no egress under the chart's namespace-wide
+  # default-deny-all.
+  - it: carries the app=lenny-backup label the lenny-backup-job NetworkPolicy selects on
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - equal:
+          path: spec.template.metadata.labels.app
+          value: lenny-backup
+
   - it: sources backup credentials from the lenny-backup Secrets, never inlined
     set:
       backups.onDemand.enabled: true
@@ -213,3 +229,49 @@ tests:
       - equal:
           path: spec.template.spec.containers[0].env[1].value
           value: arn:aws:kms:us-east-1:111:key/abc
+
+  # spec: §12.5 "TLS: MinIO connections MUST use TLS (`https://` endpoint)
+  # ... All other backends enforce TLS." A self-managed MinIO whose serving
+  # cert is issued by a CA outside the system trust store still needs the
+  # on-demand backup Job's TLS client to verify that endpoint; the gateway
+  # and the bucket-lifecycle Job already trust minio.tls.caBundleConfigMap
+  # for the same purpose, so the backup Job mirrors that mount so its own
+  # MinIO connection can complete the MUST-use-TLS handshake instead of
+  # failing closed with x509: certificate signed by unknown authority.
+  - it: mounts the MinIO CA bundle and sets SSL_CERT_DIR when minio.tls.caBundleConfigMap is set
+    set:
+      backups.onDemand.enabled: true
+      minio.tls.caBundleConfigMap: lenny-minio-ca
+    documentIndex: 5
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: lenny-minio-ca
+            mountPath: /etc/lenny/minio-ca
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: lenny-minio-ca
+            configMap:
+              name: lenny-minio-ca
+              items:
+                - key: ca.crt
+                  path: ca.crt
+
+  - it: omits the MinIO CA bundle mount when minio.tls.caBundleConfigMap is unset
+    set:
+      backups.onDemand.enabled: true
+    documentIndex: 5
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SSL_CERT_DIR
+            value: /etc/lenny/minio-ca

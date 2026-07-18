@@ -106,14 +106,11 @@ func TestRestoreTestCronJobDispatchWritesResult(t *testing.T) {
 		t.Fatalf("failed to apply the §25.11 restore-test Secrets/CronJob/RBAC overlay: %v\n%s", out, err)
 	}
 
-	// The rendered CronJob's pod template carries no CA-bundle mount for
-	// its own MinIO TLS client (unlike the chart's minio-bucket-lifecycle
-	// Job, which mounts minio.tls.caBundleConfigMap for the identical
-	// self-signed-CA e2e MinIO). Patching it in here is a test-harness
-	// adaptation to this cluster's self-managed MinIO cert, not a
-	// product change; charts/lenny/templates/restore-test-cronjob.yaml
-	// itself is untouched.
-	patchRestoreTestCronJobForMinIOCA(t, c)
+	// charts/lenny/templates/restore-test-cronjob.yaml natively mounts
+	// minio.tls.caBundleConfigMap (the same value e2e-values.yaml sets
+	// for the chart's other MinIO consumers) into the CronJob's pod
+	// template's SSL_CERT_DIR, so this cluster's self-managed MinIO CA
+	// is already trusted without any test-side patch.
 
 	const jobName = "t5-restore-test-dispatch-run"
 	if out, err := c.KubectlOut(t, "-n", t5SystemNS, "delete", "job", jobName, "--ignore-not-found", "--wait=true"); err != nil {
@@ -279,31 +276,6 @@ func renderRestoreTestOverlay(t *testing.T, c *kind.Cluster) string {
 	return string(out)
 }
 
-// patchRestoreTestCronJobForMinIOCA adds an SSL_CERT_DIR env var and a
-// lenny-minio-ca volume mount to the lenny-restore-test CronJob's pod
-// template. charts/lenny/templates/restore-test-cronjob.yaml renders no
-// CA-bundle option for the lenny-backup image's own MinIO TLS client
-// (unlike minio-bucket-lifecycle-job.yaml's minio.tls.caBundleConfigMap
-// handling for mc), so a restore-test Job cannot verify TLS against a
-// self-managed MinIO whose serving cert is issued by a private CA — the
-// e2e MinIO's cert-manager-issued cert. This patch is scoped to the Job
-// this test creates and does not modify the chart template.
-func patchRestoreTestCronJobForMinIOCA(t *testing.T, c *kind.Cluster) {
-	t.Helper()
-	patch := `[
-		{"op":"add","path":"/spec/jobTemplate/spec/template/spec/containers/0/env/-",
-		 "value":{"name":"SSL_CERT_DIR","value":"/etc/lenny/minio-ca"}},
-		{"op":"add","path":"/spec/jobTemplate/spec/template/spec/containers/0/volumeMounts/-",
-		 "value":{"name":"minio-ca","mountPath":"/etc/lenny/minio-ca","readOnly":true}},
-		{"op":"add","path":"/spec/jobTemplate/spec/template/spec/volumes/-",
-		 "value":{"name":"minio-ca","configMap":{"name":"lenny-minio-ca","items":[{"key":"ca.crt","path":"ca.crt"}]}}}
-	]`
-	if out, err := c.KubectlOut(t, "-n", t5SystemNS, "patch", "cronjob", "lenny-restore-test",
-		"--type=json", "-p="+patch); err != nil {
-		t.Fatalf("failed to patch the lenny-restore-test CronJob with the e2e MinIO CA bundle: %v\n%s", err, out)
-	}
-}
-
 // waitForJobPodName polls for the pod a Job created and returns its
 // name once one exists, failing the test if none appears within the
 // deadline.
@@ -390,7 +362,6 @@ func TestRestoreTestResultReachesLennyOpsMetrics(t *testing.T) {
 	if out, err := c.ApplyStdin(t, overlay); err != nil {
 		t.Fatalf("apply restore-test overlay: %v\n%s", err, out)
 	}
-	patchRestoreTestCronJobForMinIOCA(t, c)
 
 	const jobName = "t5-restore-test-metrics-run"
 	if out, err := c.KubectlOut(t, "-n", t5SystemNS, "create", "job", jobName,

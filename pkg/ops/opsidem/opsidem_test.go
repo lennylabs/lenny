@@ -184,7 +184,7 @@ func TestStoreOutageRequiredFailsClosed_spec_25_4(t *testing.T) {
 	}
 }
 
-// spec: §25.4 lines 2069-2070 — optional endpoints proceed during an
+// spec: §25.4 line 2057 — optional endpoints proceed during an
 // outage but the response carries a degradation warning.
 func TestStoreOutageOptionalProceedsWithDegradation_spec_25_4(t *testing.T) {
 	inner := &countingHandler{}

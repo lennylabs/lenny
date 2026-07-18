@@ -55,7 +55,7 @@ func TestAcquireSingleReplicaOnlyRejectsMultiReplica(t *testing.T) {
 	}
 }
 
-// spec: §25.4 line 2209 — "always" grants but attaches a replica-local
+// spec: §25.4 line 2215 — "always" grants but attaches a replica-local
 // warning in the degradation envelope.
 func TestAcquireAlwaysGrantsWithDegradationWarning(t *testing.T) {
 	srv := gatedLockServer(coordination.MemoryTierAlways, fixedReplicas(3))

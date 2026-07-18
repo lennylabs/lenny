@@ -3272,6 +3272,7 @@
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsPackagesWithSuiteSelectUnitTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsDedicatedSuitesSelectHigherTiers",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphLennyOpsBinarySelectsUnitTier",
+    "tests/tier0_static/degradation_lock_line_citation_test.go::TestSpec254DegradationWarningLineCitationsAreFresh",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
@@ -3460,6 +3461,7 @@
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
+        "tests/tier2_component/observability/version_drift_metric_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go",
         "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
         "cmd/lenny-ops/release_channel_trust_anchor_test.go::TestStockChartReleaseChannelHasCompiledInTrustAnchor_spec_25_8",
@@ -3574,7 +3576,9 @@
         "tests/tier9_security/backup_isolation_test.go::TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11",
         "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11",
         "tests/tier6_e2e_cloud/artifact_replication_residency_test.go::TestCloudArtifactReplicationResidency",
-        "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11"
+        "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11",
+        "charts/lenny/tests/restore-test-cronjob_test.yaml",
+        "charts/lenny/tests/backup-job_test.yaml"
       ],
       "packages": [
         "pkg/ops/backup",
@@ -3610,6 +3614,8 @@
         "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDWinsOverMeta_spec_25_12",
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
+        "pkg/ops/mcp/server_test.go::TestToolsCallDryRunMapsToMetaFlag",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go::TestMCPToolsCallDryRunMapping",
         "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphMCPPackageSelectsContractAndSecurityTiers",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",

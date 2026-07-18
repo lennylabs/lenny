@@ -652,6 +652,7 @@
       "unit": ["pkg/ops/upgradeservice/..."],
       "component": [
         "tests/tier2_component/observability/version_aggregation_test.go",
+        "tests/tier2_component/observability/version_drift_metric_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go"
       ],
       "contract": ["tests/tier3_contract/ops_endpoints/upgrade_test.go"],
