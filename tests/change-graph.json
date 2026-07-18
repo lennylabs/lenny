@@ -309,7 +309,8 @@
       "security": [
         "tests/tier9_security/diagnostics_fix_guardrails_test.go",
         "tests/tier9_security/mcp_management_authz_sweep_test.go"
-      ]
+      ],
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
     },
     "tests/tier3_contract/ops_endpoints": {
       "unit": ["pkg/ops/opsserver/..."],
@@ -439,7 +440,8 @@
     "cmd/lenny-ops": {
       "unit": ["cmd/lenny-ops/..."],
       "component": ["cmd/lenny-ops/..."],
-      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"]
+      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"],
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
     },
     "cmd/lenny-backup": {
       "unit": ["cmd/lenny-backup/..."],
@@ -562,7 +564,7 @@
     },
     "pkg/ops/backup": {
       "unit": ["pkg/ops/backup/..."],
-      "component": ["tests/tier2_component/opsidem/outage_test.go", "tests/tier2_component/stores/backup_minio_roundtrip_test.go"],
+      "component": ["tests/tier2_component/opsidem/outage_test.go", "tests/tier2_component/stores/backup_minio_roundtrip_test.go", "tests/tier2_component/opsbackup/leader_scheduled_backup_retention_test.go"],
       "contract": ["tests/tier3_contract/ops_endpoints/backup_test.go"],
       "integration": ["tests/tier4_integration/backup_degradation_test.go"]
     },
@@ -620,7 +622,8 @@
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go"
       ],
-      "security": ["tests/tier9_security/mcp_management_authz_sweep_test.go"]
+      "security": ["tests/tier9_security/mcp_management_authz_sweep_test.go"],
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
     },
     "pkg/ops/me": {
       "unit": ["pkg/ops/me/..."]
@@ -641,7 +644,7 @@
     },
     "pkg/ops/opsservice": {
       "unit": ["pkg/ops/opsservice/..."],
-      "component": ["tests/tier2_component/observability/upgrade_check_cron_test.go"],
+      "component": ["tests/tier2_component/observability/upgrade_check_cron_test.go", "tests/tier2_component/opsbackup/leader_scheduled_backup_retention_test.go"],
       "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"],
       "integration": ["tests/tier4_integration/escalation_webhook_under_outage_test.go", "tests/tier4_integration/event_subscription_cold_start_test.go", "tests/tier4_integration/event_stream_test.go"],
       "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"],

@@ -3257,7 +3257,8 @@
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
         "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E",
-        "pkg/ops/me/service_test.go::TestService_Authorized_ScopeFilter"
+        "pkg/ops/me/service_test.go::TestService_Authorized_ScopeFilter",
+        "tests/tier4_integration/ops_mcp_scope_live_bearer_test.go::TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin",
@@ -3383,6 +3384,8 @@
         "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128",
         "tests/tier9_security/ops_rbac_test.go::TestOpsScopeClaimNarrowsBelowRoleCeiling_spec_25_4_1569",
+        "tests/tier9_security/ops_inventory_isolation_test.go::TestOpsTenantAdminInventoryScopedToOwnAndTenant_spec_25_4_1840",
+        "tests/tier9_security/ops_inventory_isolation_test.go::TestOpsTenantAdminActorWildcardAutoRestricted_spec_25_4_1840",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsNetworkPolicyPosture_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsEgressBoundToAllowlist_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
@@ -3443,7 +3446,8 @@
         "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery",
-        "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown"
+        "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapEventStreamNotesDoNotOverclaimRedisSupport"
       ],
       "packages": [
         "pkg/ops/events",
@@ -3455,7 +3459,7 @@
         "cmd/lenny-ops"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/events is the read surface over the Redis stream and in-memory buffer; pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
+      "notes": "§25.5 Operational Event Stream. See TESTING.md §25 for the test plan. pkg/ops/events serves the SSE and polling read surface from its own in-memory ring buffer; the read-side Redis stream source and the Redis-down/gateway-down degradation matrix are still F-25.5.1/F-25.5.14, tracked by the tests/tier5_e2e_kind/event_buffer_fanout_test.go t.Skip scaffold and named in the package's own doc comment. pkg/ops/opsservice.RedisEventSource and the Redis fan-out emitter feed the webhook delivery worker (a distinct consumer from the SSE/polling Service) via cmd/lenny-ops/events_wiring.go. pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
     },
     "25.6": {
       "title": "Diagnostic Endpoints",
@@ -3513,14 +3517,16 @@
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
         "tests/tier4_integration/runbook_discovery_test.go",
         "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary",
-        "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet"
+        "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet",
+        "pkg/alerting/rules/health_components_test.go::TestHealthComponentCertManagerMatchesSpecName_spec_25_7"
       ],
       "packages": [
         "pkg/ops/runbooks",
         "pkg/ops/opsserver",
         "pkg/gateway/operability/health",
         "pkg/gateway/externalapi/openapi",
-        "pkg/ops/mcp"
+        "pkg/ops/mcp",
+        "pkg/alerting/rules"
       ],
       "notes": "§25.7 Operational Runbooks. pkg/ops/runbooks implements the runbook index; pkg/ops/opsserver serves it over REST and pkg/ops/mcp over the MCP tool inventory. See TESTING.md §25 for the test plan."
     },
@@ -3659,6 +3665,7 @@
         "cmd/lenny-gateway/replication_wiring_test.go",
         "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
+        "tests/tier4_integration/backup_restore_resume_lock_test.go::TestRestoreResumeAfterLockStealRequiresCurrentHolder",
         "tests/tier4_integration/backup_binary_test.go::TestBackupBinaryFullModeAgainstPostgresAndMinIO",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
@@ -3667,6 +3674,7 @@
         "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools",
         "tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go::TestRestoreTestCronJobDispatchWritesResult",
         "tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go::TestRestoreTestResultReachesLennyOpsMetrics",
+        "tests/tier2_component/opsbackup/leader_scheduled_backup_retention_test.go::TestLeaderElectedScheduledBackupAndRetentionCronFireOnce",
         "tests/tier9_security/backup_isolation_test.go::TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11",
         "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11",
         "tests/tier6_e2e_cloud/artifact_replication_residency_test.go::TestCloudArtifactReplicationResidency",

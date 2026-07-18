@@ -114,6 +114,30 @@ func readSpecMapBlockedUntilPhase(t *testing.T) map[string]string {
 	return out
 }
 
+// readSpecMapNotes returns, per section id, the `notes` string recorded
+// in tests/spec-map.json.
+func readSpecMapNotes(t *testing.T) map[string]string {
+	t.Helper()
+	root := schematest.RepoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
+	if err != nil {
+		t.Fatalf("read spec-map.json: %v", err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Notes string `json:"notes"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map.json: %v", err)
+	}
+	out := map[string]string{}
+	for id, sec := range doc.Sections {
+		out[id] = sec.Notes
+	}
+	return out
+}
+
 // readSpecMapTests returns, per section id, the `tests` list recorded
 // in tests/spec-map.json, with any trailing `::TestName` selector
 // stripped so the result is a set of repo-relative file paths.
@@ -597,6 +621,51 @@ func TestSpecMapPackagesIncludeEveryTestReferencedPackage(t *testing.T) {
 //	(TestSpecMapAuditQueryPackagesIncludeAdminImplementation /
 //	TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore) that dropped the
 //	same stale field once each section's packages[] was backfilled.
+//
+// spec: pkg/ops/events/service.go package doc ("The Redis stream
+//
+//	source and the Redis-down / gateway-down degradation matrix are
+//	F-25.5.1 / F-25.5.14; this package serves the §25.5 read surface
+//	over the buffer source"); TESTING.md §5 ("tests/spec-map.json maps
+//	every spec section to the tests, packages, migrations, and chart
+//	templates that encode it")
+//
+// diagnosis: The §25.5 spec-map `notes` field carried the stale "Phase
+//
+//	14 ships the operability surface" framing and stated "pkg/ops/events
+//	is the read surface over the Redis stream and in-memory buffer",
+//	which overclaims Redis-stream read support pkg/ops/events.Service
+//	does not have: its own package doc names the Redis stream source and
+//	the Redis-down/gateway-down degradation matrix as still-outstanding
+//	F-25.5.1/F-25.5.14. The §25.8/§25.13/§25.6/§25.7/§25.11/§25.12 notes
+//	fields were rewritten in commit 05f07d90 to drop the "Phase 14
+//	ships" phrasing and state concrete implementation facts, but §25.5
+//	was missed. Guard against the phrasing reappearing and require the
+//	notes to name the still-outstanding Redis read source explicitly.
+func TestSpecMapEventStreamNotesDoNotOverclaimRedisSupport(t *testing.T) {
+	t.Parallel()
+
+	notes := readSpecMapNotes(t)["25.5"]
+	if notes == "" {
+		t.Fatal("spec-map.json §25.5 has no notes field")
+	}
+	if strings.Contains(notes, "Phase 14 ships") {
+		t.Errorf("spec-map.json §25.5 notes still carries the stale \"Phase 14 ships\" framing "+
+			"dropped from the sibling §25 sections in commit 05f07d90: %q", notes)
+	}
+	if strings.Contains(notes, "read surface over the Redis stream") {
+		t.Errorf("spec-map.json §25.5 notes claims pkg/ops/events is a read surface over the "+
+			"Redis stream, but the package's own doc comment states the Redis stream source is "+
+			"still F-25.5.1 (unbuilt) and the Service always serves from the in-memory buffer: %q", notes)
+	}
+	for _, want := range []string{"F-25.5.1", "F-25.5.14"} {
+		if !strings.Contains(notes, want) {
+			t.Errorf("spec-map.json §25.5 notes %q does not name the still-outstanding %s "+
+				"read-side Redis source / degradation matrix", notes, want)
+		}
+	}
+}
+
 func TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase(t *testing.T) {
 	t.Parallel()
 
