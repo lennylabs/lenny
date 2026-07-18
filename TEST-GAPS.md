@@ -9699,12 +9699,8 @@ Counts: 6 High, 7 Medium, 3 Low, 2 Info.
 - **Dependencies:** none — doc-example correction.
 - **Suggested test:** Correct the TESTING.md change-graph example to reference `tests/tier0_static/schemas_test.go` and the tier5 `checkpoint_resume_test.go` path, and extend the tier0 manifest-integrity check (per T-25.8.7 / T-10.5.11) to cover paths named in the TESTING.md change-graph example.
 
-### - [ ] T-25.8.22 — Migration test embeds a TEST-GAPS finding id in a source comment [Low] — OPEN
-- **Spec/Doc:** `code-best-practices.md` (`// spec: §X.Y` citation convention); the `platform_registry_config` migration backs the §25.8 runtime registry API.
-- **Existing tests:** `migrations/platform_registry_config_test.go::TestPlatformRegistryConfigMigration_spec_25_8`.
-- **Gap:** `migrations/platform_registry_config_test.go:15` contains the comment "...only the Secret name. F-25.8.6." The project convention forbids putting a finding id (anything that is not a durable spec-section reference) into test code or comments; the comment should cite only `// spec: §X.Y` or describe the behavior in prose.
-- **Dependencies:** none — comment correction.
-- **Suggested test:** Remove the `F-25.8.6.` reference from the comment, leaving the existing `// spec: §25.8` citation and the behavioral prose intact.
+### - [x] T-25.8.22 — Migration test embeds a TEST-GAPS finding id in a source comment [Low] — RESOLVED 18988133a7131385c33fff414a01dd728561d2cf
+- **Resolution:** `migrations/platform_registry_config_test.go:15` no longer contains the `F-25.8.6.` reference; the comment now ends "...only the Secret name." with the existing `// spec: §25.8` citation intact. Commit `18988133` ("test-gaps: drop the finding id from platform_registry_config_test.go comment") made this change.
 
 ### - [ ] T-25.8.23 — Platform-upgrade state machine leaves every non-terminal phase Paused, so the non-paused active state that yields the spec-named fixed_phase_durations ETA may be unreachable through the public mutation API [Low] — OPEN
 - **Spec/Doc:** §25.8 (spec/25_agent-operability.md line 3496) states GET /v1/admin/platform/upgrade/status returns the canonical §25.2 progress envelope whose `etaSeconds` uses `etaMethod` `fixed_phase_durations` (combined with `historical_p50` once `ops_operation_baselines` has samples) for an actively-progressing upgrade.
