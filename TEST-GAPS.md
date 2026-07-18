@@ -9084,7 +9084,7 @@ Counts: 3 High, 5 Medium, 4 Low, 0 Info.
 
 ### Summary
 §25.4 specifies the mandatory `lenny-ops` Deployment and its full operational surface: identity discovery (`/v1/admin/me`), the operations inventory, remediation locks with a tiered Postgres/Redis/memory store and epoch-based split-brain resolution, idempotency with tier-dependent enforcement, tiered escalations, self-monitoring, leader-elected singletons, the `GatewayClient` with TLS-default internal transport (NET-070), Prometheus-with-fan-out aggregation, and three rendered NetworkPolicies. Unit coverage in `pkg/ops/**` is dense, the helm-unittests in `charts/lenny/tests/ops-*` pin the rendered manifests, and a tier3 contract suite (`tests/tier3_contract/ops_endpoints`) pins the wire shapes through `httptest` with stub stores. Coverage falls off sharply above the unit and static tiers: there is no tier4 compose-stack exercise of any `lenny-ops` endpoint against real backing services, no tier2/tier8 exercise of the lock tier-transition and split-brain reconciliation against real Postgres and Redis, the tier9 RBAC and NetworkPolicy suites never drive the live `lenny-ops` service, the tier5/tier6 e2e coverage stops at "Deployment Ready," and no harness pins any `lenny-ops` response against the `/v1/openapi.json` schema. Several deployment combinations (multi-replica `memoryTier` rejection, Tier-1 vs Tier-2/3 idempotency enforcement, Prometheus-down fan-out, air-gapped) are unexercised end to end. Proposal 0021 moved the audit log query API fully to the gateway (Section 25.9) and re-hosted `/v1/openapi.json` on the gateway as well (still covering `lenny-ops`'s own routes via the F-COV-3 document merge); this reassigns wording throughout §25.4 but does not remove any of the findings below. Proposal 0019's F-SH-1 fix wired a real producer for the previously-inert `lenny_ops_clock_skew_seconds` gauge, which is a new self-monitoring surface with only fake-clock unit coverage (T-25.4.15).
-Counts: 6 High, 18 Medium, 5 Low, 1 Info.
+Counts: 6 High, 18 Medium, 6 Low, 1 Info.
 
 ### Findings
 
@@ -9276,6 +9276,13 @@ Counts: 6 High, 18 Medium, 5 Low, 1 Info.
 
 ### - [x] T-25.4.43 — lenny-ops's own self-check surface uses cert_manager (snake_case) for the same cert-manager component, diverging from the spec's camelCase certManager [Low] — RESOLVED 21ffff8a
 - **Resolution:** The finding's paraphrase conflated two distinct endpoints. `cert_manager` here is `opsservice.CheckCertManager`, a self-health check name in lenny-ops's own `GET /v1/admin/ops/health` report (§25.4), which the spec documents with snake_case identifiers verbatim (`postgres_pool`, `redis_consumer_lag`, `webhook_backlog`, `k8s_api` at spec/25_agent-operability.md:2494-2497). The camelCase `certManager` name the finding cited belongs to a different, already-fixed surface: the gateway's separate `GET /v1/admin/health` component list (§25.3/§25.7/§25.8), pinned by `pkg/alerting/rules.HealthComponentCertManager` per T-25.3.13. Added `pkg/ops/opsservice/selfchecks_test.go::TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494`, which pins `CheckCertManager` and its sibling self-health check constants to the spec's snake_case convention for this endpoint and documents the two-namespace distinction so the divergence is not mistakenly "fixed" again in the future. Registered the new test in `tests/spec-map.json` under §25.4.
+
+### - [ ] T-25.4.44 — lenny-ops's gateway_auth self-health check name (snake_case) diverges from the spec's literal gateway-auth (kebab-case) component name [Low] — OPEN
+- **Spec/Doc:** spec/25_agent-operability.md:1999-2000 names this self-health signal with a hyphen, twice: "...emit `ops_health_status_changed` with component `gateway-auth` degraded" and "...`ops_health_status_changed` emits with `gateway-auth` unhealthy."
+- **Existing tests:** `pkg/ops/opsservice/gatewayauthcheck_test.go` only asserts equality against the `CheckGatewayAuth` constant itself (tautological); no test pins the literal string value against the spec's kebab-case citations.
+- **Gap:** `pkg/ops/opsservice/selfchecks.go:24` defines `CheckGatewayAuth = "gateway_auth"` (snake_case), wired in `cmd/lenny-ops/services_wiring.go:41` as `w.selfChecks[opsservice.CheckGatewayAuth]`, diverging from the spec's two kebab-case citations of the same component name. Nothing currently catches this divergence.
+- **Dependencies:** None.
+- **Suggested test:** A test pinning the `gateway-auth` component name literal (or reconciling code/spec naming first) analogous to `TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494` added for T-25.4.43, scoped to this component's kebab-case citation instead.
 
 ## §25.5 Operational Event Stream <a id="t-25.5"></a>
 **Spec file:** `spec/25_agent-operability.md`
@@ -12401,6 +12408,7 @@ The five theme audits each proposed integrated testbeds (T-BED.1 through T-BED.1
 - **Also observed** (2026-07-18, while closing T-25.5.23): Reproduced again at commit f9ff1da8 via `lenny-test run --since <zero-diff sha>`, same four files.
 - **Also observed** (2026-07-18, while closing T-25.8.25): reproduced again, same four files, on `lenny-test run --since 98150040d3bd7e49ec5966a9a4e37190da34761c`.
 - **Also observed** (2026-07-18, while closing T-25.4.42, T-25.8.16, and T-25.8.21): reproduced again at three further startShas; same four files, no new files affected.
+- **Also observed** (2026-07-18, while closing T-25.4.43): reproduced again at startSha `323532c3`, same four files, blocking the static tier gate regardless of the diff under test.
 
 ### - [ ] T-META.28 — Pre-existing gofumpt formatting drift confirmed at a second startSha (`0413b4ff5`), same four files, independent of that finding's diff [Low] — OPEN
 - **Spec/Doc:** The repo's static CI tier runs `gofumpt -l .` as a formatting gate.
