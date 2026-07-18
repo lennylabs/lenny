@@ -140,3 +140,23 @@ func TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494(t *testing.T) {
 		t.Errorf("CheckCertManager = %q, want %q (§25.4 self-health snake_case convention; the camelCase certManager name belongs to the distinct §25.3 gateway health API component list, §25.7 line 3032)", CheckCertManager, "cert_manager")
 	}
 }
+
+// TestGatewayAuthComponentNameMatchesOIDCLifecycleCitation pins the
+// §25.4 "OIDC Token Lifecycle (GatewayClient)" section's literal
+// component name for the gateway-auth self-health check against the
+// CheckGatewayAuth constant used to name that check in the
+// "triggeringChecks" field of the emitted ops_health_status_changed
+// event. That section states, verbatim, twice: "Continuous refresh
+// failures within the pre-expiry window emit `ops_health_status_changed`
+// with component `gateway-auth` degraded" and "the token is assumed
+// revoked and `ops_health_status_changed` emits with `gateway-auth`
+// unhealthy" — both citing the component in kebab-case.
+//
+// spec: §25.4 "OIDC Token Lifecycle (GatewayClient)" (lines 1999-2000).
+func TestGatewayAuthComponentNameMatchesOIDCLifecycleCitation_spec_25_4_1999(t *testing.T) {
+	t.Skip("spec self-contradiction: §25.4 \"OIDC Token Lifecycle\" cites the gateway-auth component in kebab-case (lines 1999-2000) while the Self-Health Checks naming convention pinned by TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494 requires the same check name in snake_case (gateway_auth); which citation governs needs a spec decision, tracked separately in TEST-GAPS.md")
+	const specCitedComponentName = "gateway-auth"
+	if CheckGatewayAuth != specCitedComponentName {
+		t.Errorf("CheckGatewayAuth = %q, want %q per §25.4 lines 1999-2000", CheckGatewayAuth, specCitedComponentName)
+	}
+}
