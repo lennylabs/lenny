@@ -335,6 +335,68 @@ func TestResolveCredentialPoolsInheritDisjointDenies(t *testing.T) {
 	}
 }
 
+// spec: §8.3 line 443 — a deny hop grants the child no LLM credentials.
+// A row stamped CredentialDeny returns from resolveCredentialPools before
+// any intersection is computed: an empty provider map and no error, so
+// PreClaim runs no assignment and no lease is minted (fail closed). Over
+// the same fixture an independent (non-deny) child draws
+// anthropic_direct→claude-prod, so a deny child that received that pool
+// would be the spec-forbidden assignment this asserts against.
+func TestResolveCredentialPoolsDenyRowReceivesNoCredential(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	s := preclaimFixture(
+		t, policy, []string{"anthropic_direct"},
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+	)
+	row := sessionRow()
+	row.CredentialDeny = true // deny hop: child receives no LLM credentials
+	got, userProviders, _, err := s.resolveCredentialPools(context.Background(), row)
+	if err != nil {
+		t.Fatalf("resolveCredentialPools (deny row): %v", err)
+	}
+	if len(got) != 0 || len(userProviders) != 0 {
+		t.Errorf("deny row assigned pools=%v userProviders=%v, want none (deny grants no credentials)", got, userProviders)
+	}
+}
+
+// spec: §8.3 line 443, 490 — an inherit hop whose credential origin
+// resolves to a deny session fails closed. A deny session holds no origin
+// pool, so the child has nothing to inherit and resolveCredentialPools
+// returns ErrNoCredentialAvailable (CREDENTIAL_POOL_EXHAUSTED at
+// assignment) rather than deriving eligibility from the deny origin
+// runtime's supportedProviders. The deny origin runtime here declares
+// anthropic_direct with an active pool, so the pre-fix origin branch would
+// have admitted the grandchild; the deny check must still deny.
+func TestResolveCredentialPoolsInheritFailsClosedOnDenyOrigin(t *testing.T) {
+	policy := credential.CredentialPolicy{
+		ProviderPools: map[string]credential.ProviderPool{
+			"anthropic_direct": {DefaultPool: "claude-prod"},
+		},
+	}
+	s := preclaimInheritFixture(
+		t, policy,
+		[]string{"anthropic_direct"},
+		[]string{"anthropic_direct"},
+		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
+	)
+	if err := s.store.Create(context.Background(), sessionstore.Session{
+		ID: "origin-deny", TenantID: "acme", UserID: "alice@acme.com",
+		RuntimeRef: "origin-rt", CredentialDeny: true,
+	}); err != nil {
+		t.Fatalf("create deny origin: %v", err)
+	}
+	row := sessionRow()
+	row.CredentialOriginSessionID = "origin-deny"
+	_, _, _, err := s.resolveCredentialPools(context.Background(), row)
+	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
+		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (inherit from deny origin fails closed)", err)
+	}
+}
+
 // spec: §8.3 line 470 — the local intersectProviders set-∩ is
 // order-stable in a's order, deduplicates, and drops elements absent from
 // b. It backs the inherit constraint's origin∩child computation.

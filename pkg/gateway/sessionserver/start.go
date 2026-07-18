@@ -1363,6 +1363,14 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	if s.tenants == nil || s.runtimes == nil || s.credPools == nil {
 		return nil, nil, nil, nil
 	}
+	// spec: §8.3 line 443 — a deny hop grants the child no LLM credentials.
+	// A deny row resolves to zero eligible providers, so PreClaim runs no
+	// assignment and no lease is minted (fail closed). CredentialOriginSessionID
+	// cannot express this: a deny child is self-origin, identical to an
+	// independent child, so the persisted deny marker is the only signal.
+	if row.CredentialDeny {
+		return nil, nil, nil, nil
+	}
 	tenant, err := s.tenants.Get(ctx, row.TenantID)
 	if err != nil {
 		// The §10.2 tenant-claim extractor already gated the request; an
@@ -1396,10 +1404,19 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	// origin session or origin runtime fails closed (empty intersection →
 	// CREDENTIAL_POOL_EXHAUSTED at assignment) rather than falling back to
 	// the child's own unconstrained set, which would defeat the inherit
-	// guarantee.
+	// guarantee. A deny origin row also fails closed: a deny hop holds no
+	// origin pool (§8.3 line 443, line 490), so an inherit hop whose origin
+	// traces to a deny session has nothing to inherit and must not derive
+	// eligibility from the deny runtime's supportedProviders.
 	if row.CredentialOriginSessionID != "" && row.CredentialOriginSessionID != row.ID {
 		originRow, originErr := s.store.Get(ctx, row.TenantID, row.CredentialOriginSessionID)
 		if originErr != nil {
+			intersection = nil
+		} else if originRow.CredentialDeny {
+			// spec: §8.3 line 443, 490 — a deny session holds no origin pool, so
+			// an inherit hop from it has nothing to inherit and fails closed to
+			// CREDENTIAL_POOL_EXHAUSTED rather than deriving eligibility from the
+			// deny runtime's supportedProviders.
 			intersection = nil
 		} else if originRt, rtErr := runtimestore.Resolve(ctx, s.runtimes, originRow.RuntimeRef); rtErr != nil {
 			intersection = nil
