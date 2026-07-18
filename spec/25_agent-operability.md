@@ -804,7 +804,7 @@ Lenny's Helm chart uses these top-level keys. Every Helm value referenced in Sec
 | `backups` | Backup schedule, retention, encryption. |
 | `security` | OIDC, webhook signing, TLS overrides. |
 
-The full canonical values.yaml reference is maintained at `deploy/helm/lenny/values.yaml` in the repository. Tier-specific presets live at `deploy/helm/lenny/values-tier1.yaml`, `-tier2.yaml`, `-tier3.yaml` and override a defined subset of the base values (listed in the comment header of each preset file).
+The full canonical values.yaml reference is maintained at `charts/lenny/values.yaml` in the repository. Tier-specific presets live at `charts/lenny/presets/values-tier1.yaml`, `charts/lenny/presets/values-tier2.yaml`, and `charts/lenny/presets/values-tier3.yaml` and override a defined subset of the base values (listed in the comment header of each preset file).
 
 #### `lenny-ops` Helm Values
 
