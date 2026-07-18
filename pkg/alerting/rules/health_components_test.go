@@ -37,6 +37,26 @@ func TestHealthComponentMapTargetsAreKnownComponents_spec_25_3_443(t *testing.T)
 	}
 }
 
+// spec: §25.7 ("`components` — maps to the component names used in the
+// health API response (`warmPools`, `postgres`, `redis`, `gateway`,
+// `objectStore`, `certManager`, `credentialPools`, `controllers`,
+// `circuitBreakers`)."); §25.8 ("The `certManager` component in the
+// health response reports: ..."). Both sections name the §25.3
+// GET /v1/admin/health component key in camelCase. HealthComponentCertManager
+// is the single source of truth the gateway wiring (cmd/lenny-gateway) and
+// the runbook `components:` front matter (docs/runbooks/cert-manager-outage.md,
+// docs/runbooks/ca-rotation.md — both already spelled camelCase) key off; a
+// value that drifts from the spec's `certManager` breaks the §25.7 Path B
+// component lookup (`GET /v1/admin/runbooks?component=<health key>`) for
+// this component specifically, because the runbook index matches by exact
+// string equality against the front matter (pkg/ops/runbooks/index.go).
+func TestHealthComponentCertManagerMatchesSpecName_spec_25_7(t *testing.T) {
+	const wantSpecName = "certManager"
+	if HealthComponentCertManager != wantSpecName {
+		t.Errorf("HealthComponentCertManager = %q, want %q (spec §25.7/§25.8 component name)", HealthComponentCertManager, wantSpecName)
+	}
+}
+
 func TestHealthComponentFor_spec_25_3_443(t *testing.T) {
 	// A mapped critical dependency alert resolves to its component.
 	if got, ok := HealthComponentFor("SessionStoreUnavailable"); !ok || got != HealthComponentPostgres {

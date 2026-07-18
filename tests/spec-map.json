@@ -3456,14 +3456,16 @@
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
         "tests/tier4_integration/runbook_discovery_test.go",
         "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary",
-        "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet"
+        "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet",
+        "pkg/alerting/rules/health_components_test.go::TestHealthComponentCertManagerMatchesSpecName_spec_25_7"
       ],
       "packages": [
         "pkg/ops/runbooks",
         "pkg/ops/opsserver",
         "pkg/gateway/operability/health",
         "pkg/gateway/externalapi/openapi",
-        "pkg/ops/mcp"
+        "pkg/ops/mcp",
+        "pkg/alerting/rules"
       ],
       "notes": "§25.7 Operational Runbooks. pkg/ops/runbooks implements the runbook index; pkg/ops/opsserver serves it over REST and pkg/ops/mcp over the MCP tool inventory. See TESTING.md §25 for the test plan."
     },
