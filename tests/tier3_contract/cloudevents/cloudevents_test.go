@@ -329,6 +329,85 @@ func TestCloudEventsAlertFiredPayloadFields(t *testing.T) {
 	}
 }
 
+// spec: 25.17 (End-to-End Operational Example, Step 1: Observe — Event
+// Arrives). The Step 1 SSE payload is:
+// `"suggestedAction":{"action":"SCALE_WARM_POOL","endpoint":"PUT
+// /v1/admin/pools/default-gvisor/warm-count","body":{"minWarm":15},
+// "reasoning":"Pool exhausted for 3 minutes. Peak claim rate:
+// 4.2/min."}` — the suggestedAction object carries a `body` key holding
+// the concrete remediation request body.
+// diagnosis: §25.17 Step 1's suggestedAction carries a `body` field
+// alongside action/endpoint/reasoning so a watchdog can issue the PUT
+// without a follow-up diagnostic call. This test is a non-blocking
+// skip: pkg/alerting/rules.criticalAlerts's WarmPoolExhausted entry
+// deliberately sets no Body on its catalog-level SuggestedAction (the
+// concrete minWarm value depends on the pool's live claim rate, which
+// the static rule catalog compiled at build time has no way to know;
+// only the runtime §25.6 pool diagnostic can compute it). The §25.7
+// Path B canonical alert_fired example (spec/25_agent-operability.md
+// around line 3238) goes further and omits suggestedAction from the
+// payload entirely, conflicting with §25.17's fuller illustration.
+// Reconciling whether §25.17's example should drop `body` (matching
+// the deliberate rule-level design) or whether the catalog should grow
+// a template body is a spec-versus-implementation decision left for
+// human review.
+func TestCloudEventsAlertFiredPayloadSuggestedActionBody(t *testing.T) {
+	t.Skip("WarmPoolExhausted's catalog-level SuggestedAction sets no Body, so alert_fired's suggestedAction omits body; spec-versus-implementation reconciliation pending (see TEST-GAPS.md)")
+
+	var rule rules.Rule
+	for _, r := range rules.Catalog() {
+		if r.Name == "WarmPoolExhausted" {
+			rule = r
+			break
+		}
+	}
+	if rule.Name == "" {
+		t.Fatal("WarmPoolExhausted not in the §16.5 catalog")
+	}
+
+	buf := eventbuffer.NewEventBuffer(0)
+	em := eventbuffer.NewEmitter(buf, "gw-7f4c2a1e")
+	onFired, onResolved := evaluator.EmitCallbacks(evaluator.EventEmitOptions{
+		Emitter: em,
+		Source:  "//lenny.dev/gateway/gw-7f4c2a1e",
+	})
+	ev := evaluator.New([]rules.Rule{rule}, alwaysActiveExpr{}, evaluator.Options{
+		OnFired: onFired, OnResolved: onResolved,
+	})
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ev.Tick(context.Background(), t0)
+	ev.Tick(context.Background(), t0.Add(2*time.Minute))
+
+	page := buf.Query(0, events.EventFilter{EventType: "alert_fired"}, 100)
+	if len(page.Events) != 1 {
+		t.Fatalf("alert_fired emitted %d events, want 1", len(page.Events))
+	}
+
+	var data struct {
+		SuggestedAction *struct {
+			Body json.RawMessage `json:"body"`
+		} `json:"suggestedAction"`
+	}
+	if err := json.Unmarshal(page.Events[0].Event.Data, &data); err != nil {
+		t.Fatalf("alert_fired data payload: %v", err)
+	}
+	if data.SuggestedAction == nil {
+		t.Fatal("data.suggestedAction is absent, want a well-formed remediation hint")
+	}
+	if len(data.SuggestedAction.Body) == 0 {
+		t.Fatal("data.suggestedAction.body is absent, want the §25.17 Step 1 example's {\"minWarm\":15}")
+	}
+	var body struct {
+		MinWarm int `json:"minWarm"`
+	}
+	if err := json.Unmarshal(data.SuggestedAction.Body, &body); err != nil {
+		t.Fatalf("data.suggestedAction.body: %v", err)
+	}
+	if body.MinWarm != 15 {
+		t.Errorf("data.suggestedAction.body.minWarm = %d, want 15", body.MinWarm)
+	}
+}
+
 // spec: 25.5 (Event Types table — alert_fired payload highlights list
 // "labels"), 25.7 (runbook discovery), 25.17 (End-to-End Operational
 // Example, Step 1). The §25.5 Event Types table names labels among the

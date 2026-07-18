@@ -3199,10 +3199,12 @@
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
-        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E"
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E",
+        "pkg/ops/me/service_test.go::TestService_Authorized_ScopeFilter"
       ],
       "packages": [
-        "pkg/gateway/externalapi/admin"
+        "pkg/gateway/externalapi/admin",
+        "pkg/ops/me"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.1 Design Philosophy and Agent Model. The §25.1 enforcement-point-1 admin-API scope gate (proposal 0019 ADM-1) is pinned by the scope-enforcement tests; see TESTING.md §25 for the rest of the operability test plan."
@@ -3339,7 +3341,8 @@
         "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryOperationIDLookupIsUnambiguousForVerifyingBackup",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
-        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
+        "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock"
       ],
       "packages": [
         "cmd/lenny-ops",
@@ -3349,6 +3352,9 @@
         "pkg/ops/coordination/pgstore",
         "pkg/ops/coordination/redisstore",
         "pkg/ops/escalation/pgstore"
+      ],
+      "chart_templates": [
+        "charts/lenny/templates/ops-rbac.yaml"
       ]
     },
     "25.5": {
@@ -3711,12 +3717,13 @@
       "tests": [
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields",
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadSuggestedActionBody",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels",
         "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation"
       ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review. The tier-3 contract test pins the Step 1 alert_fired event's `data` payload — severity, alertName, runbook, and a well-formed suggestedAction (action, endpoint, reasoning) — produced end to end through the real §16.5 WarmPoolExhausted rule and the evaluator's EmitCallbacks wiring, so a payload-field rename or drop breaks the test before it reaches a watchdog agent. A companion contract test pins the alert_fired payload's `labels` field (the §25.7 / §25.17 examples carry \"labels\":{\"pool\":\"...\"}); it is a non-blocking skip because EmitCallbacks emits no labels key and the ExprEvaluator contract resolves a rule to a bool with no matched-series labels, so whether emit.go merges the rule's static Labels and whether ExprEvaluator surfaces matched-series labels is a product decision left for human review."
+      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review. The tier-3 contract test pins the Step 1 alert_fired event's `data` payload — severity, alertName, runbook, and a well-formed suggestedAction (action, endpoint, reasoning) — produced end to end through the real §16.5 WarmPoolExhausted rule and the evaluator's EmitCallbacks wiring, so a payload-field rename or drop breaks the test before it reaches a watchdog agent. A companion contract test pins the suggestedAction's `body` field (the §25.17 Step 1 example carries \"body\":{\"minWarm\":15}); it is a non-blocking skip because pkg/alerting/rules's WarmPoolExhausted catalog entry deliberately sets no Body on its SuggestedAction (the concrete minWarm value depends on live pool state the static rule catalog cannot compute), and the §25.7 Path B canonical alert_fired example omits suggestedAction from the payload entirely, conflicting with §25.17's fuller illustration. Whether §25.17's example should drop `body` or the catalog should grow a template body is a spec-versus-implementation decision left for human review. A companion contract test pins the alert_fired payload's `labels` field (the §25.7 / §25.17 examples carry \"labels\":{\"pool\":\"...\"}); it is a non-blocking skip because EmitCallbacks emits no labels key and the ExprEvaluator contract resolves a rule to a bool with no matched-series labels, so whether emit.go merges the rule's static Labels and whether ExprEvaluator surfaces matched-series labels is a product decision left for human review."
     },
     "26": {
       "title": "Reference Runtime Catalog",
