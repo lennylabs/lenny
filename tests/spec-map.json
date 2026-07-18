@@ -3439,7 +3439,9 @@
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
-        "tests/tier4_integration/runbook_discovery_test.go"
+        "tests/tier4_integration/runbook_discovery_test.go",
+        "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary",
+        "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet"
       ],
       "packages": [
         "pkg/ops/runbooks",
@@ -3460,6 +3462,16 @@
         "pkg/ops/upgradeservice/upgradeservice_test.go",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_InSync_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_Changes_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_GatewayUnavailable_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailed_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_DryRun_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_Confirm_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ConfirmRestartRequired_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_GatewayApplyError_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_LowerMinimumWarning_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestNew_NilGatewayPanics_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
         "tests/tier2_component/observability/version_drift_metric_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go",
@@ -3473,11 +3485,14 @@
         "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
         "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry",
+        "tests/tier2_component/controllers/upgrade_digest_patch_test.go::TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest",
         "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
         "charts/lenny/tests/registry-digest-webhook_test.yaml",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesFixedPhaseDurations",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
-        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta"
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta",
+        "pkg/ops/upgradeservice/upgradeservice_test.go::TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA",
+        "tests/tier0_static/upgrade_channel_key_render_test.go::TestUpgradeChannelKeyDisablesReleaseChannelURL"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3486,10 +3501,11 @@
         "pkg/ops/opsserver",
         "pkg/ops/registryservice",
         "pkg/ops/opsinventory",
-        "pkg/releasechannel"
+        "pkg/releasechannel",
+        "pkg/ops/configservice"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts."
+      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
     },
     "25.9": {
       "title": "Audit Log Query API",

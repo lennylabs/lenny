@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/upgradeservice"
 	"github.com/lennylabs/lenny/pkg/upgrade"
 )
@@ -538,5 +539,74 @@ func TestProceedAbortsCompletionOnPromoteFailure_spec_25_10_3789(t *testing.T) {
 	st, _, _ := svc.Status(ctx)
 	if st.Phase != upgrade.Verification {
 		t.Errorf("phase = %s after promote failure, want unchanged Verification (fail closed)", st.Phase)
+	}
+}
+
+// spec: §25.8 line 3496 ("etaSeconds uses etaMethod: fixed_phase_durations
+// ... combined with historical_p50 when ops_operation_baselines has
+// samples") describes the ETA the canonical progress envelope reports for
+// an in-flight platform upgrade. This drives every public mutation the
+// orchestrator exposes (Start, Proceed, AdvanceOpsRoll) through a full
+// Preflight-to-Verification walk and asserts that the fixed_phase_durations
+// (or historical_p50) branch is reachable that way: some non-terminal
+// phase along the walk must be left both active (not Complete/RolledBack)
+// and not Paused, so GET /v1/admin/platform/upgrade/status can report an
+// ETA rather than the "none" the §25.8 Pausing-and-Resuming paused example
+// (spec line ~1733) shows.
+//
+// diagnosis: the orchestrator's public mutation API (Start/Proceed/
+// AdvanceOpsRoll) re-pauses (Paused=true) on every non-terminal transition
+// (upgradeservice.go Start/Proceed/AdvanceOpsRoll), so no sequence of
+// public calls ever leaves the upgrade active and unpaused; the
+// fixed_phase_durations/historical_p50 ETA branch in FullProgress is
+// exercised today only by tests that construct upgradeservice.State
+// directly with Paused: false (pkg/ops/opsinventory/upgrade_progress_test.go),
+// not by driving the state machine through its public mutation surface.
+func TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA(t *testing.T) {
+	t.Skip("blocked on the open §25.8 architecture question (recorded in TEST-GAPS.md): whether lenny-ops should perform upgrade phase work in-process (leaving the state active and unpaused while it runs, per the spec's phase-detail narrative) or remain the operator-paced orchestrator it is today (pausing after every phase and delegating the actual cluster mutations to the operator/agent between proceed calls); until that is resolved via the change-proposal pipeline, no sequence of public Start/Proceed/AdvanceOpsRoll calls produces an active, unpaused, non-terminal state to assert an ETA against")
+
+	svc, _, _ := newService(t)
+	ctx := context.Background()
+
+	if _, err := svc.Start(ctx, upgradeservice.StartRequest{TargetVersion: "1.6.0", StartedBy: "alice"}); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	var (
+		st          upgradeservice.State
+		err         error
+		sawActive   bool
+		sawFixedETA bool
+	)
+	for {
+		st, _, err = svc.Status(ctx)
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if st.Active() && !st.Paused {
+			sawActive = true
+			full := svc.FullProgress(ctx, st)
+			if full.EtaMethod == conventions.EtaFixedPhaseDurations || full.EtaMethod == conventions.EtaHistoricalP50 {
+				sawFixedETA = true
+			}
+		}
+		if upgrade.IsTerminal(st.Phase) {
+			break
+		}
+		if st.Phase == upgrade.OpsRoll {
+			st, err = svc.AdvanceOpsRoll(ctx)
+		} else {
+			st, err = svc.Proceed(ctx)
+		}
+		if err != nil {
+			t.Fatalf("advance from %s: %v", st.Phase, err)
+		}
+	}
+
+	if !sawActive {
+		t.Fatalf("no phase along the walk was ever active and unpaused")
+	}
+	if !sawFixedETA {
+		t.Fatalf("no active/unpaused phase reported etaMethod fixed_phase_durations or historical_p50")
 	}
 }
