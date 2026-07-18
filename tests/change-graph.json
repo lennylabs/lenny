@@ -653,7 +653,8 @@
       "component": [
         "tests/tier2_component/observability/version_aggregation_test.go",
         "tests/tier2_component/observability/version_drift_metric_test.go",
-        "tests/tier2_component/observability/upgrade_check_cron_test.go"
+        "tests/tier2_component/observability/upgrade_check_cron_test.go",
+        "tests/tier2_component/controllers/upgrade_digest_patch_test.go"
       ],
       "contract": ["tests/tier3_contract/ops_endpoints/upgrade_test.go"],
       "integration": ["tests/tier4_integration/release_channel_fetch_test.go"]
