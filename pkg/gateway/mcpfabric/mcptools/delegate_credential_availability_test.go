@@ -199,8 +199,9 @@ func TestDelegateTaskNilCheckerSkipsGate_spec_8_3(t *testing.T) {
 
 // newCrossEnvInheritCredAvailMCP mirrors the §10.6 cross-environment inherit
 // setup but wires the §8.3 credential-availability checker, so a test can prove
-// the 0043 CREDENTIAL_PROVIDER_MISMATCH gate is evaluated before the §8.3
-// availability gate on a cross-environment inherit hop.
+// the cross-environment inherit CREDENTIAL_PROVIDER_MISMATCH provider-compatibility
+// gate is evaluated before the §8.3 availability gate on a cross-environment
+// inherit hop.
 func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabilityChecker, childProviders []string) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
@@ -273,11 +274,11 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	return srv, store
 }
 
-// spec: 8.3 — on a cross-environment inherit hop the more specific 0043
-// CREDENTIAL_PROVIDER_MISMATCH gate is evaluated before the §8.3 availability
-// gate. With disjoint providers and a checker configured to report exhaustion,
-// the handler returns CREDENTIAL_PROVIDER_MISMATCH, proving the availability
-// gate does not preempt the provider-compatibility gate.
+// spec: 8.3 — on a cross-environment inherit hop the more specific
+// CREDENTIAL_PROVIDER_MISMATCH provider-compatibility gate is evaluated before
+// the §8.3 availability gate. With disjoint providers and a checker configured to
+// report exhaustion, the handler returns CREDENTIAL_PROVIDER_MISMATCH, proving the
+// availability gate does not preempt the provider-compatibility gate.
 func TestDelegateTaskCrossEnvInheritMismatchBeforeAvailability_spec_8_3(t *testing.T) {
 	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
 	srv, store := newCrossEnvInheritCredAvailMCP(t, checker, []string{"openai_direct"})
@@ -287,10 +288,10 @@ func TestDelegateTaskCrossEnvInheritMismatchBeforeAvailability_spec_8_3(t *testi
 	result, _ := resp["result"].(map[string]any)
 	env := readLennyErrorEnvelope(t, result)
 	if env["code"] != "CREDENTIAL_PROVIDER_MISMATCH" {
-		t.Fatalf("code = %v, want CREDENTIAL_PROVIDER_MISMATCH (0043 gate must run first)", env["code"])
+		t.Fatalf("code = %v, want CREDENTIAL_PROVIDER_MISMATCH (provider-compatibility gate must run first)", env["code"])
 	}
 	if len(checker.calls) != 0 {
-		t.Errorf("the availability checker must not run when the 0043 gate rejects, got %d calls", len(checker.calls))
+		t.Errorf("the availability checker must not run when the provider-compatibility gate rejects, got %d calls", len(checker.calls))
 	}
 	if childRowExists(t, store) {
 		t.Error("a rejected cross-environment inherit hop must not create a child session")
