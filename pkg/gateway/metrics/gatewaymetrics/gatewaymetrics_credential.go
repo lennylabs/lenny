@@ -38,6 +38,11 @@ type credentialMetrics struct {
 	// to total pool credentials, in [0,1]. Labeled by `pool`; the
 	// CredentialPoolLow alert fires above 0.80.
 	credentialPoolUtilization *prometheus.GaugeVec
+	// credentialLeasesSwept counts the §4.9 expired-lease rows the
+	// bounded sweep worker removes from the credential_leases table
+	// (lenny_gateway_credential_leases_swept_total). Unlabeled per
+	// §16.1.1 (no high-cardinality attribute). spec: §4.9 line 1671.
+	credentialLeasesSwept prometheus.Counter
 	// llmProxyActiveConnections is the §16.1 count of in-flight LLM proxy
 	// requests on a replica. No labels.
 	llmProxyActiveConnections prometheus.Gauge
@@ -138,6 +143,16 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 	if err != nil {
 		return m, err
 	}
+	// §4.9 line 1671 — `lenny_gateway_credential_leases_swept_total` counts
+	// the expired lease rows the bounded sweep worker removes from the
+	// credential_leases table each tick. Unlabeled per §16.1.1.
+	credentialLeasesSwept, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_gateway_credential_leases_swept_total",
+		Help: "Expired credential-lease rows removed by the §4.9 sweep worker.",
+	}, nil)
+	if err != nil {
+		return m, err
+	}
 	// §16.1 line 97 — `lenny_gateway_llm_proxy_active_connections` is the
 	// count of in-flight LLM proxy requests on a replica.
 	llmProxyActiveConnections, err := metrics.NewGauge(prometheus.GaugeOpts{
@@ -221,8 +236,10 @@ func newCredentialMetrics(reg *prometheus.Registry) (credentialMetrics, error) {
 		slotRehydration,
 		slotPodReplacement,
 		adapterLeakedSlots,
-		llmProxyActiveConnections)
+		llmProxyActiveConnections,
+		credentialLeasesSwept)
 	llmProxyConns := llmProxyActiveConnections.WithLabelValues()
+	m.credentialLeasesSwept = credentialLeasesSwept.WithLabelValues()
 	m.credentialPreclaimMismatch = credentialPreclaimMismatch
 	m.credentialLeaseAssignments = credentialLeaseAssignments
 	m.credentialLeaseDuration = credentialLeaseDuration

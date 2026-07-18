@@ -135,13 +135,13 @@ type Report struct {
 	// Components is the per-subsystem breakdown, name-sorted.
 	Components []Component `json:"components"`
 
-	// Degradation carries the §25.4 canonical envelope. The gateway's
+	// Degradation carries the §25.2 canonical envelope. The gateway's
 	// in-process alert tracker always evaluates the compiled-in
 	// thresholds, so a single-replica Report stamps
 	// `thresholdSource: "compiled-in-defaults"` per §25.13 line 4848.
 	// `lenny-ops` overrides the envelope when its aggregated view
 	// derives from the operator's Prometheus rules.
-	// spec: §25.4 line 215.
+	// spec: §25.2.
 	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 
@@ -155,10 +155,11 @@ type cachedProbe struct {
 // Aggregator holds the registered Checkers and rolls them up.
 // Goroutine-safe.
 type Aggregator struct {
-	mu           sync.RWMutex
-	checkers     map[string]Checker
-	lastStatus   Status
-	onTransition func(prev, curr Status)
+	mu             sync.RWMutex
+	checkers       map[string]Checker
+	lastStatus     Status
+	lastComponents []Component
+	onTransition   func(prev, curr Status, prevComponents, currComponents []Component)
 
 	// §25.3 line 526 per-replica probe-result cache. cacheTTL of 0
 	// disables caching (every request runs the probes); the clock is
@@ -337,7 +338,15 @@ func (a *Aggregator) SetAlertSource(src AlertStatusSource) {
 // Report computes an aggregate status that differs from the previous
 // Report's. It is the §25.3 health_status_changed hook. The first
 // Report establishes the baseline and fires no transition.
-func (a *Aggregator) OnTransition(fn func(prev, curr Status)) {
+//
+// prevComponents and currComponents are the per-component snapshots
+// from the previous and the new Report, so the caller can identify the
+// triggering component(s) — the components whose individual status
+// changed between the two snapshots — the same way the §25.4
+// ops_health_status_changed payload names its triggering check(s).
+// spec: §25.3 (event types — health_status_changed payload: "Old
+// status, new status, triggering component").
+func (a *Aggregator) OnTransition(fn func(prev, curr Status, prevComponents, currComponents []Component)) {
 	a.mu.Lock()
 	a.onTransition = fn
 	a.mu.Unlock()
@@ -387,13 +396,18 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 
 	// §25.3: detect an aggregate-status transition against the previous
 	// Report and fire the health_status_changed hook outside the lock.
+	// prevComponents is the component snapshot from the previous Report;
+	// it lets the hook identify the triggering component(s) alongside
+	// the old/new aggregate status.
 	a.mu.Lock()
 	prev := a.lastStatus
+	prevComponents := a.lastComponents
 	a.lastStatus = worst
+	a.lastComponents = components
 	fn := a.onTransition
 	a.mu.Unlock()
 	if fn != nil && prev != "" && prev != worst {
-		fn(prev, worst)
+		fn(prev, worst, prevComponents, components)
 	}
 	// spec: §25.13 line 4848 — the gateway's in-process tracker
 	// evaluates the compiled-in thresholds. Surface the source on the
@@ -410,7 +424,7 @@ func (a *Aggregator) Report(ctx context.Context) Report {
 	}
 }
 
-// degradationLevelFor maps the §25.3 worst-status to the §25.4
+// degradationLevelFor maps the §25.3 worst-status to the §25.2
 // envelope level. healthy → healthy, degraded → degraded, unhealthy →
 // failed.
 func degradationLevelFor(s Status) conventions.DegradationLevel {
@@ -475,4 +489,32 @@ func (a *Aggregator) HardDependencyStatus(ctx context.Context, names ...string) 
 		}
 	}
 	return worst
+}
+
+// TriggeringComponents returns the names of the components whose
+// individual status changed between prev and curr, sorted by name.
+// These are the components that drove the aggregate health transition
+// an OnTransition hook observes. A component present in curr but absent
+// from prev (for example, one registered after the baseline Report)
+// counts as a trigger when its new status is not healthy.
+//
+// spec: §25.3 (event types — health_status_changed payload: "Old
+// status, new status, triggering component").
+func TriggeringComponents(prev, curr []Component) []string {
+	prevStatus := make(map[string]Status, len(prev))
+	for _, c := range prev {
+		prevStatus[c.Name] = c.Status
+	}
+	var changed []string
+	for _, c := range curr {
+		before, ok := prevStatus[c.Name]
+		switch {
+		case ok && before != c.Status:
+			changed = append(changed, c.Name)
+		case !ok && c.Status != StatusHealthy:
+			changed = append(changed, c.Name)
+		}
+	}
+	sort.Strings(changed)
+	return changed
 }

@@ -12,7 +12,8 @@ import (
 
 // cmdSLO implements the §16.10 `slo` group. The only subcommand is
 // `export`, which renders the §16.5 SLO catalog as OpenSLO v1
-// SLO/SLI/AlertPolicy documents. It runs offline from the embedded
+// SLO/SLI/AlertPolicy documents plus a shared AlertNotificationTarget the
+// alert policies reference. It runs offline from the embedded
 // pkg/alerting/rules catalog (the same source the bundled §16.5
 // burn-rate alerts and the chart's OpenSLO ConfigMap derive from), so it
 // reaches no gateway. spec: §16.10 lines 732-736.
@@ -42,7 +43,7 @@ func cmdSLOExport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "lenny-ctl: unsupported slo export format %q (only \"openslo\")\n", *format)
 		return 2
 	}
-	out, err := rules.RenderOpenSLO(rules.OpenSLOService, *tier)
+	out, err := rules.RenderOpenSLO(rules.OpenSLOService, *tier, rules.OpenSLODefaultNotificationTarget)
 	if err != nil {
 		fmt.Fprintf(stderr, "lenny-ctl: slo export: %v\n", err)
 		return 1

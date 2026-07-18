@@ -42,6 +42,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
@@ -1003,7 +1004,21 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 			if code == "" {
 				code = "INTERCEPTOR_REJECTED"
 			}
-			return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, nil)
+			// A deliberate PreToolResult reject falls back to
+			// INTERCEPTOR_REJECTED; an immutable-field violation (a MODIFY
+			// altering the immutable tool_call `id`) carries its own §15.1
+			// code (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION) plus the
+			// violated field names, so the tool-error envelope matches the
+			// §15.1 catalog row uniformly with the other chain surfaces.
+			// spec: §4.8 (PreToolResult id immutability), §15.1.
+			details := map[string]any{
+				"phase":           string(interceptor.PhasePreToolResult),
+				"interceptor_ref": res.RejectedBy,
+			}
+			if res.Code == interceptor.CodeInterceptorImmutableFieldViolation {
+				details["violated_fields"] = res.ViolatedFields
+			}
+			return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, details)
 		case interceptor.ActionModify:
 			var modified preToolResultPayload
 			if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
@@ -1566,6 +1581,66 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 		return false, nil
 	}
 	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, res.AllEnvironments), nil
+}
+
+// crossEnvInheritMismatch runs the §8.3 cross-environment `inherit`
+// provider-compatibility check. Before a cross-environment `inherit`
+// delegation claims a warm pod, the gateway intersects the providers
+// represented in the parent's origin credential pool — the tenant
+// credentialPolicy providers narrowed to the origin runtime's
+// supportedProviders — with the child runtime's supportedProviders. An
+// empty intersection returns a CREDENTIAL_PROVIDER_MISMATCH tool error so
+// the delegation is rejected before any pod is claimed; a non-empty
+// intersection returns nil and the caller proceeds to the pod-claiming
+// Delegate path unchanged.
+//
+// The origin session is resolved live at this hop from the delegating
+// parent's stored CredentialOriginSessionID (its own id when unset),
+// forwarding the same origin pool through contiguous inherit hops and
+// re-checking it against the immediate target runtime at each
+// environment boundary. An unresolvable origin session or origin runtime
+// fails closed: its empty supportedProviders yield an empty intersection
+// and the delegation is rejected rather than falling back to the child's
+// own unconstrained provider set. The check is skipped (returns nil) when
+// the session, runtime, or tenant registry is unwired, mirroring
+// crossEnvReachable's nil-registry behavior; a parent lookup failure also
+// skips it, since the pod-claiming Delegate path rejects a missing parent.
+//
+// spec: §8.3 line 472 (cross-environment compatibility check and exact
+// rejection message); line 472/488 (origin-pool forwarding through
+// contiguous inherit hops); line 474. §15 CREDENTIAL_PROVIDER_MISMATCH is
+// POLICY / 422.
+func crossEnvInheritMismatch(ctx context.Context, deps Deps, tenant, parentSessionID, targetRef string) *mcp.ToolError {
+	if deps.Store == nil || deps.Runtimes == nil || deps.Tenants == nil {
+		return nil
+	}
+	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
+	if err != nil {
+		return nil
+	}
+	originID := parent.CredentialOriginSessionID
+	if originID == "" {
+		originID = parent.ID
+	}
+	// An unresolvable origin session or runtime leaves the zero value,
+	// whose empty SupportedProviders produce an empty intersection: the
+	// inherit hop fails closed rather than drawing from the child's own
+	// unconstrained provider set.
+	origin, _ := deps.Store.Get(ctx, tenant, originID)
+	originRuntime, _ := deps.Runtimes.Get(ctx, origin.RuntimeRef)
+	childRuntime, _ := deps.Runtimes.Get(ctx, targetRef)
+	var providers []string
+	if tnt, terr := deps.Tenants.Get(ctx, tenant); terr == nil {
+		providers = tnt.CredentialPolicy.Providers()
+	}
+	originProviders := lease.IntersectProviders(providers, originRuntime.SupportedProviders)
+	compat := lease.IntersectProviders(originProviders, childRuntime.SupportedProviders)
+	if len(compat) > 0 {
+		return nil
+	}
+	return mcp.NewToolError("CREDENTIAL_PROVIDER_MISMATCH",
+		"credentialPropagation: inherit is incompatible with cross-environment delegation: parent credential pool providers do not intersect with child runtime supportedProviders",
+		map[string]any{"originRuntime": origin.RuntimeRef, "childRuntime": targetRef})
 }
 
 // memberOfEnvironment reports whether the resolved caller is a member

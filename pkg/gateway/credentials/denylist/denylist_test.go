@@ -74,6 +74,92 @@ func TestRevokeIsIdempotent(t *testing.T) {
 	}
 }
 
+// spec: §4.9 line 1671 — a deny-list entry expires when the credential's
+// last lease lapses; the sweep calls Remove to drop it.
+func TestRemoveDeletesKey(t *testing.T) {
+	d := denylist.New()
+	key := poolKey("claude-prod", "key-1")
+	d.Revoke(key)
+	if !d.Revoked(key) {
+		t.Fatal("the revoked credential is not reported revoked before Remove")
+	}
+	d.Remove(key)
+	if d.Revoked(key) {
+		t.Error("the credential is still reported revoked after Remove")
+	}
+	if d.Len() != 0 {
+		t.Errorf("deny list holds %d entries after removing the only key, want 0", d.Len())
+	}
+}
+
+func TestRemoveOnlyDeletesNamedKey(t *testing.T) {
+	d := denylist.New()
+	keep := poolKey("claude-prod", "key-1")
+	drop := userKey("acme", "cred-1")
+	d.Revoke(keep)
+	d.Revoke(drop)
+	d.Remove(drop)
+	if d.Revoked(drop) {
+		t.Error("the removed key is still reported revoked")
+	}
+	if !d.Revoked(keep) {
+		t.Error("removing one key also dropped an unrelated key")
+	}
+}
+
+func TestRemoveAbsentKeyIsNoop(t *testing.T) {
+	d := denylist.New()
+	d.Revoke(poolKey("claude-prod", "key-1"))
+	d.Remove(userKey("acme", "never-added"))
+	if d.Len() != 1 {
+		t.Errorf("removing an absent key changed the deny list size to %d, want 1", d.Len())
+	}
+}
+
+func TestKeysSnapshot(t *testing.T) {
+	d := denylist.New()
+	if got := d.Keys(); len(got) != 0 {
+		t.Errorf("a fresh deny list returned %d keys, want 0", len(got))
+	}
+	want := map[credential.CredentialKey]struct{}{
+		poolKey("p", "c1"):     {},
+		poolKey("p", "c2"):     {},
+		userKey("acme", "cr1"): {},
+	}
+	for k := range want {
+		d.Revoke(k)
+	}
+	got := d.Keys()
+	if len(got) != len(want) {
+		t.Fatalf("Keys returned %d entries, want %d", len(got), len(want))
+	}
+	seen := make(map[credential.CredentialKey]struct{}, len(got))
+	for _, k := range got {
+		if _, ok := want[k]; !ok {
+			t.Errorf("Keys returned unexpected entry %+v", k)
+		}
+		if _, dup := seen[k]; dup {
+			t.Errorf("Keys returned duplicate entry %+v", k)
+		}
+		seen[k] = struct{}{}
+	}
+}
+
+// TestKeysReflectsRemoval pins that Keys returns the current-entry
+// snapshot rather than a stale set: a key dropped via Remove is absent.
+func TestKeysReflectsRemoval(t *testing.T) {
+	d := denylist.New()
+	stay := poolKey("p", "c1")
+	gone := poolKey("p", "c2")
+	d.Revoke(stay)
+	d.Revoke(gone)
+	d.Remove(gone)
+	got := d.Keys()
+	if len(got) != 1 || got[0] != stay {
+		t.Errorf("Keys after Remove = %+v, want exactly [%+v]", got, stay)
+	}
+}
+
 func TestLen(t *testing.T) {
 	d := denylist.New()
 	if d.Len() != 0 {

@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
@@ -269,6 +270,35 @@ func TestToolsCallDryRunMapsToMetaFlag(t *testing.T) {
 	meta, _ := result["_meta"].(map[string]any)
 	if meta == nil || meta["lenny.dryRun"] != true {
 		t.Errorf("_meta = %v, want lenny.dryRun:true", meta)
+	}
+	// §25.12: "The structured _meta.lenny.dryRun: true field is the
+	// canonical signal ... The text content remains JSON-formatted so
+	// clients without metadata support can still detect the dry-run via
+	// string parsing." _meta.lenny.preview must carry the REST preview
+	// body, and content[0].text must string-parse as JSON carrying
+	// dryRun:true.
+	var wantPreview any
+	if err := json.Unmarshal(inv.result.Preview, &wantPreview); err != nil {
+		t.Fatalf("test fixture preview is not valid JSON: %v", err)
+	}
+	if !reflect.DeepEqual(meta["lenny.preview"], wantPreview) {
+		t.Errorf("_meta.lenny.preview = %v, want %v (the REST preview body)", meta["lenny.preview"], wantPreview)
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("result.content = %v, want a non-empty content array", result["content"])
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	var textBody map[string]any
+	if err := json.Unmarshal([]byte(text), &textBody); err != nil {
+		t.Fatalf("content[0].text = %q is not valid JSON: %v", text, err)
+	}
+	if textBody["dryRun"] != true {
+		t.Errorf("content[0].text dryRun = %v, want true", textBody["dryRun"])
+	}
+	if !reflect.DeepEqual(textBody["preview"], wantPreview) {
+		t.Errorf("content[0].text preview = %v, want %v (the REST preview body)", textBody["preview"], wantPreview)
 	}
 }
 

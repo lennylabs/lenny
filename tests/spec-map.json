@@ -444,7 +444,8 @@
         "tests/tier4_integration/send_message_scan_test.go",
         "tests/tier4_integration/export_scan_test.go",
         "tests/tier3_contract/interceptor_proto/contract_test.go",
-        "tests/tier8_chaos/interceptor_fail_open_escalation_test.go::TestInterceptorFailOpenEscalationOverGRPC_spec_4_8"
+        "tests/tier8_chaos/interceptor_fail_open_escalation_test.go::TestInterceptorFailOpenEscalationOverGRPC_spec_4_8",
+        "tests/tier3_contract/interceptor_immutable_envelope/contract_test.go"
       ],
       "packages": [
         "pkg/gateway/interceptors",
@@ -479,7 +480,11 @@
         "tests/tier8_chaos/testbed_partition_test.go",
         "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
         "tests/tier5_e2e_kind/admission_credential_multitenant_test.go",
-        "tests/tier9_security/lease_spiffe_replay_test.go"
+        "tests/tier9_security/lease_spiffe_replay_test.go",
+        "tests/tier3_contract/adapter_extendcredlease/extend_credential_lease_wire_test.go",
+        "tests/tier8_chaos/token_service_unavailability_guard_test.go",
+        "tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go",
+        "tests/tier9_security/credential_delivery_gate_test.go"
       ],
       "packages": [
         "pkg/credential",
@@ -753,7 +758,8 @@
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
         "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
-        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas"
+        "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
+        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -778,7 +784,8 @@
       "title": "Upload Safety",
       "spec_file": "spec/07_session-lifecycle.md",
       "tests": [
-        "pkg/upload/..."
+        "pkg/upload/...",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives"
       ],
       "packages": [
         "pkg/upload"
@@ -840,11 +847,16 @@
         "pkg/delegation/lease/lease_test.go::TestEnforcePolicyCeilingCapsResolved",
         "pkg/delegation/lease/lease_test.go::TestCheckDepthRejectsAtCeiling",
         "tests/tier4_integration/multi_agent_testbed_test.go::TestMultiAgentDelegationTestbedPerHopInvariants",
-        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2"
+        "tests/tier4_integration/concurrent_delegation_proxy_test.go::TestConcurrentSlotsDelegationAndProxyIsolation_spec_5_2",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationCycleDetectedRejectsSelfRecursion",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationDepthExceededRejectsChainBeyondCeiling",
+        "tests/tier4_integration/delegation_adversarial_test.go::TestDelegationBudgetExhaustedRejectsWidenedFanOutSlice"
       ],
       "packages": [
         "pkg/delegation/cycle",
-        "pkg/delegation/lease"
+        "pkg/delegation/lease",
+        "pkg/gateway/mcpfabric/mcptools",
+        "pkg/gateway/externalapi/errorclassify"
       ],
       "blocked_until_phase": "9",
       "notes": "Phase 9 ships the §8.2 cycle-detection three-layer AND gate (CycleMode enum + Decide function), the §8.2 LeaseSlice budget arithmetic with parent-ceiling validation, and the §8.2.bis maxDepth precedence chain (explicit > preset > runtime > policy > Helm fallback). The Redis Lua scripts (budget_reserve.lua, budget_return.lua) and the §8.2 delegate_task gateway handler are deferred to the K8s-integration phase that ships the delegation-echo runtime."
@@ -859,14 +871,15 @@
         "tests/tier2_component/stores/delegationpolicystore_test.go",
         "tests/tier9_security/budget_extension_failclosed_test.go::TestExtensionGrantNeverExceedsCeiling_F866",
         "tests/tier4_integration/cross_environment_delegation_test.go::TestCrossEnvironmentDelegationCredentialCompatibility",
-        "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058"
+        "tests/tier4_integration/interceptor_weakening_cooldown_test.go::TestInterceptorWeakeningCooldownComposed_spec_4_8_1058",
+        "tests/tier4_integration/delegation_credential_pool_race_test.go::TestDelegateTaskConcurrentCredentialPoolExhaustionRace"
       ],
       "packages": [
         "pkg/delegation/lease",
         "pkg/delegation/policy"
       ],
       "blocked_until_phase": "9",
-      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2."
+      "notes": "Phase 9 ships the lease budget arithmetic and the policy ceiling enforcement that gate child slice acceptance. Tests overlap with §8.2. The concurrent credential-pool point-in-time-check race (adversarial case) has a spec-derived test at tests/tier4_integration/delegation_credential_pool_race_test.go, kept t.Skip'd because credentialPropagation has no production implementation to race against yet."
     },
     "8.4": {
       "title": "Approval Modes",
@@ -1014,7 +1027,8 @@
       "tests": [
         "tests/tier2_component/stores/connectorstore_test.go",
         "tests/tier4_integration/connector_oauth_test.go",
-        "tests/tier4_integration/external_mcp_tool_test.go"
+        "tests/tier4_integration/external_mcp_tool_test.go",
+        "tests/tier4_integration/connector_delegation_scope_test.go"
       ],
       "packages": [
         "pkg/connector",
@@ -1180,9 +1194,13 @@
         "tests/tier3_contract/rest_auth/auth_test.go::TestNoCredentialsRejectedWhenAuthRequired",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderTransportAccepted",
         "tests/tier3_contract/rest_auth/auth_test.go::TestDevHeaderUnregisteredReturns403",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgNoneForgeryRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestKeySubstitutionForgedKIDRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgorithmConfusionRS256HeaderRejected",
         "tests/tier2_component/stores/userstore_test.go",
         "tests/tier2_component/stores/customrolestore_test.go",
-        "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation"
+        "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation",
+        "tests/tier5_e2e_kind/prompt_journey_auth_modes_test.go::TestPromptJourneyAcrossAuthModes"
       ],
       "packages": [
         "pkg/auth"
@@ -1335,7 +1353,8 @@
         "pkg/experiment/experiment_test.go::TestAssignVariantExperimentIDPartOfHashKey",
         "tests/tier2_component/stores/experimentstore_test.go",
         "tests/tier2_component/stores/evalstore_test.go",
-        "tests/tier2_component/evalaggregates/eval_aggregates_test.go"
+        "tests/tier2_component/evalaggregates/eval_aggregates_test.go",
+        "pkg/gateway/sessionserver/eval_test.go::TestEvalRateLimitFixedWindowBoundary_spec_10_7"
       ],
       "packages": [
         "pkg/experiment"
@@ -1592,8 +1611,12 @@
         "tests/tier2_component/stores/eventstore_test.go",
         "tests/tier3_contract/ocsf_audit/ocsf_audit_test.go",
         "tests/tier3_contract/ocsf_audit/published_schema_test.go",
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFTranslatedRecordsSatisfyPublishedBaseEventSchema",
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestOCSFDeadLetterReceiptSatisfiesPublishedBaseEventSchema",
+        "tests/tier3_contract/ocsf_audit/per_class_required_test.go::TestOCSFPerClassRequiredAttributesPresent",
         "tests/tier3_contract/ocsf_audit/determinism_test.go::TestOCSFChainHashRecomputableFromCanonicalTuple",
         "tests/tier4_integration/audit_pipeline_test.go",
+        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
         "tests/tier8_chaos/audit_chain_test.go",
         "tests/tier2_component/opsaudit/opsaudit_durable_test.go",
         "tests/tier9_security/write_before_issue_failclosed_test.go"
@@ -1790,7 +1813,8 @@
         "tests/tier2_component/tenantsalt/tenantsalt_test.go",
         "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
         "tests/tier4_integration/erasure_job_test.go",
-        "tests/tier2_component/legalholdreconciler/reconciler_test.go"
+        "tests/tier2_component/legalholdreconciler/reconciler_test.go",
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable"
       ],
       "packages": [
         "pkg/store",
@@ -1803,6 +1827,7 @@
       "spec_file": "spec/12_storage-architecture.md",
       "tests": [
         "tests/tier9_security/audit_integrity_test.go",
+        "tests/tier9_security/blackbox_fuzz_test.go",
         "tests/tier9_security/live_session_test.go",
         "tests/tier9_security/pentest/...",
         "tests/tier9_security/rbac_test.go",
@@ -1931,6 +1956,7 @@
         "tests/tier2_component/migrations/migrations_test.go",
         "tests/tier5_e2e_kind/ingress_test.go",
         "tests/tier9_security/network_policy_test.go",
+        "tests/tier9_security/agent_egress_test.go",
         "tests/tier6_e2e_cloud/managed_elasticache_test.go",
         "tests/tier6_e2e_cloud/managed_rds_test.go",
         "tests/tier6_e2e_cloud/managed_cloudsql_test.go",
@@ -1974,6 +2000,9 @@
         "tests/tier3_contract/oauth_token/oauth_token_test.go::TestPerDialectCapCapsExp",
         "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestSuccessEnvelopeMatchesRFC8693",
         "tests/tier3_contract/oauth_token/oauth_token_envelope_test.go::TestErrorEnvelopeMatchesRFC8693",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgNoneForgeryRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestKeySubstitutionForgedKIDRejected",
+        "tests/tier3_contract/rest_auth/jwt_forgery_test.go::TestAlgorithmConfusionRS256HeaderRejected",
         "tests/tier3_contract/oauth_token/...",
         "tests/tier2_component/securitycaches/propagation_test.go",
         "tests/tier2_component/stores/connectorcredstore_test.go",
@@ -2023,7 +2052,9 @@
         "pkg/upload/upload_test.go::TestValidateEntrySymlinkRejectsEscape",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsOversizedAggregate",
         "pkg/upload/upload_test.go::TestValidateArchiveRejectsTooManyEntries",
-        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio"
+        "pkg/upload/upload_test.go::TestValidateArchiveRejectsExtremeRatio",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric",
+        "pkg/gateway/podlifecycle/podsession/binder_archive_test.go::TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives"
       ],
       "packages": [
         "pkg/upload"
@@ -2254,10 +2285,12 @@
         "tests/tier3_contract/rest_mcp_consistency/inbox_unavailable_test.go",
         "tests/tier3_contract/rest_mcp_consistency/message_input_union_test.go",
         "tests/tier3_contract/rest_mcp_consistency/consistency_test.go",
+        "tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go::TestEventSubscriptionRESTMCPParityContract",
         "tests/tier3_contract/rest_openai_chat/fidelity_test.go",
         "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
         "tests/tier3_contract/multiprotocol_journey/journey_test.go",
-        "tests/tier4_integration/multi_protocol_same_deployment_test.go"
+        "tests/tier4_integration/multi_protocol_same_deployment_test.go",
+        "tests/tier4_integration/openai_cross_tenant_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2581,10 +2614,16 @@
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationEmitsExchangeAndRevokeAudit",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditIsIdempotentOnAlreadyRevoked",
         "tests/tier2_component/stores/issuedtokenstore_rotation_test.go::TestRevokeWithAuditMissingTokenIsErrNotFound",
-        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision"
+        "tests/tier2_component/admission/drain_readiness_webhook_test.go::TestDrainReadinessWebhookEvictionDecision",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ConfirmEmitsConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_DryRunNoConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailureNoConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_GatewayErrorNoConfigChanged_spec_16_7",
+        "pkg/ops/configservice/configservice_test.go::TestApply_IdempotentConfirmEmitsConfigChanged_spec_16_7"
       ],
       "packages": [
-        "pkg/observability/audit"
+        "pkg/observability/audit",
+        "pkg/ops/configservice"
       ],
       "blocked_until_phase": "14",
       "notes": "§25-mandated audit events: agent action attribution, runbook execution, policy override. pkg/observability/audit/catalog.go is the typed §16.7 audit-event-type catalog cross-checked for completeness against the §16.7 enumeration. Phase 14 wires the emitter."
@@ -2615,7 +2654,7 @@
       "title": "OpenSLO Export",
       "spec_file": "spec/16_observability.md",
       "tests": [
-        "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOEmitsThreeDocsPerSLO",
+        "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOEmitsFourDocsPerSLOPlusSharedTarget",
         "pkg/alerting/rules/openslo_test.go::TestRenderOpenSLOObjectivesMatchCatalog",
         "pkg/alerting/rules/slo_test.go::TestSLODefinitionsBackEveryBurnRateAlert",
         "charts/lenny/tests/openslo-configmap_test.yaml"
@@ -2824,6 +2863,7 @@
       "spec_file": "spec/17_deployment-topology.md",
       "tests": [
         "pkg/common/registry/resolver_test.go",
+        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
         "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
       ],
       "packages": [],
@@ -2870,6 +2910,23 @@
       ],
       "blocked_until_phase": "2",
       "notes": "ImageResolver enforces override > url > default precedence and digest pinning. Spec §18 (build sequence) is currently deferred; this entry captures the §18.1 deliverable named by the prior spec revision."
+    },
+    "18.33": {
+      "title": "Phase 14 — External pen-test replay",
+      "spec_file": "spec/18_build-sequence.md",
+      "tests": [
+        "tests/tier9_security/scaffolds_test.go::TestPentestReplay",
+        "tests/tier9_security/scaffolds_test.go::TestPentestReplayReleaseGateRequiresPartnerBundle",
+        "tests/tier9_security/pentest/driver_test.go::TestLoadExampleBundleParses",
+        "tests/tier9_security/pentest/driver_test.go::TestAssertAllRemediatedPassesCleanBundle",
+        "tests/tier9_security/pentest/driver_test.go::TestParseBundleRejectsMalformed",
+        "tests/tier9_security/pentest/driver_test.go::TestLoadBundleMissingFile"
+      ],
+      "packages": [
+        "tests/tier9_security/pentest"
+      ],
+      "blocked_until_phase": "14",
+      "notes": "TestPentestReplay runs the §18.33 external pen-test driver against the bundle at LENNY_PENTEST_BUNDLE, falling back to the internal v1-baseline-bundle.json on a non-release run. TestPentestReplayReleaseGateRequiresPartnerBundle pins resolvePentestBundlePath's release-gate branch: when LENNY_RELEASE_GATE is set (as .github/workflows/pre-release.yml's security-pentest job sets it), an unset LENNY_PENTEST_BUNDLE fails the test instead of silently falling back to the baseline, so the Phase 14 exit gate cannot pass a release without a real partner engagement bundle."
     },
     "19": {
       "title": "Resolved Decisions",
@@ -3087,13 +3144,16 @@
       "title": "Server Discovery and Routing",
       "spec_file": "spec/24_lenny-ctl-command-reference.md",
       "tests": [
-        "cmd/lenny-ctl/..."
+        "cmd/lenny-ctl/...",
+        "pkg/ctlcli/session_ops_test.go::TestMCPManagementAutoDiscoversOpsURL",
+        "pkg/ctlcli/session_ops_test.go::TestMCPManagementFallsBackToGatewayWhenOpsURLAbsent",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlMCPManagementOpsRoutingE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
       ],
       "blocked_until_phase": "14",
-      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands."
+      "notes": "lenny-ctl server discovery and routing subcommand. Phase 14 ships the operability tooling surface; each subcommand gains contract and integration tests as it lands. The tier-4 test drives the real lenny-ctl binary against a live gateway and lenny-ops pair to cover the rule-2 auto-discovery and rule-3 gateway-host fallback end to end for the mcp-management group."
     },
     "24.17": {
       "title": "Session Operations",
@@ -3186,13 +3246,17 @@
       "title": "Design Philosophy and Agent Model",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier5_e2e_kind/admin_scope_narrowing_test.go::TestScopeNarrowedBearerGatesAdminAPI",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestOpsUnreachableFromAgentPod_spec_25_1",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestOpsSurvivesGatewayOutage",
         "tests/tier8_chaos/ops_survives_gateway_test.go::TestGatewayHealthSummarySurvivesOpsOutage",
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestRouteScopesResolvesCanonicalScope",
-        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler"
+        "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
+        "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin"
@@ -3205,16 +3269,24 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier3_contract/gateway_ops/endpoints_test.go::TestRecommendationsDegradedToHealthyOnFirstSampleTransition",
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestErrorEnvelopeSchemaConformance",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapHasNoOperabilityPackageReferences",
-        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist"
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapPackagesIncludeEveryTestReferencedPackage",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase",
+        "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
+        "tests/tier8_chaos/store_failure_test.go",
+        "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview",
+        "pkg/ops/events/read_surface_test.go::TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261"
       ],
       "packages": [
-        "pkg/ops/conventions"
+        "pkg/ops/conventions",
+        "pkg/ops/events"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.2 Architecture Overview. The API conventions shared by every operability endpoint (the canonical degradation and error envelopes and pagination) are implemented in pkg/ops/conventions. The §25.2 cursor-opaqueness and gap-detection rule (a cursor minted at one actualSource presented at another reports gapDetected/oldestAvailableCursor/suggestedAction) is exercised against the §25.5 read surface in pkg/ops/events. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.3": {
       "title": "Gateway-Side Ops Endpoints",
@@ -3234,12 +3306,24 @@
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformVersionWireContract",
         "tests/tier3_contract/gateway_ops/endpoints_test.go::TestPlatformConfigRedactionWireContract",
         "tests/tier4_integration/ops_endpoints_test.go",
+        "tests/tier4_integration/ops_event_emission_test.go::TestOpsEventEmissionHealthStatusChangedReachesBuffer",
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
-        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go"
+        "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
+        "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey",
+        "tests/tier8_chaos/store_failure_test.go",
+        "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesTriggeringCheck_spec_25_3",
+        "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesRecoveredCheck_spec_25_3",
+        "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesTriggeringComponent_spec_25_3",
+        "cmd/lenny-gateway/health_status_changed_payload_test.go::TestHealthStatusChangedPayloadNamesRecoveredComponent_spec_25_3",
+        "pkg/gateway/operability/health/service_test.go::TestOnTransitionCarriesComponentSnapshots",
+        "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent",
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphGatewayOperabilityPackagesSelectUnitTier",
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphLennyGatewayBinarySelectsUnitTier"
       ],
       "packages": [
         "pkg/gateway/operability/health",
-        "pkg/gateway/operability/recommendations"
+        "pkg/gateway/operability/recommendations",
+        "pkg/events"
       ],
       "blocked_until_phase": "4.5"
     },
@@ -3252,14 +3336,18 @@
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsEndpointsSuiteSelectsContractTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsPackagesWithSuiteSelectUnitTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsDedicatedSuitesSelectHigherTiers",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphLennyOpsBinarySelectsUnitTier",
+    "tests/tier0_static/degradation_lock_line_citation_test.go::TestSpec254DegradationWarningLineCitationsAreFresh",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
+        "pkg/ops/opsserver/me_test.go::TestAuthorizedToolsTenantAdminEventSubscriptions",
         "pkg/ops/opsserver/escalations_test.go::TestListEscalationsPaginationReportsMore_spec_25_4",
         "pkg/ops/escalation/pgstore/pgstore_test.go::TestPgStoreKeysetPagination_spec_25_4",
         "pkg/ops/escalation/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
+        "pkg/ops/coordination/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgReconcileSplitBrainPostgresWinsRedisExpired_spec_25_4",
         "pkg/ops/coordination/pgstore/pgstore_test.go::TestPgSplitBrainLoserNotifiedOnNextCall_spec_25_4",
         "pkg/ops/coordination/redisstore/redisstore_test.go::TestRedisRemoveByID_spec_25_4",
@@ -3276,6 +3364,7 @@
         "tests/tier4_integration/ops_escalations_e2e_test.go::TestOpsServiceEscalationStoreBackedE2E",
         "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
         "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
+        "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E",
         "tests/tier8_chaos/escalation_retry_test.go",
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationCreatePathTierProgressionAgainstRealStores",
         "tests/tier8_chaos/ops_escalation_tiers_test.go::TestEscalationReconciliationFlushPreservesRecordAgainstRealStores",
@@ -3284,6 +3373,7 @@
         "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnRealPostgresConnectionError",
         "tests/tier8_chaos/ops_self_health_test.go::TestOpsSelfHealthEmitsOnGatewayAuth401",
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
+        "tests/tier5_e2e_kind/ops_anonymous_rejected_test.go::TestOpsAnonymousRejectedOnDeployedBinary_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsAnonymousRejectedOnEveryEndpoint_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsHealthzAnonymousAdmitted_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingRejectsNonAdmin_spec_25_4_1567",
@@ -3295,28 +3385,47 @@
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsDenyAllIngress_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPINoPlaintextHandshake_spec_25_4",
+        "tests/tier9_security/ops_network_policy_test.go::TestOpsAdminAPITLSHandshakeCompletes_spec_25_4",
         "tests/tier9_security/tls_test.go::TestOpsServingCertificateReady",
         "tests/tier0_static/gateway_admin_tls_listener_test.go::TestGatewayAdminTLSListenerDistinctFromLLMProxy",
-        "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal"
+        "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
+        "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsRunningRestore",
+        "pkg/ops/opsserver/operations_restore_test.go::TestOperationsInventoryListsFailedRestore",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsRunningBackup",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryListsVerifyingBackup",
+        "pkg/ops/opsserver/operations_backup_test.go::TestOperationsInventoryOperationIDLookupIsUnambiguousForVerifyingBackup",
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
+        "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress"
       ],
       "packages": [
-        "cmd/lenny-ops"
-      ],
-      "blocked_until_phase": "3.5"
+        "cmd/lenny-ops",
+        "pkg/ops/opsserver",
+        "pkg/ops/conventions",
+        "pkg/ops/probe",
+        "pkg/ops/coordination/pgstore",
+        "pkg/ops/coordination/redisstore",
+        "pkg/ops/escalation/pgstore"
+      ]
     },
     "25.5": {
       "title": "Operational Event Stream",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/eventsubscription/pgstore/pgstore_test.go::TestPgStoreRoundTrip_spec_25_5",
+        "pkg/ops/eventsubscription/eventsubscription_test.go::TestServiceInvalidFilterType_spec_25_5",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheInitialLoad",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheRefreshUpdates",
         "pkg/ops/opsservice/subscriptioncache_test.go::TestSubscriptionCacheSurvivesListError",
         "pkg/ops/opsservice/webhookloop_emit_test.go::TestWebhookWorkerDoesNotRedeliverDeliveryFailureToFailingSubscription",
         "pkg/ops/opsserver/event_subscriptions_test.go",
+        "pkg/ops/opsserver/event_subscriptions_redaction_test.go",
         "tests/tier3_contract/ops_endpoints/events_test.go",
+        "tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go::TestEventSubscriptionRESTMCPParityContract",
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
+        "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go::TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation",
+        "cmd/lenny-ops/eventmetrics_stream_test.go::TestEventsStreamLengthGaugeAtMaxLen_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
@@ -3324,7 +3433,8 @@
         "tests/tier4_integration/event_stream_test.go::TestOpsEventStreamReadSurfaceE2E",
         "tests/tier4_integration/event_stream_test.go::TestOpsEventSubscriptionWebhookSSRFE2E",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable",
-        "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery"
+        "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery",
+        "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown"
       ],
       "packages": [
         "pkg/ops/events",
@@ -3332,7 +3442,8 @@
         "pkg/ops/eventsubscription/pgstore",
         "pkg/ops/opsservice",
         "pkg/ops/opsserver",
-        "pkg/webhookdelivery"
+        "pkg/webhookdelivery",
+        "cmd/lenny-ops"
       ],
       "blocked_until_phase": "14",
       "notes": "§25.5 Operational Event Stream. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. pkg/ops/events is the read surface over the Redis stream and in-memory buffer; pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
@@ -3345,23 +3456,36 @@
         "pkg/ops/diagnostics/bottleneck_test.go",
         "pkg/ops/diagnostics/chain_test.go",
         "pkg/ops/diagnostics/prodsource/readers_test.go",
+        "pkg/ops/diagnostics/prodsource/prodsource_test.go",
         "pkg/ops/opsserver/opsserver_test.go",
         "pkg/ops/opsserver/diagnostics_test.go",
         "pkg/ops/opsserver/diagnostics_audit_test.go",
         "pkg/ops/auditrate/auditrate_test.go",
         "tests/tier2_component/stores/diagnostics_prodsource_test.go",
         "tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go",
+        "tests/tier2_component/opsaudit/diagnostics_rate_limit_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go",
         "tests/tier3_contract/ops_endpoints/diagnostics_schema_test.go",
-        "tests/tier4_integration/diagnostics_test.go"
+        "tests/tier4_integration/diagnostics_test.go",
+        "tests/tier5_e2e_kind/diagnostics_fix_test.go",
+        "tests/tier5_e2e_kind/diagnostics_cause_chain_test.go",
+        "tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go",
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go",
+        "cmd/lenny-ops/deps_setup_test.go"
       ],
       "packages": [
         "pkg/ops/diagnostics",
-        "pkg/ops/opsserver"
+        "pkg/ops/diagnostics/prodsource",
+        "pkg/ops/opsserver",
+        "pkg/ops/doctor",
+        "pkg/ops/auditrate",
+        "cmd/lenny-ops"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.6 Diagnostic Endpoints. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "chart_templates": [
+        "charts/lenny/templates/ops-rbac.yaml"
+      ],
+      "notes": "§25.6 Diagnostic Endpoints. pkg/ops/diagnostics and pkg/ops/diagnostics/prodsource implement the endpoints; pkg/ops/opsserver serves them. See TESTING.md §25 for the test plan."
     },
     "25.7": {
       "title": "Operational Runbooks",
@@ -3373,16 +3497,23 @@
         "pkg/gateway/operability/health/runbook_bundle_test.go",
         "pkg/gateway/externalapi/openapi/openapi_test.go::TestRunbookIndexAdvertisesPathAFilters_spec_25_7",
         "pkg/ops/mcp/server_test.go::TestToolsListReturnsTheInventory",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListExposesNoOptionalFilters_spec_25_12",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListForwardsOptionalFilter_spec_25_12",
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go",
         "tests/tier3_contract/ops_endpoints/runbook_authz_test.go::TestRunbookEndpointsRequireAuthenticatedScopedPrincipal",
-        "tests/tier4_integration/runbook_discovery_test.go"
+        "tests/tier4_integration/runbook_discovery_test.go",
+        "tests/tier5_e2e_kind/runbook_index_test.go::TestRunbookIndexServedOnDeployedBinary",
+        "tests/tier11_docs/runbook_index_count_test.go::TestRunbookIndexSpecProseCountMatchesShippedSet"
       ],
       "packages": [
-        "pkg/ops/runbooks"
+        "pkg/ops/runbooks",
+        "pkg/ops/opsserver",
+        "pkg/gateway/operability/health",
+        "pkg/gateway/externalapi/openapi",
+        "pkg/ops/mcp"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.7 Operational Runbooks. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.7 Operational Runbooks. pkg/ops/runbooks implements the runbook index; pkg/ops/opsserver serves it over REST and pkg/ops/mcp over the MCP tool inventory. See TESTING.md §25 for the test plan."
     },
     "25.8": {
       "title": "Platform Lifecycle Management",
@@ -3393,14 +3524,38 @@
         "pkg/ops/upgradeservice/upgradeservice_test.go",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_InSync_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_Changes_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestDiff_GatewayUnavailable_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ValidationFailed_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_DryRun_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_Confirm_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_ConfirmRestartRequired_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_GatewayApplyError_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestApply_LowerMinimumWarning_spec_25_8",
+        "pkg/ops/configservice/configservice_test.go::TestNew_NilGatewayPanics_spec_25_8",
         "tests/tier2_component/observability/version_aggregation_test.go",
+        "tests/tier2_component/observability/version_drift_metric_test.go",
         "tests/tier2_component/observability/upgrade_check_cron_test.go",
         "cmd/lenny-ops/cert_manager_source_test.go::TestCertManagerSource_HealthDerivation_spec_25_8",
+        "cmd/lenny-ops/release_channel_trust_anchor_test.go::TestStockChartReleaseChannelHasCompiledInTrustAnchor_spec_25_8",
         "tests/tier4_integration/release_channel_fetch_test.go",
         "tests/tier9_security/release_channel_signature_test.go",
         "tests/tier10_conformance/release_channel_manifest_test.go",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
-        "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff"
+        "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
+        "tests/tier4_integration/upgrade_pause_restart_test.go::TestUpgradePauseSurvivesLeaderHandoff",
+        "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImageNotPullableAgainstRealRegistry",
+        "tests/tier2_component/preflight/upgrade_image_pullable_test.go::TestUpgradePreflight_ImagePullableAgainstRealRegistry",
+        "tests/tier2_component/controllers/upgrade_digest_patch_test.go::TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest",
+        "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
+        "charts/lenny/tests/registry-digest-webhook_test.yaml",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesFixedPhaseDurations",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
+        "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta",
+        "pkg/ops/upgradeservice/upgradeservice_test.go::TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA",
+        "tests/tier0_static/upgrade_channel_key_render_test.go::TestUpgradeChannelKeyDisablesReleaseChannelURL",
+        "tests/tier11_docs/agent_operability_chart_paths_test.go::TestSpecAgentOperabilityChartPathsResolve"
       ],
       "packages": [
         "pkg/upgrade",
@@ -3408,66 +3563,113 @@
         "pkg/ops/versionsource",
         "pkg/ops/opsserver",
         "pkg/ops/registryservice",
-        "pkg/releasechannel"
+        "pkg/ops/opsinventory",
+        "pkg/releasechannel",
+        "pkg/ops/configservice"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.8 Platform Lifecycle Management. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts."
+      "notes": "§25.8 Platform Lifecycle Management. pkg/ops/upgradeservice and pkg/ops/configservice implement the upgrade and config-diff/apply surfaces; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
     },
     "25.9": {
       "title": "Audit Log Query API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
+        "tests/tier3_contract/ocsf_audit/ocsf_schema_conformance_test.go::TestAdminAuditEventsListItemsSatisfyPublishedBaseEventSchema",
         "pkg/gateway/externalapi/admin/audit_query_test.go",
         "pkg/gateway/externalapi/admin/audit_query_filter_test.go::TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707",
+        "pkg/gateway/externalapi/admin/audit_scatter_test.go::TestCrossTenantQueryAuditReceiptRecordsCacheAndShards_spec_25_9_3754",
         "tests/tier2_component/auditstore/admin_query_test.go",
+        "tests/tier2_component/auditstore/scatter_redis_cache_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/audit_deferred_reconcile_test.go",
-        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
+        "tests/tier11_docs/diagnostics_audit_wiring_comment_test.go::TestDiagnosticsAuditWiringCommentsNotStale"
       ],
       "packages": [
+        "pkg/gateway/externalapi/admin",
         "pkg/ops/opsaudit"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.9 Audit Log Query API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.9 Audit Log Query API. pkg/gateway/externalapi/admin implements the query endpoints; pkg/ops/opsaudit is the §11.7 audit-append funnel that feeds the queried log. See TESTING.md §25 for the test plan."
     },
     "25.10": {
       "title": "Configuration Drift Detection",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/drift/drift_test.go",
+        "pkg/ops/driftservice/gatewayreader/gatewayreader_test.go",
+        "tests/tier0_static/change_graph_drift_selection_test.go::TestChangeGraphDriftPackageSelectsUnitTier",
+        "tests/tier0_static/change_graph_drift_selection_test.go::TestChangeGraphDriftEntryCoversConfigServiceConsumer",
         "tests/tier3_contract/ops_endpoints/drift_against_target_test.go",
         "tests/tier4_integration/ops_endpoints_test.go",
         "tests/tier4_integration/drift_reconcile_test.go",
+        "tests/tier4_integration/drift_gatewayreader_http_test.go::TestGatewayReaderRunningStateAgainstLiveGatewayE2E",
         "tests/tier4_integration/upgrade_rollback_drift_cleanup_test.go::TestUpgradeRollbackDeletesTargetSnapshotDurable",
+        "tests/tier4_integration/drift_target_snapshot_promote_test.go::TestUpgradePromotesTargetSnapshotToLiveDurable",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminDriftCrossTenantForbidden_spec_12_9_1"
       ],
       "packages": [
-        "pkg/ops/driftservice"
+        "pkg/drift",
+        "pkg/ops/driftservice",
+        "pkg/ops/driftservice/gatewayreader",
+        "pkg/ops/driftservice/pgstore"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.10 Configuration Drift Detection. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.10 Configuration Drift Detection. pkg/drift implements the field-by-field diff and severity classification; pkg/ops/driftservice/pgstore implements the Postgres-backed bootstrap_seed_snapshot store. See TESTING.md §25 for the test plan."
     },
     "25.11": {
       "title": "Backup and Restore API",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "pkg/ops/backup/backup_test.go",
+        "pkg/ops/backup/restore_test.go",
+        "pkg/ops/backup/postrestore_test.go",
+        "pkg/ops/backup/region_test.go",
+        "pkg/ops/backup/estimate_test.go",
+        "pkg/ops/backup/pgstore/pgstore_test.go",
+        "pkg/ops/backup/k8slauncher/k8slauncher_test.go",
+        "pkg/ops/backup/runner/audit_test.go",
+        "pkg/ops/backup/runner/audit_verify_internal_test.go",
+        "pkg/ops/backup/runner/exec_test.go",
+        "pkg/ops/backup/runner/export_test.go",
+        "pkg/ops/backup/runner/opsevents_test.go",
+        "pkg/ops/backup/runner/redact_exec_test.go",
+        "pkg/ops/backup/runner/redact_internal_test.go",
+        "pkg/ops/backup/runner/restoreexec_test.go",
+        "pkg/ops/backup/runner/restoretest_test.go",
+        "pkg/ops/backup/runner/runner_test.go",
+        "pkg/ops/backup/restoretest/restoretest_test.go",
+        "pkg/ops/opsserver/backup_test.go",
+        "pkg/gateway/externalapi/admin/artifact_replication_test.go",
+        "pkg/blobstore/replication/replication_test.go",
+        "cmd/lenny-gateway/replication_wiring_test.go",
+        "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
+        "tests/tier4_integration/backup_binary_test.go::TestBackupBinaryFullModeAgainstPostgresAndMinIO",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupJobCreationFailsWhenKubernetesAPIDown",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupUploadFailsWhenMinIODown",
         "tests/tier5_e2e_kind/backup_test.go::TestBackupImageProvidesPostgresClientTools",
+        "tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go::TestRestoreTestCronJobDispatchWritesResult",
+        "tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go::TestRestoreTestResultReachesLennyOpsMetrics",
         "tests/tier9_security/backup_isolation_test.go::TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11",
         "tests/tier9_security/backup_isolation_test.go::TestBackupJobEgressBoundToAllowlist_spec_25_11",
         "tests/tier6_e2e_cloud/artifact_replication_residency_test.go::TestCloudArtifactReplicationResidency",
-        "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11"
+        "pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go::TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11",
+        "charts/lenny/tests/restore-test-cronjob_test.yaml",
+        "charts/lenny/tests/backup-job_test.yaml"
       ],
       "packages": [
-        "pkg/ops/backup"
+        "pkg/ops/backup",
+        "pkg/ops/backup/runner",
+        "pkg/ops/backup/pgstore",
+        "pkg/ops/backup/restoretest",
+        "pkg/ops/backup/k8slauncher",
+        "pkg/blobstore/replication",
+        "pkg/gateway/externalapi/admin",
+        "pkg/ops/opsserver",
+        "pkg/gateway/sessionserver"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.11 Backup and Restore API. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status."
+      "notes": "§25.11 Backup and Restore API. pkg/ops/backup and its runner/pgstore/k8slauncher subpackages implement the archive pipeline; see TESTING.md §25 for the test plan. The tier-4 round trip drives the lenny-backup runner (pg_dump, AES-256-GCM archive, MinIO SSE-S3 upload, download+decrypt, pg_restore) against real Postgres and MinIO containers and asserts a seeded row survives the round trip. The tier-4 degradation tests drive the production backup.Service, pgstore, k8slauncher, and lenny-backup runner against real Postgres and MinIO containers that are stopped mid-test to assert the §25.11 Degradation dependency-down failure modes: Postgres down yields BACKUP_STORAGE_UNREACHABLE (503) on create/list/schedule, an unreachable Kubernetes API yields BACKUP_JOB_CREATION_FAILED (503), and MinIO down fails the upload and records the failed status. §25.11 also covers the continuous ArtifactStore replication pipeline (pkg/blobstore/replication, its Postgres-backed lag/state store, and the pkg/gateway/externalapi/admin artifact-replication resume endpoint), wired into cmd/lenny-gateway."
     },
     "25.12": {
       "title": "MCP Management Server",
@@ -3477,7 +3679,10 @@
         "tests/tier9_security/mcp_management_authz_sweep_test.go::TestMCPManagementNoRoleForbiddenSweep_spec_25_12_25_4",
         "tests/tier9_security/mcp_management_isolation_test.go::TestMCPManagementCrossTenantWriteRejected_spec_12_9_1",
         "tests/tier4_integration/mcp_management_event_subscription_test.go::TestMCPManagementEventSubscriptionE2E",
+        "tests/tier3_contract/ops_endpoints/event_subscription_mcp_parity_test.go::TestEventSubscriptionRESTMCPParityContract",
         "tests/tier5_e2e_kind/mcp_management_e2e_test.go::TestMCPManagementServerOnDeployedOps",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListExposesNoOptionalFilters_spec_25_12",
+        "pkg/ops/opsserver/mcp_test.go::TestMCPRunbooksListForwardsOptionalFilter_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallCarriesCallerPrincipal_spec_25_12",
         "pkg/ops/opsserver/mcp_test.go::TestMCPManagementCallRejectsNonAdminRole_spec_25_12",
         "pkg/ops/opsserver/mcp_correlation_test.go::TestMCPManagementMetaOperationIDPropagatesToLock_spec_25_12",
@@ -3486,51 +3691,66 @@
         "pkg/ops/mcp/correlation_test.go::TestToolInputOperationIDWinsOverMeta_spec_25_12",
         "pkg/ops/mcp/correlation_test.go::TestClientInfoNamePropagatesAsAgentName_spec_25_12",
         "pkg/ops/mcp/server_test.go::TestToolsListIntersectsCapabilityFilterWithScopeClaim",
-        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas"
+        "pkg/ops/mcp/server_test.go::TestToolsCallDryRunMapsToMetaFlag",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go::TestMCPToolsCallDryRunMapping",
+        "pkg/ops/mcp/naming_test.go::TestToolNamesFollowLennyDomainActionPattern_spec_25_12",
+        "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphMCPPackageSelectsContractAndSecurityTiers",
+        "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
+        "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer"
       ],
       "packages": [
-        "pkg/ops/mcp"
+        "pkg/ops/mcp",
+        "pkg/ops/opsserver",
+        "pkg/gateway/externalapi/openapi"
       ],
-      "blocked_until_phase": "14",
-      "notes": "§25.12 MCP Management Server. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.12 MCP Management Server. pkg/ops/mcp implements the ManagementMCPAdapter; pkg/ops/opsserver wires it into lenny-ops at /mcp/management. See TESTING.md §25 for the test plan."
     },
     "25.13": {
       "title": "Bundled Alerting Rules",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier4_integration/alerting_metrics_exposition_test.go::TestAlertingMetricsExposedOnGatewayScrape",
+        "tests/tier4_integration/alerting_rules_prometheus_firing_test.go::TestBundledPrometheusOnlyAlertsFireUnderTriggeringConditions",
         "pkg/alerting/inproceval/inproceval_test.go::TestBundledUniversalAlertsFireOnTriggerCondition_spec_25_13",
         "tests/tier2_component/observability/catalog_crosscheck_test.go::TestRulesConfigMapIsLoadablePrometheusRuleFile",
-        "charts/lenny/tests/tier-presets_test.yaml"
+        "tests/tier11_docs/alerting_docs_reference_test.go::TestDocsAlertingRulesYAMLIsLoadablePrometheusRuleFile",
+        "tests/tier11_docs/alerting_docs_reference_test.go::TestRoutingRecommendationsNameAllSeverities",
+        "charts/lenny/tests/tier-presets_test.yaml",
+        "tests/tier8_chaos/store_failure_test.go"
       ],
-      "packages": [],
-      "blocked_until_phase": "14",
-      "notes": "§25.13 Bundled Alerting Rules. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
+      "packages": [
+        "pkg/alerting/inproceval"
+      ],
+      "notes": "§25.13 Bundled Alerting Rules. pkg/alerting/inproceval implements the in-process alert-state tracker over the shared rules.Catalog(). See TESTING.md §25 for the test plan. The tier-4 test boots the real cmd/lenny-gateway with the chart-supplied bundle-format and override-count inputs and scrapes /metrics, asserting lenny_alerting_rules_bundled{format} and lenny_alerting_rule_overrides appear on the served registry with the expected values (§25.13 lines 4836-4840). The inproceval unit test drives the in-process alert state tracker with each Universal alert's triggering condition (dual store down, cert near expiry, Postgres primary down across the For sustain) and asserts the bundled alert from rules.Catalog() transitions to StateFiring and appears in the tracker Firing() set; WarmPoolExhausted is asserted to be left to Prometheus because its `unless on (pool)` join is outside the in-process fallback's evaluable subset (§25.13 lines 4685, 4731). The complementary tier-4 firing test renders the shared catalog to a Prometheus rule file and runs `promtool test rules` (the Prometheus rule engine, in a prom/prometheus container) across simulated time, driving the triggering metric conditions of the Prometheus-only alerts that the in-process fallback declines (rate: RedisUnavailable, `unless on()` join: WarmPoolExhausted, time(): BackupOverdue, increase(): BackupFailed, histogram_quantile: CheckpointDurationHigh) past their For windows and asserting each fires with its rendered severity label and annotations, so a broken rendered expression that would silently fail to page is caught (§25.13 lines 4676-4682). The helm-unittest tier-presets suite renders the gateway Deployment under each tier preset and pins the tier-dependent alert-threshold defaults from the §25.13 table (LENNY_GATEWAY_QUEUE_DEPTH_THRESHOLD 10 at Tier 2 and 5 at Tier 3, LENNY_GATEWAY_LATENCY_THRESHOLD_SECONDS 2 at Tier 2 and 1 at Tier 3, loosest base at Tier 1) so an accidental preset edit that loosens a higher-tier threshold is caught (§25.13 lines 4735-4769)."
     },
     "25.14": {
       "title": "lenny-ctl Extensions",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "cmd/lenny-ctl/...",
-        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E"
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlOperabilityCommandsE2E",
+        "tests/tier4_integration/lenny_ctl_ops_test.go::TestLennyCtlMCPManagementOpsRoutingE2E"
       ],
       "packages": [
         "cmd/lenny-ctl"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.14 lenny-ctl Extensions. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. TestLennyCtlMCPManagementOpsRoutingE2E drives the real lenny-ctl binary against a live cmd/lenny-gateway and cmd/lenny-ops pair to cover the §24.16 opsServiceURL auto-discovery and gateway-host fallback for the mcp-management group specifically."
     },
     "25.15": {
       "title": "Failure Mode Analysis",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier8_chaos/ops_survives_gateway_outage_test.go::TestOpsSurfaceSurvivesGatewayOutageEndToEnd",
+        "tests/tier8_chaos/ops_down_audit_survives_test.go::TestGatewayAuditSurvivesOpsOutage",
         "tests/tier4_integration/ops_dual_store_degraded_test.go::TestOpsDualStoreDegradedInMemoryFallback",
-        "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown"
+        "tests/tier4_integration/escalation_webhook_under_outage_test.go::TestEscalationWebhookReachesReceiverWhilePostgresDown",
+        "tests/tier4_integration/webhook_dual_outage_buffer_delivery_test.go::TestWebhookDeliveredFromGatewayBufferDuringDualOutage"
       ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.15 Failure Mode Analysis. The high-value scenario (lenny-ops up while the gateway is down) is pinned end to end by the tier-8 chaos test: it scales the gateway to zero and asserts the ops surface stays available (connectivity 200 with the gateway shown unreachable), runbook fetching is unchanged, and the gateway-resident audit query fails. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
+      "notes": "§25.15 Failure Mode Analysis. The high-value scenario (lenny-ops up while the gateway is down) is pinned end to end by the tier-8 chaos test: it scales the gateway to zero and asserts the ops surface stays available (connectivity 200 with the gateway shown unreachable), runbook fetching is unchanged, and the gateway-resident audit query fails. The reverse \"lenny-ops crash\" row is pinned by a second tier-8 chaos test: it scales lenny-ops to zero and asserts GET /v1/admin/audit-events on the gateway keeps returning 200 while the lenny-ops-hosted diagnostics, runbook index, drift, backup, and upgrade endpoints become unreachable. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan."
     },
     "25.16": {
       "title": "Deployment Topology Summary",
@@ -3546,11 +3766,14 @@
       "title": "End-to-End Operational Example",
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
-        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID"
+        "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields",
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels",
+        "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation"
       ],
       "packages": [],
       "blocked_until_phase": "14",
-      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review."
+      "notes": "§25.17 End-to-End Operational Example. Phase 14 ships the operability surface; see TESTING.md §25 for the test plan. The tier-4 test drives the lenny-ops-hosted portion of the §25.17 remediation loop (remediation-lock acquire and release under one X-Lenny-Operation-ID) against a live Postgres audit chain and asserts each durable audit row carries the operation id the §25.9 ?operationId= query groups by. It is currently a non-blocking skip: the lenny-ops remediation-lock audit rows drop the X-Lenny-Operation-ID entirely (open TEST-GAPS finding), so the §25.17 multi-step remediation cannot be reconstructed from the audit trail. Resolving it is a systemic operation-id key-normalization decision across the lenny-ops audit emitters and is left for human review. The tier-3 contract test pins the Step 1 alert_fired event's `data` payload — severity, alertName, runbook, and a well-formed suggestedAction (action, endpoint, reasoning) — produced end to end through the real §16.5 WarmPoolExhausted rule and the evaluator's EmitCallbacks wiring, so a payload-field rename or drop breaks the test before it reaches a watchdog agent. A companion contract test pins the alert_fired payload's `labels` field (the §25.7 / §25.17 examples carry \"labels\":{\"pool\":\"...\"}); it is a non-blocking skip because EmitCallbacks emits no labels key and the ExprEvaluator contract resolves a rule to a bool with no matched-series labels, so whether emit.go merges the rule's static Labels and whether ExprEvaluator surfaces matched-series labels is a product decision left for human review."
     },
     "26": {
       "title": "Reference Runtime Catalog",

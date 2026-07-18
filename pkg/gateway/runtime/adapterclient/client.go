@@ -220,6 +220,26 @@ func (c *Client) RotateCredentials(ctx context.Context, sessionID string, leases
 	return err
 }
 
+// ExtendCredentialLease re-arms the direct-mode credential-expiry timer
+// for a still-valid lease to a later deadline, without delivering
+// credential material and without running the §4.7 rebind handshake. It
+// is the gateway-side driver for the §4.9 Token Service unavailability
+// guard: when the Token Service breaker is open and the lease has not yet
+// expired, the renewal worker advances the enforced deadline instead of
+// re-minting against the down Token Service. The adapter re-arms the
+// provider's expiry timer to newExpiresAt so the enforced deadline moves
+// in lockstep with the gateway's tracked deadline.
+// spec: §4.9 line 1470 / §4.7.
+func (c *Client) ExtendCredentialLease(ctx context.Context, sessionID, provider, leaseID string, newExpiresAt time.Time) error {
+	_, err := c.rpc.ExtendCredentialLease(ctx, &adapterv1.ExtendCredentialLeaseRequest{
+		SessionId:       &adapterv1.SessionId{Value: sessionID},
+		Provider:        provider,
+		LeaseId:         leaseID,
+		ExpiresAtUnixMs: newExpiresAt.UnixMilli(),
+	})
+	return err
+}
+
 // prepareWorkspaceChunkSize bounds each PrepareWorkspace upload frame.
 const prepareWorkspaceChunkSize = 64 * 1024
 

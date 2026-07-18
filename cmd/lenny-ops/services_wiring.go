@@ -287,7 +287,8 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 		*w.f.registryURL, *w.f.registryPullSecret, *w.f.registryRequireDigest, *w.f.registryOverrides,
 	), w.auditRecorder)
 	// §25.8 upgrade preflight (Phase 1 safety gates) and OpsRoll watchdog.
-	w.upgradePreflighter = buildPreflighter(w.upgradeStore, w.pgPool)
+	w.upgradePreflighter = buildPreflighter(w.upgradeStore, w.pgPool,
+		time.Duration(*w.f.registryPullCheckTimeout)*time.Second)
 	w.upgradeWatchdog = buildWatchdog(w.upgradeSvc, upgradeservice.WatchdogConfig{
 		OpsRollTimeout:        time.Duration(*w.f.opsRollTimeout) * time.Second,
 		GatewayRollTimeout:    time.Duration(*w.f.gatewayRollTimeout) * time.Second,
@@ -302,8 +303,8 @@ func (w *opsWiring) buildUpgradeSubsystem() {
 	// component sources lenny-ops can reach; it also raises the
 	// lenny_platform_version_drift gauge on each aggregation.
 	w.versionAggregator = buildVersionAggregator(
-		buildVersion, *w.f.gatewayURL, w.gatewayHTTP, w.pgPool, w.clientset,
-		envOr("POD_NAMESPACE", *w.f.leaderElectNS),
+		buildVersion, *w.f.gatewayURL, w.gatewayHTTP, w.pgPool, w.clientset, w.apiextClient,
+		envOr("POD_NAMESPACE", *w.f.leaderElectNS), *w.f.helmReleaseName,
 	)
 	// §25.8 config diff/apply: the operator surface over the gateway's own
 	// config API. Wired only when a gateway client exists; otherwise the
@@ -320,9 +321,13 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 	// §25.4 Operations Inventory: a scatter-gather view over the wired
 	// subsystem sources. The lock, escalation, and platform-upgrade
 	// adapters project their live records; the §25.10 drift reconcile
-	// tracker is already an operations.Source. The backup/restore,
-	// idempotency, and webhook-delivery kinds plug in as their subsystems
-	// expose enumeration. F-25.4.3.
+	// tracker is already an operations.Source; the §25.11 restore adapter
+	// projects ops_restore_state rows under kind restore so a running or
+	// failed restore appears on GET /v1/admin/operations alongside its own
+	// status endpoint; the §25.11 backup adapter projects ops_backups rows
+	// under kind backup (running/verifying) and backup_verification
+	// (verifying). The idempotency and webhook-delivery kinds plug in as
+	// their subsystems expose enumeration.
 	// spec: §25.4 (Operations Inventory `resources.audit`) — the
 	// gateway-resident §25.9 audit-events query the audit link targets is
 	// joined to the gateway base URL so the discovery hop resolves against
@@ -332,6 +337,8 @@ func (w *opsWiring) buildInventoryAndIdempotency() {
 		opsinventory.NewLockSource(w.lockSvc, gatewayURL),
 		opsinventory.NewEscalationSource(w.escalationSvc, gatewayURL),
 		opsinventory.NewUpgradeSource(w.upgradeSvc, gatewayURL),
+		opsinventory.NewRestoreSource(w.backupSvc, gatewayURL),
+		opsinventory.NewBackupSource(w.backupSvc, gatewayURL),
 		w.driftSvc.ReconcileSource(),
 	)
 	// §25.2 lines 357-396: enrich every in-progress operation's Progress

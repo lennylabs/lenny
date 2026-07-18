@@ -60,7 +60,7 @@ func TestGateSingleReplicaOnly(t *testing.T) {
 	})
 }
 
-// spec: §25.4 line 2209 — "always" grants every acquire but attaches a
+// spec: §25.4 line 2215 — "always" grants every acquire but attaches a
 // replica-local warning, regardless of replica count.
 func TestGateAlwaysGrantsWithWarning(t *testing.T) {
 	for _, replicas := range []fakeReplicas{1, 5} {

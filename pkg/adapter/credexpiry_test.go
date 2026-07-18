@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/adapter/credfile"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
@@ -377,6 +380,270 @@ func TestPerProviderExpiryIsIndependent_spec_4_9(t *testing.T) {
 	s.mu.Unlock()
 	if !bedrockArmed {
 		t.Error("aws_bedrock timer was cancelled by anthropic_direct expiry")
+	}
+}
+
+// slotExpiryServer builds a server wired to the fake expiry clock with the
+// per-slot roots resolved so a slot-qualified AssignCredentials arms a
+// per-slot timer. spec: §6.1 line 28; §4.9 line 1470.
+func slotExpiryServer(t *testing.T, clk *fakeExpiryClock) *Server {
+	t.Helper()
+	base := t.TempDir()
+	s := New("slot-expiry-test")
+	s.WorkspaceBase = filepath.Join(base, "workspace")
+	s.SessionsRoot = filepath.Join(base, "sessions")
+	s.ArtifactsRoot = filepath.Join(base, "artifacts")
+	s.CredentialsDir = filepath.Join(base, "run", "lenny")
+	s.ExpiryAfterFunc = clk.After
+	s.ExpiryNow = clk.Now
+	return s
+}
+
+func assignSlotOne(t *testing.T, s *Server, session, slot, provider string, lease *adapterv1.CredentialLease) {
+	t.Helper()
+	if _, err := s.AssignCredentials(context.Background(), &adapterv1.AssignCredentialsRequest{
+		SessionId: &adapterv1.SessionId{Value: session},
+		SlotId:    &adapterv1.SlotId{Value: slot},
+		Leases:    map[string]*adapterv1.CredentialLease{provider: lease},
+	}); err != nil {
+		t.Fatalf("AssignCredentials(slot %s): %v", slot, err)
+	}
+}
+
+func extendReq(session, provider, leaseID string, newExpiresAt time.Time) *adapterv1.ExtendCredentialLeaseRequest {
+	return &adapterv1.ExtendCredentialLeaseRequest{
+		SessionId:       &adapterv1.SessionId{Value: session},
+		Provider:        provider,
+		LeaseId:         leaseID,
+		ExpiresAtUnixMs: newExpiresAt.UnixMilli(),
+	}
+}
+
+// spec: §4.9 line 1470 — the Token Service unavailability guard moves a
+// still-valid direct-mode lease's deadline by re-arming its expiry timer,
+// without re-delivering credential material: the credential file is
+// unchanged and the re-armed timer still deletes the entry when it fires at
+// the extended deadline.
+func TestExtendCredentialLeaseMovesDeadlineWithoutRewrite_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	stream, cancel := attachControlStream(t, s)
+	defer cancel()
+
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	original := clk.last()
+
+	before := fileProviders(t, s.CredentialsDir)
+
+	newExp := clk.cur.Add(90 * time.Minute)
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l1", newExp)); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+
+	// The original timer is stopped and a new one is armed at the extended
+	// delay; no material was re-delivered, so the credential file is
+	// unchanged.
+	if !original.isStopped() {
+		t.Error("original expiry timer was not stopped on extension")
+	}
+	extended := clk.last()
+	if extended == original || extended.d != 90*time.Minute {
+		t.Fatalf("extended timer delay = %v, want 90m", extended.d)
+	}
+	after := fileProviders(t, s.CredentialsDir)
+	if len(before) != len(after) || !after["anthropic_direct"] {
+		t.Errorf("credential file changed on extension: before=%v after=%v", before, after)
+	}
+	s.mu.Lock()
+	tmr, ok := s.expiryTimers["anthropic_direct"]
+	s.mu.Unlock()
+	if !ok || tmr.leaseID != "l1" {
+		t.Errorf("expiryTimers[anthropic_direct] = %+v, want leaseID l1", tmr)
+	}
+
+	// Firing the extended timer still deletes the entry and reports
+	// AUTH_EXPIRED, at the extended deadline.
+	extended.fire()
+	if fileProviders(t, s.CredentialsDir)["anthropic_direct"] {
+		t.Error("credential file still carries anthropic_direct after extended expiry")
+	}
+	ev := recvEvent(t, stream)
+	if ev.Type != eventAuthExpired || ev.LeaseID != "l1" {
+		t.Errorf("control event = %+v, want AUTH_EXPIRED l1", ev)
+	}
+}
+
+// spec: §4.9 line 1470 — an extension with no armed timer for the provider
+// is a no-op: nothing is armed and the response is still returned.
+func TestExtendCredentialLeaseAbsentProviderIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l1", clk.cur.Add(time.Hour))); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for an absent provider, want 0", len(armed))
+	}
+}
+
+// spec: §4.9 line 1470 — an extension naming a lease id that differs from
+// the armed timer's is a no-op: the current timer is left untouched so a
+// stale extension cannot move a replaced lease's deadline.
+func TestExtendCredentialLeaseMismatchedLeaseIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	original := clk.last()
+
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l2", clk.cur.Add(90*time.Minute))); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if original.isStopped() {
+		t.Error("mismatched-lease extension stopped the current timer")
+	}
+	if armed := clk.armed(); len(armed) != 1 {
+		t.Fatalf("armed %d timers after mismatched extension, want 1", len(armed))
+	}
+	s.mu.Lock()
+	tmr := s.expiryTimers["anthropic_direct"]
+	s.mu.Unlock()
+	if tmr == nil || tmr.leaseID != "l1" {
+		t.Errorf("expiryTimers[anthropic_direct] = %+v, want unchanged leaseID l1", tmr)
+	}
+}
+
+// spec: §4.9 line 1470 — a proxy-mode lease arms no adapter timer, so an
+// extension against it is a no-op (the gateway lease store enforces proxy
+// expiry).
+func TestExtendCredentialLeaseProxyModeIsNoop_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	assignOne(t, s, "sess-1", "anthropic_direct",
+		expiryLease("l1", "anthropic_direct", proxyPayload, clk.cur.Add(time.Hour)))
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("sess-1", "anthropic_direct", "l1", clk.cur.Add(90*time.Minute))); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for a proxy lease extension, want 0", len(armed))
+	}
+}
+
+// spec: §4.9 line 1470 — an extension with an empty session id is rejected
+// with InvalidArgument, mirroring RotateCredentials's guard.
+func TestExtendCredentialLeaseEmptySessionRejected_spec_4_9(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := expiryServer(t, clk)
+	_, err := s.ExtendCredentialLease(context.Background(),
+		extendReq("", "anthropic_direct", "l1", clk.cur.Add(time.Hour)))
+	if status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("ExtendCredentialLease empty session err = %v, want InvalidArgument", err)
+	}
+}
+
+// spec: §6.1 line 28; §4.9 line 1470 — a per-slot extension moves only the
+// named slot's timer to the new deadline, and a sibling slot's timer is
+// untouched.
+func TestExtendCredentialLeaseSlotIsIsolated_spec_6_1(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := slotExpiryServer(t, clk)
+
+	assignSlotOne(t, s, "slot-a", "slot-a", "anthropic_direct",
+		expiryLease("la", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	assignSlotOne(t, s, "slot-b", "slot-b", "anthropic_direct",
+		expiryLease("lb", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+
+	s.mu.Lock()
+	stA, _ := s.slotStateLocked("slot-a")
+	stB, _ := s.slotStateLocked("slot-b")
+	handleA := stA.timers["anthropic_direct"].handle
+	handleB := stB.timers["anthropic_direct"].handle
+	s.mu.Unlock()
+
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		&adapterv1.ExtendCredentialLeaseRequest{
+			SessionId:       &adapterv1.SessionId{Value: "slot-a"},
+			SlotId:          &adapterv1.SlotId{Value: "slot-a"},
+			Provider:        "anthropic_direct",
+			LeaseId:         "la",
+			ExpiresAtUnixMs: clk.cur.Add(90 * time.Minute).UnixMilli(),
+		}); err != nil {
+		t.Fatalf("ExtendCredentialLease(slot-a): %v", err)
+	}
+
+	if !handleA.(*fakeTimer).isStopped() {
+		t.Error("slot-a original timer was not stopped on extension")
+	}
+	if handleB.(*fakeTimer).isStopped() {
+		t.Error("slot-b timer was stopped by a slot-a extension")
+	}
+	s.mu.Lock()
+	newA := stA.timers["anthropic_direct"]
+	curB := stB.timers["anthropic_direct"]
+	s.mu.Unlock()
+	if newA == nil || newA.leaseID != "la" {
+		t.Errorf("slot-a timer = %+v, want leaseID la", newA)
+	}
+	if got := newA.handle.(*fakeTimer).d; got != 90*time.Minute {
+		t.Errorf("slot-a extended timer delay = %v, want 90m", got)
+	}
+	if curB.handle != handleB {
+		t.Error("slot-b timer handle changed after slot-a extension")
+	}
+}
+
+// spec: §6.1 line 28; §4.9 line 1470 — per-slot extension no-op paths: an
+// absent slot, and a mismatched lease id, leave timers untouched.
+func TestExtendCredentialLeaseSlotNoopPaths_spec_6_1(t *testing.T) {
+	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
+	s := slotExpiryServer(t, clk)
+
+	// Absent slot: no state, no timer armed, no error.
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		&adapterv1.ExtendCredentialLeaseRequest{
+			SessionId:       &adapterv1.SessionId{Value: "slot-x"},
+			SlotId:          &adapterv1.SlotId{Value: "slot-x"},
+			Provider:        "anthropic_direct",
+			LeaseId:         "lx",
+			ExpiresAtUnixMs: clk.cur.Add(time.Hour).UnixMilli(),
+		}); err != nil {
+		t.Fatalf("ExtendCredentialLease(absent slot): %v", err)
+	}
+	if armed := clk.armed(); len(armed) != 0 {
+		t.Fatalf("armed %d timers for an absent slot, want 0", len(armed))
+	}
+
+	// Mismatched lease id: the slot's timer is left untouched.
+	assignSlotOne(t, s, "slot-a", "slot-a", "anthropic_direct",
+		expiryLease("la", "anthropic_direct", directPayload, clk.cur.Add(time.Hour)))
+	s.mu.Lock()
+	stA, _ := s.slotStateLocked("slot-a")
+	original := stA.timers["anthropic_direct"]
+	s.mu.Unlock()
+
+	if _, err := s.ExtendCredentialLease(context.Background(),
+		&adapterv1.ExtendCredentialLeaseRequest{
+			SessionId:       &adapterv1.SessionId{Value: "slot-a"},
+			SlotId:          &adapterv1.SlotId{Value: "slot-a"},
+			Provider:        "anthropic_direct",
+			LeaseId:         "stale",
+			ExpiresAtUnixMs: clk.cur.Add(90 * time.Minute).UnixMilli(),
+		}); err != nil {
+		t.Fatalf("ExtendCredentialLease(mismatched lease): %v", err)
+	}
+	if original.handle.(*fakeTimer).isStopped() {
+		t.Error("mismatched-lease slot extension stopped the current timer")
+	}
+	s.mu.Lock()
+	cur := stA.timers["anthropic_direct"]
+	s.mu.Unlock()
+	if cur != original {
+		t.Error("slot timer was replaced by a mismatched-lease extension")
 	}
 }
 

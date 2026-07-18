@@ -170,6 +170,11 @@
       "unit": ["pkg/audit/..."],
       "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
     },
+    "pkg/audit/ocsf": {
+      "unit": ["pkg/audit/ocsf/..."],
+      "contract": ["tests/tier3_contract/ocsf_audit/..."],
+      "integration": ["tests/tier4_integration/audit_pipeline_test.go"]
+    },
     "pkg/circuitbreaker": {
       "unit": ["pkg/circuitbreaker/..."],
       "component": ["tests/tier2_component/policy/..."],
@@ -230,8 +235,18 @@
     },
     "cmd/lenny-gateway": {
       "static": ["cmd/lenny-gateway/..."],
+      "unit": ["cmd/lenny-gateway/..."],
       "contract": ["tests/tier3_contract/rest_sessions/..."],
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
+    },
+    "pkg/gateway/operability/health": {
+      "unit": ["pkg/gateway/operability/health/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/health_auth_test.go"],
+      "integration": ["tests/tier4_integration/ops_endpoints_test.go"]
+    },
+    "pkg/gateway/operability/recommendations": {
+      "unit": ["pkg/gateway/operability/recommendations/..."],
+      "contract": ["tests/tier3_contract/gateway_ops/endpoints_test.go"]
     },
     "pkg/auth": {
       "unit": ["pkg/auth/..."],
@@ -290,7 +305,11 @@
         "tests/tier2_component/runbooks/index_load_test.go",
         "tests/tier2_component/opsidem/outage_test.go"
       ],
-      "contract": ["tests/tier3_contract/ops_endpoints/..."]
+      "contract": ["tests/tier3_contract/ops_endpoints/..."],
+      "security": [
+        "tests/tier9_security/diagnostics_fix_guardrails_test.go",
+        "tests/tier9_security/mcp_management_authz_sweep_test.go"
+      ]
     },
     "tests/tier3_contract/ops_endpoints": {
       "unit": ["pkg/ops/opsserver/..."],
@@ -314,7 +333,8 @@
       "component": ["tests/tier2_component/runbooks/index_load_test.go"]
     },
     "docs/runbooks": {
-      "component": ["tests/tier2_component/runbooks/index_load_test.go"]
+      "component": ["tests/tier2_component/runbooks/index_load_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/runbook_index_test.go"]
     },
     "pkg/releasechannel": {
       "unit": ["pkg/releasechannel/..."],
@@ -324,7 +344,8 @@
     },
     "pkg/alerting/rules": {
       "unit": ["pkg/alerting/rules/..."],
-      "component": ["tests/tier2_component/alerting/..."]
+      "component": ["tests/tier2_component/alerting/..."],
+      "integration": ["tests/tier4_integration/alerting_rules_prometheus_firing_test.go"]
     },
     "tests/testinfra/mocks/otelcollector": {
       "unit": ["tests/testinfra/mocks/otelcollector/..."],
@@ -415,13 +436,24 @@
       "unit": ["cmd/lenny-token-service/..."],
       "contract": ["tests/tier3_contract/oauth_token/..."]
     },
+    "cmd/lenny-ops": {
+      "unit": ["cmd/lenny-ops/..."],
+      "component": ["cmd/lenny-ops/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"]
+    },
+    "cmd/lenny-backup": {
+      "unit": ["cmd/lenny-backup/..."],
+      "integration": ["tests/tier4_integration/backup_binary_test.go"]
+    },
     "buf.yaml": {
       "static": ["tests/tier0_static/schemas_test.go"]
     },
     "charts/lenny/": {
       "static": [
         "charts/lenny/tests/...",
-        "tests/tier0_static/helm_lint_test.go"
+        "tests/tier0_static/helm_lint_test.go",
+        "tests/tier0_static/airgap_registry_render_test.go",
+        "tests/tier0_static/upgrade_channel_key_render_test.go"
       ],
       "e2e_kind": [
         "tests/tier5_e2e_kind/admission_policy_test.go",
@@ -529,7 +561,7 @@
     },
     "pkg/ops/backup": {
       "unit": ["pkg/ops/backup/..."],
-      "component": ["tests/tier2_component/opsidem/outage_test.go"],
+      "component": ["tests/tier2_component/opsidem/outage_test.go", "tests/tier2_component/stores/backup_minio_roundtrip_test.go"],
       "contract": ["tests/tier3_contract/ops_endpoints/backup_test.go"],
       "integration": ["tests/tier4_integration/backup_degradation_test.go"]
     },
@@ -549,7 +581,13 @@
       "contract": ["tests/tier3_contract/ops_endpoints/diagnostics_degradation_test.go", "tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go", "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go"]
     },
     "pkg/ops/doctor": {
-      "unit": ["pkg/ops/doctor/..."]
+      "unit": ["pkg/ops/doctor/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_fix_test.go"],
+      "security": ["tests/tier9_security/diagnostics_fix_guardrails_test.go"]
+    },
+    "pkg/drift": {
+      "unit": ["pkg/drift/...", "pkg/ops/configservice/..."],
+      "contract": ["tests/tier3_contract/ops_endpoints/drift_against_target_test.go", "tests/tier3_contract/ops_endpoints/helpers_test.go"]
     },
     "pkg/ops/driftservice": {
       "unit": ["pkg/ops/driftservice/..."],
@@ -561,7 +599,7 @@
     },
     "pkg/ops/events": {
       "unit": ["pkg/ops/events/..."],
-      "component": ["tests/tier2_component/eventstream/event_stream_gap_test.go"],
+      "component": ["tests/tier2_component/eventstream/event_stream_gap_test.go", "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go"],
       "contract": ["tests/tier3_contract/cloudevents/ops_event_stream_test.go", "tests/tier3_contract/ops_endpoints/events_test.go"],
       "integration": ["tests/tier4_integration/event_stream_test.go"]
     },
@@ -572,11 +610,16 @@
       "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
     },
     "pkg/ops/gateway": {
-      "unit": ["pkg/ops/gateway/..."]
+      "unit": ["pkg/ops/gateway/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/event_buffer_fanout_test.go"]
     },
     "pkg/ops/mcp": {
       "unit": ["pkg/ops/mcp/..."],
-      "contract": ["tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go"]
+      "contract": [
+        "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
+        "tests/tier3_contract/ops_endpoints/mcp_test.go"
+      ],
+      "security": ["tests/tier9_security/mcp_management_authz_sweep_test.go"]
     },
     "pkg/ops/me": {
       "unit": ["pkg/ops/me/..."]
@@ -600,6 +643,7 @@
       "component": ["tests/tier2_component/observability/upgrade_check_cron_test.go"],
       "contract": ["tests/tier3_contract/ops_endpoints/events_test.go"],
       "integration": ["tests/tier4_integration/escalation_webhook_under_outage_test.go", "tests/tier4_integration/event_subscription_cold_start_test.go", "tests/tier4_integration/event_stream_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"],
       "security": ["tests/tier9_security/event_webhook_ssrf_test.go"]
     },
     "pkg/webhookdelivery": {
@@ -617,11 +661,16 @@
     "pkg/ops/registryservice": {
       "unit": ["pkg/ops/registryservice/..."]
     },
+    "pkg/blobstore/replication": {
+      "unit": ["pkg/blobstore/replication/..."]
+    },
     "pkg/ops/upgradeservice": {
       "unit": ["pkg/ops/upgradeservice/..."],
       "component": [
         "tests/tier2_component/observability/version_aggregation_test.go",
-        "tests/tier2_component/observability/upgrade_check_cron_test.go"
+        "tests/tier2_component/observability/version_drift_metric_test.go",
+        "tests/tier2_component/observability/upgrade_check_cron_test.go",
+        "tests/tier2_component/controllers/upgrade_digest_patch_test.go"
       ],
       "contract": ["tests/tier3_contract/ops_endpoints/upgrade_test.go"],
       "integration": ["tests/tier4_integration/release_channel_fetch_test.go"]

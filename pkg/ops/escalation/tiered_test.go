@@ -210,6 +210,72 @@ func TestRequireDurableRejectsWhenNoDurableStore_spec_25_4(t *testing.T) {
 	}
 }
 
+// TestRequireDurableRejectDoesNotEmit asserts a create rejected with
+// ESCALATION_NO_DURABLE_STORE emits no escalation_created event. §25.4
+// specifies the event stream receives exactly one escalation_created event
+// per escalation, and requireDurable makes the create fail "instead of
+// accepting a memory-only record". A rejected create records no escalation,
+// so it must page no webhook/SSE subscribers.
+// spec: §25.4 (Emission Exactly-Once; Storage Tiers requireDurable).
+func TestRequireDurableRejectDoesNotEmit_spec_25_4(t *testing.T) {
+	pg := newFakeStore(escalation.PersistenceDurablePostgres)
+	rd := newFakeStore(escalation.PersistenceDurableRedis)
+	pg.setDown(true)
+	rd.setDown(true)
+	em := &recordingEmitter{}
+	s := escalation.NewWithStores(escalation.Options{
+		Durable:        []escalation.Store{pg, rd},
+		Emitter:        em,
+		RequireDurable: true,
+	})
+	_, err := s.Create(context.Background(), escalation.CreateRequest{
+		Severity: escalation.SeverityCritical, Summary: "x", Source: "watchdog",
+	})
+	if escalation.CodeOf(err) != escalation.ErrCodeNoDurableStore {
+		t.Fatalf("err code = %q, want ESCALATION_NO_DURABLE_STORE", escalation.CodeOf(err))
+	}
+	if em.calls != 0 {
+		t.Errorf("emitter calls = %d, want 0 for a rejected create", em.calls)
+	}
+}
+
+// TestRequireDurableSuccessEmitsOnce asserts a requireDurable create that
+// lands in a durable tier still emits exactly one escalation_created event
+// and records the emitted flag, so the reject-path fix does not suppress
+// emission on the accepted path.
+// spec: §25.4 (Emission Exactly-Once).
+func TestRequireDurableSuccessEmitsOnce_spec_25_4(t *testing.T) {
+	pg := newFakeStore(escalation.PersistenceDurablePostgres)
+	rd := newFakeStore(escalation.PersistenceDurableRedis)
+	pg.setDown(true) // Postgres down, Redis up: the record must still land durably.
+	em := &recordingEmitter{}
+	s := escalation.NewWithStores(escalation.Options{
+		Durable:        []escalation.Store{pg, rd},
+		Emitter:        em,
+		RequireDurable: true,
+	})
+	esc, err := s.Create(context.Background(), escalation.CreateRequest{
+		Severity: escalation.SeverityCritical, Summary: "x", Source: "watchdog",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if esc.Persistence != escalation.PersistenceDurableRedis {
+		t.Errorf("persistence = %q, want durable-redis", esc.Persistence)
+	}
+	if em.calls != 1 {
+		t.Errorf("emitter calls = %d, want 1 on an accepted durable create", em.calls)
+	}
+	if !esc.Emitted {
+		t.Error("emitted = false after a successful publish on the durable path")
+	}
+	// The stored record carries the emitted flag for exactly-once semantics.
+	got, _ := rd.Get(context.Background(), esc.ID)
+	if got == nil || !got.Emitted {
+		t.Errorf("stored record emitted flag not set: %+v", got)
+	}
+}
+
 // TestFlushPromotesBufferedToPostgres asserts the §25.4 reconciliation
 // flush: a record buffered during an outage is promoted to Postgres once
 // it recovers, preserving the authoring timestamp and the emitted flag,

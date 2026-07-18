@@ -5,6 +5,7 @@ package opsserver_test
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,6 +91,83 @@ var errStoreDown = httpTestError("postgres down")
 type httpTestError string
 
 func (e httpTestError) Error() string { return string(e) }
+
+// TestDriftReportCallerDesiredBodySurvivesStoreOutage pins the §25.10
+// Degradation matrix at the HTTP layer. GET /v1/admin/drift accepts a
+// caller-supplied {"desired": {...}} body for ad-hoc comparison, and
+// that body replaces the bootstrap_seed_snapshot as the desired side.
+// When the snapshot store is unavailable (Postgres down), a request that
+// carries the body still succeeds — its desired state comes from the
+// caller, and the running side is read from the gateway (no Postgres
+// dependency) — and the report records desiredStateSource: "caller". The
+// same request without a body returns 503 DRIFT_DESIRED_STATE_MISSING.
+// This is the GitOps-during-outage path the failingStore stands in for.
+//
+// spec: §25.10 (Drift Detection Logic) — "Alternatively, the caller can
+// supply a {\"desired\": {...}} body for ad-hoc comparison." and the
+// §25.10 Degradation matrix — "Postgres down, caller supplies desired
+// body: Drift detection runs normally ... The response includes
+// \"desiredStateSource\": \"caller\". ... Postgres down, no desired
+// body: Drift detection returns 503 DRIFT_DESIRED_STATE_MISSING".
+func TestDriftReportCallerDesiredBodySurvivesStoreOutage(t *testing.T) {
+	// failingStore stands in for a Postgres outage: every snapshot read
+	// fails. The running state is served independently of the store.
+	svc := driftservice.NewService(failingStore{}, fixedRunning{state: map[string]any{
+		"pools": map[string]any{"p": map[string]any{"minWarm": float64(1)}},
+	}})
+	srv := opsserver.New(opsserver.Options{Drift: svc})
+
+	// Caller supplies a desired body: the report runs without the store.
+	rec, body := doJSON(t, srv, http.MethodGet, "/v1/admin/drift", nil, map[string]any{
+		"desired": map[string]any{"pools": map[string]any{"p": map[string]any{"minWarm": float64(5)}}},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("caller-desired GET status = %d, want 200 (store-independent GitOps path); body=%v", rec.Code, body)
+	}
+	if body["desiredStateSource"] != "caller" {
+		t.Errorf("desiredStateSource = %v, want caller", body["desiredStateSource"])
+	}
+	// The pool minWarm differs (1 running vs 5 desired), so the diff ran
+	// against the caller-supplied desired side rather than degrading.
+	if dc, _ := body["driftCount"].(float64); dc != 1 {
+		t.Errorf("driftCount = %v, want 1 (diff against caller-supplied desired)", body["driftCount"])
+	}
+
+	// No body against the same failing store: the snapshot side is
+	// unreachable, so the report fails closed with 503.
+	rec2, body2 := doJSON(t, srv, http.MethodGet, "/v1/admin/drift", nil, nil)
+	if rec2.Code != http.StatusServiceUnavailable {
+		t.Fatalf("no-body GET status = %d, want 503 (Postgres-down, no caller desired); body=%v", rec2.Code, body2)
+	}
+	errObj, _ := body2["error"].(map[string]any)
+	if errObj["code"] != "DRIFT_DESIRED_STATE_MISSING" {
+		t.Errorf("no-body error code = %v, want DRIFT_DESIRED_STATE_MISSING", errObj["code"])
+	}
+}
+
+// TestDriftReportMalformedBodyReturns400 pins the §25.10 caller-supplied
+// desired-body validation branch: a request whose body is present but is
+// not valid JSON is a §25.2 VALIDATION_ERROR (HTTP 400, PERMANENT category),
+// distinct from the empty-body snapshot path and the well-formed
+// caller-desired path. An empty body decodes to io.EOF and is treated as
+// "no caller-supplied desired"; only a genuinely malformed body fails
+// closed here.
+//
+// spec: §25.10 (Drift Detection Logic) — caller-supplied {"desired": {...}}
+// body; §25.2 — the canonical VALIDATION_ERROR envelope for a malformed
+// request body.
+func TestDriftReportMalformedBodyReturns400(t *testing.T) {
+	srv := driftServer(t,
+		map[string]any{"pools": map[string]any{}},
+		map[string]any{"pools": map[string]any{}})
+	rec := do(srv, http.MethodGet, "/v1/admin/drift", `{"desired": {not valid json`)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed-body status = %d, want 400; body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "VALIDATION_ERROR") {
+		t.Errorf("malformed-body error envelope = %s, want code VALIDATION_ERROR", rec.Body.String())
+	}
+}
 
 func TestDriftValidateReportsDiverged(t *testing.T) {
 	srv := driftServer(t,

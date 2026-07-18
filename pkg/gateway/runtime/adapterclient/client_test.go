@@ -545,9 +545,19 @@ type recordingAdapter struct {
 	shutdownErr       error
 	gotRotate         *adapterv1.RotateCredentialsRequest
 	rotateErr         error
+	gotExtend         *adapterv1.ExtendCredentialLeaseRequest
+	extendErr         error
 	gotSignalDeadline *adapterv1.SignalDeadlineRequest
 	signalDelivered   bool
 	signalErr         error
+}
+
+func (r *recordingAdapter) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {
+	if r.extendErr != nil {
+		return nil, r.extendErr
+	}
+	r.gotExtend = req
+	return &adapterv1.ExtendCredentialLeaseResponse{}, nil
 }
 
 func (r *recordingAdapter) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadlineRequest) (*adapterv1.SignalDeadlineResponse, error) {
@@ -1296,6 +1306,57 @@ func TestRotateCredentialsRewritesTheCredentialFile(t *testing.T) {
 	}
 	if len(doc.Providers) != 1 || doc.Providers[0]["leaseId"] != "cl-rotated" {
 		t.Errorf("credential file providers = %v, want one entry for the rotated lease cl-rotated", doc.Providers)
+	}
+}
+
+// spec: §4.9 line 1470 / §4.7 — the Token Service unavailability guard's
+// gateway-side driver marshals session_id, provider, lease_id, and the
+// new deadline as expires_at_unix_ms so the adapter re-arms the direct-mode
+// expiry timer to the later deadline without a re-mint. Asserting the
+// millisecond conversion pins that the gateway's time.Time deadline reaches
+// the wire as UnixMilli rather than seconds or nanoseconds.
+// diagnosis: a failure means the extension carried the wrong field or the
+// deadline crossed the wire at the wrong resolution, so the adapter timer
+// would re-arm to a deadline that disagrees with the gateway's tracked one.
+func TestExtendCredentialLeaseMarshalsFieldsAndMillisecondDeadline(t *testing.T) {
+	rec := &recordingAdapter{}
+	cl := dialRecordingAdapter(t, rec)
+
+	newExpiresAt := time.Date(2026, 7, 17, 12, 30, 0, 500_000_000, time.UTC)
+	if err := cl.ExtendCredentialLease(context.Background(), "sess-ext",
+		"anthropic_direct", "cl-live", newExpiresAt); err != nil {
+		t.Fatalf("ExtendCredentialLease: %v", err)
+	}
+	if rec.gotExtend == nil {
+		t.Fatal("the adapter received no ExtendCredentialLease request")
+	}
+	if got := rec.gotExtend.GetSessionId().GetValue(); got != "sess-ext" {
+		t.Errorf("ExtendCredentialLease session id = %q, want sess-ext", got)
+	}
+	if got := rec.gotExtend.GetProvider(); got != "anthropic_direct" {
+		t.Errorf("ExtendCredentialLease provider = %q, want anthropic_direct", got)
+	}
+	if got := rec.gotExtend.GetLeaseId(); got != "cl-live" {
+		t.Errorf("ExtendCredentialLease lease id = %q, want cl-live", got)
+	}
+	if got := rec.gotExtend.GetExpiresAtUnixMs(); got != newExpiresAt.UnixMilli() {
+		t.Errorf("ExtendCredentialLease expires_at_unix_ms = %d, want %d (millisecond deadline)",
+			got, newExpiresAt.UnixMilli())
+	}
+}
+
+// The extension does not swallow an adapter-side failure: if the adapter
+// cannot re-arm the timer, the error surfaces so the renewal worker does not
+// advance its tracked deadline past the still-enforced original one.
+// spec: §4.9 line 1470.
+func TestExtendCredentialLeasePropagatesAdapterError(t *testing.T) {
+	rec := &recordingAdapter{extendErr: status.Error(codes.FailedPrecondition, "no session")}
+	cl := dialRecordingAdapter(t, rec)
+
+	err := cl.ExtendCredentialLease(context.Background(), "sess-ext",
+		"anthropic_direct", "cl-live", time.Now())
+	if status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("ExtendCredentialLease error = %v, want the adapter's FailedPrecondition", err)
 	}
 }
 

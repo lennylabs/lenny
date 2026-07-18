@@ -360,12 +360,21 @@ func probePodName(manifest string) string {
 	return ""
 }
 
-// curlFromPod runs curl inside the named probe pod against target with
-// a bounded connect timeout and returns curl's exit code and combined
-// output. The -m timeout caps how long a CNI-dropped connection hangs,
-// so a blocked path returns curl exit 28 within the bound rather than
-// stalling the test.
+// curlFromPod runs curl inside the named probe pod (in lenny-system)
+// against target with a bounded connect timeout and returns curl's exit
+// code and combined output. The -m timeout caps how long a CNI-dropped
+// connection hangs, so a blocked path returns curl exit 28 within the
+// bound rather than stalling the test.
 func curlFromPod(t *testing.T, c *kind.Cluster, pod, target string, timeout time.Duration) curlResult {
+	t.Helper()
+	return curlFromPodInNamespace(t, c, lennySystemNS, pod, target, timeout)
+}
+
+// curlFromPodInNamespace is curlFromPod generalized to an arbitrary
+// namespace. agent_egress_test.go reuses it against lenny-agents (and a
+// throwaway sibling-tenant namespace) for the §12.9.4 agent-pod egress
+// probes.
+func curlFromPodInNamespace(t *testing.T, c *kind.Cluster, namespace, pod, target string, timeout time.Duration) curlResult {
 	t.Helper()
 	secs := int(timeout.Seconds())
 	// curl prints the connect result; `echo exit=$?` carries the curl
@@ -377,7 +386,7 @@ func curlFromPod(t *testing.T, c *kind.Cluster, pod, target string, timeout time
 	)
 	out, _ := c.KubectlOut(
 		t,
-		"-n", lennySystemNS, "exec", pod, "--", "sh", "-c", script,
+		"-n", namespace, "exec", pod, "--", "sh", "-c", script,
 	)
 	return curlResult{exitCode: parseCurlExit(out), output: out}
 }

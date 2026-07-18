@@ -388,3 +388,293 @@ func TestCredLeaseStoreByCredential(t *testing.T) {
 		t.Errorf("LeasesByCredential for an unknown credential returned %d, want 0", n)
 	}
 }
+
+// credleaseExpiring returns a valid pool-backed proxy lease whose expiry
+// is expiresAt, so a test can place a lease on either side of a sweep
+// cutoff.
+func credleaseExpiring(leaseID, token string, expiresAt time.Time) credential.Lease {
+	l := credleaseProxy(leaseID, token)
+	l.IssuedAt = expiresAt.Add(-time.Hour).Truncate(time.Microsecond)
+	l.ExpiresAt = expiresAt
+	return l
+}
+
+// spec: §4.9 line 1671 — deny-list entries expire when the credential's
+// natural lease TTL lapses, so the store projects the lease's ExpiresAt
+// into the plain expires_at column (migration 0175) and the bounded
+// sweep deletes rows past that expiry without decrypting the body.
+// diagnosis: a failure means Put did not project ExpiresAt into the
+// plain column, so the indexed expired-lease sweep cannot find rows past
+// their TTL and the credential_leases table grows without bound.
+func TestCredLeaseStoreExpiresAtProjectionAndSweep(t *testing.T) {
+	t.Parallel()
+	store, pg := newCredLeaseStore(t)
+	ctx := context.Background()
+
+	t.Run("put projects expires_at into the plain column", func(t *testing.T) {
+		want := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t),
+			time.Now().UTC().Add(90*time.Minute).Truncate(time.Microsecond))
+		if err := store.Put(want); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		var got *time.Time
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT expires_at FROM credential_leases WHERE lease_id = $1`, want.LeaseID).Scan(&got); err != nil {
+			t.Fatalf("read expires_at: %v", err)
+		}
+		if got == nil {
+			t.Fatal("expires_at column is NULL after Put; the projection did not run")
+		}
+		if !got.Equal(want.ExpiresAt) {
+			t.Errorf("expires_at = %v, want %v", got, want.ExpiresAt)
+		}
+	})
+
+	t.Run("delete expired removes rows past the cutoff and counts them", func(t *testing.T) {
+		now := time.Now().UTC()
+		past1 := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), now.Add(-time.Hour).Truncate(time.Microsecond))
+		past2 := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), now.Add(-time.Minute).Truncate(time.Microsecond))
+		live := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), now.Add(time.Hour).Truncate(time.Microsecond))
+		for _, l := range []credential.Lease{past1, past2, live} {
+			if err := store.Put(l); err != nil {
+				t.Fatalf("Put %s: %v", l.LeaseID, err)
+			}
+		}
+		removed, err := store.DeleteExpired(ctx, now)
+		if err != nil {
+			t.Fatalf("DeleteExpired: %v", err)
+		}
+		if removed != 2 {
+			t.Errorf("DeleteExpired removed %d rows, want 2", removed)
+		}
+		if _, ok := store.GetByID(past1.LeaseID); ok {
+			t.Error("an expired lease survived DeleteExpired")
+		}
+		if _, ok := store.GetByID(live.LeaseID); !ok {
+			t.Error("DeleteExpired dropped an unexpired lease")
+		}
+	})
+
+	t.Run("delete expired never removes a NULL-expires_at row", func(t *testing.T) {
+		now := time.Now().UTC()
+		l := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), now.Add(-time.Hour).Truncate(time.Microsecond))
+		if err := store.Put(l); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		// Model a pre-migration row by clearing the projection column.
+		if _, err := pg.Pool.Exec(ctx,
+			`UPDATE credential_leases SET expires_at = NULL WHERE lease_id = $1`, l.LeaseID); err != nil {
+			t.Fatalf("null out expires_at: %v", err)
+		}
+		if _, err := store.DeleteExpired(ctx, now); err != nil {
+			t.Fatalf("DeleteExpired: %v", err)
+		}
+		if _, ok := store.GetByID(l.LeaseID); !ok {
+			t.Error("DeleteExpired removed a NULL-expires_at row; a pre-backfill row must be left for the backfill")
+		}
+	})
+}
+
+// spec: §4.9 lines 1694-1695 — the startup rebuild and the deny-list
+// sweep seed or drop a deny entry only after a fail-closed active-lease
+// existence check, so the count query must distinguish a definitive zero
+// from an unanswerable query and count an active or unknown-expiry row.
+// diagnosis: a failure means the existence count conflates an active
+// lease with an expired one (or a NULL-expiry row with an expired one),
+// so the fail-closed deny-entry removal and rebuild filter would drop a
+// deny entry that still shadows a live revoked lease.
+func TestCredLeaseStoreByCredentialCount(t *testing.T) {
+	t.Parallel()
+	store, pg := newCredLeaseStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	pool := "pool-" + newUUID(t)[:8]
+	credID := "cred-" + newUUID(t)[:8]
+	key := credential.CredentialKey{Source: credential.SourcePool, PoolID: pool, CredentialID: credID}
+	mk := func(expiresAt time.Time) credential.Lease {
+		l := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), expiresAt.Truncate(time.Microsecond))
+		l.PoolID = pool
+		l.CredentialID = credID
+		return l
+	}
+
+	active1 := mk(now.Add(time.Hour))
+	active2 := mk(now.Add(30 * time.Minute))
+	expired := mk(now.Add(-time.Minute))
+	for _, l := range []credential.Lease{active1, active2, expired} {
+		if err := store.Put(l); err != nil {
+			t.Fatalf("Put %s: %v", l.LeaseID, err)
+		}
+	}
+
+	n, err := store.LeasesByCredentialCount(ctx, key, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("LeasesByCredentialCount = %d, want 2 (the expired lease must not count)", n)
+	}
+
+	// A pre-migration NULL-expires_at row counts as active so the guard
+	// fails closed on a row the backfill has not yet reached.
+	if _, err := pg.Pool.Exec(ctx,
+		`UPDATE credential_leases SET expires_at = NULL WHERE lease_id = $1`, expired.LeaseID); err != nil {
+		t.Fatalf("null out expires_at: %v", err)
+	}
+	n, err = store.LeasesByCredentialCount(ctx, key, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount after NULL: %v", err)
+	}
+	if n != 3 {
+		t.Errorf("LeasesByCredentialCount = %d, want 3 (a NULL-expiry row counts as active)", n)
+	}
+
+	// A credential with no lease reports a definitive zero with a nil
+	// error, the answer the fail-closed callers remove a deny entry on.
+	absent := credential.CredentialKey{Source: credential.SourcePool, PoolID: "absent-" + newUUID(t)[:8], CredentialID: "absent"}
+	n, err = store.LeasesByCredentialCount(ctx, absent, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount(absent): %v", err)
+	}
+	if n != 0 {
+		t.Errorf("LeasesByCredentialCount(absent) = %d, want 0", n)
+	}
+
+	// A user-backed (direct-mode) credential is counted on the
+	// (tenantId, credentialRef) key, the §4.9 user term of the rebuild.
+	user := credleaseDirect("cl-" + newUUID(t))
+	if err := store.Put(user); err != nil {
+		t.Fatalf("Put user lease: %v", err)
+	}
+	userKey := credential.CredentialKey{Source: credential.SourceUser, TenantID: user.TenantID, CredentialRef: user.CredentialRef}
+	nUser, err := store.LeasesByCredentialCount(ctx, userKey, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount(user): %v", err)
+	}
+	if nUser != 1 {
+		t.Errorf("LeasesByCredentialCount(user) = %d, want 1", nUser)
+	}
+
+	// A key with no recognized source is not a lease-bearing credential;
+	// the count is a definitive zero with no query.
+	unknown := credential.CredentialKey{}
+	nUnknown, err := store.LeasesByCredentialCount(ctx, unknown, now)
+	if err != nil {
+		t.Fatalf("LeasesByCredentialCount(unknown source): %v", err)
+	}
+	if nUnknown != 0 {
+		t.Errorf("LeasesByCredentialCount(unknown source) = %d, want 0", nUnknown)
+	}
+}
+
+// spec: §4.9 lines 1671, 1694-1695 — the sweep, the rebuild filter, and the
+// backfill are fail-closed security paths, so a store or KMS fault must
+// surface as an error (or leave an undecryptable row untouched) rather than
+// masquerade as an empty result that would drop a live deny entry.
+// diagnosis: a failure means a query error is swallowed as a zero count or a
+// clean backfill, so a transient Postgres or KMS fault at boot or sweep time
+// would silently open a CREDENTIAL_REVOKED bypass.
+func TestCredLeaseStoreExistenceQueriesFailClosed(t *testing.T) {
+	t.Parallel()
+	store, pg := newCredLeaseStore(t)
+
+	t.Run("count, delete, and backfill surface a store error", func(t *testing.T) {
+		// A cancelled context makes every pgx query return an error before
+		// it runs, modeling a dead pool or a boot-time Postgres outage.
+		canceled, cancel := context.WithCancel(context.Background())
+		cancel()
+		now := time.Now().UTC()
+		poolKey := credential.CredentialKey{Source: credential.SourcePool, PoolID: "p", CredentialID: "c"}
+
+		if _, err := store.LeasesByCredentialCount(canceled, poolKey, now); err == nil {
+			t.Error("LeasesByCredentialCount must return an error when the query cannot run (fail closed)")
+		}
+		if _, err := store.DeleteExpired(canceled, now); err == nil {
+			t.Error("DeleteExpired must return an error when the delete cannot run")
+		}
+		if _, _, err := store.BackfillExpiresAt(canceled); err == nil {
+			t.Error("BackfillExpiresAt must return an error when the query cannot run")
+		}
+	})
+
+	t.Run("backfill leaves an undecryptable row in place", func(t *testing.T) {
+		ctx := context.Background()
+		l := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond))
+		if err := store.Put(l); err != nil {
+			t.Fatalf("Put: %v", err)
+		}
+		// Corrupt the encrypted body and clear the projection so the row
+		// looks pre-migration; its body no longer decrypts.
+		if _, err := pg.Pool.Exec(ctx,
+			`UPDATE credential_leases SET lease = $2, expires_at = NULL WHERE lease_id = $1`,
+			l.LeaseID, []byte("not-a-valid-envelope")); err != nil {
+			t.Fatalf("corrupt lease body: %v", err)
+		}
+		filled, _, err := store.BackfillExpiresAt(ctx)
+		if err != nil {
+			t.Fatalf("BackfillExpiresAt must skip an undecryptable row, not error: %v", err)
+		}
+		// The undecryptable row is neither filled nor deleted: its NULL
+		// expires_at persists so the existence guard keeps counting it active.
+		var expiresAt *time.Time
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT expires_at FROM credential_leases WHERE lease_id = $1`, l.LeaseID).Scan(&expiresAt); err != nil {
+			t.Fatalf("read expires_at: %v", err)
+		}
+		if expiresAt != nil {
+			t.Errorf("an undecryptable row was backfilled to %v; it must be left NULL (fail closed)", expiresAt)
+		}
+		_ = filled
+	})
+}
+
+// spec: §4.9 line 1671 — a row written before migration 0175 carries a
+// NULL expires_at that the sweep cannot treat as expired; the one-time
+// startup backfill decrypts each such row and either fills expires_at
+// from the lease body or deletes the row when it is already past expiry.
+// diagnosis: a failure means a pre-migration expired lease lingers
+// indefinitely (never swept) or a pre-migration active lease is never
+// projected, so its deny entry can never expire.
+func TestCredLeaseStoreBackfillExpiresAt(t *testing.T) {
+	t.Parallel()
+	store, pg := newCredLeaseStore(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	live := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), now.Add(time.Hour).Truncate(time.Microsecond))
+	stale := credleaseExpiring("cl-"+newUUID(t), "lt-"+newUUID(t), now.Add(-time.Hour).Truncate(time.Microsecond))
+	for _, l := range []credential.Lease{live, stale} {
+		if err := store.Put(l); err != nil {
+			t.Fatalf("Put %s: %v", l.LeaseID, err)
+		}
+	}
+	// Model both as pre-migration rows by clearing the projection column.
+	if _, err := pg.Pool.Exec(ctx,
+		`UPDATE credential_leases SET expires_at = NULL WHERE lease_id = ANY($1)`,
+		[]string{live.LeaseID, stale.LeaseID}); err != nil {
+		t.Fatalf("null out expires_at: %v", err)
+	}
+
+	filled, deleted, err := store.BackfillExpiresAt(ctx)
+	if err != nil {
+		t.Fatalf("BackfillExpiresAt: %v", err)
+	}
+	if filled < 1 || deleted < 1 {
+		t.Errorf("BackfillExpiresAt filled=%d deleted=%d, want at least one of each", filled, deleted)
+	}
+
+	// The active lease's expires_at is now projected from its body.
+	var got *time.Time
+	if err := pg.Pool.QueryRow(ctx,
+		`SELECT expires_at FROM credential_leases WHERE lease_id = $1`, live.LeaseID).Scan(&got); err != nil {
+		t.Fatalf("read filled expires_at: %v", err)
+	}
+	if got == nil || !got.Equal(live.ExpiresAt) {
+		t.Errorf("backfilled expires_at = %v, want %v", got, live.ExpiresAt)
+	}
+	// The already-expired pre-migration row was removed.
+	if _, ok := store.GetByID(stale.LeaseID); ok {
+		t.Error("BackfillExpiresAt left an already-expired pre-migration row in place")
+	}
+}

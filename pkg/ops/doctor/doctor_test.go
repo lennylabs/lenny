@@ -13,10 +13,11 @@ import (
 
 // fakeRemediator is a test seam for the §25.6 cluster-facing Remediator.
 type fakeRemediator struct {
-	detected  []Detected
-	detectErr error
-	applied   []string // codes Apply was called with, in order
-	applyErr  map[string]error
+	detected         []Detected
+	detectErr        error
+	applied          []string // codes Apply was called with, in order
+	appliedResources []string // resources Apply was called with, in order
+	applyErr         map[string]error
 }
 
 func (f *fakeRemediator) Detect(context.Context) ([]Detected, error) {
@@ -25,6 +26,7 @@ func (f *fakeRemediator) Detect(context.Context) ([]Detected, error) {
 
 func (f *fakeRemediator) Apply(_ context.Context, d Detected) error {
 	f.applied = append(f.applied, d.Code)
+	f.appliedResources = append(f.appliedResources, d.Resource)
 	if f.applyErr != nil {
 		return f.applyErr[d.Code]
 	}
@@ -327,6 +329,67 @@ func TestRun_Fix_AllDetected_OrderedByTable(t *testing.T) {
 		rep.Findings[0].Finding != FindingCoreDNSStuckEndpoint ||
 		rep.Findings[1].Finding != FindingWarmPoolStuckReplenish {
 		t.Fatalf("order=%+v", rep.Findings)
+	}
+}
+
+// spec: §25.6 lines 2949, 2968, 2985 — auto-remediation "applies a
+// narrow set of safe, idempotent fixes and reports what it did", and the
+// fix_applied event carries a per-`resource` payload. When a single
+// finding code is detected on more than one independent resource (two
+// Certificates within 7 days of expiry share certManagerExpiring), each
+// resource is remediated and reported. A code that collapses same-code
+// detections would leave the other resource unfixed and unreported.
+func TestRun_Fix_MultipleResourcesSameCode_AllRemediated_spec_25_6_2949(t *testing.T) {
+	rem := &fakeRemediator{detected: []Detected{
+		{Code: FindingCertManagerExpiring, Resource: "lenny-system/gateway-tls", Detail: "expires in 3 days"},
+		{Code: FindingCertManagerExpiring, Resource: "lenny-system/admin-tls", Detail: "expires in 5 days"},
+	}}
+	audit, got := collectAudit()
+	o := newOrch(t, rem, Config{Audit: audit})
+
+	rep, err := o.Run(context.Background(), RunRequest{Fix: true})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if rep.AppliedCount != 2 || rep.SkippedCount != 0 || rep.FailedCount != 0 {
+		t.Fatalf("counts: applied=%d skipped=%d failed=%d", rep.AppliedCount, rep.SkippedCount, rep.FailedCount)
+	}
+	// Both resources must have been remediated.
+	wantRes := map[string]bool{"lenny-system/gateway-tls": true, "lenny-system/admin-tls": true}
+	if len(rem.appliedResources) != 2 {
+		t.Fatalf("Apply called %d times, want 2: %v", len(rem.appliedResources), rem.appliedResources)
+	}
+	for _, r := range rem.appliedResources {
+		if !wantRes[r] {
+			t.Fatalf("unexpected remediated resource %q", r)
+		}
+		delete(wantRes, r)
+	}
+	if len(wantRes) != 0 {
+		t.Fatalf("resources never remediated: %v", wantRes)
+	}
+	// Both resources must appear in the report.
+	reportRes := map[string]bool{}
+	for _, f := range rep.Findings {
+		if f.Finding != FindingCertManagerExpiring || f.Result != resultApplied {
+			t.Fatalf("unexpected finding entry: %+v", f)
+		}
+		reportRes[f.Resource] = true
+	}
+	if len(rep.Findings) != 2 || !reportRes["lenny-system/gateway-tls"] || !reportRes["lenny-system/admin-tls"] {
+		t.Fatalf("report must cover both resources, got %+v", rep.Findings)
+	}
+	// A fix_applied event per resource carries the distinct resource field.
+	appliedEventRes := map[string]bool{}
+	for _, e := range *got {
+		if e.Type == auditcat.EventDiagnosticsFixApplied {
+			if s, _ := e.Fields["resource"].(string); s != "" {
+				appliedEventRes[s] = true
+			}
+		}
+	}
+	if !appliedEventRes["lenny-system/gateway-tls"] || !appliedEventRes["lenny-system/admin-tls"] {
+		t.Fatalf("fix_applied events must carry each resource, got %v", appliedEventRes)
 	}
 }
 

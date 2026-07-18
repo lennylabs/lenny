@@ -291,6 +291,13 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Escalation, e
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
+	// requireDurable rejects a create that cannot land durably. Emitting
+	// before that rejection would page subscribers for an escalation
+	// persisted nowhere, so the durable-required path stores first and
+	// emits only once a durable tier accepts the record.
+	if s.requireDurable {
+		return s.createRequireDurable(ctx, esc)
+	}
 	// §25.4 emission exactly-once: emit, then persist with the flag set.
 	// On failure emitted stays false for the background retry.
 	if s.emitter != nil {
@@ -309,15 +316,49 @@ func (s *Service) Create(ctx context.Context, req CreateRequest) (*Escalation, e
 		}
 		return nil, err
 	}
-	// No durable tier accepted the record.
-	if s.requireDurable {
-		return nil, &Error{Code: ErrCodeNoDurableStore, Message: "both Postgres and Redis are unavailable"}
-	}
+	// No durable tier accepted the record; buffer it in memory.
 	esc.Persistence = PersistenceBufferedMemory
 	if err := s.mem.Put(ctx, esc); err != nil {
 		return nil, err
 	}
 	return cloneEscalation(&esc), nil
+}
+
+// createRequireDurable is the §25.4 requireDurable create path: the record
+// must land in a durable tier (Postgres, then Redis) or the create is
+// rejected with ESCALATION_NO_DURABLE_STORE. The escalation_created event
+// is emitted only after a durable store accepts the record, so a create
+// rejected with both durable tiers down pages no webhook or SSE
+// subscribers. This preserves the §25.4 "exactly one escalation_created
+// event per escalation" contract: a rejected create records no escalation
+// and therefore emits none.
+//
+// spec: §25.4 (requireDurable rejects instead of accepting a memory-only
+// record; emission exactly-once).
+func (s *Service) createRequireDurable(ctx context.Context, esc Escalation) (*Escalation, error) {
+	for _, st := range s.durable {
+		esc.Persistence = st.Tier()
+		err := st.Put(ctx, esc)
+		if errors.Is(err, ErrStoreUnavailable) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		// The record is durably stored. §25.4 emission exactly-once:
+		// publish the event, then set the emitted flag on the accepting
+		// store. On emission failure the flag stays false for the
+		// background retry.
+		if s.emitter != nil && s.emitter.EmitEscalationCreated(esc) {
+			esc.Emitted = true
+			if serr := st.SetEmitted(ctx, esc.ID); serr != nil {
+				esc.Emitted = false
+			}
+		}
+		return cloneEscalation(&esc), nil
+	}
+	// No durable tier accepted the record; reject without emitting.
+	return nil, &Error{Code: ErrCodeNoDurableStore, Message: "both Postgres and Redis are unavailable"}
 }
 
 // Get returns a single §25.4 escalation by id from the highest reachable

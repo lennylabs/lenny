@@ -203,7 +203,7 @@ func (s *Server) handleAcquireLock(w http.ResponseWriter, r *http.Request) {
 		writeLockError(w, err)
 		return
 	}
-	// §25.4 line 2209: the "always" mode grants the lock but signals that
+	// §25.4 line 2215: the "always" mode grants the lock but signals that
 	// coordination is replica-local through the §25.2 degradation envelope.
 	// The warning attaches only when the lock was actually granted at the
 	// in-memory tier.

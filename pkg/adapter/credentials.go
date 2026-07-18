@@ -137,6 +137,33 @@ func (s *Server) RotateCredentials(ctx context.Context, req *adapterv1.RotateCre
 	return &adapterv1.RotateCredentialsResponse{}, nil
 }
 
+// ExtendCredentialLease re-arms a still-valid direct-mode credential
+// lease's expiry timer to a later deadline without delivering credential
+// material and without running the §4.7 rebind handshake. It is the §4.9
+// Token Service unavailability guard's adapter-side surface: when the
+// Token Service circuit breaker is open and the lease has not yet expired,
+// the gateway extends the enforced deadline from the lease record it
+// already holds, so no Token Service call is made. It touches neither the
+// credential file nor s.credLeases.
+//
+// spec: §4.9 line 1470.
+func (s *Server) ExtendCredentialLease(_ context.Context, req *adapterv1.ExtendCredentialLeaseRequest) (*adapterv1.ExtendCredentialLeaseResponse, error) {
+	sessionID := req.GetSessionId().GetValue()
+	if sessionID == "" {
+		return nil, status.Error(codes.InvalidArgument, "ExtendCredentialLease requires a session id")
+	}
+	newExpiresAt := time.UnixMilli(req.GetExpiresAtUnixMs())
+	// spec: §6.1 line 28 — a slot-qualified extension re-arms only the
+	// slot's own timer, so sibling slots' deadlines are untouched.
+	if slotID := req.GetSlotId().GetValue(); s.useSlot(slotID) {
+		return s.extendCredentialLeaseSlot(slotID, req.GetProvider(), req.GetLeaseId(), newExpiresAt)
+	}
+	s.mu.Lock()
+	s.extendExpiryTimer(req.GetProvider(), req.GetLeaseId(), newExpiresAt)
+	s.mu.Unlock()
+	return &adapterv1.ExtendCredentialLeaseResponse{}, nil
+}
+
 // rotateProviderFull runs the §4.7 Full-level rotation protocol for one
 // provider: the in-flight LLM-request completion gate (spec line 820)
 // with the 300s revocation ceiling (line 822), the credentials_rotated

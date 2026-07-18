@@ -86,11 +86,20 @@ type Pagination struct {
 	CursorKind string `json:"cursorKind,omitempty"`
 	HeadCursor string `json:"headCursor,omitempty"`
 	// GapDetected reports the encoded source cannot be honoured (the
-	// stream evicted past the cursor). spec: §25.5 lines 2666-2675.
+	// stream evicted past the cursor, or the cursor was minted at a
+	// different actualSource this buffer cannot translate). spec: §25.2
+	// lines 261-271; §25.5 lines 2666-2675.
 	GapDetected bool `json:"gapDetected,omitempty"`
+	// GapReason explains a detected gap in human-readable form. spec:
+	// §25.2 line 269.
+	GapReason string `json:"gapReason,omitempty"`
 	// OldestAvailableCursor pairs with GapDetected so a poller can
 	// resume from the oldest retained event. spec: §25.5 line 2698.
 	OldestAvailableCursor string `json:"oldestAvailableCursor,omitempty"`
+	// SuggestedAction is the §25.2 recovery hint ("resync") emitted on a
+	// gap so the agent re-reads platform state before assuming
+	// continuity. spec: §25.2 line 270.
+	SuggestedAction string `json:"suggestedAction,omitempty"`
 }
 
 // DeliveryPage is the canonical §25.5 webhook-delivery query

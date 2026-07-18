@@ -50,7 +50,7 @@ func (c *captureWriter) Write(b []byte) (int, error) {
 // merges a `degradation` field into a top-level JSON object; a non-object
 // body (or non-JSON) is passed through unchanged with the header set.
 //
-// spec: §25.4 lines 2069-2070 — "the response includes degradation.warnings
+// spec: §25.4 line 2057 — "the response includes degradation.warnings
 // noting that retry-safety is not guaranteed".
 type degradingWriter struct {
 	http.ResponseWriter

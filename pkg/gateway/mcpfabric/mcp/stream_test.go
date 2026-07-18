@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -317,6 +318,98 @@ func TestAttachKeepalive_spec_15_2(t *testing.T) {
 	}
 }
 
+// diagnosis: a failure here means the SSE attach transport no longer
+// bounds a write to a stalled subscriber, so a single slow client can
+// block the handler goroutine writing into a full socket buffer forever
+// instead of the connection being dropped within the configured timeout.
+// That is exactly the unbounded-memory-growth / resource-exhaustion
+// scenario the §15 bounded-error policy exists to prevent.
+//
+// TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout verifies the
+// §15 OutboundChannel bounded-error policy for the attach_session SSE
+// transport: when the subscriber's read loop is behind such that a write
+// would block, the gateway closes the connection within the bounded send
+// timeout rather than blocking indefinitely.
+//
+// The test publishes a backlog large enough to exceed any realistic TCP
+// socket buffer, opens the real attach stream over a real connection, and
+// then reads nothing at all for a stall period — long enough for a
+// genuinely blocked write to hit the bounded send timeout several times
+// over, but not long enough to depend on ever fully draining the backlog.
+// Only after the stall does the test start draining, and it asserts that
+// draining completes (a clean EOF, meaning the server already closed the
+// connection during the stall) within a bound comfortably below the time
+// a full, un-terminated backlog transfer would take. A server that never
+// bounds its writes keeps the handler goroutine parked in the still-open
+// connection's live-event loop indefinitely once the backlog eventually
+// drains, so the drain in that case never reaches EOF within the bound.
+// spec: §7.2 "SSE back-pressure policy" (spec/07_session-lifecycle.md);
+// §15 "Normative back-pressure policy for OutboundChannel
+// implementations", bounded-error policy (spec/15_external-api-surface.md).
+func TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15(t *testing.T) {
+	origTimeout := attachSendTimeout
+	attachSendTimeout = 30 * time.Millisecond
+	defer func() { attachSendTimeout = origTimeout }()
+
+	bus := sessionevents.NewBus(30000)
+	// A large enough backlog (well past any realistic kernel socket
+	// buffer, including macOS/Linux TCP autotuning ceilings in the low
+	// single-digit megabytes) so the replay loop's write genuinely blocks
+	// once the subscriber below stalls.
+	payload := `{"type":"text","text":"` + strings.Repeat("A", 3000) + `"}`
+	for i := 0; i < 7000; i++ {
+		bus.PublishForTenant("acme", "sess-1", "response", payload, streamTS())
+	}
+
+	srv := NewServer()
+	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/mcp", strings.NewReader(attachBody(t, "sess-1", 0)))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// The stall: read nothing at all for several multiples of the bounded
+	// send timeout, so a genuinely blocked write has every opportunity to
+	// hit it. This is the stalled-subscriber scenario the bounded-error
+	// policy guards against.
+	time.Sleep(300 * time.Millisecond)
+
+	// Only now start draining. If the server already closed the
+	// connection during the stall, this drains a small residue and the
+	// drain finishes almost immediately — the gateway's bounded-error
+	// policy calls for dropping the connection outright on a stalled
+	// write, so the chunked-encoding trailer never gets written and the
+	// client observes an abrupt io.ErrUnexpectedEOF rather than a clean
+	// io.EOF; either terminates the drain and is an acceptable outcome
+	// here. If the server never bounds its writes, this unblocks the
+	// still-parked handler, which then finishes flushing the entire
+	// backlog and settles into its live-event loop on the still-open
+	// connection — draining never completes in that case.
+	drained := make(chan error, 1)
+	go func() {
+		_, copyErr := io.Copy(io.Discard, resp.Body)
+		drained <- copyErr
+	}()
+
+	select {
+	case <-drained:
+		// Any outcome here (clean EOF or an abrupt-close error) means the
+		// connection was terminated rather than left open indefinitely.
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not close the stalled subscriber's connection within the bounded send timeout; draining the connection is still blocked on the still-open live-event loop")
+	}
+}
+
 // TestAttachMissingSessionID returns VALIDATION_ERROR before opening the
 // stream. spec: §15.2.1 rule 3.
 func TestAttachMissingSessionID_spec_15_2(t *testing.T) {
@@ -431,7 +524,9 @@ func TestLastEventID(t *testing.T) {
 func TestWriteMCPSessionEventCarriesSeqOnIDLine(t *testing.T) {
 	var sb strings.Builder
 	rec := &flushRecorder{Builder: &sb}
-	writeMCPSessionEvent(rec, sessionevents.Event{Seq: 7, SessionID: "s", Type: "response", Data: `{"x":1}`, Timestamp: streamTS()})
+	if err := writeMCPSessionEvent(rec, sessionevents.Event{Seq: 7, SessionID: "s", Type: "response", Data: `{"x":1}`, Timestamp: streamTS()}); err != nil {
+		t.Fatalf("writeMCPSessionEvent: %v", err)
+	}
 	out := sb.String()
 	if !strings.Contains(out, "id: 7\n") {
 		t.Fatalf("frame missing id line: %q", out)
@@ -447,7 +542,9 @@ func TestWriteMCPSessionEventCarriesSeqOnIDLine(t *testing.T) {
 func TestWriteMCPGapDetectedHasNoIDLine(t *testing.T) {
 	var sb strings.Builder
 	rec := &flushRecorder{Builder: &sb}
-	writeMCPGapDetected(rec, 5, 9)
+	if err := writeMCPGapDetected(rec, 5, 9); err != nil {
+		t.Fatalf("writeMCPGapDetected: %v", err)
+	}
 	out := sb.String()
 	if strings.Contains(out, "id:") {
 		t.Fatalf("gap_detected must not carry an id line: %q", out)
@@ -472,4 +569,59 @@ func (f *flushRecorder) Header() http.Header {
 }
 func (f *flushRecorder) Write(p []byte) (int, error) { return f.Builder.Write(p) }
 func (f *flushRecorder) WriteHeader(int)             {}
-func (f *flushRecorder) Flush()                      {}
+
+// spec: §15 OutboundChannel bounded-error policy — "the gateway closes
+// the channel on non-nil error" applies to any write/flush failure, not
+// only a deadline timeout. writeBoundedSSEFrame must propagate a Write
+// error rather than swallow it.
+// diagnosis: a nil return here means a write failure on the underlying
+// connection is silently ignored instead of signaling the caller to
+// close the connection.
+func TestWriteBoundedSSEFramePropagatesWriteError(t *testing.T) {
+	w := &erroringWriter{writeErr: errors.New("broken pipe")}
+	err := writeBoundedSSEFrame(w, []byte("data: x\n\n"))
+	if err == nil {
+		t.Fatal("writeBoundedSSEFrame: got nil error, want the underlying Write error propagated")
+	}
+}
+
+// spec: §15 OutboundChannel bounded-error policy, same rationale as
+// TestWriteBoundedSSEFramePropagatesWriteError, for the flush leg.
+// diagnosis: a nil return here means a flush failure (e.g. the
+// connection dropped between Write and Flush) is silently ignored.
+func TestFlushBoundedSSEPropagatesFlushError(t *testing.T) {
+	w := &erroringWriter{flushErr: errors.New("connection reset")}
+	err := flushBoundedSSE(w)
+	if err == nil {
+		t.Fatal("flushBoundedSSE: got nil error, want the underlying Flush error propagated")
+	}
+}
+
+// erroringWriter is a minimal http.ResponseWriter whose Write and Flush
+// can be made to fail, to exercise writeBoundedSSEFrame/flushBoundedSSE's
+// error-return branches. It deliberately does not implement
+// SetWriteDeadline, so http.ResponseController.SetWriteDeadline returns
+// http.ErrNotSupported (the tolerated case both functions fall through
+// on), letting these tests isolate the Write/Flush error paths.
+type erroringWriter struct {
+	hdr      http.Header
+	writeErr error
+	flushErr error
+}
+
+func (e *erroringWriter) Header() http.Header {
+	if e.hdr == nil {
+		e.hdr = http.Header{}
+	}
+	return e.hdr
+}
+
+func (e *erroringWriter) Write(p []byte) (int, error) {
+	if e.writeErr != nil {
+		return 0, e.writeErr
+	}
+	return len(p), nil
+}
+func (e *erroringWriter) WriteHeader(int)   {}
+func (e *erroringWriter) FlushError() error { return e.flushErr }
+func (f *flushRecorder) Flush()             {}

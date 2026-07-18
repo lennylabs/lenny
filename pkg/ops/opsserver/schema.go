@@ -218,15 +218,27 @@ var opsRouteSchemas = []RouteSchema{
 	{"PUT", "/v1/admin/escalations/{id}", "Update an escalation's state", "lenny_escalation_update", "tools:escalation:write", "platform-admin", operabilityCategory, "200"},
 
 	// §25.5 operational event stream (SSE + poll) and webhook subscriptions.
-	{"GET", "/v1/admin/events", "Poll the operational event stream", "", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"GET", "/v1/admin/events/stream", "Server-sent operational event stream", "", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"GET", "/v1/admin/event-subscriptions", "List webhook event subscriptions", "lenny_event_subscriptions_list", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"POST", "/v1/admin/event-subscriptions", "Create a webhook event subscription", "lenny_event_subscription_create", "tools:events:write", "platform-admin", operabilityCategory, "201"},
-	{"GET", "/v1/admin/event-subscriptions/{id}", "Get a webhook event subscription", "lenny_event_subscription_get", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"PUT", "/v1/admin/event-subscriptions/{id}", "Update a webhook event subscription", "lenny_event_subscription_update", "tools:events:write", "platform-admin", operabilityCategory, "200"},
-	{"DELETE", "/v1/admin/event-subscriptions/{id}", "Delete a webhook event subscription", "lenny_event_subscription_delete", "tools:events:write", "platform-admin", operabilityCategory, "204"},
-	{"GET", "/v1/admin/event-subscriptions/{id}/deliveries", "List a subscription's webhook deliveries", "", "tools:events:read", "platform-admin", operabilityCategory, "200"},
-	{"POST", "/v1/admin/event-subscriptions/{id}/rotate-secret", "Rotate a subscription's signing secret", "", "tools:events:write", "platform-admin", operabilityCategory, "200"},
+	// spec: §25.4 ("Requires platform-admin or tenant-admin role on all
+	// endpoints") and §25.5 Tenant Isolation ("SSE and polling endpoints
+	// apply the same filter: tenant-scoped callers only see events matching
+	// their tenant..."; subscriptions and event delivery, including
+	// deliveries and rotate-secret, respect tenant boundaries) — a
+	// tenant-admin may poll or stream events filtered to its own tenant, and
+	// may list the deliveries of, or rotate the secret of, a subscription
+	// its own tenant owns. The required-role ceiling for all four routes is
+	// therefore tenant-admin (the value callerHasToolRole reads as "admits
+	// platform-admin and tenant-admin"), keeping the authorized-tools
+	// discovery surface and the served openapi.json accurate for a
+	// tenant-admin caller.
+	{"GET", "/v1/admin/events", "Poll the operational event stream", "", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"GET", "/v1/admin/events/stream", "Server-sent operational event stream", "", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"GET", "/v1/admin/event-subscriptions", "List webhook event subscriptions", "lenny_event_subscriptions_list", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"POST", "/v1/admin/event-subscriptions", "Create a webhook event subscription", "lenny_event_subscription_create", "tools:events:write", "tenant-admin", operabilityCategory, "201"},
+	{"GET", "/v1/admin/event-subscriptions/{id}", "Get a webhook event subscription", "lenny_event_subscription_get", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"PUT", "/v1/admin/event-subscriptions/{id}", "Update a webhook event subscription", "lenny_event_subscription_update", "tools:events:write", "tenant-admin", operabilityCategory, "200"},
+	{"DELETE", "/v1/admin/event-subscriptions/{id}", "Delete a webhook event subscription", "lenny_event_subscription_delete", "tools:events:write", "tenant-admin", operabilityCategory, "204"},
+	{"GET", "/v1/admin/event-subscriptions/{id}/deliveries", "List a subscription's webhook deliveries", "", "tools:events:read", "tenant-admin", operabilityCategory, "200"},
+	{"POST", "/v1/admin/event-subscriptions/{id}/rotate-secret", "Rotate a subscription's signing secret", "", "tools:events:write", "tenant-admin", operabilityCategory, "200"},
 
 	// §25.4 pod-log proxy.
 	{"GET", "/v1/admin/logs/pods/{namespace}/{name}", "Proxy a pod's logs from the Kubernetes API", "lenny_logs_pod", "tools:logs:read", "platform-admin", operabilityCategory, "200"},

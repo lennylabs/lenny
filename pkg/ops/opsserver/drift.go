@@ -84,9 +84,29 @@ func (s *Server) handleDriftReport(w http.ResponseWriter, r *http.Request) {
 			fresh = parsed
 		}
 	}
+	// §25.10 (Drift Detection Logic): "Alternatively, the caller can
+	// supply a {"desired": {...}} body for ad-hoc comparison." The
+	// caller-supplied desired state replaces the bootstrap_seed_snapshot
+	// as the desired side, so the report needs no snapshot store — this is
+	// the §25.10 Degradation "Postgres down, caller supplies desired body"
+	// path that lets GitOps agents keep running drift checks during a
+	// Postgres outage, with the response recording desiredStateSource:
+	// "caller". An empty body leaves Desired nil so the snapshot side is
+	// used; a malformed body is a §25.2 validation error.
+	// spec: §25.10
+	var reqBody struct {
+		Desired map[string]any `json:"desired"`
+	}
+	if err := readJSONBody(r, &reqBody); err != nil {
+		conventions.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			conventions.CategoryPermanent, "malformed request body")
+		return
+	}
 	// §25.10 line 3791: ?against=both returns the live and target diffs in
 	// one response. It routes through a distinct service method because
-	// the response carries two reports rather than one. F-25.10.6.
+	// the response carries two reports rather than one. F-25.10.6. The
+	// two-snapshot diff is defined only against the stored live and target
+	// snapshots, so a caller-supplied desired body does not apply here.
 	if q.Get("against") == "both" {
 		both, err := s.drift.ReportBoth(r.Context(), driftservice.ReportParams{
 			Scope: q.Get("scope"),
@@ -102,6 +122,7 @@ func (s *Server) handleDriftReport(w http.ResponseWriter, r *http.Request) {
 	report, err := s.drift.Report(r.Context(), driftservice.ReportParams{
 		Scope:   q.Get("scope"),
 		Against: q.Get("against"),
+		Desired: reqBody.Desired,
 		Fresh:   fresh,
 	})
 	if err != nil {

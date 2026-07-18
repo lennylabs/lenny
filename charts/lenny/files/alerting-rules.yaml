@@ -102,9 +102,9 @@ groups:
           labels:
             severity: critical
           annotations:
-            description: At least one credential in revoked state (pool-scoped or user-scoped) still has active leases alive against it for more than 30s, indicating revocation propagation failure and that the compromised key may still be in use.
+            description: At least one credential in revoked state (pool-scoped or user-scoped) still has an active lease that is not shadowed by a deny-list entry for more than 30s, indicating revocation propagation did not reach the deny list and that the compromised key may still be in use. The alert clears once every active lease against the credential is on the deny list or has been terminated in direct mode.
             runbook_url: https://docs.lenny.dev/runbooks/credential-revocation
-            summary: Revoked credential still has active leases
+            summary: Revoked credential has an active lease not on the deny list
         - alert: TokenServiceUnavailable
           expr: lenny_token_service_circuit_state == 2
           for: 30s

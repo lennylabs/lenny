@@ -256,11 +256,22 @@ for (const f of selectResult.selected) {
   let verifyResult = { approved: false, issues: [] }
   let priorIssues = []
   let forcedHuman = false
+  // A finding can take several attempts (a rejected first pass, a
+  // corrected second one); each attempt's own discoveredIssues would
+  // otherwise be lost when a later attempt's implResult overwrites the
+  // earlier one (observed directly: a real discoveredIssue from a
+  // superseded first attempt never made it to the File-discovered-issues
+  // step because only the FINAL implResult was read). Accumulate across
+  // every attempt instead.
+  const discoveredThisFinding = []
   while (attempt < maxAttemptsPerFinding) {
     attempt++
     implResult = await agent(implementPrompt(f, priorIssues), {
       label: f.id + ':impl:' + attempt, phase: 'Close', schema: IMPLEMENT_SCHEMA, effort: 'high',
     })
+    if (implResult && implResult.discoveredIssues && implResult.discoveredIssues.length) {
+      discoveredThisFinding.push.apply(discoveredThisFinding, implResult.discoveredIssues)
+    }
     if (!implResult) {
       // agent() returns null on a terminal API error (auth expiry, rate/usage
       // limit) after retries, not just for this finding but almost certainly
@@ -317,6 +328,12 @@ for (const f of selectResult.selected) {
     implResult = { id: f.id, route: 'needs-human', attempts: attempt, humanQuestion: revertResult.humanQuestion, notes: 'code-fix reverted after verifier veto' }
     verifyResult = { approved: true, issues: [] }
   }
+  if (implResult) {
+    // Replace with the full cross-attempt accumulation so a discovery
+    // from a superseded earlier attempt isn't lost (see the comment
+    // above discoveredThisFinding).
+    implResult.discoveredIssues = discoveredThisFinding
+  }
   closedResults.push({ finding: f, impl: implResult, verify: verifyResult, attempts: attempt })
   log(f.id + ' -> route=' + (implResult ? implResult.route : 'none') + ' approved=' + verifyResult.approved + ' after ' + attempt + ' attempt(s).')
   if (abortedOnTerminalError) {
@@ -338,16 +355,21 @@ for (const f of selectResult.selected) {
 const approvedClosable = closedResults.filter(function (r) {
   return r.verify.approved && r.impl && (r.impl.route === 'test' || r.impl.route === 'code-fix' || r.impl.route === 'moot')
 })
-// A route=test/code-fix/moot approval with no commitSha means the
-// implementer's own commit never actually landed (observed directly: a
-// Bash-tool outage let an implementer finish and pass independent
-// verification without ever running `git commit`). Marking TEST-GAPS.md
-// resolved in that case would record a resolution backed by nothing in
-// git — the exact bookkeeping-vs-reality gap this workflow exists to
-// prevent. Route these to the same stuck/annotate path as a genuine
-// rejection instead of silently resolving them.
-const toResolve = approvedClosable.filter(function (r) { return !!r.impl.commitSha })
-const missingCommit = approvedClosable.filter(function (r) { return !r.impl.commitSha })
+// A route=test/code-fix approval with no commitSha means the implementer's
+// own commit never actually landed (observed directly: a Bash-tool outage
+// let an implementer finish and pass independent verification without ever
+// running `git commit`). Marking TEST-GAPS.md resolved in that case would
+// record a resolution backed by nothing in git — the exact
+// bookkeeping-vs-reality gap this workflow exists to prevent. Route these
+// to the same stuck/annotate path as a genuine rejection instead of
+// silently resolving them. route=moot is exempt from this check: its own
+// contract (see implementPrompt) is "already covered by since-landed work,"
+// which frequently means nothing at all needs to change or be committed —
+// requiring a commitSha there punished a real, verified, legitimately
+// commit-free resolution the same way (observed directly on this run).
+const commitRequiredRoutes = ['test', 'code-fix']
+const toResolve = approvedClosable.filter(function (r) { return r.impl.route === 'moot' || !!r.impl.commitSha })
+const missingCommit = approvedClosable.filter(function (r) { return commitRequiredRoutes.indexOf(r.impl.route) !== -1 && !r.impl.commitSha })
 const needsHuman = closedResults.filter(function (r) { return r.impl && r.impl.route === 'needs-human' })
 // abortedFindings: impl is null because the implementer or verifier agent
 // hit a terminal API error (rate/usage limit, auth expiry) and never
@@ -373,7 +395,7 @@ if (toResolve.length) {
       return { id: r.finding.id, commitSha: r.impl.commitSha, resolutionNote: r.impl.resolutionNote, route: r.impl.route, specCitation: r.impl.specCitation }
     })),
     '',
-    'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'` — use the literal id) in TEST-GAPS.md, flip `- [ ]` to `- [x]` and `OPEN` to `RESOLVED <commitSha>`, and replace the five original fields (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test) with a single `- **Resolution:** <resolutionNote>` field, mirroring the existing worked example at T-10.1.11 (grep it in TEST-GAPS.md for the exact tone). For route="moot" findings, phrase the Resolution as "already covered by <what>, found during batch review" rather than implying new work landed. For route="code-fix" findings, the Resolution must state both what the test now pins and what product-code defect was corrected, citing the spec section that made the fix unambiguous.',
+    'For each, locate its heading (`grep -n \'^### - \\[ \\] <id> \'` — use the literal id) in TEST-GAPS.md, flip `- [ ]` to `- [x]` and `OPEN` to `RESOLVED <commitSha>`, and replace the five original fields (Spec/Doc, Existing tests, Gap, Dependencies, Suggested test) with a single `- **Resolution:** <resolutionNote>` field, mirroring the existing worked example at T-10.1.11 (grep it in TEST-GAPS.md for the exact tone). For route="moot" findings, phrase the Resolution as "already covered by <what>, found during batch review" rather than implying new work landed; a moot resolution legitimately has no commitSha of its own when nothing needed to change — if none was given, look up the actual historical commit that landed the covering test/fix via `git log --oneline --all -- <the covering test file the resolutionNote names>` and cite that instead of leaving the RESOLVED marker bare. For route="code-fix" findings, the Resolution must state both what the test now pins and what product-code defect was corrected, citing the spec section that made the fix unambiguous.',
     '',
     'GIT DISCIPLINE: you are already on the batch branch and must stay on it — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: mark <ids> resolved"`.',
     '',
@@ -383,6 +405,16 @@ if (toResolve.length) {
     label: 'mark-resolved', phase: 'Close', effort: 'medium',
     schema: { type: 'object', additionalProperties: false, required: ['markedCount'], properties: { markedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
   })
+  if (!markResult) {
+    // Same terminal-error shape as Annotate/File-discovered-issues below:
+    // the write to TEST-GAPS.md may never have happened (observed
+    // directly — resolvedCount reported >0 in a batch summary while
+    // markResult came back as a bare `null` and the findings stayed
+    // OPEN on disk). Carry the unresolved list forward instead of
+    // losing it in a null.
+    markResult = { markedCount: 0, abortedOnTerminalError: true, pendingResolutions: toResolve.map(function (r) { return { id: r.finding.id, commitSha: r.impl.commitSha, route: r.impl.route } }) }
+    abortedOnTerminalError = true
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -459,20 +491,35 @@ const discoveredIssues = closedResults
 let fileIssuesResult = { filedCount: 0 }
 if (discoveredIssues.length) {
   const fileIssuesPrompt = [
-    'ROLE. File the following implementer-discovered issues as new OPEN findings in TEST-GAPS.md. Each was found incidentally while closing an unrelated finding and is out of scope for it; they need their own durable record.',
+    'ROLE. File the following implementer-discovered issues as new OPEN findings in TEST-GAPS.md. Each was found incidentally while closing an unrelated finding and is out of scope for it; they need their own durable record — UNLESS an existing finding already records the same fact, in which case filing a new one is pure duplication (this has repeatedly happened: the same pre-existing gofumpt drift, the same delegation-echo build flakiness, and the same tier4_integration go:build tag bug have each been independently re-filed as 3-7 separate findings across batches because nothing checked for an existing record first). Your job is to file what is genuinely new and consolidate what is not.',
     '',
     'DISCOVERED ISSUES:',
     JSON.stringify(discoveredIssues),
     '',
-    'For each: pick the TEST-GAPS.md section that actually covers its subject matter (the spec section it concerns, or the closest theme section — do not default to wherever foundWhileClosing happens to live unless that is genuinely the right home), find that section\'s highest existing finding number and use the next one, and insert a new finding block in the same format every other finding in that section uses: `### - [ ] <new-id> — <title> [<severity>] — OPEN` followed by `- **Spec/Doc:**`, `- **Existing tests:**`, `- **Gap:**`, `- **Dependencies:**`, `- **Suggested test:**` fields, writing them from the evidence given (it is fine for Existing tests / Suggested test to be brief if the evidence does not spell them out — do not invent specifics the evidence does not support). Update that section\'s theme/spec-area summary line near the top of the file (the "NH NM NL NI" counts) to include the new finding. Do not touch any other finding\'s text.',
+    'STEP 1 — dedup WITHIN this list first. Two or more entries can describe the same underlying fact even when found while closing different findings (e.g. two implementers in the same batch both hit the same pre-existing static-tier failure). Merge entries whose evidence points at the same root cause (same file(s), same error signature, same defect) into one: keep the most complete evidence, the highest severity among them, and list every contributing foundWhileClosing id.',
+    '',
+    'STEP 2 — for each remaining (deduplicated) issue, search TEST-GAPS.md for an existing finding that already records the same fact before writing a new one: `grep -in` for the issue\'s distinctive filenames, function/test names, or error text across TEST-GAPS.md. A match is the same fact if it names the same file(s)/symptom/root cause, even if worded differently or observed at a different commit — "confirmed again at a later commit" is corroboration, not a new gap.',
+    '  - If an existing OPEN finding already covers it: do NOT file a new finding. Instead append one line to that finding, right after its `Suggested test` field (before the next heading): `- **Also observed** (' + '<today\'s date via `date +%F`>' + ', while closing <foundWhileClosing id(s)>): <one-sentence note — a new detail only if the new evidence adds one, e.g. a newly affected file, otherwise just "reproduced again">.` Record its id under corroboratedIds.',
+    '  - If an existing finding covers the same fact but is already RESOLVED (checked `[x]`) or already carries a `**Needs human input` field: treat it the same as a match — do not refile; skip it silently (a resolved-but-recurring fact is itself worth noting, but as a one-line addendum to that finding\'s Resolution, not a new open finding). Record its id under corroboratedIds.',
+    '  - Only when genuinely nothing existing covers it, file it as new: pick the TEST-GAPS.md section that actually covers its subject matter (the spec section it concerns, or the closest theme section — do not default to wherever foundWhileClosing happens to live unless that is genuinely the right home), find that section\'s highest existing finding number and use the next one, and insert a new finding block in the same format every other finding in that section uses: `### - [ ] <new-id> — <title> [<severity>] — OPEN` followed by `- **Spec/Doc:**`, `- **Existing tests:**`, `- **Gap:**`, `- **Dependencies:**`, `- **Suggested test:**` fields, writing them from the evidence given (it is fine for Existing tests / Suggested test to be brief if the evidence does not spell them out — do not invent specifics the evidence does not support). Update that section\'s theme/spec-area summary line near the top of the file (the "NH NM NL NI" counts) to include the new finding.',
+    '',
+    'Do not touch any finding\'s text beyond the one-line addenda and new insertions described above.',
     '',
     'GIT DISCIPLINE: stay on the current batch branch — first confirm `git branch --show-current` is NOT `impl/v1-initial`/`main` (if it is, STOP and report; do not write). Use only `git add TEST-GAPS.md` + `git commit`; never checkout/switch/branch/merge/push. Commit the TEST-GAPS.md edit by itself: `git add TEST-GAPS.md && git commit -m "test-gaps: record <N> issue(s) discovered during batch review"`.',
     '',
-    'RETURN filedCount (integer) and commitSha.',
+    'RETURN filedCount (integer, genuinely new findings only), skippedAsDuplicateCount (integer, issues that matched an existing finding or were merged as within-batch dupes), corroboratedIds (array of existing finding ids you appended a one-line addendum to, empty if none), commitSha.',
   ].join('\n')
   fileIssuesResult = await agent(fileIssuesPrompt, {
     label: 'file-discovered-issues', phase: 'Close', effort: 'medium',
-    schema: { type: 'object', additionalProperties: false, required: ['filedCount'], properties: { filedCount: { type: 'integer' }, commitSha: { type: 'string' } } },
+    schema: {
+      type: 'object', additionalProperties: false, required: ['filedCount'],
+      properties: {
+        filedCount: { type: 'integer' },
+        skippedAsDuplicateCount: { type: 'integer' },
+        corroboratedIds: { type: 'array', items: { type: 'string' } },
+        commitSha: { type: 'string' },
+      },
+    },
   })
   if (!fileIssuesResult) {
     // Same terminal-error shape as Annotate: the write may never have

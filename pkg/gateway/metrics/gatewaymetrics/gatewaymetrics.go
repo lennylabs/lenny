@@ -669,6 +669,19 @@ func (m *Metrics) AddGCTombstonesPruned(table string, n int) {
 	m.gcTombstonesPruned.WithLabelValues(table).Add(float64(n))
 }
 
+// AddCredentialLeasesSwept bumps the §4.9
+// `lenny_gateway_credential_leases_swept_total` counter by n, the number
+// of expired lease rows the bounded sweep worker removed this tick. The
+// counter is unlabeled per §16.1.1.
+//
+// spec: §4.9 line 1671.
+func (m *Metrics) AddCredentialLeasesSwept(n int) {
+	if m == nil || n <= 0 {
+		return
+	}
+	m.credentialLeasesSwept.Add(float64(n))
+}
+
 // IncGCRun bumps the §12.5 ll. 321 `lenny_gc_runs_total` counter once
 // per retention-GC sweep. outcome is `success` or `error`.
 //

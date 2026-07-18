@@ -884,10 +884,17 @@ func runComponentTier(subsets []string) (string, string, *tierResult) {
 
 // componentTargets maps component subset names to (test package globs,
 // needsDocker). An empty subset list resolves to every component directory
-// plus the testinfra/containers package.
+// plus the testinfra/containers package and any cmd/ package that carries
+// its own `component`-tagged tests in-package (for example cmd/lenny-ops,
+// which tests Redis- and Postgres-backed unexported helpers directly
+// against real containers rather than through an external tests/
+// package). Without the cmd/lenny-ops/... target, files there guarded by
+// `//go:build component` never compile under any tier: the unit tier's
+// `go test ./...` carries no `-tags=component`, and no other tier target
+// reaches cmd/lenny-ops.
 func componentTargets(subsets []string) ([]string, bool, error) {
 	if len(subsets) == 0 {
-		return []string{"./tests/tier2_component/...", "./tests/testinfra/containers/..."}, true, nil
+		return []string{"./tests/tier2_component/...", "./tests/testinfra/containers/...", "./cmd/lenny-ops/..."}, true, nil
 	}
 	type entry struct {
 		path        string

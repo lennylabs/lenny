@@ -100,7 +100,25 @@ jobs:
           cache: true
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
+      # The §18.33 external pen-test partner bundle is delivered via the
+      # org-level secret two-person-approval process TESTING.md §20.13
+      # documents, not committed to the repository. When the secret is
+      # configured, write it to a runner-local file and point
+      # LENNY_PENTEST_BUNDLE at it. LENNY_RELEASE_GATE marks this run as
+      # the "per release" pen-test cadence, so TestPentestReplay fails
+      # instead of silently falling back to the internal baseline bundle
+      # when the secret is missing.
+      - name: Write partner pen-test bundle
+        if: ${{ secrets.PENTEST_BUNDLE_JSON != '' }}
+        env:
+          PENTEST_BUNDLE_JSON: ${{ secrets.PENTEST_BUNDLE_JSON }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/pentest"
+          printf '%s' "${PENTEST_BUNDLE_JSON}" > "${RUNNER_TEMP}/pentest/partner-bundle.json"
+          echo "LENNY_PENTEST_BUNDLE=${RUNNER_TEMP}/pentest/partner-bundle.json" >> "${GITHUB_ENV}"
       - name: Run security tier
+        env:
+          LENNY_RELEASE_GATE: "1"
         run: ./bin/lenny-test --tier security
       - name: Upload verdict
         if: always()

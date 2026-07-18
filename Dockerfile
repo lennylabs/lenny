@@ -21,5 +21,14 @@ RUN test -n "$BINARY" || { echo 'the BINARY build-arg is required' >&2; exit 1; 
 RUN CGO_ENABLED=0 go build -trimpath -ldflags='-s -w' -o /out/lenny ./cmd/"$BINARY"
 
 FROM gcr.io/distroless/static:nonroot
+# spec: §25.7 ("No Postgres storage — runbooks are read-only artifacts
+# shipped with the binary."). cmd/lenny-ops/flags.go defaults
+# --runbook-dir to the relative path "docs/runbooks", resolved against
+# the process's working directory; WORKDIR / plus this COPY put the
+# bundled corpus exactly there so lenny-ops's default flag value
+# resolves inside every image built from this Dockerfile, not just the
+# repo-root-rooted subprocess the integration-test harness runs.
+WORKDIR /
+COPY docs/runbooks /docs/runbooks
 COPY --from=build /out/lenny /usr/local/bin/lenny
 ENTRYPOINT ["/usr/local/bin/lenny"]

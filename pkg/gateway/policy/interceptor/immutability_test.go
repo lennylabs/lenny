@@ -142,6 +142,45 @@ func TestChainModifyImmutableFieldViolation(t *testing.T) {
 	}
 }
 
+// TestChainModifyImmutableViolationCarriesViolatedFields confirms the
+// immutable-violation reject Result carries the violated field paths on
+// Result.ViolatedFields (so every surface can emit
+// details.violated_fields), and that a clean MODIFY altering only a
+// mutable field leaves ViolatedFields nil.
+// spec: 4.8 (immutable field enforcement), 15.1
+// (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION details.violated_fields).
+func TestChainModifyImmutableViolationCarriesViolatedFields(t *testing.T) {
+	t.Run("PreRoute alters tenant_id reports violated_fields", func(t *testing.T) {
+		c := interceptor.NewChain()
+		pre := `{"tenant_id":"acme","user_id":"alice","requested_runtime":"claude","input":[]}`
+		post := `{"tenant_id":"globex","user_id":"alice","requested_runtime":"claude","input":[]}`
+		mustRegister(t, c, interceptor.PhasePreRoute, modifyTo("mod", 200, []byte(post)))
+		res := c.Run(context.Background(), interceptor.Request{Phase: interceptor.PhasePreRoute, Content: []byte(pre)})
+		if res.Action != interceptor.ActionReject {
+			t.Fatalf("action = %v, want REJECT", res.Action)
+		}
+		if res.Code != interceptor.CodeInterceptorImmutableFieldViolation {
+			t.Errorf("code = %q, want %q", res.Code, interceptor.CodeInterceptorImmutableFieldViolation)
+		}
+		if !equal(res.ViolatedFields, []string{"tenant_id"}) {
+			t.Errorf("ViolatedFields = %v, want [tenant_id]", res.ViolatedFields)
+		}
+	})
+	t.Run("PreRoute clean MODIFY of mutable field leaves ViolatedFields nil", func(t *testing.T) {
+		c := interceptor.NewChain()
+		pre := `{"tenant_id":"acme","user_id":"alice","requested_runtime":"claude","input":[]}`
+		post := `{"tenant_id":"acme","user_id":"alice","requested_runtime":"gpt","input":[]}`
+		mustRegister(t, c, interceptor.PhasePreRoute, modifyTo("mod", 200, []byte(post)))
+		res := c.Run(context.Background(), interceptor.Request{Phase: interceptor.PhasePreRoute, Content: []byte(pre)})
+		if res.Action != interceptor.ActionModify {
+			t.Fatalf("action = %v, want MODIFY", res.Action)
+		}
+		if res.ViolatedFields != nil {
+			t.Errorf("ViolatedFields = %v, want nil on a clean MODIFY", res.ViolatedFields)
+		}
+	})
+}
+
 // TestChainModifyViolationShortCircuits confirms a downstream interceptor
 // never observes a payload an upstream MODIFY illegally rewrote (spec:
 // §4.8 line 1060: no subsequent interceptor sees the illegal modification).

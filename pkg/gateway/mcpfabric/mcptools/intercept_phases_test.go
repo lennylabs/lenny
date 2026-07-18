@@ -64,6 +64,34 @@ func errorEnvelope(t *testing.T, resp map[string]any) string {
 	return ""
 }
 
+// errorEnvelopeMap extracts the full §15.2.1 lenny error envelope (code plus
+// details) from an isError tool result so a test can assert the structured
+// details the surface attaches. It fails the test when the response is not an
+// error.
+func errorEnvelopeMap(t *testing.T, resp map[string]any) map[string]any {
+	t.Helper()
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("no result: %+v", resp)
+	}
+	if result["isError"] != true {
+		t.Fatalf("expected isError result, got %+v", result)
+	}
+	content, _ := result["content"].([]any)
+	for _, raw := range content {
+		block, _ := raw.(map[string]any)
+		if block["type"] == "lenny/error" {
+			var env map[string]any
+			if err := json.Unmarshal([]byte(block["text"].(string)), &env); err != nil {
+				t.Fatalf("decode error envelope: %v", err)
+			}
+			return env
+		}
+	}
+	t.Fatalf("no lenny/error block in %+v", content)
+	return nil
+}
+
 func runningSession(t *testing.T, store sessionstore.Store) {
 	t.Helper()
 	now := time.Now()
@@ -125,6 +153,57 @@ func TestPreToolResultModifyImmutableIdRejected_spec_4_8_line_1060(t *testing.T)
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
 	if code := errorEnvelope(t, resp); code != interceptor.CodeInterceptorImmutableFieldViolation {
 		t.Errorf("code = %q, want %s", code, interceptor.CodeInterceptorImmutableFieldViolation)
+	}
+}
+
+// spec: §4.8 (PreToolResult id immutability), §15.1 — a PreToolResult MODIFY
+// altering the immutable tool_call id surfaces the §15.1
+// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION code and carries the violated field
+// names in details.violated_fields, so a caller or SIEM can distinguish an
+// interceptor tampering with the correlation id from an ordinary policy reject.
+func TestPreToolResultModifyImmutableIdCarriesViolatedFields_spec_4_8_15_1(t *testing.T) {
+	modified, _ := json.Marshal(map[string]any{
+		"id":      "999",
+		"content": []map[string]string{{"type": "text", "text": "x"}},
+	})
+	chain := chainAt(t, interceptor.PhasePreToolResult,
+		interceptor.Result{Action: interceptor.ActionModify, ModifiedContent: modified})
+	srv, store := newMCPWithChain(t, chain)
+	runningSession(t, store)
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
+	env := errorEnvelopeMap(t, resp)
+	if code, _ := env["code"].(string); code != interceptor.CodeInterceptorImmutableFieldViolation {
+		t.Fatalf("code = %q, want %s", code, interceptor.CodeInterceptorImmutableFieldViolation)
+	}
+	details, _ := env["details"].(map[string]any)
+	if details == nil {
+		t.Fatalf("no details in envelope %+v", env)
+	}
+	violated, _ := details["violated_fields"].([]any)
+	if len(violated) != 1 || violated[0] != "id" {
+		t.Errorf("details.violated_fields = %v, want [id]", details["violated_fields"])
+	}
+}
+
+// spec: §4.8 (PreToolResult), §15.1 — a generic PreToolResult REJECT that is
+// not an immutable-field violation falls back to INTERCEPTOR_REJECTED and
+// carries no violated_fields, so the immutable branch does not steal an
+// ordinary policy reject.
+func TestPreToolResultGenericRejectCarriesNoViolatedFields_spec_4_8_15_1(t *testing.T) {
+	chain := chainAt(t, interceptor.PhasePreToolResult,
+		interceptor.Result{Action: interceptor.ActionReject, Reason: "secret in tool output"})
+	srv, store := newMCPWithChain(t, chain)
+	runningSession(t, store)
+
+	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_x","message":"ping"}`)
+	env := errorEnvelopeMap(t, resp)
+	if code, _ := env["code"].(string); code != "INTERCEPTOR_REJECTED" {
+		t.Fatalf("code = %q, want INTERCEPTOR_REJECTED", code)
+	}
+	details, _ := env["details"].(map[string]any)
+	if _, ok := details["violated_fields"]; ok {
+		t.Errorf("generic reject carries violated_fields = %v, want absent", details["violated_fields"])
 	}
 }
 

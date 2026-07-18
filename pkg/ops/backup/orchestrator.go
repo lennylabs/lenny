@@ -847,6 +847,23 @@ func (s *Service) GetRestoreStatus(ctx context.Context, restoreID string) (*Rest
 	return &r, nil
 }
 
+// ListRestores returns the §25.11 ops_restore_state rows matching filter,
+// ordered newest-first by started_at. A store outage returns a
+// STORAGE_UNREACHABLE-coded error so the §25.4 Operations Inventory turns
+// it into a degradation warning rather than failing the whole request.
+// This backs the Operations Inventory restore projection (a restore
+// appears under kind "restore" per the §25.4 Operation Kinds table).
+//
+// spec: §25.4 (Operations Inventory kind "restore" / ops_restore_state),
+// §25.11 (ops_restore_state).
+func (s *Service) ListRestores(ctx context.Context, filter RestoreFilter) ([]RestoreState, error) {
+	all, err := s.store.ListRestores(ctx, filter)
+	if err != nil {
+		return nil, codedError(ErrCodeStorageUnreachable, "list restores: %v", err)
+	}
+	return all, nil
+}
+
 // ResumeRestore re-creates the restore Job for a partially-completed
 // restore, restoring only the shards that have not completed. §25.11
 // requires the caller to be the current holder of the restore:platform

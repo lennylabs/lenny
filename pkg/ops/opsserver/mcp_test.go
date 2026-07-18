@@ -3,6 +3,7 @@
 package opsserver_test
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/ops/runbooks"
 )
 
 // TestMCPManagementToolsList confirms the §25.12 MCP management server
@@ -152,6 +154,118 @@ func TestMCPManagementCallRejectsNonAdminRole_spec_25_12(t *testing.T) {
 		})
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403 for a non-admin caller; body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestMCPRunbooksListExposesNoOptionalFilters pins the §25.12 / §15.2.1
+// rule-4 contract for the auto-generated lenny_runbooks_list tool: the tool's
+// advertised inputSchema is the strict structural subset of the REST request
+// the openapi-to-mcp step produces, so the §25.7 Path A optional runbook
+// filters (alert, component, tag, requires, q) are NOT advertised as tool
+// arguments — the schema carries only the operationId correlation field and
+// requires nothing. The filters' canonical discovery surface is the OpenAPI
+// document (§25.12 "or /v1/openapi.json for the full surface"), and they stay
+// invokable through the tool (asserted by the companion test below), so their
+// omission from tools/list does not narrow what an MCP-first agent can do.
+//
+// diagnosis: the openapi-to-mcp generator began advertising optional query
+// parameters on a list tool's inputSchema (or dropped operationId). The
+// §15.2.1 strict-subset generation drifted; reconcile the mcpschemagen
+// transform and regenerate the §25.12 inventory rather than accepting the
+// change here.
+//
+// spec: 15.2.1 rule 4 (MCP tool schemas generated from the OpenAPI
+// request/response definitions, structural consistency by construction),
+// 25.7 (Path A alert/component/tag/requires/q optional combinable runbook
+// filters), 25.12 (auto-generated tool inventory; OpenAPI is the full-surface
+// discovery document).
+func TestMCPRunbooksListExposesNoOptionalFilters_spec_25_12(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{})
+	_, body := doJSON(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/list",
+	})
+	result, _ := body["result"].(map[string]any)
+	tools, _ := result["tools"].([]any)
+	var schema map[string]any
+	for _, raw := range tools {
+		tool, _ := raw.(map[string]any)
+		if tool["name"] == "lenny_runbooks_list" {
+			schema, _ = tool["inputSchema"].(map[string]any)
+			break
+		}
+	}
+	if schema == nil {
+		t.Fatal("lenny_runbooks_list absent from tools/list, or it carries no inputSchema")
+	}
+	props, _ := schema["properties"].(map[string]any)
+	for _, filter := range []string{"alert", "component", "tag", "requires", "q"} {
+		if _, present := props[filter]; present {
+			t.Errorf("§25.7 optional filter %q must not be advertised on the lenny_runbooks_list inputSchema (strict structural subset, §15.2.1 rule 4); properties=%v", filter, props)
+		}
+	}
+	if _, ok := props["operationId"]; !ok {
+		t.Errorf("lenny_runbooks_list inputSchema must carry the operationId correlation field; properties=%v", props)
+	}
+	// §25.7: "When no filters are provided, the endpoint returns all
+	// runbooks" — the tool therefore requires no arguments.
+	if req, ok := schema["required"].([]any); ok && len(req) != 0 {
+		t.Errorf("lenny_runbooks_list must require no arguments; required=%v", req)
+	}
+}
+
+// TestMCPRunbooksListForwardsOptionalFilter confirms the §25.12 guarantee that
+// "an MCP-first agent can do anything a REST caller can": although
+// lenny_runbooks_list does not advertise the §25.7 Path A filters in its
+// inputSchema, a tools/call that supplies one is forwarded to the runbook
+// index as the matching query parameter, so the MCP surface can still narrow
+// the index. This is why the strict-subset omission pinned above is not a loss
+// of agent capability.
+//
+// diagnosis: the §25.12 MCP invoker dropped an unadvertised query argument
+// instead of forwarding it, so an MCP agent that learned a §25.7 filter from
+// the OpenAPI document can no longer apply it and the omission from tools/list
+// becomes a real capability loss.
+//
+// spec: 25.12 (an MCP-first agent can do anything a REST caller can; MCP tool
+// invocation translated into the mapped REST call), 25.7 (Path A component
+// filter narrows the runbook index).
+func TestMCPRunbooksListForwardsOptionalFilter_spec_25_12(t *testing.T) {
+	src := fakeRunbookSource{books: []opsserver.Runbook{
+		{Name: "warm-pool-exhaustion", FrontMatter: runbooks.FrontMatter{
+			Title: "Warm Pool Exhaustion", Components: []string{"warmPools"},
+		}},
+		{Name: "postgres-failover", FrontMatter: runbooks.FrontMatter{
+			Title: "Postgres Failover", Components: []string{"postgres"},
+		}},
+	}}
+	srv := opsserver.New(opsserver.Options{Runbooks: src})
+	_, body := doJSON(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "lenny_runbooks_list",
+			"arguments": map[string]any{"component": "warmPools"},
+		},
+	})
+	result, _ := body["result"].(map[string]any)
+	if result["isError"] != false {
+		t.Fatalf("isError = %v, want false; body=%v", result["isError"], body)
+	}
+	content, _ := result["content"].([]any)
+	if len(content) == 0 {
+		t.Fatal("tools/call returned no content")
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	var list struct {
+		Runbooks []struct {
+			Name string `json:"name"`
+		} `json:"runbooks"`
+	}
+	if err := json.Unmarshal([]byte(text), &list); err != nil {
+		t.Fatalf("decode tool result %q: %v", text, err)
+	}
+	if len(list.Runbooks) != 1 || list.Runbooks[0].Name != "warm-pool-exhaustion" {
+		t.Errorf("component=warmPools filter through MCP returned %+v, want only warm-pool-exhaustion", list.Runbooks)
 	}
 }
 

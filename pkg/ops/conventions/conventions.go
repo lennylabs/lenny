@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-// Package conventions implements the §25.4 conventions shared by every
+// Package conventions implements the §25.2 conventions shared by every
 // operability endpoint on both the gateway and lenny-ops: the canonical
 // pagination parameters, the dry-run/confirm pattern for mutating
 // endpoints, and the response-level degradation envelope.
@@ -98,7 +98,7 @@ func WantsConfirm(body []byte) bool {
 	return v.Confirm
 }
 
-// DegradationLevel is the §25.4 degradation-envelope level.
+// DegradationLevel is the §25.2 degradation-envelope level.
 type DegradationLevel string
 
 const (
@@ -107,13 +107,13 @@ const (
 	DegradationFailed   DegradationLevel = "failed"
 )
 
-// ThresholdSource is the §25.4 envelope field for endpoints whose
+// ThresholdSource is the §25.2 envelope field for endpoints whose
 // recommendations or health-derivation logic depends on alert
 // thresholds. It distinguishes the operator-configured rule set
 // (Prometheus-backed) from the gateway's compiled-in default thresholds
 // the in-process tracker uses during the §25.13 Prometheus fallback.
 //
-// spec: §25.4 line 215, §25.13 line 4848.
+// spec: §25.2, §25.13 line 4848.
 type ThresholdSource string
 
 const (
@@ -126,7 +126,7 @@ const (
 	ThresholdSourceCompiledInDefaults ThresholdSource = "compiled-in-defaults"
 )
 
-// Degradation is the §25.4 canonical degradation envelope: the
+// Degradation is the §25.2 canonical degradation envelope: the
 // response-level signal for an endpoint whose data quality depends on
 // an external dependency. Endpoints serving from their primary source
 // omit it; an absent envelope is equivalent to healthy.
@@ -141,7 +141,7 @@ type Degradation struct {
 	// responses to signal whether the active rule set is the
 	// operator-customized one or the gateway's compiled-in defaults.
 	// Empty on responses unaffected by alert-threshold provenance.
-	// spec: §25.4 line 215, §25.13 line 4848.
+	// spec: §25.2, §25.13 line 4848.
 	ThresholdSource ThresholdSource `json:"thresholdSource,omitempty"`
 	Warnings        []string        `json:"warnings,omitempty"`
 	Since           string          `json:"since,omitempty"`

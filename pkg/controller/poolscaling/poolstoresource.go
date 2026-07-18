@@ -68,6 +68,17 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		RuntimeRef:       p.RuntimeRef,
 		IsolationProfile: string(p.IsolationProfile),
 		EgressProfile:    string(p.EgressProfile),
+		// spec: §4.9 — carry the pool-definition credential-delivery mode
+		// and SPIFFE-binding mode from the poolstore source of truth onto
+		// the SandboxTemplate CRD so the lenny-direct-mode-isolation
+		// ValidatingAdmissionWebhook and the preflight scan read live values
+		// rather than empty strings when evaluating the two cross-tenant-risky
+		// combinations. The two deployer opt-in acknowledgments are not copied
+		// to the CRD: the webhook rejects both forbidden combinations in
+		// multi-tenant mode regardless of any opt-in value, so the CRD carries
+		// only the fields the admission gate evaluates.
+		DeliveryMode:  p.DeliveryMode,
+		SpiffeBinding: p.SpiffeBinding,
 		// spec: §13.2 — the per-pool DNS opt-out. The WarmPoolController
 		// stamps the lenny.dev/dns-policy: cluster-default label from this
 		// field so the supplemental allow-pod-egress-kube-dns NetworkPolicy

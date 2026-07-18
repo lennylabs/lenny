@@ -9,7 +9,7 @@ components:
   - platform
 symptoms:
   - "the §10.4 emergency credential revocation path was triggered"
-  - "a revoked pool credential still has active leases after propagation"
+  - "a revoked pool credential has an active lease that is not on the deny list after propagation"
 tags:
   - chaos
   - credentials
@@ -23,7 +23,7 @@ Direct-mode residual-risk operator steps for emergency credential revocation per
 
 ## Trigger
 
-The `CredentialCompromised` alert (defined in `pkg/alerting/rules/rules.go`) fires when a revoked pool credential still has active leases against it for more than 30s, indicating that propagation has not fully cleared. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL. The [credential-revocation](credential-revocation.html) runbook covers the full rotation procedure; this runbook covers direct-mode residual-risk steps that apply after the revocation has been issued.
+The `CredentialCompromised` alert (defined in `pkg/alerting/rules/rules.go`) fires when a revoked credential still has an active lease that is not shadowed by a deny-list entry for more than 30s, indicating that revocation propagation did not reach the deny list. It clears once every active lease against the credential is on the deny list or has been terminated in direct mode. See [Metrics Reference §Alert rules](../reference/metrics.html#alert-rules) for the exact PromQL. The [credential-revocation](credential-revocation.html) runbook covers the full rotation procedure; this runbook covers direct-mode residual-risk steps that apply after the revocation has been issued.
 
 ## Diagnosis
 

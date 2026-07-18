@@ -142,3 +142,70 @@ capabilities:
       gke: planned
       eks: planned
       aks: planned
+
+  # lenny-ops operability surface: the chart-deployed lenny-ops
+  # Deployment is Ready and its /readyz + /v1/admin/diagnostics/
+  # connectivity responses report Postgres and the Kubernetes API (and,
+  # when the cloud install is wired to a managed cache, Redis) as
+  # reachable from outside the cluster. Exercised by
+  # TestCloudOpsSurfaceHealthy against the managed RDS / ElastiCache
+  # provisioning path on AWS; no provider run has validated it live yet.
+  - name: ops_operability_surface
+    spec_section: "25.1"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  # lenny-ops caller-discovery endpoint: GET /v1/admin/me answers with
+  # the documented identity/authorization/platform/capabilities/links
+  # envelope from a lenny-ops deployed against the cloud install's
+  # managed-store ipBlock egress. Exercised by TestCloudOpsAdminMe on
+  # AWS; no provider run has validated it live yet.
+  - name: ops_me
+    spec_section: "25.4"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  # lenny-ops remediation-lock coordination: a lock acquire followed by
+  # a release against whichever lock tier (Postgres, Redis, or
+  # in-memory) the cloud install's managed-store wiring resolves to.
+  # Exercised by TestCloudOpsRemediationLockAcquireRelease on AWS; no
+  # provider run has validated it live yet.
+  - name: ops_locks
+    spec_section: "25.4"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  # lenny-ops escalation creation and listing against the cloud
+  # install's managed-store wiring. No tier6 test exists yet.
+  - name: ops_escalations
+    spec_section: "25.4"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  # lenny-ops full/incremental backup and restore against the cloud
+  # install's managed object storage. No tier6 test exists yet; the
+  # existing tier6 artifact_replication_residency capability above
+  # covers ArtifactStore residency, a related but distinct surface.
+  - name: ops_backup
+    spec_section: "25.11"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+
+  # lenny-ops drift detection and reconciliation against the cloud
+  # install's live gateway admin API. No tier6 test exists yet.
+  - name: ops_drift
+    spec_section: "25.10"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned

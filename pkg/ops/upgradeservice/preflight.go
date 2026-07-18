@@ -5,6 +5,7 @@ package upgradeservice
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // Preflight check names, surfaced in the §25.8 preflight result and the
@@ -90,10 +91,11 @@ type PreflightResult struct {
 // Preflighter runs the §25.8 Phase-1 upgrade-safety gates and returns the
 // upgrade plan as a preview without writing any state.
 type Preflighter struct {
-	store  Store
-	health HealthChecker
-	images ImagePullChecker
-	conns  ConnChecker
+	store    Store
+	health   HealthChecker
+	images   ImagePullChecker
+	conns    ConnChecker
+	imageDur ImagePullCheckRecorder
 }
 
 // PreflighterOptions configures a Preflighter.
@@ -105,6 +107,11 @@ type PreflighterOptions struct {
 	Health HealthChecker
 	Images ImagePullChecker
 	Conns  ConnChecker
+	// ImageDuration observes the latency of each per-component Images.
+	// Pullable call on the lenny_platform_image_pull_check_duration_seconds
+	// histogram (spec line 3619). A nil recorder drops the observation; it
+	// is only consulted when Images is configured.
+	ImageDuration ImagePullCheckRecorder
 }
 
 // NewPreflighter returns a Preflighter over opts. It panics when Store is
@@ -113,7 +120,10 @@ func NewPreflighter(opts PreflighterOptions) *Preflighter {
 	if opts.Store == nil {
 		panic("upgradeservice: PreflighterOptions.Store is required")
 	}
-	return &Preflighter{store: opts.Store, health: opts.Health, images: opts.Images, conns: opts.Conns}
+	return &Preflighter{
+		store: opts.Store, health: opts.Health, images: opts.Images, conns: opts.Conns,
+		imageDur: opts.ImageDuration,
+	}
 }
 
 // Preflight runs the §25.8 Phase-1 gates. A transport failure (store or a
@@ -178,7 +188,11 @@ func (p *Preflighter) Preflight(ctx context.Context, req PreflightRequest) (Pref
 		var firstDetail string
 		for _, component := range sortedKeys(req.ImagePlan) {
 			ref := req.ImagePlan[component]
+			start := time.Now()
 			ok, detail, err := p.images.Pullable(ctx, ref)
+			if p.imageDur != nil {
+				p.imageDur(component, time.Since(start))
+			}
 			if err != nil {
 				return PreflightResult{}, err
 			}

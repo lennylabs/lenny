@@ -91,6 +91,16 @@ service Adapter {
   // agent. Used for hot rotation without pod restart.
   rpc RotateCredentials(RotateCredentialsRequest) returns (RotateCredentialsResponse) {}
 
+  // ExtendCredentialLease re-arms the direct-mode credential-expiry timer for a
+  // still-valid lease to a later deadline, without delivering credential
+  // material and without running the credentials_rotated handshake.
+  // Gateway-initiated; used by the §4.9 Token Service unavailability
+  // guard when the Token Service circuit breaker is open and the lease
+  // has not yet expired. Requires no Token Service call: the gateway
+  // supplies the new deadline from the lease record it already holds.
+  // spec: §4.9 line 1470.
+  rpc ExtendCredentialLease(ExtendCredentialLeaseRequest) returns (ExtendCredentialLeaseResponse) {}
+
   // RevokeCredentials removes a credential lease immediately. The agent
   // receives no chance to drain in-flight requests; emergency revocation.
   rpc RevokeCredentials(RevokeCredentialsRequest) returns (RevokeCredentialsResponse) {}
@@ -996,6 +1006,21 @@ message RotateCredentialsRequest {
 }
 
 message RotateCredentialsResponse {}
+
+message ExtendCredentialLeaseRequest {
+  SessionId session_id = 1;
+  string provider = 2;
+  string lease_id = 3;
+  // expires_at_unix_ms is the new, later expiry deadline the adapter
+  // re-arms the direct-mode expiry timer to. spec: §4.9 line 1470.
+  int64 expires_at_unix_ms = 4;
+  // slot_id, when set, extends this slot's §6.1 per-slot credential
+  // lease timer independently of sibling slots. Empty when
+  // `maxConcurrentSessions: 1`. spec: §6.1 line 28.
+  SlotId slot_id = 5;
+}
+
+message ExtendCredentialLeaseResponse {}
 
 message RevokeCredentialsRequest {
   SessionId session_id = 1;

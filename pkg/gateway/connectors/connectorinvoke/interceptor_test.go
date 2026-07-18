@@ -238,6 +238,44 @@ func TestPreConnectorRequestFailClosed_spec_4_8_1077(t *testing.T) {
 	}
 }
 
+// TestRejectionForImmutableViolationPreservesCodeAndFields guards the
+// connector-path deferral: an immutable-field violation on the connector
+// interceptor phases is surfaced with its own §15.1 code
+// (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION) rather than collapsed into the
+// generic phase-specific connector reject code, and the violated field
+// names ride to the runtime inside the Reason string (the connector gRPC
+// transport carries no structured details.violated_fields). If rejectionFor
+// were to overwrite res.Code or drop the Reason, a connector-path identity
+// or routing tamper would be indistinguishable from an ordinary
+// CONNECTOR_REQUEST_REJECTED / CONNECTOR_RESPONSE_REJECTED.
+// spec: §4.8 (immutable field enforcement), §15.1 (connector-path code
+// preservation).
+func TestRejectionForImmutableViolationPreservesCodeAndFields(t *testing.T) {
+	res := interceptor.Result{
+		Action:         interceptor.ActionReject,
+		Code:           interceptor.CodeInterceptorImmutableFieldViolation,
+		Reason:         `interceptor "rerouter" MODIFY altered immutable PreConnectorRequest field(s): connector_id`,
+		RejectedBy:     "rerouter",
+		ViolatedFields: []string{"connector_id"},
+	}
+	for _, phase := range []interceptor.Phase{
+		interceptor.PhasePreConnectorRequest,
+		interceptor.PhasePostConnectorResponse,
+	} {
+		rej := rejectionFor(phase, res)
+		if rej.Code != interceptor.CodeInterceptorImmutableFieldViolation {
+			t.Errorf("phase %s: code = %q, want %q (the distinct code must not collapse to the generic connector reject code)",
+				phase, rej.Code, interceptor.CodeInterceptorImmutableFieldViolation)
+		}
+		if !strings.Contains(rej.Reason, "connector_id") {
+			t.Errorf("phase %s: reason = %q, want it to name the violated field connector_id", phase, rej.Reason)
+		}
+		if rej.Phase != phase {
+			t.Errorf("phase = %s, want %s", rej.Phase, phase)
+		}
+	}
+}
+
 // TestConnectorPhasesNoInterceptorPassthrough confirms a chain that
 // registers no interceptor for the connector phases leaves the call
 // unmodified: the §4.8 phases are no-ops when nothing is registered.

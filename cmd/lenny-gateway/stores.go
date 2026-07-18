@@ -1738,6 +1738,12 @@ func (w *gatewayWiring) buildExecutorAndCredentials() {
 			log.Fatalf("lenny-gateway: construct credential-lease store: %v", lerr)
 		}
 		llmLeases = pgLeases
+		// The Postgres backend carries the plain expires_at projection
+		// (migration 0175), so startBillingAndSecurityWorkers runs the
+		// one-time §4.9 backfill against it via an expiresAtBackfiller
+		// type assertion. This guard keeps that selection wired if the
+		// method signature ever drifts.
+		var _ expiresAtBackfiller = pgLeases
 	}
 	// credAssign mints a session's §4.9 credential leases. It is one of
 	// two implementations:

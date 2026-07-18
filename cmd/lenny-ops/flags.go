@@ -73,9 +73,11 @@ type opsFlags struct {
 	registryPullSecret               *string
 	registryRequireDigest            *bool
 	registryOverrides                *string
+	registryPullCheckTimeout         *int
 	opsRollTimeout                   *int
 	gatewayRollTimeout               *int
 	controllerRollTimeout            *int
+	helmReleaseName                  *string
 	shutdownTimeout                  *time.Duration
 	pgauditLogFile                   *string
 	pgauditTenantID                  *string
@@ -306,6 +308,11 @@ func (f *opsFlags) registerUpgradeFlags() {
 	f.registryOverrides = flag.String("registry-overrides", os.Getenv("LENNY_PLATFORM_REGISTRY_OVERRIDES"),
 		"§25.8 platform.registry.overrides as a JSON object mapping component short name to "+
 			"full image reference. Override via LENNY_PLATFORM_REGISTRY_OVERRIDES.")
+	f.registryPullCheckTimeout = flag.Int("registry-pull-check-timeout-seconds",
+		envInt("LENNY_PLATFORM_REGISTRY_PULL_CHECK_TIMEOUT_SECONDS", 10),
+		"§25.8 line 3500 timeout for the upgrade-preflight image-pullability HEAD request "+
+			"(including any anonymous Bearer-token exchange) against the target registry, per image. "+
+			"Override via LENNY_PLATFORM_REGISTRY_PULL_CHECK_TIMEOUT_SECONDS.")
 	// §25.8 platform.upgrade.* roll timeouts for the OpsRoll watchdog.
 	f.opsRollTimeout = flag.Int("ops-roll-timeout-seconds", envInt("LENNY_PLATFORM_OPS_ROLL_TIMEOUT_SECONDS", 600),
 		"§25.8 platform.upgrade.opsRollTimeoutSeconds: the OpsRoll watchdog auto-rollback timeout.")
@@ -313,6 +320,13 @@ func (f *opsFlags) registerUpgradeFlags() {
 		"§25.8 platform.upgrade.gatewayRollTimeoutSeconds.")
 	f.controllerRollTimeout = flag.Int("controller-roll-timeout-seconds", envInt("LENNY_PLATFORM_CONTROLLER_ROLL_TIMEOUT_SECONDS", 600),
 		"§25.8 platform.upgrade.controllerRollTimeoutSeconds.")
+	// §25.8 Version Aggregation: the Helm release name the chart-version
+	// source reads the helm.sh/release.v1 Secret for. The chart passes its
+	// own Release.Name; the default matches the release name every
+	// deploy/install script in this repository uses.
+	f.helmReleaseName = flag.String("helm-release-name", envOr("LENNY_HELM_RELEASE_NAME", "lenny"),
+		"§25.8 Version Aggregation: Helm release name the CRD/chart-version source reads the "+
+			"helm.sh/release.v1 Secret for. Override via LENNY_HELM_RELEASE_NAME.")
 }
 
 // registerObservabilityFlags registers the §4.4/§11.7 pgaudit, §25.16 BYO

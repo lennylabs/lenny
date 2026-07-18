@@ -3,6 +3,8 @@
 package main
 
 import (
+	"flag"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -47,5 +49,36 @@ func TestParseFlagsPopulatesEveryField(t *testing.T) {
 			// no value is supplied. They are exercised by the wiring tests
 			// rather than asserted here.
 		}
+	}
+}
+
+// spec: §4.9 line 1671 (credential_leases expired-lease sweep cadence)
+//
+// TestRegisterArtifactFlagsBindsCredentialLeaseGCInterval pins that
+// registerArtifactFlags binds the --credential-lease-gc-interval-seconds
+// flag that drives the §4.9 bounded expired-lease sweep, defaulting to one
+// hour (3600s). It runs on a fresh flag set so it neither redefines a flag on
+// the global set nor triggers a second flag.Parse.
+func TestRegisterArtifactFlagsBindsCredentialLeaseGCInterval(t *testing.T) {
+	savedCmdLine := flag.CommandLine
+	savedArgs := os.Args
+	t.Cleanup(func() {
+		flag.CommandLine = savedCmdLine
+		os.Args = savedArgs
+	})
+	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
+	os.Args = []string{savedArgs[0]}
+
+	f := &gatewayFlags{}
+	f.registerArtifactFlags()
+
+	if f.credentialLeaseGCIntervalSeconds == nil {
+		t.Fatal("registerArtifactFlags did not bind --credential-lease-gc-interval-seconds")
+	}
+	if got := *f.credentialLeaseGCIntervalSeconds; got != 3600 {
+		t.Errorf("--credential-lease-gc-interval-seconds default = %d, want 3600", got)
+	}
+	if flag.CommandLine.Lookup("credential-lease-gc-interval-seconds") == nil {
+		t.Error("--credential-lease-gc-interval-seconds is not registered on the flag set")
 	}
 }

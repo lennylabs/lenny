@@ -92,6 +92,14 @@ type PoolMatch struct {
 	// copied from the SandboxTemplate so the §7.1 sessionIsolationLevel
 	// can report the assigned pod's profile.
 	IsolationProfile string
+	// SpiffeBinding is the §4.9 proxy-mode lease-token SPIFFE binding the
+	// pool's pods run under, copied from the SandboxTemplate. The
+	// session-start credential-delivery gate pairs it with each resolved
+	// CredentialPool's effective deliveryMode so the same
+	// direct_mode_isolation.Decide the registration and admission layers run
+	// also evaluates the delivery mode leasing actually uses. Empty is the
+	// SandboxTemplate default. spec: §4.9.
+	SpiffeBinding string
 	// Recycle reports whether the pool's §5.2 sessionPolicy.recycle block
 	// is present, so the §7.1 scrubPolicy derivation knows the pod is
 	// reused across sessions. It is set from the SandboxTemplate's
@@ -294,6 +302,7 @@ func ResolvePool(ctx context.Context, reader client.Reader, policy PoolPolicyRea
 			ExecutionMode:    tmpl.Spec.ExecutionMode,
 			MaxConcurrent:    tmpl.Spec.MaxConcurrent,
 			IsolationProfile: tmpl.Spec.IsolationProfile,
+			SpiffeBinding:    tmpl.Spec.SpiffeBinding,
 			PoolWarmingUp:    warmingUp,
 			PodsWarming:      podsWarming,
 		}

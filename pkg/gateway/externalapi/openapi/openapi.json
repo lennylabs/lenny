@@ -3819,7 +3819,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": "lenny_event_subscriptions_list",
         "x-lenny-scope": "tools:events:read",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       },
@@ -3829,7 +3829,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": "lenny_event_subscription_create",
         "x-lenny-scope": "tools:events:write",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "201": { "description": "Created" } }
       }
@@ -3841,7 +3841,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": "lenny_event_subscription_get",
         "x-lenny-scope": "tools:events:read",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       },
@@ -3851,7 +3851,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": "lenny_event_subscription_update",
         "x-lenny-scope": "tools:events:write",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       },
@@ -3861,7 +3861,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": "lenny_event_subscription_delete",
         "x-lenny-scope": "tools:events:write",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "204": { "description": "No Content" } }
       }
@@ -3873,7 +3873,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": null,
         "x-lenny-scope": "tools:events:read",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       }
@@ -3885,7 +3885,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": null,
         "x-lenny-scope": "tools:events:write",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       }
@@ -3897,7 +3897,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": null,
         "x-lenny-scope": "tools:events:read",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       }
@@ -3909,7 +3909,7 @@
         "security": [{ "BearerAuth": [] }],
         "x-lenny-mcp-tool": null,
         "x-lenny-scope": "tools:events:read",
-        "x-lenny-required-role": "platform-admin",
+        "x-lenny-required-role": "tenant-admin",
         "x-lenny-category": "operability",
         "responses": { "200": { "description": "OK" } }
       }

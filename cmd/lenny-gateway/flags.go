@@ -52,6 +52,7 @@ import (
 type gatewayFlags struct {
 	addr                                          *string
 	multiTenant                                   *bool
+	tenancyMode                                   *string
 	tenantIDClaim                                 *string
 	oidcIssuerURL                                 *string
 	oidcClientID                                  *string
@@ -241,9 +242,6 @@ type gatewayFlags struct {
 	objectStorageRegion                           *string
 	objectStorageAccountURL                       *string
 	objectStorageFilesystemRoot                   *string
-	objectStorageGCSBucketDefaultCMEK             *string
-	objectStorageAzureDefaultEncryptionScope      *string
-	objectStorageAzureDenyEncryptionScopeOverride *bool
 	minioEndpoint                                 *string
 	minioAccessKey                                *string
 	minioSecretKey                                *string
@@ -279,8 +277,12 @@ type gatewayFlags struct {
 	credentialsExpiryWarningLeadSeconds           *int
 	workspaceSealMaxDurationSeconds               *int
 	idempotencyGCIntervalSeconds                  *int
+	credentialLeaseGCIntervalSeconds              *int
 	idempotencyMaxBodyBytes                       *int64
 	checkpointJitterFraction                      *float64
+	objectStorageGCSBucketDefaultCMEK             *string
+	objectStorageAzureDefaultEncryptionScope      *string
+	objectStorageAzureDenyEncryptionScopeOverride *bool
 	checkpointGrantWindow                         *int
 	checkpointCapabilityTTLSeconds                *int
 	partialRecoveryThresholdFraction              *float64
@@ -381,6 +383,15 @@ func parseFlags() *gatewayFlags {
 func (f *gatewayFlags) registerCoreFlags() {
 	f.addr = flag.String("addr", ":8080", "address to bind (host:port)")
 	f.multiTenant = flag.Bool("multi-tenant", false, "enable §10.2 multi-tenant claim extraction")
+	// spec: §4.9 — the platform tenancy.mode signal the gateway enforces
+	// the two cross-tenant credential-delivery rejections against. It
+	// mirrors the lenny-webhook binary's --tenancy-mode flag (wired from
+	// the same .Values.tenancy.mode) rather than overloading the
+	// semantically inverted §10.2 --multi-tenant auth flag. This one flag
+	// is the source both the admin Router and the sessionserver read the
+	// tenancy mode from. Defaults to "single".
+	f.tenancyMode = flag.String("tenancy-mode", envOr("LENNY_TENANCY_MODE", "single"),
+		"§4.9 platform tenancy.mode (\"multi\" or \"single\"). The gateway enforces the §4.9 direct/standard and proxy/spiffe cross-tenant credential-delivery rejections only in multi-tenant mode. Mirrors the tenancy.mode Helm value. Override via LENNY_TENANCY_MODE.")
 	f.tenantIDClaim = flag.String("tenant-id-claim", envOr("LENNY_TENANT_ID_CLAIM", "tenant_id"),
 		"§10.2 line 212 OIDC claim name the gateway reads the tenant identifier from. Defaults to `tenant_id` (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9.")
 	f.oidcIssuerURL = flag.String("oidc-issuer-url", os.Getenv("LENNY_OIDC_ISSUER_URL"),
@@ -750,7 +761,7 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
 	f.auditScatterCacheEnabled = flag.Bool("audit-scatter-gather-cache-enabled",
 		envBool("LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED", true),
-		"§25.9 line 3709 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results in-process for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")
+		"§25.9 line 3709 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Backed by Redis (shared across replicas) when a Redis backend is configured, otherwise in-process (per-replica). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")
 	f.externalAdapterHarnessPath = flag.String("external-adapter-harness-path",
 		os.Getenv("LENNY_EXTERNAL_ADAPTER_HARNESS_PATH"),
 		"§24.8 / §15 line 1414 — path to the lenny-compliance harness binary the external-adapter validate gate drives. When empty the gateway resolves `lenny-compliance` on $PATH; when the harness is absent, POST /v1/admin/external-adapters/{name}/validate returns 503 ADAPTER_VALIDATION_UNAVAILABLE and the adapter stays pending_validation. Override via LENNY_EXTERNAL_ADAPTER_HARNESS_PATH. F-24.8.2.")
@@ -946,18 +957,6 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§17.9.3 Azure Blob storage account URL (https://<account>.blob.core.windows.net) for --object-storage-provider=azure. Override via LENNY_OBJECT_STORAGE_ACCOUNT_URL. F-17.5.1.")
 	f.objectStorageFilesystemRoot = flag.String("object-storage-filesystem-root", os.Getenv("LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT"),
 		"§17.4 line 165 local-filesystem object-storage directory for --object-storage-provider=filesystem (e.g. ~/.lenny/artifacts/). Persists artifacts across a restart. Override via LENNY_OBJECT_STORAGE_FILESYSTEM_ROOT. F-17.4.8.")
-	// spec: §12.5 line 315 / §17.9.7 — GCS V4 signed URLs and Azure SAS
-	// cannot bind a per-request T4 encryption key, so a gcs/azure backend
-	// serving a workspaceTier T4 tenant carries the tenant's encryption
-	// posture through a bucket/container default instead. These declare
-	// that default so the gateway startup assertion (and the §17.6 preflight
-	// check) can verify it before the deployment serves a T4 tenant.
-	f.objectStorageGCSBucketDefaultCMEK = flag.String("object-storage-gcs-bucket-default-cmek", os.Getenv("LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK"),
-		"§12.5 line 315 objectStorage.gcs.bucketDefaultCmek: the per-tenant GCS bucket-default CMEK resource name that a T4 checkpoint PUT inherits (the GCS V4 signed URL cannot carry a per-request CMEK). Required when --object-storage-provider=gcs serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK.")
-	f.objectStorageAzureDefaultEncryptionScope = flag.String("object-storage-azure-default-encryption-scope", os.Getenv("LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE"),
-		"§12.5 line 315 objectStorage.azure.defaultEncryptionScope: the Azure container-level default encryption scope a T4 chunk PUT lands under (the SAS carries no encryption scope). Required with --object-storage-azure-deny-encryption-scope-override when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE.")
-	f.objectStorageAzureDenyEncryptionScopeOverride = flag.Bool("object-storage-azure-deny-encryption-scope-override", envFlagDefault("LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE", false),
-		"§12.5 line 315 objectStorage.azure.denyEncryptionScopeOverride: assert the T4 container sets DenyEncryptionScopeOverride so a chunk PUT cannot land under any other scope. Required with --object-storage-azure-default-encryption-scope when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE.")
 	f.minioEndpoint = flag.String("minio-endpoint", os.Getenv("LENNY_MINIO_ENDPOINT"),
 		"MinIO endpoint (host:port). When set, the §4.5 artifact store is the MinIO-backed blob store; the drain-readiness endpoint runs a real §12.5 bucket probe. When empty, an in-memory blob store is used.")
 	f.minioAccessKey = flag.String("minio-access-key", os.Getenv("LENNY_MINIO_ACCESS_KEY"),
@@ -1119,11 +1118,20 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.idempotencyGCIntervalSeconds = flag.Int("idempotency-gc-interval-seconds",
 		envInt("LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS", 3600),
 		"§11.5 line 277 idempotency_keys TTL garbage-collection cadence. The sweeper iterates tenants and drops rows past the 24-hour retention window every interval. Default 3600s (one hour). Lower values reduce row backlog at the cost of more frequent Postgres scans; higher values keep expired rows up to the configured interval past TTL (read-time gate masks them from clients). Override via LENNY_IDEMPOTENCY_GC_INTERVAL_SECONDS.")
+	f.credentialLeaseGCIntervalSeconds = flag.Int("credential-lease-gc-interval-seconds",
+		envInt("LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS", 3600),
+		"§4.9 line 1671 credential_leases expired-lease sweep cadence. Every interval the gateway deletes lease rows past ExpiresAt (bounding the credential_leases table) and then reconciles this replica's deny list, dropping a credential's deny entry only when the store definitively reports no remaining active lease for it (failing closed on a store error). Runs on every replica so each replica's in-memory deny list stays bounded within its lifetime. Default 3600s (one hour). Override via LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS.")
 	f.idempotencyMaxBodyBytes = flag.Int64("idempotency-max-body-bytes",
 		envInt64("LENNY_IDEMPOTENCY_MAX_BODY_BYTES", 8<<20),
 		"§11.5 line 277 cap on the request body the idempotency middleware buffers and hashes. A request larger than this is rejected with 413 BODY_TOO_LARGE before reaching the inner handler. Default 8 MiB covers the §11.5 critical operations (CreateSession ~10KB, FinalizeWorkspace and StartSession ~KB, Resume body that may carry a TaskResult). Operators raise it when their delegation payloads (taskInput) or replay/derive bodies exceed the default. Override via LENNY_IDEMPOTENCY_MAX_BODY_BYTES.")
 	f.checkpointJitterFraction = flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
 		"§4.4 line 258 `periodicCheckpointJitterFraction`. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
+	f.objectStorageGCSBucketDefaultCMEK = flag.String("object-storage-gcs-bucket-default-cmek", os.Getenv("LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK"),
+		"§12.5 line 315 objectStorage.gcs.bucketDefaultCmek: the per-tenant GCS bucket-default CMEK resource name that a T4 checkpoint PUT inherits (the GCS V4 signed URL cannot carry a per-request CMEK). Required when --object-storage-provider=gcs serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK.")
+	f.objectStorageAzureDefaultEncryptionScope = flag.String("object-storage-azure-default-encryption-scope", os.Getenv("LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE"),
+		"§12.5 line 315 objectStorage.azure.defaultEncryptionScope: the Azure container-level default encryption scope a T4 chunk PUT lands under (the SAS carries no encryption scope). Required with --object-storage-azure-deny-encryption-scope-override when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE.")
+	f.objectStorageAzureDenyEncryptionScopeOverride = flag.Bool("object-storage-azure-deny-encryption-scope-override", envFlagDefault("LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE", false),
+		"§12.5 line 315 objectStorage.azure.denyEncryptionScopeOverride: assert the T4 container sets DenyEncryptionScopeOverride so a chunk PUT cannot land under any other scope. Required with --object-storage-azure-default-encryption-scope when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE.")
 	f.checkpointGrantWindow = flag.Int("checkpoint-grant-window",
 		envInt("LENNY_CHECKPOINT_GRANT_WINDOW", checkpointer.DefaultGrantWindow),
 		"§10.1 line 131 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")

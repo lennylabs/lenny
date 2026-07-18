@@ -128,7 +128,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	delegation_lease,
 	env, request_envelope,
 	legal_hold_set_by, legal_hold_set_at, legal_hold_note,
-	last_agent_activity_at`
+	last_agent_activity_at,
+	COALESCE(credential_origin_session_id::text, '')`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -192,7 +193,8 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		delegation_depth,
 		delegation_lease,
 		env, request_envelope,
-		last_agent_activity_at
+		last_agent_activity_at,
+		credential_origin_session_id
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -226,7 +228,11 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 		$47,
 		$48::jsonb,
 		$49::jsonb, $50::jsonb,
-		$51
+		$51,
+		-- §8.3 line 472 credential_origin_session_id: empty string
+		-- collapses to SQL NULL (the read path COALESCEs it back to the
+		-- row's own id), matching the parent_session_id NULLIF convention.
+		NULLIF($57, '')::uuid
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -305,7 +311,14 @@ func (s *Store) Create(ctx context.Context, sess sessionstore.Session) error {
 			// $55-$56 — §7.2 interrupt-suspension Suspended condition fact.
 			// suspended_at is NULL while the session is not suspended. spec:
 			// §6.49; §7.2 line 230; §8.8.
-			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason)
+			pgtenant.NullTime(sess.SuspendedAt), sess.SuspendedReason,
+			// $57 — §8.3 line 472 / 488 credential_origin_session_id; the
+			// resolved origin pool the delegation Service stamps at
+			// child-row creation so contiguous `inherit` hops share one
+			// origin. Empty falls back to the row's own id via the
+			// NULLIF/COALESCE convention. Invariant after creation, so it is
+			// absent from updateSQL.
+			sess.CredentialOriginSessionID)
 		return err
 	})
 	var pgErr *pgconn.PgError
@@ -1064,6 +1077,11 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §6.2 lines 273-300 — idle-timer anchor from migration 0159
 		// (F-11.3.7). NULL → the watchdog falls back to updated_at.
 		&lastAgentActivityAt,
+		// §8.3 line 472 / 488 — credential_origin_session_id from
+		// migration 0176. COALESCEd to '' when NULL so a self-origin row
+		// scans as empty, matching the memstore convention. The finalize
+		// path treats an empty or self value as "not inherited".
+		&s.CredentialOriginSessionID,
 	); err != nil {
 		return sessionstore.Session{}, err
 	}

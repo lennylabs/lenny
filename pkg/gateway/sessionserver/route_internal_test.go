@@ -117,10 +117,11 @@ func TestRunRouteChainModifyRewritesRuntimeHint(t *testing.T) {
 	}
 }
 
-// spec: §4.8 line 1048, line 1060 — a PreRoute MODIFY that alters the
-// authenticated tenant_id is rejected by the chain with
+// spec: §4.8 line 1048, line 1060, §15.1 line 1011 — a PreRoute MODIFY
+// that alters the authenticated tenant_id is rejected by the chain with
 // INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION before runRouteChain applies it;
-// the helper surfaces it as a 403 carrying that code.
+// the helper surfaces it as the §15.1 400 POLICY envelope carrying the
+// top-level code, phase, and violated_fields naming tenant_id.
 func TestRunRouteChainModifyImmutableTenantRejected(t *testing.T) {
 	modified, _ := json.Marshal(routeTaskSpec{TenantID: "globex", RequestedRuntime: "claude-code"})
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePreRoute, routeModifyInterceptor{priority: 150, out: modified})}
@@ -129,17 +130,27 @@ func TestRunRouteChainModifyImmutableTenantRejected(t *testing.T) {
 	if _, ok := s.runRouteChain(rec, req, interceptor.PhasePreRoute, routeTaskSpec{TenantID: "acme", RequestedRuntime: "claude-code"}); ok {
 		t.Fatal("runRouteChain admitted a MODIFY that altered tenant_id")
 	}
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want 403", rec.Code)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	body := decodeEnvelope(t, rec)
-	if got := body.Details["interceptorCode"]; got != interceptor.CodeInterceptorImmutableFieldViolation {
-		t.Errorf("interceptorCode = %v, want %s", got, interceptor.CodeInterceptorImmutableFieldViolation)
+	if body.Code != interceptor.CodeInterceptorImmutableFieldViolation {
+		t.Errorf("code = %q, want %s", body.Code, interceptor.CodeInterceptorImmutableFieldViolation)
+	}
+	if body.Category != "POLICY" {
+		t.Errorf("category = %q, want POLICY", body.Category)
+	}
+	if got := body.Details["phase"]; got != string(interceptor.PhasePreRoute) {
+		t.Errorf("phase = %v, want PreRoute", got)
+	}
+	if !violatedFieldsContain(body.Details["violated_fields"], "tenant_id") {
+		t.Errorf("violated_fields = %v, want to contain tenant_id", body.Details["violated_fields"])
 	}
 }
 
-// spec: §4.8 line 1052, line 1060 — a PostRoute MODIFY that alters the
-// resolved_runtime_name is rejected with the immutable-field violation.
+// spec: §4.8 line 1052, line 1060, §15.1 line 1011 — a PostRoute MODIFY
+// that alters the resolved_runtime_name is rejected with the §15.1 400
+// immutable-field violation envelope naming resolved_runtime_name.
 func TestRunRouteChainPostRouteModifyResolvedRuntimeRejected(t *testing.T) {
 	modified, _ := json.Marshal(routeTaskSpec{TenantID: "acme", ResolvedRuntimeName: "other-runtime"})
 	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePostRoute, routeModifyInterceptor{priority: 150, out: modified})}
@@ -148,9 +159,78 @@ func TestRunRouteChainPostRouteModifyResolvedRuntimeRejected(t *testing.T) {
 	if _, ok := s.runRouteChain(rec, req, interceptor.PhasePostRoute, routeTaskSpec{TenantID: "acme", ResolvedRuntimeName: "claude-code"}); ok {
 		t.Fatal("runRouteChain admitted a MODIFY that altered resolved_runtime_name")
 	}
-	if body := decodeEnvelope(t, rec); body.Details["interceptorCode"] != interceptor.CodeInterceptorImmutableFieldViolation {
-		t.Errorf("interceptorCode = %v, want %s", body.Details["interceptorCode"], interceptor.CodeInterceptorImmutableFieldViolation)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
 	}
+	body := decodeEnvelope(t, rec)
+	if body.Code != interceptor.CodeInterceptorImmutableFieldViolation {
+		t.Errorf("code = %q, want %s", body.Code, interceptor.CodeInterceptorImmutableFieldViolation)
+	}
+	if body.Category != "POLICY" {
+		t.Errorf("category = %q, want POLICY", body.Category)
+	}
+	if got := body.Details["phase"]; got != string(interceptor.PhasePostRoute) {
+		t.Errorf("phase = %v, want PostRoute", got)
+	}
+	if !violatedFieldsContain(body.Details["violated_fields"], "resolved_runtime_name") {
+		t.Errorf("violated_fields = %v, want to contain resolved_runtime_name", body.Details["violated_fields"])
+	}
+}
+
+// codedRejectInterceptor returns a deliberate REJECT carrying a non-empty,
+// non-immutable interceptor code. It exercises the generic-reject branch's
+// demotion of the code into details.interceptorCode.
+type codedRejectInterceptor struct{ code string }
+
+func (codedRejectInterceptor) Name() string                       { return "coded-block" }
+func (codedRejectInterceptor) Priority() int32                    { return 150 }
+func (codedRejectInterceptor) Builtin() bool                      { return false }
+func (codedRejectInterceptor) FailPolicy() interceptor.FailPolicy { return interceptor.FailClosed }
+func (codedRejectInterceptor) Timeout() time.Duration             { return 0 }
+func (c codedRejectInterceptor) Intercept(context.Context, interceptor.Request) (interceptor.Result, error) {
+	return interceptor.Result{Action: interceptor.ActionReject, Reason: "denied", Code: c.code}, nil
+}
+
+// spec: §4.8 line 1052, §15.1 — a deliberate REJECT that carries a
+// non-immutable interceptor code still surfaces as the generic 403
+// INTERCEPTOR_REJECTED envelope with that code in details.interceptorCode,
+// so the immutable-violation branch does not steal an ordinary reject that
+// carries its own code.
+func TestRunRouteChainGenericRejectStays403(t *testing.T) {
+	s := &Server{interceptors: newRouteChain(t, interceptor.PhasePreRoute, codedRejectInterceptor{code: "SOME_POLICY_CODE"})}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", nil)
+	if _, ok := s.runRouteChain(rec, req, interceptor.PhasePreRoute, routeTaskSpec{TenantID: "acme"}); ok {
+		t.Fatal("runRouteChain admitted a deliberate REJECT")
+	}
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", rec.Code)
+	}
+	body := decodeEnvelope(t, rec)
+	if body.Code != "INTERCEPTOR_REJECTED" {
+		t.Errorf("code = %q, want INTERCEPTOR_REJECTED", body.Code)
+	}
+	if got := body.Details["interceptorCode"]; got != "SOME_POLICY_CODE" {
+		t.Errorf("details.interceptorCode = %v, want SOME_POLICY_CODE", got)
+	}
+	if _, ok := body.Details["violated_fields"]; ok {
+		t.Errorf("generic reject carried violated_fields: %v", body.Details["violated_fields"])
+	}
+}
+
+// violatedFieldsContain reports whether the decoded details.violated_fields
+// value (a JSON array decoded into []any) contains want.
+func violatedFieldsContain(v any, want string) bool {
+	fields, ok := v.([]any)
+	if !ok {
+		return false
+	}
+	for _, f := range fields {
+		if s, ok := f.(string); ok && s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // recordingRouteInterceptor records each invocation by name and returns

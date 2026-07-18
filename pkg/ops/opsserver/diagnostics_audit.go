@@ -34,9 +34,9 @@ var (
 type DiagnosticsAuditConfig struct {
 	// Emit is the terminal audit sink each coalesced diagnostic audit
 	// event is handed to when its window closes. lenny-ops wires it to
-	// the audit-append destination (a documented stub until the
-	// audit-store client lands, mirroring the §25.11 backup AuditSink). A
-	// nil Emit accounts windows without emitting.
+	// opsaudit.Recorder, which durably commits the event to the §11.7
+	// hash chain (the same durable-append path the §25.11 backup
+	// AuditSink uses). A nil Emit accounts windows without emitting.
 	Emit func(auditrate.Event)
 
 	// RatePerMinute is ops.audit.diagnosticsRatePerMinute (default 60):

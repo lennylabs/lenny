@@ -16,10 +16,13 @@ label, so the Deployment, the selector, and the Service all key on it.
 lenny-ops runs the §13.1 Restricted-PSS posture (non-root, all
 capabilities dropped, read-only root filesystem, RuntimeDefault
 seccomp) shared with the controller. Postgres and Redis stay
-bring-your-own external services (§17.9); their connection settings are
-wired from values via the LENNY_POSTGRES_DSN and LENNY_REDIS_URL
-environment variables the binary reads, left unset by default so a
-stock render runs lenny-ops in the §25.4 degraded single-process mode.
+bring-your-own external services (§17.9); the lenny-ops binary reads
+its connection settings from the LENNY_POSTGRES_DSN and LENNY_REDIS_URL
+environment variables (cmd/lenny-ops/flags.go), but unlike
+controller-deployment.yaml and gateway-deployment.yaml this Deployment
+renders no values path that sets them — postgres.dsn and redis.url are
+not wired here even when set. Every render therefore runs lenny-ops in
+the §25.4 degraded single-process mode.
 */ -}}
 {{- /* §17.8.5 line 1323: "Attempts to disable lenny-ops via Helm values
    are rejected at chart validation." The chart has no ops.enabled key;
@@ -253,6 +256,10 @@ spec:
             - --ops-roll-timeout-seconds={{ .Values.platform.upgrade.opsRollTimeoutSeconds }}
             - --gateway-roll-timeout-seconds={{ .Values.platform.upgrade.gatewayRollTimeoutSeconds }}
             - --controller-roll-timeout-seconds={{ .Values.platform.upgrade.controllerRollTimeoutSeconds }}
+            # §25.8 Version Aggregation: the running Helm release name, so
+            # the Helm-chart-version source reads the helm.sh/release.v1
+            # Secret for this install rather than a hardcoded default.
+            - --helm-release-name={{ .Release.Name }}
             {{- with .Values.platform.releaseChannel.url }}
             # §25.8 upgrade-check consumer: fetch the release manifest over
             # HTTP from the configured channel and verify its Ed25519

@@ -45,19 +45,6 @@ const promptRoundtripTenant = "prompt-roundtrip-tenant"
 // central guarantee (§6.3 / §15.1) and, unlike the in-process tier4
 // tests, exercises the real SandboxClaim-bound pod over the network.
 func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
-	// The e2e agent-workload.yaml Runtime CR and install.sh bootstrap
-	// overlay now declare capabilities.injection.supported: true on
-	// echo-runtime-sidecar so a mid-session message can reach the pod,
-	// but re-deploying that change onto the shared persistent e2e Kind
-	// cluster hit an unrelated stale-image/chart skew (the running
-	// gateway image predates a chart flag it no longer recognizes) that
-	// needs a full image rebuild + reinstall to clear. Un-skip once a
-	// fresh `tests/testinfra/kind/install.sh` run (without
-	// LENNY_SKIP_BUILD) has been verified green against this test.
-	t.Skip("precondition not met: the e2e cluster needs a fresh (non-skip-build) install.sh run " +
-		"to pick up the echo-runtime-sidecar injection-capability change and clear an unrelated " +
-		"stale gateway image/chart flag mismatch before this test can be verified")
-
 	d := sessiondriver.New(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -68,6 +55,22 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
 
+	runEchoPromptJourney(ctx, t, d, tenant)
+}
+
+// runEchoPromptJourney drives the §7.1 steps 16-18 prompt round-trip on
+// an already-provisioned tenant: it starts a session on the echo pool,
+// attaches the AttachSession event stream, sends a prompt, and asserts
+// the real pod's echoed output returns both in the synchronous
+// POST /messages response and over the bidirectional stream proxy. It is
+// the reusable core of TestPromptRoundTripsToRealPodAndReturnsContent so
+// the same journey can be replayed across auth modes
+// (prompt_journey_auth_modes_test.go) without duplicating the
+// assertions. The caller owns tenant provisioning; d's session-surface
+// auth (dev headers or a §10.2 Bearer) is whatever d was constructed
+// with.
+func runEchoPromptJourney(ctx context.Context, t *testing.T, d *sessiondriver.Driver, tenant string) {
+	t.Helper()
 	sess, err := d.CreateAndStart(ctx, tenant, sessiondriver.EchoRuntimeSidecar)
 	if errors.Is(err, sessiondriver.ErrPoolNotReady) {
 		// §4.6 warm pool never settled an idle pod within the retry
@@ -113,9 +116,16 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 	// stub or a 500-tolerant no-op would not produce this content.
 	assertOutputEchoes(t, "POST /messages response", msgResp.Output, prompt)
 
-	// 17. Gateway ↔ Pod: confirm the same content also arrives over the
-	// AttachSession bidirectional stream proxy, proving the events
+	// 17. Gateway ↔ Pod: confirm the runtime's OUTPUT also arrives over
+	// the AttachSession bidirectional stream proxy, proving the events
 	// channel carries live pod output rather than only the request body.
+	// Match on the echo runtime's "[echo seq=N] " prefix
+	// (pkg/runtimekit/echocore) together with the prompt: the gateway
+	// also emits a message_delivered frame that reflects the user input
+	// verbatim, so matching the bare prompt alone would pass even if no
+	// pod output ever returned. Requiring the echo prefix pins the
+	// assertion to the runtime's response travelling back across the
+	// stream proxy.
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
 	for {
@@ -124,15 +134,22 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 			if !ok {
 				t.Fatalf("events stream closed before an echoed response event arrived for prompt %q", prompt)
 			}
-			if strings.Contains(string(ev.Data), prompt) {
-				t.Logf("observed echoed content on the events stream: type=%q data=%s", ev.Type, ev.Data)
+			data := string(ev.Data)
+			if strings.Contains(data, echoOutputPrefix) && strings.Contains(data, prompt) {
+				t.Logf("observed runtime echo output on the events stream: type=%q data=%s", ev.Type, ev.Data)
 				return
 			}
 		case <-deadline.C:
-			t.Fatalf("timed out waiting for an events-stream frame echoing prompt %q", prompt)
+			t.Fatalf("timed out waiting for an events-stream frame carrying the runtime's echoed output for prompt %q", prompt)
 		}
 	}
 }
+
+// echoOutputPrefix is the literal prefix the echo runtime prepends to
+// every text part it emits (pkg/runtimekit/echocore). Its presence on a
+// stream frame distinguishes the runtime's own output from the gateway's
+// message_delivered reflection of the client's input.
+const echoOutputPrefix = "[echo seq="
 
 // assertOutputEchoes decodes a §15.1 message-response output array and
 // fails the test unless at least one text part contains want.

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
@@ -98,6 +99,22 @@ type PoolPayload struct {
 	WarmCount              int    `json:"warmCount,omitempty"`
 	MaxSessionAgeSeconds   int    `json:"maxSessionAgeSeconds,omitempty"`
 	AllowStandardIsolation bool   `json:"allowStandardIsolation,omitempty"`
+
+	// DeliveryMode and SpiffeBinding are the §4.9 pool-definition
+	// credential-delivery fields (`proxy`/`direct` and `enabled`/`disabled`)
+	// carried on the warm-pool admin resource so one resource holds the whole
+	// combination the pool-registration and admission layers evaluate against
+	// IsolationProfile. They reconcile onto the SandboxTemplate CRD. spec: §4.9.
+	DeliveryMode  string `json:"deliveryMode,omitempty"`
+	SpiffeBinding string `json:"spiffeBinding,omitempty"`
+
+	// AllowDirectModeStandardIsolation and AllowProxyModeSpiffeBindingDisabled
+	// are the §4.9 deployer opt-ins that acknowledge the two cross-tenant-risky
+	// combinations in single-tenant or development mode. In multi-tenant mode
+	// the admission webhook rejects the combination regardless of either flag.
+	// spec: §4.9.
+	AllowDirectModeStandardIsolation    bool `json:"allowDirectModeStandardIsolation,omitempty"`
+	AllowProxyModeSpiffeBindingDisabled bool `json:"allowProxyModeSpiffeBindingDisabled,omitempty"`
 
 	// AcknowledgeNonceOnlyAuth is the §5.3 deployer opt-in that admits a
 	// pool referencing a §4.7 nonce-only runtime (requireSoPeercred:
@@ -253,6 +270,15 @@ type UpdatePoolRequest struct {
 	DNSPolicy                *string                     `json:"dnsPolicy,omitempty"`
 	MaxConcurrent            *int                        `json:"maxConcurrent,omitempty"`
 	SessionPolicy            *runtimestore.SessionPolicy `json:"sessionPolicy,omitempty"`
+
+	// DeliveryMode, SpiffeBinding, and the two opt-in bools are the §4.9
+	// pool-definition credential-delivery fields as tri-state pointers so a
+	// partial PUT can toggle them while leaving an omitted field unchanged.
+	// spec: §4.9.
+	DeliveryMode                        *string `json:"deliveryMode,omitempty"`
+	SpiffeBinding                       *string `json:"spiffeBinding,omitempty"`
+	AllowDirectModeStandardIsolation    *bool   `json:"allowDirectModeStandardIsolation,omitempty"`
+	AllowProxyModeSpiffeBindingDisabled *bool   `json:"allowProxyModeSpiffeBindingDisabled,omitempty"`
 	// ClearSessionPolicy, when true, removes the persisted sessionPolicy
 	// block in the same PUT. A non-nil SessionPolicy with
 	// ClearSessionPolicy set is rejected (the two operations are mutually
@@ -286,13 +312,19 @@ func fromPool(p poolstore.Pool) PoolPayload {
 		MaxSessionAgeSeconds:     p.MaxSessionAgeSeconds,
 		AllowStandardIsolation:   p.AllowStandardIsolation,
 		AcknowledgeNonceOnlyAuth: p.AcknowledgeNonceOnlyAuth,
-		EgressProfile:            string(p.EgressProfile),
-		DNSPolicy:                p.DNSPolicy,
-		MaxConcurrent:            p.MaxConcurrent,
-		SessionPolicy:            p.SessionPolicy.Clone(),
-		CreatedAt:                rfc3339Nano(p.CreatedAt),
-		UpdatedAt:                rfc3339Nano(p.UpdatedAt),
-		DeletedAt:                rfc3339Nano(p.DeletedAt),
+		// spec: §4.9 — GET/list surface the pool-definition
+		// credential-delivery combination and its deployer opt-ins.
+		DeliveryMode:                        p.DeliveryMode,
+		SpiffeBinding:                       p.SpiffeBinding,
+		AllowDirectModeStandardIsolation:    p.AllowDirectModeStandardIsolation,
+		AllowProxyModeSpiffeBindingDisabled: p.AllowProxyModeSpiffeBindingDisabled,
+		EgressProfile:                       string(p.EgressProfile),
+		DNSPolicy:                           p.DNSPolicy,
+		MaxConcurrent:                       p.MaxConcurrent,
+		SessionPolicy:                       p.SessionPolicy.Clone(),
+		CreatedAt:                           rfc3339Nano(p.CreatedAt),
+		UpdatedAt:                           rfc3339Nano(p.UpdatedAt),
+		DeletedAt:                           rfc3339Nano(p.DeletedAt),
 		// spec: §15.1 line 1207 — the ETag is the quoted decimal
 		// pool_config_generation (the per-resource version column).
 		ETag: formatETag(p.Generation),
@@ -339,23 +371,30 @@ func urlModeFromWire(in *URLModeElicitationPayload) elicitation.URLModeAllowlist
 // defaults. CreatedAt/UpdatedAt are stamped from the Router clock.
 func (r *Router) poolFromPayload(body PoolPayload) poolstore.Pool {
 	pl := poolstore.Pool{
-		Name:                       body.Name,
-		RuntimeRef:                 body.RuntimeRef,
-		IsolationProfile:           isolation.Profile(body.IsolationProfile),
-		ExecutionMode:              runtimestore.ExecutionMode(body.ExecutionMode),
-		MaxConcurrent:              body.MaxConcurrent,
-		SessionPolicy:              body.SessionPolicy.Clone(),
-		ResourceClass:              body.ResourceClass,
-		WarmCount:                  body.WarmCount,
-		MaxSessionAgeSeconds:       body.MaxSessionAgeSeconds,
-		AllowStandardIsolation:     body.AllowStandardIsolation,
-		AcknowledgeNonceOnlyAuth:   body.AcknowledgeNonceOnlyAuth,
-		EgressProfile:              egress.Profile(body.EgressProfile),
-		DNSPolicy:                  body.DNSPolicy,
-		ElicitationDepthPolicy:     elicitation.DepthPolicy(body.ElicitationDepthPolicy),
-		ElicitationSuppressAtDepth: body.ElicitationSuppressAtDepth,
-		URLModeElicitation:         urlModeFromWire(body.URLModeElicitation),
-		CreatedAt:                  r.clock(),
+		Name:                     body.Name,
+		RuntimeRef:               body.RuntimeRef,
+		IsolationProfile:         isolation.Profile(body.IsolationProfile),
+		ExecutionMode:            runtimestore.ExecutionMode(body.ExecutionMode),
+		MaxConcurrent:            body.MaxConcurrent,
+		SessionPolicy:            body.SessionPolicy.Clone(),
+		ResourceClass:            body.ResourceClass,
+		WarmCount:                body.WarmCount,
+		MaxSessionAgeSeconds:     body.MaxSessionAgeSeconds,
+		AllowStandardIsolation:   body.AllowStandardIsolation,
+		AcknowledgeNonceOnlyAuth: body.AcknowledgeNonceOnlyAuth,
+		// spec: §4.9 — carry the pool-definition credential-delivery
+		// combination and its deployer opt-ins onto the stored pool so one
+		// admin resource holds the whole combination.
+		DeliveryMode:                        body.DeliveryMode,
+		SpiffeBinding:                       body.SpiffeBinding,
+		AllowDirectModeStandardIsolation:    body.AllowDirectModeStandardIsolation,
+		AllowProxyModeSpiffeBindingDisabled: body.AllowProxyModeSpiffeBindingDisabled,
+		EgressProfile:                       egress.Profile(body.EgressProfile),
+		DNSPolicy:                           body.DNSPolicy,
+		ElicitationDepthPolicy:              elicitation.DepthPolicy(body.ElicitationDepthPolicy),
+		ElicitationSuppressAtDepth:          body.ElicitationSuppressAtDepth,
+		URLModeElicitation:                  urlModeFromWire(body.URLModeElicitation),
+		CreatedAt:                           r.clock(),
 	}
 	pl.UpdatedAt = pl.CreatedAt
 	// spec: §6.1 lines 48, 63-65 — carry the SDK-warm operability block
@@ -423,6 +462,30 @@ func validatePoolForStore(p poolstore.Pool) error {
 	return poolstore.ValidateElicitationPolicy(p)
 }
 
+// validateCredentialDeliveryCombo runs the §4.9 layer-1 pool-registration
+// credential-delivery gate on a fully-resolved pool, reusing the shipped
+// direct_mode_isolation.Decide as the single canonical decision function so
+// the warm-pool admin path rejects exactly what the layer-2
+// ValidatingAdmissionWebhook rejects. EgressProfile is carried so the §13.2
+// NET-006 proxy + provider-direct combination is also rejected (in every
+// tenancy mode), keeping layer 1 a superset of the layer-2 gate rather than
+// admitting a pool the webhook would later reject on the reconciled
+// SandboxTemplate. The two multi-tenant combinations reject only when
+// tenancyMode is "multi" and devMode is false; the Request carries no opt-in
+// fields, so an opt-in bool cannot rescue a forbidden combination in
+// multi-tenant mode. spec: §4.9.
+func (r *Router) validateCredentialDeliveryCombo(pl poolstore.Pool) direct_mode_isolation.Decision {
+	return direct_mode_isolation.Decide(direct_mode_isolation.Request{
+		TenancyMode:      r.tenancyMode,
+		DevMode:          r.devMode,
+		Kind:             "pool",
+		DeliveryMode:     pl.DeliveryMode,
+		IsolationProfile: string(pl.IsolationProfile),
+		SpiffeBinding:    pl.SpiffeBinding,
+		EgressProfile:    string(pl.EgressProfile),
+	})
+}
+
 // WithPools wires the §15.1 pool CRUD handlers onto the Router.
 func (r *Router) WithPools(s poolstore.Store) *Router {
 	r.pools = s
@@ -469,6 +532,22 @@ func (r *Router) WithCRDGenerationReader(rdr CRDGenerationReader) *Router {
 	return r
 }
 
+// isValidDeliveryMode reports whether v is an empty or recognised §4.9
+// deliveryMode. Empty inherits the runtime default; the only non-empty
+// values the SandboxTemplate CRD enum admits are `proxy` and `direct`.
+// spec: §4.9.
+func isValidDeliveryMode(v string) bool {
+	return v == "" || v == direct_mode_isolation.DeliveryProxy || v == "direct"
+}
+
+// isValidSpiffeBinding reports whether v is an empty or recognised §4.9
+// spiffeBinding. Empty inherits the runtime default; the only non-empty
+// values the SandboxTemplate CRD enum admits are `enabled` and `disabled`.
+// spec: §4.9.
+func isValidSpiffeBinding(v string) bool {
+	return v == "" || v == "enabled" || v == "disabled"
+}
+
 func (p PoolPayload) validateEnums() error {
 	if p.IsolationProfile != "" && !isolation.IsValid(isolation.Profile(p.IsolationProfile)) {
 		return errors.New("isolationProfile is not a recognised §5.3 profile")
@@ -478,6 +557,17 @@ func (p PoolPayload) validateEnums() error {
 	}
 	if p.EgressProfile != "" && !egress.IsValid(egress.Profile(p.EgressProfile)) {
 		return errors.New("egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)")
+	}
+	// spec: §4.9 — deliveryMode and spiffeBinding are apiserver-enforced
+	// enums on the SandboxTemplate CRD (proxy;direct and enabled;disabled).
+	// Reject an out-of-enum value at registration so it never reconciles
+	// onto a controller-authored SandboxTemplate the apiserver would reject,
+	// wedging the PoolScalingController.
+	if !isValidDeliveryMode(p.DeliveryMode) {
+		return errors.New("deliveryMode is not a recognised §4.9 mode (proxy, direct)")
+	}
+	if !isValidSpiffeBinding(p.SpiffeBinding) {
+		return errors.New("spiffeBinding is not a recognised §4.9 value (enabled, disabled)")
 	}
 	if p.DNSPolicy != "" && p.DNSPolicy != poolstore.DNSPolicyClusterDefault {
 		return errors.New("dnsPolicy is not a recognised §13.2 value (only cluster-default opts out of the dedicated CoreDNS instance)")
@@ -559,6 +649,16 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 			map[string]any{"runtimeRef": body.RuntimeRef})
 		return
 	}
+	// spec: §4.9 — layer-1 pool-registration validation. Reject the two
+	// cross-tenant-risky credential-delivery combinations (direct + standard,
+	// proxy + spiffeBinding disabled) in multi-tenant mode, and the §13.2
+	// NET-006 proxy + provider-direct combination in every tenancy mode,
+	// before any store write, so no SandboxTemplate the layer-2 webhook would
+	// reject is ever reconciled. The decision reuses the canonical Decide.
+	if dec := r.validateCredentialDeliveryCombo(pl); !dec.Allowed {
+		writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", dec.Reason, nil)
+		return
+	}
 	// spec: §15.1 line 1140 — ?dryRun=true validates without persisting or auditing.
 	// The remaining store-side validations (the checks Create would run)
 	// run here so the dry run is exhaustive; the preview carries the
@@ -604,6 +704,7 @@ func (r *Router) handleCreatePool(w http.ResponseWriter, req *http.Request) {
 		"executionMode":    string(stored.ExecutionMode),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, stored)
+	r.maybeEmitProxySpiffeDisabledWarning(req.Context(), principal, stored)
 	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, stored, runtimeMultiTurn)
 	r.dispatchPoolIsolationAudit(req.Context(), principal, stored.Name)
 	w.Header().Set("Content-Type", "application/json")
@@ -655,6 +756,39 @@ func (r *Router) maybeEmitWeakIsolation(ctx context.Context, p authmw.Principal,
 		"egressProfile":          string(pool.EgressProfile),
 		"severity":               "warning",
 		"reason":                 "pool admitted under standard (runc) isolation via explicit allowStandardIsolation opt-in (§5.3)",
+	})
+}
+
+// maybeEmitProxySpiffeDisabledWarning emits the §4.9.2
+// credential.proxy_mode_spiffe_binding_disabled audit event when an admitted
+// pool carries deliveryMode: proxy together with spiffeBinding: disabled. The
+// combination is rejected outright in multi-tenant mode (the layer-1 Decide
+// gate returns before this emitter runs), so the event fires only in
+// single-tenant or development mode where §4.9 permits the disablement via
+// the allowProxyModeSpiffeBindingDisabled opt-in; it lands on the credential
+// audit stream alongside the Kubernetes ProxyModeSpiffeBindingDisabled
+// warning so auditors see the disablement. A pool that is not proxy-mode, or
+// that keeps SPIFFE-binding enabled, emits nothing. spec: §4.9.2.
+func (r *Router) maybeEmitProxySpiffeDisabledWarning(ctx context.Context, p authmw.Principal, pool poolstore.Pool) {
+	if pool.DeliveryMode != direct_mode_isolation.DeliveryProxy || pool.SpiffeBinding != "disabled" {
+		return
+	}
+	// Defense in depth: in a multi-tenant-enforcing deployment the combination
+	// is a rejection, not a warning, so the event never fires there even if a
+	// caller reaches this emitter with an unadmitted pool.
+	if r.tenancyMode == direct_mode_isolation.TenancyMulti && !r.devMode {
+		return
+	}
+	mode := "single"
+	if r.devMode {
+		mode = "dev"
+	}
+	r.emit(ctx, p, "credential.proxy_mode_spiffe_binding_disabled", pool.Name, map[string]any{
+		"deliveryMode":  pool.DeliveryMode,
+		"spiffeBinding": pool.SpiffeBinding,
+		"tenancy_mode":  mode,
+		"severity":      "warning",
+		"reason":        "pool admitted with deliveryMode: proxy and spiffeBinding: disabled outside multi-tenant mode (§4.9)",
 	})
 }
 
@@ -1091,6 +1225,20 @@ func applyPoolUpdateMerge(p *poolstore.Pool, body UpdatePoolRequest) {
 	if body.AcknowledgeNonceOnlyAuth != nil {
 		p.AcknowledgeNonceOnlyAuth = *body.AcknowledgeNonceOnlyAuth
 	}
+	// spec: §4.9 — a partial PUT toggles the pool-definition
+	// credential-delivery fields; an omitted (nil) field is unchanged.
+	if body.DeliveryMode != nil {
+		p.DeliveryMode = *body.DeliveryMode
+	}
+	if body.SpiffeBinding != nil {
+		p.SpiffeBinding = *body.SpiffeBinding
+	}
+	if body.AllowDirectModeStandardIsolation != nil {
+		p.AllowDirectModeStandardIsolation = *body.AllowDirectModeStandardIsolation
+	}
+	if body.AllowProxyModeSpiffeBindingDisabled != nil {
+		p.AllowProxyModeSpiffeBindingDisabled = *body.AllowProxyModeSpiffeBindingDisabled
+	}
 	if body.EgressProfile != nil {
 		p.EgressProfile = egress.Profile(*body.EgressProfile)
 	}
@@ -1394,6 +1542,19 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 			"egressProfile is not a recognised §13.2 profile (restricted, provider-direct, internet)", nil)
 		return false
 	}
+	// spec: §4.9 — reject an out-of-enum deliveryMode/spiffeBinding on a PUT,
+	// matching the create-side validateEnums clauses, so an out-of-enum value
+	// never reconciles onto the enum-constrained SandboxTemplate CRD.
+	if body.DeliveryMode != nil && !isValidDeliveryMode(*body.DeliveryMode) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"deliveryMode is not a recognised §4.9 mode (proxy, direct)", nil)
+		return false
+	}
+	if body.SpiffeBinding != nil && !isValidSpiffeBinding(*body.SpiffeBinding) {
+		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			"spiffeBinding is not a recognised §4.9 value (enabled, disabled)", nil)
+		return false
+	}
 	if body.DNSPolicy != nil && *body.DNSPolicy != "" &&
 		*body.DNSPolicy != poolstore.DNSPolicyClusterDefault {
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -1410,6 +1571,21 @@ func (r *Router) validatePoolUpdate(w http.ResponseWriter, req *http.Request, na
 		writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"elicitationDepthPolicy is not a recognised §9.2 policy (allow_all, suppress_at_depth, block_all)", nil)
 		return false
+	}
+	// spec: §4.9 — layer-1 pool-registration validation on the update path.
+	// Evaluate the MERGED effective pool (the stored row with the partial
+	// PUT's non-nil fields applied) through the canonical Decide, so a partial
+	// PUT that sets only one half of a forbidden combination cannot bypass the
+	// gate and so the dry-run preview and the persisted write are covered from
+	// one seam. A missing pool is left to the persist/preview stage, which
+	// resolves the 404. spec: §4.9.
+	if current, gerr := r.pools.Get(req.Context(), name); gerr == nil {
+		merged := current
+		applyPoolUpdateMerge(&merged, body)
+		if dec := r.validateCredentialDeliveryCombo(merged); !dec.Allowed {
+			writeError(w, http.StatusUnprocessableEntity, "VALIDATION_ERROR", dec.Reason, nil)
+			return false
+		}
 	}
 	// runtimeRef cross-check.
 	if body.RuntimeRef != nil && *body.RuntimeRef != "" && r.runtimes != nil {
@@ -1582,6 +1758,7 @@ func (r *Router) persistPoolUpdate(w http.ResponseWriter, req *http.Request, nam
 		"changedFields": changedPoolFields(body),
 	})
 	r.maybeEmitWeakIsolation(req.Context(), principal, updated)
+	r.maybeEmitProxySpiffeDisabledWarning(req.Context(), principal, updated)
 	r.maybeEmitMultiTurnServiceWarning(req.Context(), principal, updated,
 		r.poolRuntimeMultiTurn(req.Context(), updated))
 	r.dispatchPoolIsolationAudit(req.Context(), principal, updated.Name)

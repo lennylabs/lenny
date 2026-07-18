@@ -7,7 +7,9 @@
 package ops_endpoints_test
 
 import (
+	"encoding/json"
 	"net/http"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
@@ -128,21 +130,41 @@ func TestMCPToolsCallRoutesToOpsEndpoint(t *testing.T) {
 
 // TestMCPToolsCallDryRunMapping confirms the §25.12 dry-run mapping: a
 // tools/call whose underlying endpoint returns a §25.2 dry-run preview
-// is isError:false with the canonical _meta.lenny.dryRun flag.
+// is isError:false with the canonical _meta.lenny.dryRun flag, the
+// _meta.lenny.preview object equal to the REST preview body, and a
+// content[0].text that string-parses as JSON carrying dryRun:true so a
+// client without metadata support can still detect the dry-run.
 //
 // spec: 25.12 (MCP dry-run result mapping)
-// diagnosis: A dry-run tools/call was reported as isError:true, or the
-// _meta.lenny.dryRun flag is absent. §25.12 makes a dry-run a
-// successful preview; an MCP client checks the flag to know it must
-// retry with confirm:true.
+// diagnosis: A dry-run tools/call was reported as isError:true, the
+// _meta.lenny.dryRun flag is absent, _meta.lenny.preview does not match
+// the REST preview body (for example the preview object was dropped or
+// only a subset of it forwarded), or content[0].text is not valid JSON
+// (breaking clients that fall back to string parsing). §25.12 makes a
+// dry-run a successful preview; an MCP client checks the flag to know
+// it must retry with confirm:true, and the text content must remain a
+// reliable fallback for clients without metadata support.
 func TestMCPToolsCallDryRunMapping(t *testing.T) {
 	srv := opsServer(t)
+	args := map[string]any{"desired": map[string]any{"pools": map[string]any{}}}
+
+	// Call the underlying REST endpoint directly to capture the §25.2
+	// preview body the MCP adapter is expected to forward verbatim.
+	restRec, restBody := request(t, srv, http.MethodPost, "/v1/admin/drift/snapshot/refresh", nil, args)
+	if restRec.Code != http.StatusOK || restBody["dryRun"] != true {
+		t.Fatalf("REST preview status = %d, body = %v, want 200 with dryRun:true", restRec.Code, restBody)
+	}
+	wantPreview, ok := restBody["preview"]
+	if !ok {
+		t.Fatalf("REST preview body has no preview object: %v", restBody)
+	}
+
 	rec, body := request(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
 		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
 		"params": map[string]any{
 			"name": "lenny_drift_snapshot_refresh",
 			// No confirm:true — the endpoint returns a §25.2 preview.
-			"arguments": map[string]any{"desired": map[string]any{"pools": map[string]any{}}},
+			"arguments": args,
 		},
 	})
 	if rec.Code != http.StatusOK {
@@ -155,6 +177,26 @@ func TestMCPToolsCallDryRunMapping(t *testing.T) {
 	meta, ok := result["_meta"].(map[string]any)
 	if !ok || meta["lenny.dryRun"] != true {
 		t.Errorf("_meta = %v, want lenny.dryRun:true", result["_meta"])
+	}
+	if !reflect.DeepEqual(meta["lenny.preview"], wantPreview) {
+		t.Errorf("_meta.lenny.preview = %v, want %v (the REST preview body)", meta["lenny.preview"], wantPreview)
+	}
+
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("result.content = %v, want a non-empty content array", result["content"])
+	}
+	first, _ := content[0].(map[string]any)
+	text, _ := first["text"].(string)
+	var textBody map[string]any
+	if err := json.Unmarshal([]byte(text), &textBody); err != nil {
+		t.Fatalf("content[0].text = %q is not valid JSON: %v", text, err)
+	}
+	if textBody["dryRun"] != true {
+		t.Errorf("content[0].text dryRun = %v, want true", textBody["dryRun"])
+	}
+	if !reflect.DeepEqual(textBody["preview"], wantPreview) {
+		t.Errorf("content[0].text preview = %v, want %v (the REST preview body)", textBody["preview"], wantPreview)
 	}
 }
 

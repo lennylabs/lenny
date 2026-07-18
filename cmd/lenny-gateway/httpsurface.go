@@ -197,10 +197,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	}
 	// §25.3: emit a health_status_changed operational event when the
 	// aggregate health verdict transitions.
-	healthAgg.OnTransition(func(prev, curr health.Status) {
-		data, _ := json.Marshal(map[string]any{
-			"oldStatus": string(prev), "newStatus": string(curr),
-		})
+	healthAgg.OnTransition(func(prev, curr health.Status, prevComponents, currComponents []health.Component) {
+		data, _ := json.Marshal(healthStatusChangedPayload(prev, curr, prevComponents, currComponents))
 		_ = opsEmitter.Emit(context.Background(), events.OperationalEvent{
 			Source:          "/v1/admin/health",
 			Type:            events.EventHealthStatusChanged.CloudEventsType(),
@@ -652,6 +650,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// serving until the process crashes. The dual-store-both-down case
 	// is exempted so the replica stays ready to answer the §10.1 503
 	// PLATFORM_DEGRADED. F-10.4.6.
+	// spec: §4.9 — the §4.9 credential deny-list startup-rebuild flag the
+	// /readyz handler gates on. Captured here because the handler param
+	// shadows the gatewayWiring receiver `w`.
+	credDenyRebuilt := &w.credDenyRebuilt
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		dualStoreDown := dsMonitor != nil && dsMonitor.Unavailable()
@@ -660,7 +662,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 		defer cancel()
-		res := readinessVerdict(ctx, prestopHook.Draining(), driftMonitor.Degraded(), dualStoreDown, probe)
+		// spec: §4.9 — hold this replica out of the ready set until the
+		// startup deny-list rebuild commits its authoritative Reset, so it
+		// resolves no retained revoked lease with an incomplete deny list.
+		rebuildPending := !credDenyRebuilt.Load()
+		res := readinessVerdict(ctx, prestopHook.Draining(), driftMonitor.Degraded(), rebuildPending, dualStoreDown, probe)
 		w.WriteHeader(res.Code)
 		if res.Body != "" {
 			_, _ = w.Write([]byte(res.Body))
@@ -957,6 +963,23 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// in place later; the run loop serves w.httpSrv.
 	w.mux = mux
 	w.httpSrv = httpSrv
+}
+
+// healthStatusChangedPayload builds the §25.3 health_status_changed event
+// payload for an aggregate-health transition. The event catalog documents
+// the payload as "Old status, new status, triggering component", so
+// alongside the previous and current aggregate status the payload names
+// the triggering component(s): the health components whose individual
+// status changed between the previous and the new Report, which is what
+// drove the aggregate transition. This mirrors how lenny-ops names the
+// triggering check(s) on ops_health_status_changed.
+// spec: §25.3 (event types — health_status_changed payload).
+func healthStatusChangedPayload(prev, curr health.Status, prevComponents, currComponents []health.Component) map[string]any {
+	return map[string]any{
+		"oldStatus":            string(prev),
+		"newStatus":            string(curr),
+		"triggeringComponents": health.TriggeringComponents(prevComponents, currComponents),
+	}
 }
 
 // startLeaderElectedSweeps launches the §12.5 gateway-singleton sweeps

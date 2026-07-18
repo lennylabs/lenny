@@ -412,6 +412,12 @@ spec:
             # the chart cannot probe in-cluster.
             - --dev-mode={{ .Values.global.devMode }}
             - --attest-volume-encryption={{ .Values.preflight.attestVolumeEncryption }}
+            # §4.9 — the credential-delivery scan lists every SandboxTemplate
+            # pool definition and fails the multi-tenant install when a pool
+            # carries a forbidden deliveryMode combination (direct + standard,
+            # proxy + spiffeBinding: disabled, or proxy + provider-direct). It
+            # enforces only when tenancy.mode is multi.
+            - --tenancy-mode={{ .Values.tenancy.mode }}
             # §10.3 line 304 / F-10.3.12: when the cert-manager-backed mTLS
             # PKI is enabled, the preflight requires cert-manager >= v1.12.0.
             # Set certmanager.enabled=false alongside mtls.enabled=false for

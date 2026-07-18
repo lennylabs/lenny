@@ -44,6 +44,7 @@ const (
 	Adapter_Attach_FullMethodName                      = "/lenny.adapter.v1.Adapter/Attach"
 	Adapter_AssignCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/AssignCredentials"
 	Adapter_RotateCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/RotateCredentials"
+	Adapter_ExtendCredentialLease_FullMethodName       = "/lenny.adapter.v1.Adapter/ExtendCredentialLease"
 	Adapter_RevokeCredentials_FullMethodName           = "/lenny.adapter.v1.Adapter/RevokeCredentials"
 	Adapter_Interrupt_FullMethodName                   = "/lenny.adapter.v1.Adapter/Interrupt"
 	Adapter_Checkpoint_FullMethodName                  = "/lenny.adapter.v1.Adapter/Checkpoint"
@@ -123,6 +124,15 @@ type AdapterClient interface {
 	// a new lease. Emits a `credentials_rotated` lifecycle event to the
 	// agent. Used for hot rotation without pod restart.
 	RotateCredentials(ctx context.Context, in *RotateCredentialsRequest, opts ...grpc.CallOption) (*RotateCredentialsResponse, error)
+	// ExtendCredentialLease re-arms the direct-mode credential-expiry timer for a
+	// still-valid lease to a later deadline, without delivering credential
+	// material and without running the credentials_rotated handshake.
+	// Gateway-initiated; used by the §4.9 Token Service unavailability
+	// guard when the Token Service circuit breaker is open and the lease
+	// has not yet expired. Requires no Token Service call: the gateway
+	// supplies the new deadline from the lease record it already holds.
+	// spec: §4.9 line 1470.
+	ExtendCredentialLease(ctx context.Context, in *ExtendCredentialLeaseRequest, opts ...grpc.CallOption) (*ExtendCredentialLeaseResponse, error)
 	// RevokeCredentials removes a credential lease immediately. The agent
 	// receives no chance to drain in-flight requests; emergency revocation.
 	RevokeCredentials(ctx context.Context, in *RevokeCredentialsRequest, opts ...grpc.CallOption) (*RevokeCredentialsResponse, error)
@@ -340,6 +350,16 @@ func (c *adapterClient) RotateCredentials(ctx context.Context, in *RotateCredent
 	return out, nil
 }
 
+func (c *adapterClient) ExtendCredentialLease(ctx context.Context, in *ExtendCredentialLeaseRequest, opts ...grpc.CallOption) (*ExtendCredentialLeaseResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ExtendCredentialLeaseResponse)
+	err := c.cc.Invoke(ctx, Adapter_ExtendCredentialLease_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *adapterClient) RevokeCredentials(ctx context.Context, in *RevokeCredentialsRequest, opts ...grpc.CallOption) (*RevokeCredentialsResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(RevokeCredentialsResponse)
@@ -549,6 +569,15 @@ type AdapterServer interface {
 	// a new lease. Emits a `credentials_rotated` lifecycle event to the
 	// agent. Used for hot rotation without pod restart.
 	RotateCredentials(context.Context, *RotateCredentialsRequest) (*RotateCredentialsResponse, error)
+	// ExtendCredentialLease re-arms the direct-mode credential-expiry timer for a
+	// still-valid lease to a later deadline, without delivering credential
+	// material and without running the credentials_rotated handshake.
+	// Gateway-initiated; used by the §4.9 Token Service unavailability
+	// guard when the Token Service circuit breaker is open and the lease
+	// has not yet expired. Requires no Token Service call: the gateway
+	// supplies the new deadline from the lease record it already holds.
+	// spec: §4.9 line 1470.
+	ExtendCredentialLease(context.Context, *ExtendCredentialLeaseRequest) (*ExtendCredentialLeaseResponse, error)
 	// RevokeCredentials removes a credential lease immediately. The agent
 	// receives no chance to drain in-flight requests; emergency revocation.
 	RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error)
@@ -695,6 +724,9 @@ func (UnimplementedAdapterServer) AssignCredentials(context.Context, *AssignCred
 }
 func (UnimplementedAdapterServer) RotateCredentials(context.Context, *RotateCredentialsRequest) (*RotateCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RotateCredentials not implemented")
+}
+func (UnimplementedAdapterServer) ExtendCredentialLease(context.Context, *ExtendCredentialLeaseRequest) (*ExtendCredentialLeaseResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ExtendCredentialLease not implemented")
 }
 func (UnimplementedAdapterServer) RevokeCredentials(context.Context, *RevokeCredentialsRequest) (*RevokeCredentialsResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method RevokeCredentials not implemented")
@@ -894,6 +926,24 @@ func _Adapter_RotateCredentials_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(AdapterServer).RotateCredentials(ctx, req.(*RotateCredentialsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Adapter_ExtendCredentialLease_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExtendCredentialLeaseRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AdapterServer).ExtendCredentialLease(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Adapter_ExtendCredentialLease_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AdapterServer).ExtendCredentialLease(ctx, req.(*ExtendCredentialLeaseRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1162,6 +1212,10 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RotateCredentials",
 			Handler:    _Adapter_RotateCredentials_Handler,
+		},
+		{
+			MethodName: "ExtendCredentialLease",
+			Handler:    _Adapter_ExtendCredentialLease_Handler,
 		},
 		{
 			MethodName: "RevokeCredentials",

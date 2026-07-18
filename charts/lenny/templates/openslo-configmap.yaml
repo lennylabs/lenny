@@ -20,7 +20,15 @@ the rendered queries resolve the same series the bundled alerts evaluate.
 {{- if .Values.monitoring.openslo.enabled }}
 {{- $ns := .Values.monitoring.openslo.namespace | default .Values.monitoring.namespace }}
 {{- $tier := .Values.global.deploymentTier | default "tier1" }}
-{{- $openslo := .Files.Get "files/openslo.yaml" | replace "__DEPLOYMENT_TIER__" $tier }}
+{{- /* spec: §16.10 — the shared AlertNotificationTarget's spec.target
+       type and its name (metadata.name and every targetRef) are
+       deployer-configurable. The type flows through the
+       __OPENSLO_NOTIFICATION_TARGET__ token; the name flows through the
+       schema-valid default literal lenny-slo-notifications the renderer
+       emits, so the raw fragment validates before substitution. */ -}}
+{{- $ntType := .Values.monitoring.openslo.notificationTarget.type | default "webhook" }}
+{{- $ntName := .Values.monitoring.openslo.notificationTarget.name | default "lenny-slo-notifications" }}
+{{- $openslo := .Files.Get "files/openslo.yaml" | replace "__DEPLOYMENT_TIER__" $tier | replace "__OPENSLO_NOTIFICATION_TARGET__" $ntType | replace "lenny-slo-notifications" $ntName }}
 {{- /* Strip the generated-file comment header so the ConfigMap data
        carries only the OpenSLO documents. */ -}}
 {{- $body := regexReplaceAll "(?m)^#.*\n" $openslo "" }}

@@ -20,11 +20,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 )
 
 // adminQueryClock is the fixed gateway clock for the §25.9 query router.
@@ -253,6 +255,123 @@ func TestAdminAuditQueryOverPostgres(t *testing.T) {
 			t.Errorf("get missing seq: status %d, want 404", rr.Code)
 		}
 	})
+}
+
+// spec: §25.9 line 3659 — the list endpoint accepts
+// "?eventbus_publish_state= (one of pending | retry_pending | published
+// | failed ...)" and "Combining filters is AND." §25.9 line 3663 —
+// "Operators reconciling after an EventBus outage typically query
+// ?eventbus_publish_state=failed&since=<outage_start>." The publish
+// state lives on the §12.3.7 audit_log.eventbus_publish_state column,
+// which is not part of the §11.7 hash input, and is set on real rows via
+// the Postgres-backed store's SetPublishState.
+//
+// diagnosis: a failure means the §25.9 ?eventbus_publish_state=failed
+// filter, resolved against the real Postgres audit_log column rather than
+// a fake, returns rows whose column is not 'failed' (or drops rows whose
+// column is 'failed'), so an operator reconciling after an EventBus
+// outage sees the wrong set of un-published events.
+func TestAdminAuditQueryEventbusPublishStateFilterOverPostgres(t *testing.T) {
+	t.Parallel()
+	pg := startPG(t)
+	store := auditstore.New(pg.Router(t))
+	router := newAdminAuditRouter(store)
+	ctx := context.Background()
+
+	seedTenant(t, ctx, pg, "reconcile")
+
+	// Six rows across the eventbus_publish_state enum. The two 'failed'
+	// rows are the ones an operator reconciling after an outage must see;
+	// every other state must be excluded from the ?eventbus_publish_state=
+	// failed page. Newly appended rows default to 'pending'; SetPublishState
+	// transitions the column to the target state under the per-tenant lock.
+	type seeded struct {
+		row   audit.Row
+		state eventbus.PublishState
+	}
+	appendState := func(eventType, actor string, at time.Time, state eventbus.PublishState) seeded {
+		t.Helper()
+		payload, _ := json.Marshal(map[string]string{
+			"actor_subject":   actor,
+			"target_resource": "credential/" + actor,
+		})
+		row, err := store.Append(ctx, "reconcile", eventType, json.RawMessage(payload), at)
+		if err != nil {
+			t.Fatalf("append %s: %v", eventType, err)
+		}
+		if err := store.SetPublishState(ctx, "reconcile", row.Seq, state, 0); err != nil {
+			t.Fatalf("set publish state %s on seq %d: %v", state, row.Seq, err)
+		}
+		return seeded{row: row, state: state}
+	}
+
+	all := []seeded{
+		appendState("credential.leased", "f1@acme.com", adminQueryClock.Add(-1*time.Hour), eventbus.PublishFailed),
+		appendState("credential.leased", "p1@acme.com", adminQueryClock.Add(-2*time.Hour), eventbus.PublishPublished),
+		appendState("credential.leased", "f2@acme.com", adminQueryClock.Add(-3*time.Hour), eventbus.PublishFailed),
+		appendState("credential.leased", "pend@acme.com", adminQueryClock.Add(-4*time.Hour), eventbus.PublishPending),
+		appendState("credential.leased", "retry@acme.com", adminQueryClock.Add(-5*time.Hour), eventbus.PublishRetryPending),
+		appendState("credential.leased", "p2@acme.com", adminQueryClock.Add(-6*time.Hour), eventbus.PublishPublished),
+	}
+
+	// The exact set of row UUIDs whose column is 'failed'. metadata.uid on
+	// each OCSF record is the row UUID, so the returned page is compared to
+	// this set for identity, not merely count.
+	wantFailed := map[string]bool{}
+	for _, s := range all {
+		if s.state == eventbus.PublishFailed {
+			wantFailed[s.row.ID] = true
+		}
+	}
+	if len(wantFailed) != 2 {
+		t.Fatalf("test setup: expected 2 failed rows, got %d", len(wantFailed))
+	}
+
+	// spec: §25.9 line 3663 — the reconciliation query form. `since` opens
+	// the window wide enough to admit every seeded row so the only
+	// exclusion under test is the eventbus_publish_state=failed predicate.
+	env := getAuditEnvelope(t, router,
+		"/v1/admin/audit-events?tenantId=reconcile&since=2026-05-01T00:00:00Z&eventbus_publish_state=failed")
+
+	if len(env.Items) != 2 {
+		t.Fatalf("?eventbus_publish_state=failed items = %d, want 2 (only the failed rows)", len(env.Items))
+	}
+	gotFailed := map[string]bool{}
+	for i, it := range env.Items {
+		var rec map[string]any
+		if err := json.Unmarshal(it, &rec); err != nil {
+			t.Fatalf("items[%d] not JSON: %v", i, err)
+		}
+		meta, _ := rec["metadata"].(map[string]any)
+		uid, _ := meta["uid"].(string)
+		if !wantFailed[uid] {
+			t.Errorf("items[%d] uid %q is not one of the two failed rows", i, uid)
+		}
+		gotFailed[uid] = true
+	}
+	for uid := range wantFailed {
+		if !gotFailed[uid] {
+			t.Errorf("failed row %q missing from the ?eventbus_publish_state=failed page", uid)
+		}
+	}
+
+	// A control query with no publish-state filter admits every row, so the
+	// filter above is genuinely excluding the four non-failed rows rather
+	// than the window doing it.
+	unfiltered := getAuditEnvelope(t, router,
+		"/v1/admin/audit-events?tenantId=reconcile&since=2026-05-01T00:00:00Z")
+	if len(unfiltered.Items) != len(all) {
+		t.Fatalf("unfiltered items = %d, want %d (every seeded row)", len(unfiltered.Items), len(all))
+	}
+
+	// AND semantics: ?eventbus_publish_state=published narrows to exactly
+	// the two published rows, confirming the filter keys off the column
+	// value rather than defaulting to failed.
+	published := getAuditEnvelope(t, router,
+		"/v1/admin/audit-events?tenantId=reconcile&since=2026-05-01T00:00:00Z&eventbus_publish_state=published")
+	if len(published.Items) != 2 {
+		t.Fatalf("?eventbus_publish_state=published items = %d, want 2", len(published.Items))
+	}
 }
 
 // spec: §25.9 line 3661 — "GET /v1/admin/audit-events/summary Aggregate

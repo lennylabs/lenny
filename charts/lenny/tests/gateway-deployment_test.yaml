@@ -56,6 +56,31 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --tls-terminated-upstream
+  # spec: §4.9 — the gateway learns its tenancy mode from the same
+  # tenancy.mode Helm value the lenny-webhook binary and the
+  # lenny-preflight Job read, so the warm-pool pool-registration layer-1
+  # check keys off one tenancy signal. Mirrors the direct-mode-isolation
+  # webhook's --tenancy-mode render assertion.
+  - it: renders --tenancy-mode=multi under tenancy.mode multi
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      tenancy.mode: multi
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenancy-mode=multi
+  - it: renders --tenancy-mode=single otherwise
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      tenancy.mode: single
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --tenancy-mode=single
   # spec: §17.6 line 365 / F-17.6.7 — the noEnvironmentPolicy platform
   # default is the spec-canonical global.* key; an operator override
   # under global flows through to the gateway flag (it was previously

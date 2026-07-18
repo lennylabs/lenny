@@ -216,6 +216,124 @@ func TestOpsDriftEndpointsAgainstPostgresE2E(t *testing.T) {
 	}
 }
 
+// TestOpsDriftDegradesUnderPostgresOutage boots cmd/lenny-ops against a
+// real Postgres and terminates that Postgres mid-test, exercising the
+// §25.10 Degradation matrix end to end against a genuine store outage
+// rather than a unit-level failing-store stub. It asserts the two
+// documented down-states: a GET /v1/admin/drift that carries a
+// caller-supplied {"desired": {...}} body keeps returning 200 with
+// desiredStateSource: "caller" (the running state is read from the
+// gateway, and the desired state comes from the caller, so the report has
+// no Postgres dependency), while the same request with no body fails
+// closed with 503 DRIFT_DESIRED_STATE_MISSING. Before the outage the
+// no-body request returns the cold-start 404, so the 404->503 transition
+// proves the outage is observed rather than a pre-existing empty snapshot.
+//
+// spec: §25.10 Degradation — "Postgres down, caller supplies desired
+// body: Drift detection runs normally — the running state is read from
+// the gateway admin API (no Postgres dependency), and the desired state
+// comes from the caller. The response includes \"desiredStateSource\":
+// \"caller\". This enables GitOps agents that carry their own desired
+// state to continue drift checks during a Postgres outage. Postgres down,
+// no desired body: Drift detection returns 503 DRIFT_DESIRED_STATE_MISSING".
+// diagnosis: a failure means the §25.10 Postgres-outage degradation does
+// not hold against a real store outage under a running lenny-ops. Either
+// the caller-supplied-desired GitOps path did not survive the outage
+// (the GET handler coupled the desired side to the Postgres snapshot store
+// even when the caller supplied its own), or the no-body path did not
+// fail closed with 503 DRIFT_DESIRED_STATE_MISSING once the snapshot
+// store became unreachable.
+func TestOpsDriftDegradesUnderPostgresOutage(t *testing.T) {
+	opsprocess.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	ops := opsprocess.StartWith(
+		t,
+		"--postgres-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--redis-allow-insecure",
+	)
+	base := ops.BaseURL()
+
+	// driftGet issues GET /v1/admin/drift with an optional caller-supplied
+	// desired body and returns the status and decoded body. This lenny-ops
+	// runs with no --gateway-url, so the running-state collector degrades
+	// to the empty running state; the desired side is the axis under test.
+	driftGet := func(desired map[string]any) (int, map[string]any) {
+		t.Helper()
+		var reader io.Reader
+		if desired != nil {
+			b, _ := json.Marshal(map[string]any{"desired": desired})
+			reader = bytes.NewReader(b)
+		}
+		req, _ := http.NewRequest(http.MethodGet, base+"/v1/admin/drift", reader)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", "alice@acme.com")
+		req.Header.Set("X-Lenny-Roles", "platform-admin")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("GET /v1/admin/drift: %v", err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return resp.StatusCode, out
+	}
+
+	desired := map[string]any{
+		"pools": map[string]any{
+			"acme-default": map[string]any{"minWarm": float64(2), "runtime": "echo"},
+		},
+	}
+
+	// --- Preconditions (Postgres UP) ---------------------------------
+
+	// The caller-supplied path resolves its desired side from the body and
+	// reports desiredStateSource: caller while the store is reachable.
+	if code, body := driftGet(desired); code != http.StatusOK {
+		t.Fatalf("precondition: GET /v1/admin/drift with desired body status %d, want 200 (%v)", code, body)
+	} else if src, _ := body["desiredStateSource"].(string); src != "caller" {
+		t.Fatalf("precondition: desiredStateSource = %q, want caller (%v)", src, body)
+	}
+	// With no snapshot seeded and the store reachable, the no-body path is
+	// the §25.10 cold-start 404 — distinct from the 503 outage case below.
+	if code, body := driftGet(nil); code != http.StatusNotFound {
+		t.Fatalf("precondition: no-body GET /v1/admin/drift status %d, want 404 cold-start (%v)", code, body)
+	}
+
+	// --- Inject: terminate Postgres ----------------------------------
+
+	pg.Stop(t)
+
+	// --- Assert (Postgres DOWN) --------------------------------------
+
+	// The caller-supplied desired body has no Postgres dependency, so the
+	// GitOps path keeps returning 200 with desiredStateSource: caller.
+	if code, body := driftGet(desired); code != http.StatusOK {
+		t.Errorf("during outage: GET /v1/admin/drift with desired body status %d, want 200 "+
+			"(the caller-supplied GitOps path must survive a Postgres outage); body=%v", code, body)
+	} else if src, _ := body["desiredStateSource"].(string); src != "caller" {
+		t.Errorf("during outage: desiredStateSource = %q, want caller; body=%v", src, body)
+	}
+	// The no-body path resolves its desired side from the snapshot store,
+	// which is now unreachable, so it fails closed with 503.
+	code, body := driftGet(nil)
+	if code != http.StatusServiceUnavailable {
+		t.Fatalf("during outage: no-body GET /v1/admin/drift status %d, want 503 DRIFT_DESIRED_STATE_MISSING; body=%v", code, body)
+	}
+	if errObj, _ := body["error"].(map[string]any); errObj["code"] != "DRIFT_DESIRED_STATE_MISSING" {
+		t.Errorf("during outage: no-body error code = %v, want DRIFT_DESIRED_STATE_MISSING", body["error"])
+	}
+}
+
 // TestGatewayAuditQueryEndpointsE2E boots cmd/lenny-gateway and exercises
 // the §25.9 audit-log query surface: after a session lifecycle writes
 // audit rows, GET /v1/admin/audit-events returns the OCSF egress envelope
@@ -708,4 +826,180 @@ func TestGatewaySideOpsEndpointsE2E(t *testing.T) {
 			t.Errorf("re-poll cursor = %v, want it to hold at the requested %d when no new event arrived", nextPag["cursor"], sinceParam)
 		}
 	})
+}
+
+// TestOpsRemediationIdempotencyReplayAgainstPostgresE2E boots cmd/lenny-ops
+// against a real Postgres and Redis and replays a remediation mutation
+// (POST /v1/admin/remediation-locks, the §25.4 lock-acquire remediation)
+// with a repeated Idempotency-Key. It asserts the second call is a no-op
+// served from the Postgres-backed ops_idempotency_keys store rather than
+// re-executed: the replay returns the byte-identical first response with
+// X-Lenny-Idempotent-Replay: true and the same lock id, no second lock is
+// created, and exactly one completed row for the (key, caller_id) exists in
+// Postgres. Acquiring the same scope under a different key returns 409
+// REMEDIATION_LOCK_CONFLICT, proving the acquire is non-convergent and the
+// replay's success came from the cache rather than a fresh execution. It
+// also confirms the §25.4 (key, caller_id) binding: the same key under a
+// different caller does not replay the first caller's response.
+//
+// spec: §25.4 Idempotency — "Mutating endpoints (POST, PUT) accept an
+// optional Idempotency-Key header (caller-generated UUID). When present:
+// 1. lenny-ops looks up (key, caller_id) in ops_idempotency_keys
+// (Postgres). 2. If found and completed: returns the stored response
+// without re-executing." And §25.1 — "Remediation endpoints are
+// idempotent and accept an optional Idempotency-Key header." And the
+// (key, caller_id) binding: "Two different callers using the same UUID
+// receive independent idempotency behavior — one caller cannot replay
+// another caller's operation by guessing their key."
+// diagnosis: a failure means the cmd/lenny-ops composition root did not
+// thread the Postgres-backed §25.4 idempotency store through its
+// remediation mutations. Either the repeated key re-executed the lock
+// acquire instead of replaying the stored response (no X-Lenny-Idempotent-
+// Replay, a fresh lock id, or a second Postgres row), the completed
+// response was not persisted to ops_idempotency_keys, or the
+// (key, caller_id) binding leaked one caller's cached response to another.
+func TestOpsRemediationIdempotencyReplayAgainstPostgresE2E(t *testing.T) {
+	opsprocess.SkipUnlessAvailable(t)
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	ops := opsprocess.StartWith(
+		t,
+		"--postgres-dsn="+pg.DSN,
+		"--redis-url=redis://"+rd.Addr+"/0",
+		"--redis-allow-insecure",
+	)
+	base := ops.BaseURL()
+	ctx := context.Background()
+
+	// acquire issues POST /v1/admin/remediation-locks with the given
+	// Idempotency-Key and caller identity and returns the status, the raw
+	// body (so a replay can be compared byte-for-byte with the original),
+	// the decoded body, and the §25.4 idempotent-replay marker header.
+	acquire := func(key, caller string, body map[string]any) (int, []byte, map[string]any, string) {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, base+"/v1/admin/remediation-locks", bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		req.Header.Set("X-Lenny-User-ID", caller)
+		req.Header.Set("X-Lenny-Caller", caller)
+		req.Header.Set("X-Lenny-Roles", "platform-admin")
+		if key != "" {
+			req.Header.Set("Idempotency-Key", key)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST /v1/admin/remediation-locks: %v", err)
+		}
+		defer resp.Body.Close()
+		raw, _ := io.ReadAll(resp.Body)
+		var out map[string]any
+		if len(raw) > 0 {
+			_ = json.Unmarshal(raw, &out)
+		}
+		return resp.StatusCode, raw, out, resp.Header.Get("X-Lenny-Idempotent-Replay")
+	}
+
+	// completedRows counts the completed ops_idempotency_keys rows for this
+	// (key, caller_id) pair, proving the response was recorded durably in
+	// Postgres (not an in-process cache).
+	completedRows := func(key, caller string) int {
+		t.Helper()
+		var n int
+		if err := pg.Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM ops_idempotency_keys
+			 WHERE key = $1 AND caller_id = $2 AND status = 'completed'`,
+			key, caller).Scan(&n); err != nil {
+			t.Fatalf("db query ops_idempotency_keys: %v", err)
+		}
+		return n
+	}
+
+	const (
+		key    = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+		caller = "sa-prod-watchdog-01"
+		scope  = "pool:acme-default:scale"
+	)
+	lockBody := map[string]any{
+		"scope":      scope,
+		"operation":  "scale-warm-pool",
+		"ttlSeconds": 300,
+	}
+
+	// ---- first call: the lock acquire executes and is recorded ----
+	code, firstRaw, first, firstReplay := acquire(key, caller, lockBody)
+	if code != http.StatusCreated {
+		t.Fatalf("first acquire: status %d, want 201 (%s)", code, firstRaw)
+	}
+	if firstReplay == "true" {
+		t.Errorf("first acquire carried X-Lenny-Idempotent-Replay: true; the first call must execute, not replay")
+	}
+	lockID, _ := first["id"].(string)
+	if lockID == "" {
+		t.Fatalf("first acquire returned no lock id: %v", first)
+	}
+	if n := completedRows(key, caller); n != 1 {
+		t.Fatalf("ops_idempotency_keys completed rows for (key, caller) = %d, want 1 "+
+			"(the first response was not recorded to Postgres)", n)
+	}
+
+	// ---- replay: the repeated key returns the stored response, no-op ----
+	code, secondRaw, second, secondReplay := acquire(key, caller, lockBody)
+	if code != http.StatusCreated {
+		t.Fatalf("replay acquire: status %d, want the stored 201 (%s)", code, secondRaw)
+	}
+	if secondReplay != "true" {
+		t.Errorf("replay acquire: X-Lenny-Idempotent-Replay = %q, want true "+
+			"(the replay must be served from the store, not re-executed)", secondReplay)
+	}
+	if !bytes.Equal(firstRaw, secondRaw) {
+		t.Errorf("replay body differs from the stored first response:\n first=%s\nsecond=%s", firstRaw, secondRaw)
+	}
+	if id2, _ := second["id"].(string); id2 != lockID {
+		t.Errorf("replay lock id = %q, want the cached %q (a fresh execution would mint a new id)", id2, lockID)
+	}
+	// The replay re-executing would have inserted a second row; the count
+	// must stay at exactly one completed row for the (key, caller).
+	if n := completedRows(key, caller); n != 1 {
+		t.Errorf("ops_idempotency_keys completed rows after replay = %d, want 1 (the replay re-executed and re-recorded)", n)
+	}
+
+	// ---- non-convergence: a fresh key on the held scope conflicts ----
+	// Proving the acquire is non-convergent establishes that the replay's
+	// 201 came from the cached record: a genuine re-execution of the held
+	// scope would return 409, not the original success.
+	code, freshRaw, fresh, _ := acquire("11111111-2222-3333-4444-555555555555", caller, lockBody)
+	if code != http.StatusConflict {
+		t.Fatalf("acquire held scope under a fresh key: status %d, want 409 REMEDIATION_LOCK_CONFLICT (%s)", code, freshRaw)
+	}
+	if errObj, _ := fresh["error"].(map[string]any); errObj["code"] != "REMEDIATION_LOCK_CONFLICT" {
+		t.Errorf("held-scope conflict error code = %v, want REMEDIATION_LOCK_CONFLICT", fresh["error"])
+	}
+
+	// ---- caller binding: the same key under a different caller does not
+	//      replay the first caller's response (§25.4 (key, caller_id)) ----
+	// The first caller's row is live (completed, unexpired), so a distinct
+	// caller reusing the same UUID is rejected with the §25.4 line-2087
+	// 403 IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER rather than replaying the
+	// first caller's response — the guard that "one caller cannot replay
+	// another caller's operation by guessing their key."
+	code, otherRaw, other, otherReplay := acquire(key, "sa-prod-watchdog-02", lockBody)
+	if otherReplay == "true" {
+		t.Errorf("cross-caller reuse replayed the first caller's response (X-Lenny-Idempotent-Replay: true); " +
+			"the (key, caller_id) binding leaked across callers")
+	}
+	if id, _ := other["id"].(string); id == lockID {
+		t.Errorf("cross-caller reuse returned the first caller's cached lock id %q", lockID)
+	}
+	if code != http.StatusForbidden {
+		t.Fatalf("cross-caller acquire: status %d, want 403 IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER, "+
+			"not a replay of the first caller's response (%s)", code, otherRaw)
+	}
+	if errObj, _ := other["error"].(map[string]any); errObj["code"] != "IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER" {
+		t.Errorf("cross-caller error code = %v, want IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER", other["error"])
+	}
 }

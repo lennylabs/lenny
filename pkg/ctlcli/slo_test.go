@@ -16,13 +16,33 @@ func TestCmdSLOExportRendersOpenSLO(t *testing.T) {
 		t.Fatalf("slo export exit = %d, stderr=%q", code, errBuf.String())
 	}
 	s := out.String()
-	for _, want := range []string{"apiVersion: openslo/v1", "kind: SLO", "kind: AlertPolicy", `deployment_tier: tier3`} {
+	for _, want := range []string{"apiVersion: openslo/v1", "kind: SLO", "kind: AlertPolicy", "kind: AlertNotificationTarget", `deployment_tier: tier3`} {
 		if !strings.Contains(s, want) {
 			t.Errorf("slo export output missing %q", want)
 		}
 	}
 	if strings.Contains(s, "__DEPLOYMENT_TIER__") {
 		t.Error("slo export left the tier placeholder unsubstituted")
+	}
+}
+
+// TestCmdSLOExportEmitsConcreteNotificationTarget confirms the CLI threads
+// the concrete OpenSLODefaultNotificationTarget through the renderer so the
+// offline export carries a schema-valid AlertNotificationTarget with no
+// placeholder target name. spec: §16.10 lines 732-736.
+func TestCmdSLOExportEmitsConcreteNotificationTarget(t *testing.T) {
+	var out, errBuf bytes.Buffer
+	if code := cmdSLO([]string{"export"}, &out, &errBuf); code != 0 {
+		t.Fatalf("slo export exit = %d, stderr=%q", code, errBuf.String())
+	}
+	s := out.String()
+	if !strings.Contains(s, "kind: AlertNotificationTarget") {
+		t.Error("slo export omitted the shared AlertNotificationTarget document")
+	}
+	// The concrete default target name must appear so downstream AlertPolicy
+	// references resolve; an empty or placeholder name would break the round-trip.
+	if !strings.Contains(s, "webhook") {
+		t.Errorf("slo export missing the concrete notification target name, output=%q", s)
 	}
 }
 

@@ -302,6 +302,113 @@ func TestEventSubscriptionListAndDelete(t *testing.T) {
 	}
 }
 
+// doReqAs issues a request with the dev-fallback identity headers set so
+// the handler's subscriptionCaller resolves a specific role and tenant
+// without a wired AuthConfig.
+func doReqAs(t *testing.T, s *opsserver.Server, method, path, role, tenant string) (*httptest.ResponseRecorder, map[string]any) {
+	t.Helper()
+	req := httptest.NewRequest(method, path, bytes.NewReader(nil))
+	req.Header.Set("X-Lenny-Role", role)
+	req.Header.Set("X-Lenny-Tenant-ID", tenant)
+	req.Header.Set("X-Lenny-Caller", "bob@"+tenant+".example")
+	rr := httptest.NewRecorder()
+	s.ServeHTTP(rr, req)
+	var out map[string]any
+	if rr.Body.Len() > 0 {
+		_ = json.Unmarshal(rr.Body.Bytes(), &out)
+	}
+	return rr, out
+}
+
+// spec: §25.5 (tenant isolation — the subscription record carries a
+// created_by_tenant_id and event delivery respects tenant boundaries) and
+// §25.4 ("a tenant-admin caller is still constrained to its tenant regardless
+// of scope. Scopes restrict actions; tenancy restricts resources. Both are
+// enforced independently.").
+// diagnosis: a tenant-admin must not read, list, inspect the deliveries of,
+// rotate the secret of, or delete a subscription created by another tenant,
+// and List returns only the caller's own tenant's subscriptions. A failure
+// here is a cross-tenant isolation breach on the event-subscription surface:
+// tenant B can enumerate, exfiltrate the fingerprint of, invalidate the secret
+// of, or delete tenant A's webhook subscriptions.
+func TestEventSubscriptionTenantOwnershipIsolation(t *testing.T) {
+	srv, svc := newServerWithSubs(t)
+	ctx := context.Background()
+
+	// Seed one subscription owned by tenant "acme" and one owned by tenant
+	// "globex" directly through the service so ownership is unambiguous.
+	acmeSub, err := svc.Create(ctx, eventsubscription.CreateRequest{
+		CallbackURL: "https://acme.example/webhook",
+	}, eventsubscription.Caller{Subject: "alice@acme.example", TenantID: "acme"})
+	if err != nil {
+		t.Fatalf("seed acme subscription: %v", err)
+	}
+	globexSub, err := svc.Create(ctx, eventsubscription.CreateRequest{
+		CallbackURL: "https://globex.example/webhook",
+	}, eventsubscription.Caller{Subject: "bob@globex.example", TenantID: "globex"})
+	if err != nil {
+		t.Fatalf("seed globex subscription: %v", err)
+	}
+	if _, err := svc.Store.RecordDelivery(ctx, eventsubscription.Delivery{
+		SubscriptionID: acmeSub.ID, EventID: "evt-1", EventType: "dev.lenny.alert_fired",
+		Status: eventsubscription.DeliveryFailed, Attempts: 1,
+	}); err != nil {
+		t.Fatalf("seed delivery: %v", err)
+	}
+
+	base := "/v1/admin/event-subscriptions/" + acmeSub.ID
+
+	// A tenant-admin for globex cannot see acme's subscription by id: the
+	// resource is not visible to it, so the read fails closed as 404 rather
+	// than disclosing the subscription or its secret fingerprint.
+	rr, _ := doReqAs(t, srv, http.MethodGet, base, "tenant-admin", "globex")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant GET status = %d, want 404 (not visible)", rr.Code)
+	}
+	rr, _ = doReqAs(t, srv, http.MethodGet, base+"/deliveries", "tenant-admin", "globex")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant GET deliveries status = %d, want 404", rr.Code)
+	}
+	rr, _ = doReqAs(t, srv, http.MethodPost, base+"/rotate-secret", "tenant-admin", "globex")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant rotate-secret status = %d, want 404", rr.Code)
+	}
+	rr, _ = doReqAs(t, srv, http.MethodDelete, base, "tenant-admin", "globex")
+	if rr.Code != http.StatusNotFound {
+		t.Errorf("cross-tenant DELETE status = %d, want 404", rr.Code)
+	}
+
+	// The cross-tenant attempts left acme's subscription and its secret
+	// untouched.
+	stillThere, err := svc.Store.Get(ctx, acmeSub.ID)
+	if err != nil {
+		t.Fatalf("acme subscription must survive cross-tenant delete: %v", err)
+	}
+	if stillThere.SecretFingerprint != acmeSub.SecretFingerprint {
+		t.Errorf("acme secret fingerprint changed by cross-tenant rotate: got %q, want %q",
+			stillThere.SecretFingerprint, acmeSub.SecretFingerprint)
+	}
+
+	// List for a tenant-admin returns only its own tenant's subscriptions.
+	rr, body := doReqAs(t, srv, http.MethodGet, "/v1/admin/event-subscriptions", "tenant-admin", "globex")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("globex list status = %d, want 200", rr.Code)
+	}
+	subs, _ := body["subscriptions"].([]any)
+	ids := map[string]bool{}
+	for _, s := range subs {
+		m, _ := s.(map[string]any)
+		id, _ := m["id"].(string)
+		ids[id] = true
+	}
+	if !ids[globexSub.ID] {
+		t.Errorf("globex list missing its own subscription %q: %v", globexSub.ID, ids)
+	}
+	if ids[acmeSub.ID] {
+		t.Errorf("globex list leaked acme's subscription %q", acmeSub.ID)
+	}
+}
+
 // spec: §25.5 (routes are gated on the service being wired)
 func TestEventSubscriptionRoutesAbsentWithoutService(t *testing.T) {
 	srv := opsserver.New(opsserver.Options{})

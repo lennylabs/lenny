@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"sort"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -131,12 +132,7 @@ func (w *opsWiring) buildServiceBody() {
 			// failure) per the §25.5 buffer-fallback model.
 			log.Printf("lenny-ops: self-health %s -> %s (replica %s)",
 				prev.StatusText, next.StatusText, w.replicaID)
-			fields := map[string]any{
-				"replicaId":  w.replicaID,
-				"previous":   prev.StatusText,
-				"current":    next.StatusText,
-				"transition": prev.StatusText + " -> " + next.StatusText,
-			}
+			fields := selfHealthChangePayload(w.replicaID, prev, next)
 			// §11.7: commit the durable ops_health_status_changed audit row
 			// (logged only in the degraded no-Postgres mode). F-25.4.22.
 			w.auditRecorder.Record(string(events.EventOpsHealthStatusChanged), fields, time.Now())
@@ -160,4 +156,48 @@ func (w *opsWiring) buildServiceBody() {
 		log.Fatalf("lenny-ops: build service: %v", err)
 	}
 	w.svc = svc
+}
+
+// selfHealthChangePayload builds the ops_health_status_changed event
+// payload for a §25.4 self-health transition. The §25.3 event catalog
+// documents the payload as "Old status, new status, triggering check", so
+// alongside the replica identity and the previous/current aggregate
+// status the payload names the triggering check(s): the individual
+// self-health checks whose status changed between the previous and the
+// new report, which is what drove the aggregate transition.
+// spec: §25.3 (event types — ops_health_status_changed payload)
+func selfHealthChangePayload(replicaID string, prev, next opsservice.SelfHealthReport) map[string]any {
+	return map[string]any{
+		"replicaId":        replicaID,
+		"previous":         prev.StatusText,
+		"current":          next.StatusText,
+		"transition":       prev.StatusText + " -> " + next.StatusText,
+		"triggeringChecks": triggeringChecks(prev, next),
+	}
+}
+
+// triggeringChecks returns the names of the §25.4 self-health checks whose
+// individual status changed between prev and next, sorted by name. These
+// are the checks that drove the aggregate self-health transition. A check
+// present in next but absent from prev (for example on the first
+// evaluation, whose baseline report carries no checks) counts as a trigger
+// when its new status is not healthy.
+// spec: §25.3 (ops_health_status_changed — triggering check)
+func triggeringChecks(prev, next opsservice.SelfHealthReport) []string {
+	prevStatus := make(map[string]string, len(prev.Checks))
+	for _, c := range prev.Checks {
+		prevStatus[c.Name] = c.StatusText
+	}
+	changed := make([]string, 0, len(next.Checks))
+	for _, c := range next.Checks {
+		before, ok := prevStatus[c.Name]
+		switch {
+		case ok && before != c.StatusText:
+			changed = append(changed, c.Name)
+		case !ok && c.Status != opsservice.StatusHealthy:
+			changed = append(changed, c.Name)
+		}
+	}
+	sort.Strings(changed)
+	return changed
 }

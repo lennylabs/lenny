@@ -27,16 +27,20 @@ type poolLeaseStore interface {
 	Remove(leaseID string)
 }
 
-// poolCredentialRevoker terminates the §4.9 credential leases backed by
-// a revoked pool credential. For each credential it adds the source-aware
-// identity to the deny list and drops the leases this replica holds,
-// returning the count terminated. It satisfies admin.PoolCredentialRevoker.
+// poolCredentialRevoker denies the §4.9 credential leases backed by a
+// revoked pool credential. For each credential it adds the source-aware
+// identity to the deny list and retains the leases this replica holds so
+// the proxy rejects each in place, returning the count of leases affected.
+// It satisfies admin.PoolCredentialRevoker.
 //
 // The deny-list write is what stops an already-materialized proxy-mode
 // lease token from reaching the provider — §4.9 step 4 — and, when the
 // deny list is wrapped by a propagator, the revocation fans out to every
 // replica so a peer that still holds the lease rejects it on the next
-// upstream request. spec: §4.9 lines 1640-1652.
+// upstream request. The lease is retained rather than removed because under
+// the shared-Postgres lease store a delete would remove the row every
+// replica reads, making the deny-list check unreachable and degrading the
+// rejection to LEASE_TOKEN_INVALID. spec: §4.9 lines 1640-1652, 1671.
 type poolCredentialRevoker struct {
 	leases   poolLeaseStore
 	denyList credentialDenyList
@@ -44,10 +48,10 @@ type poolCredentialRevoker struct {
 
 // RevokePoolCredentials revokes each credentialID in poolID: it adds the
 // pool-backed credential identity to the deny list (propagated across
-// replicas) and removes every lease this replica holds against it,
-// returning the total leases terminated. A credential with no live lease
-// on this replica still lands on the deny list so a future request that
-// resolves a cached lease for it is rejected.
+// replicas) and retains every lease this replica holds against it, denied
+// in place by the deny-list entry, returning the count of leases affected.
+// A credential with no live lease on this replica still lands on the deny
+// list so a future request that resolves a cached lease for it is rejected.
 func (p *poolCredentialRevoker) RevokePoolCredentials(_ context.Context, poolID string, credentialIDs []string) int {
 	total := 0
 	for _, credID := range credentialIDs {
@@ -57,8 +61,9 @@ func (p *poolCredentialRevoker) RevokePoolCredentials(_ context.Context, poolID 
 			CredentialID: credID,
 		}
 		p.denyList.Revoke(key)
-		for _, lease := range p.leases.LeasesByCredential(key) {
-			p.leases.Remove(lease.LeaseID)
+		// spec: §4.9 — the lease is retained and denied in place; the
+		// returned count is leases-affected, not leases-removed.
+		for range p.leases.LeasesByCredential(key) {
 			total++
 		}
 	}

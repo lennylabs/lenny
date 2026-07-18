@@ -377,6 +377,19 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 			t.Errorf("health component %q carries runbook %q, expected %q",
 				s.healthComp, comp.runbook(), s.wantRunbookRef)
 		}
+		// Assert: the top-level §25.2 degradation envelope tracks the
+		// outage. During the store outage the aggregate status is
+		// non-healthy, so the envelope level is degraded or failed (never
+		// healthy) and its thresholdSource is compiled-in-defaults.
+		if report.Status == "healthy" {
+			t.Errorf("aggregate health status is %q during the %s outage, expected non-healthy; "+
+				"the degraded component must pull the aggregate off healthy", report.Status, s.store)
+		}
+		assertDegradationEnvelope(t, report, "during the "+s.store+" outage")
+		if report.Degradation != nil {
+			t.Logf("degradation envelope during outage: level=%q thresholdSource=%q",
+				report.Degradation.Level, report.Degradation.ThresholdSource)
+		}
 	}
 
 	// Assert: the gateway Deployment did not crash-loop on the outage.
@@ -394,8 +407,61 @@ func assertStoreOutageDegrades(t *testing.T, c *kind.Cluster, s storeOutageScena
 		t.Fatalf("/v1/admin/health did not return component %q to healthy within %s after %s was restored "+
 			"(last status %q)", s.healthComp, storeRecoveryBound, s.store, lastStatus)
 	}
+	// Assert: once the store recovers the top-level §25.2 degradation
+	// envelope returns to level healthy (with thresholdSource still
+	// compiled-in-defaults), so the response-level signal an agent reads
+	// tracks recovery, not only the per-component status.
+	if report, ok := gatewayHealth(t, c, s.probePod, gatewayIP); ok {
+		assertDegradationEnvelope(t, report, "after "+s.store+" was restored")
+	}
 	t.Logf("recovery: %s restored, health component %q back to healthy; outage verified end to end",
 		s.store, s.healthComp)
+}
+
+// expectedDegradationLevel maps a §25.3 aggregate health status to the
+// §25.2 degradation-envelope level the report must carry alongside it:
+// healthy→healthy, degraded→degraded, unhealthy→failed. spec: §25.2
+// lines 210, 233.
+func expectedDegradationLevel(status string) string {
+	switch status {
+	case "degraded":
+		return "degraded"
+	case "unhealthy":
+		return "failed"
+	default:
+		return "healthy"
+	}
+}
+
+// assertDegradationEnvelope decodes the top-level §25.2 degradation
+// object from a live §25.3 /v1/admin/health report and asserts it
+// tracks the aggregate status. The envelope is always present (the
+// aggregate report stamps it unconditionally), its thresholdSource is
+// always compiled-in-defaults (the gateway's in-process tracker
+// evaluates the compiled-in thresholds, never the operator's Prometheus
+// rules), and its level is the §25.2 mapping of the report's overall
+// status. This pins the response-level envelope an agent reads against
+// the live JSON during a real store outage, which unit tests exercise
+// only in process. spec: §25.2 line 224 (thresholdSource is used for
+// health responses); §25.3 line 529 (health Degradation); §25.13 line
+// 4851 (compiled-in-defaults on the in-process fallback view).
+func assertDegradationEnvelope(t *testing.T, report healthReport, when string) {
+	t.Helper()
+	if report.Degradation == nil {
+		t.Errorf("/v1/admin/health carried no top-level degradation envelope %s; "+
+			"the §25.4 canonical response-level signal must always be present on the aggregate report", when)
+		return
+	}
+	if report.Degradation.ThresholdSource != "compiled-in-defaults" {
+		t.Errorf("degradation.thresholdSource = %q %s, want %q; the gateway's in-process aggregate "+
+			"view always evaluates the compiled-in thresholds",
+			report.Degradation.ThresholdSource, when, "compiled-in-defaults")
+	}
+	if want := expectedDegradationLevel(report.Status); report.Degradation.Level != want {
+		t.Errorf("degradation.level = %q %s for overall status %q, want %q; the envelope level "+
+			"must track the aggregate health status",
+			report.Degradation.Level, when, report.Status, want)
+	}
 }
 
 // assertNoCrashLoop checks that the named Deployment is still Ready and

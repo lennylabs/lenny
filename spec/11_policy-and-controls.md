@@ -79,7 +79,7 @@ The platform emits a structured billing event stream that provides per-tenant, p
 | `delegation_policy.export_scan_strengthened` | A `DelegationPolicy`'s `contentPolicy.scanExportedFiles` was changed from `false` to `true`. Captures the same fields as the `_weakened` counterpart. Not subject to cooldown — tightening posture takes effect immediately. |
 | `token_usage.checkpoint`         | Periodic token usage snapshot (emitted at configurable intervals, not only at session end)                                         |
 | `credential.leased`              | A credential is leased from a credential pool to a session                                                                         |
-| `credential.revoked`             | A credential was emergency-revoked; all active leases against it were terminated (see [Section 4.9](04_system-components.md#49-credential-leasing-service) Emergency Credential Revocation) |
+| `credential.revoked`             | A credential was emergency-revoked; all active leases against it were affected (terminated in direct mode, denied in place via the deny list in proxy mode) (see [Section 4.9](04_system-components.md#49-credential-leasing-service) Emergency Credential Revocation) |
 | `billing_correction`             | Corrects a previously emitted billing event (references original by sequence number)                                               |
 
 **Event schema (all events):**
@@ -132,7 +132,7 @@ The platform emits a structured billing event stream that provides per-tenant, p
 | `delivery_mode`          | string   | Credential delivery mode (`proxy` or `direct`) at lease time (for `credential.leased` events). Enables compliance teams to audit direct-mode credential deliveries. See [Section 4.9](04_system-components.md#49-credential-leasing-service).                                                        |
 | `revoked_by`             | string   | Identity of the operator who triggered revocation (for `credential.revoked` events)                                                                                                                                                         |
 | `revocation_reason`      | string   | Reason for revocation (for `credential.revoked` events)                                                                                                                                                                                     |
-| `leases_terminated`      | uint32   | Number of active leases terminated by the revocation (for `credential.revoked` events)                                                                                                                                                      |
+| `leases_terminated`      | uint32   | Number of active leases affected by the revocation (terminated in direct mode, denied in place via the deny list in proxy mode) (for `credential.revoked` events)                                                                                                                                                      |
 
 **Null/absent field contract:** Fields annotated "(for X events only)" MUST be omitted from the JSON payload for all other event types — they are neither present nor null. Consumers MUST treat absent fields as "not applicable" for the event type (not as zero). `corrects_sequence` uses type `uint64 | null`: `null` (or absent) means the event is not a correction; `0` is never a valid sequence number (sequences start at 1). Analytics consumers MUST handle absent conditional fields as equivalent to `null` in their schema, e.g., Parquet `optional` columns. The `event_type` field is the discriminant for all conditional fields.
 
@@ -497,7 +497,7 @@ The platform surfaces security signals and provides first-responder primitives; 
 | Signal | Section | Severity |
 | --- | --- | --- |
 | `AuditGrantDrift` — unexpected UPDATE/DELETE grants on audit tables | [§11.7](#117-audit-logging), [§16.5](16_observability.md#165-alerting-rules-and-slos) | Critical |
-| `CredentialCompromised` — revoked credential still has active leases | [§4.9](04_system-components.md#49-credential-leasing-service), [§16.5](16_observability.md#165-alerting-rules-and-slos) | Critical |
+| `CredentialCompromised` — revoked credential has an active lease not on the deny list | [§4.9](04_system-components.md#49-credential-leasing-service), [§16.5](16_observability.md#165-alerting-rules-and-slos) | Critical |
 | `DataResidencyViolationAttempt` — cross-region write, delegation, backup, artifact-replication, legal-hold escrow, or platform-tenant audit-write bypass | [§12.8](12_storage-architecture.md#128-compliance-interfaces), [§11.7](#117-audit-logging), [§16.5](16_observability.md#165-alerting-rules-and-slos) | Critical |
 | `ArtifactReplicationResidencyViolation` — ArtifactStore replication runtime residency preflight halted replication on jurisdiction-tag mismatch | [§25.11](25_agent-operability.md#2511-backup-and-restore-api), [§12.8](12_storage-architecture.md#128-compliance-interfaces), [§16.5](16_observability.md#165-alerting-rules-and-slos) | Critical |
 | `AuditChainGap` — broken hash chain detected at startup | [§11.7](#117-audit-logging), [§16.5](16_observability.md#165-alerting-rules-and-slos) | Warning |
@@ -505,7 +505,7 @@ The platform surfaces security signals and provides first-responder primitives; 
 
 **Platform first-responder primitives:**
 
-- **Credential revocation:** `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` immediately marks the credential as `revoked` and triggers active-lease propagation. The `CredentialCompromised` alert clears once all active leases are terminated. See [Section 4.9](04_system-components.md#49-credential-leasing-service).
+- **Credential revocation:** `POST /v1/admin/credential-pools/{name}/credentials/{credId}/revoke` immediately marks the credential as `revoked` and triggers active-lease propagation. The `CredentialCompromised` alert clears once every active lease against the credential is on the deny list (or has been terminated in direct mode). See [Section 4.9](04_system-components.md#49-credential-leasing-service).
 - **User invalidation:** `POST /v1/admin/users/{user_id}/invalidate` terminates all active sessions for a user and revokes their tokens, stopping an active attacker's sessions. See [Section 11.4](#114-user-invalidation).
 - **Legal hold:** `POST /v1/admin/legal-hold` suspends retention rotation for any session or artifact implicated in an incident, preserving forensic state. See [Section 12.8](12_storage-architecture.md#128-compliance-interfaces).
 - **Audit trail:** All admin operations (revocations, holds, invalidations) are written to the append-only audit trail ([Section 11.7](#117-audit-logging)) with operator identity and timestamp, providing a tamper-evident record of responder actions.

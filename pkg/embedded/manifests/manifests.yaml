@@ -1589,9 +1589,9 @@ data:
               labels:
                 severity: critical
               annotations:
-                description: At least one credential in revoked state (pool-scoped or user-scoped) still has active leases alive against it for more than 30s, indicating revocation propagation failure and that the compromised key may still be in use.
+                description: At least one credential in revoked state (pool-scoped or user-scoped) still has an active lease that is not shadowed by a deny-list entry for more than 30s, indicating revocation propagation did not reach the deny list and that the compromised key may still be in use. The alert clears once every active lease against the credential is on the deny list or has been terminated in direct mode.
                 runbook_url: https://docs.lenny.dev/runbooks/credential-revocation
-                summary: Revoked credential still has active leases
+                summary: Revoked credential has an active lease not on the deny list
             - alert: TokenServiceUnavailable
               expr: lenny_token_service_circuit_state == 2
               for: 30s
@@ -3473,6 +3473,25 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch"]
+  # §25.8 Version Aggregation — read-only access to the release
+  # namespace's helm.sh/release.v1 Secret the Helm-chart-version source
+  # resolves the deployed chart version from. delete is additionally
+  # needed by the §25.6 certManagerExpiring auto-remediation, which
+  # forces cert-manager re-issuance by deleting the Certificate's
+  # backing Secret (spec/25_agent-operability.md, certManagerExpiring
+  # remediation row).
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "delete"]
+  # §25.6 certManagerExpiring detection and remediation — lists
+  # Certificates to find one within the 7-day expiry window
+  # (cert-manager healthy) and patches the issue-temporary-certificate
+  # annotation to force re-issuance once its backing Secret is deleted
+  # above. Also backs the §25.8 cert_manager self-health check's
+  # Certificate listing (k8sadapters.go certManagerSource).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    verbs: ["get", "list", "watch", "patch"]
   # §25.4 lines 1094-1096 — Lease reads for leader-election visibility.
   # The mutating lease lifecycle lives on the lenny-ops-leader-election
   # Role (ops-deployment.yaml); this read grant matches the spec rule.
@@ -4017,6 +4036,11 @@ spec:
             # (§8.6 does not fix it); default 5s. Proposal 0023.
             - --proxy-extension-wait-timeout=5s
             - --no-environment-policy=deny-all
+            # §4.9 — the platform tenancy.mode the gateway enforces the two
+            # cross-tenant credential-delivery rejections against. The same
+            # value drives the lenny-webhook binary and the lenny-preflight
+            # Job, so every enforcement point keys off one tenancy signal.
+            - --tenancy-mode=single
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays
             # inert until the operator declares a sunset window.
@@ -4745,6 +4769,10 @@ spec:
             - --ops-roll-timeout-seconds=600
             - --gateway-roll-timeout-seconds=1200
             - --controller-roll-timeout-seconds=600
+            # §25.8 Version Aggregation: the running Helm release name, so
+            # the Helm-chart-version source reads the helm.sh/release.v1
+            # Secret for this install rather than a hardcoded default.
+            - --helm-release-name=lenny
             # §25.8 upgrade-check consumer: fetch the release manifest over
             # HTTP from the configured channel and verify its Ed25519
             # X-Lenny-Release-Signature before trusting it.

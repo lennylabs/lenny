@@ -102,7 +102,7 @@ func TestRenewalWorkerPushesRotationToPod(t *testing.T) {
 	registry := podsession.NewRegistry()
 	registry.Put(&podsession.BindResult{SessionID: "run_a", Adapter: dialRecorder(t, rec)})
 
-	wiring := newCredRenewalWiring(assign, registry, nil)
+	wiring := newCredRenewalWiring(assign, registry, nil, nil, nil)
 	if wiring == nil {
 		t.Fatal("newCredRenewalWiring returned nil for a wired credential service")
 	}
@@ -160,7 +160,7 @@ func TestRenewalWorkerSurvivesNoPodBinding(t *testing.T) {
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
 
 	// An empty registry: the session's pod is bound on another replica.
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, nil, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnRenewed: wiring.onRenewed})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
@@ -179,7 +179,7 @@ func TestRenewalWorkerSurvivesNoPodBinding(t *testing.T) {
 // when the gateway has no credential-assignment service, so a minimal
 // gateway runs no renewal worker.
 func TestNewCredRenewalWiringNilWithoutService(t *testing.T) {
-	if w := newCredRenewalWiring(nil, podsession.NewRegistry(), nil); w != nil {
+	if w := newCredRenewalWiring(nil, podsession.NewRegistry(), nil, nil, nil); w != nil {
 		t.Errorf("newCredRenewalWiring(nil, ...) = %v, want nil", w)
 	}
 }
@@ -189,7 +189,7 @@ func TestNewCredRenewalWiringNilWithoutService(t *testing.T) {
 // cannot re-mint, and the worker falls through to fault rotation.
 func TestRenewWithoutPoolBindingFails(t *testing.T) {
 	assign := credassign.New(credleasestore.New(), credcache.New())
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, nil, nil)
 
 	_, err := wiring.Renew(context.Background(), credrenewal.Lease{LeaseID: "untracked"})
 	if err == nil {
@@ -205,6 +205,10 @@ func TestRenewalWiringNilReceiverHooksAreNoops(t *testing.T) {
 	w.track(nil, "pool", "provider", credential.Lease{})
 	w.onRenewed(credrenewal.Lease{})
 	w.onExhausted(credrenewal.Lease{})
+	if err := w.onExtend(credrenewal.Lease{}, time.Time{}); err != nil {
+		t.Errorf("onExtend on a nil wiring returned %v, want nil", err)
+	}
+	w.onExtensionCapReached(credrenewal.Lease{})
 }
 
 // spec §4.0, §16.6: credential pool manager emits credential_rotated on
@@ -215,7 +219,7 @@ func TestRenewalEmitsCredentialRotatedOnSuccess(t *testing.T) {
 
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em, nil, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnRenewed: wiring.onRenewed})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
@@ -272,7 +276,7 @@ func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
 
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), em, nil, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{OnExhausted: wiring.onExhausted})
 	assign.OnAssigned(func(a credassign.LeaseAssignment) {
 		wiring.track(worker, a.PoolName, string(a.Lease.Provider), a.Lease)
@@ -315,7 +319,7 @@ func TestRenewalEmitsCredentialPoolExhaustedOnExhaustion(t *testing.T) {
 func TestRenewalNoEmitterIsSilent(t *testing.T) {
 	assign := credassign.New(credleasestore.New(), credcache.New())
 	assign.RegisterPool(renewalProxyPool("claude-prod", "key-1"))
-	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil)
+	wiring := newCredRenewalWiring(assign, podsession.NewRegistry(), nil, nil, nil)
 	worker := credrenewal.New(wiring, credrenewal.Options{
 		OnRenewed:   wiring.onRenewed,
 		OnExhausted: wiring.onExhausted,

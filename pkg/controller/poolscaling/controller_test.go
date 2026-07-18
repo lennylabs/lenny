@@ -18,6 +18,9 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling/strategy"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
 const (
@@ -155,6 +158,52 @@ func TestSyncCorrectsManualSpecDrift(t *testing.T) {
 	}
 	if got := getWarmPool(t, c).Spec.MinWarm; got != 3 {
 		t.Errorf("warm pool minWarm = %d, want 3 (drift not corrected)", got)
+	}
+}
+
+// TestSyncReconcilesDeliveryFieldsOntoTemplateCRD drives the full
+// poolstore-to-CRD channel: a PoolStoreSource reads a pool carrying
+// deliveryMode/spiffeBinding, the Reconciler applies the derived
+// SandboxTemplate, and the applied CRD must carry both delivery fields so the
+// lenny-direct-mode-isolation ValidatingAdmissionWebhook reads live values
+// rather than the empty strings the CRD carried before toConfig populated them.
+// Against the pre-fix mapping the reconciled Spec.DeliveryMode/SpiffeBinding
+// stay empty and this fails.
+//
+// diagnosis: the poolstore-to-SandboxTemplate reconcile dropped the §4.9
+// credential-delivery fields, so the admission webhook and preflight scan
+// inspect empty deliveryMode/spiffeBinding on the reconciled CRD.
+//
+// spec: §4.9.
+func TestSyncReconcilesDeliveryFieldsOntoTemplateCRD(t *testing.T) {
+	s := newScheme(t)
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+
+	store := newMemoryStore(t, poolstore.Pool{
+		Name:                                testPool,
+		RuntimeRef:                          "claude-code",
+		IsolationProfile:                    isolation.ProfileStandard,
+		AllowStandardIsolation:              true,
+		ExecutionMode:                       runtimestore.ExecutionModeSession,
+		WarmCount:                           1,
+		DeliveryMode:                        "proxy",
+		SpiffeBinding:                       "disabled",
+		AllowProxyModeSpiffeBindingDisabled: true,
+	})
+	r := &poolscaling.Reconciler{
+		Client: c,
+		Source: &poolscaling.PoolStoreSource{Store: store, Namespace: testNS},
+	}
+	if err := r.Sync(context.Background()); err != nil {
+		t.Fatalf("Sync: %v", err)
+	}
+
+	tmpl := getTemplate(t, c)
+	if tmpl.Spec.DeliveryMode != "proxy" {
+		t.Errorf("template deliveryMode = %q, want proxy", tmpl.Spec.DeliveryMode)
+	}
+	if tmpl.Spec.SpiffeBinding != "disabled" {
+		t.Errorf("template spiffeBinding = %q, want disabled", tmpl.Spec.SpiffeBinding)
 	}
 }
 

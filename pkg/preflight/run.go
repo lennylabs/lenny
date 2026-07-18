@@ -15,6 +15,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
@@ -138,6 +139,13 @@ type Config struct {
 	// DevMode is the global.devMode chart value. It exempts the §12.9
 	// line 1050 volume-encryption check (local development volumes). F-12.9.12.
 	DevMode bool
+	// TenancyMode is the tenancy.mode chart value (single | multi). The
+	// §4.9 credential-delivery scan enforces only when it is "multi"; a
+	// single-tenant or development deployment permits the combinations the
+	// scan otherwise rejects. Threaded from --tenancy-mode.
+	//
+	// spec: §4.9.
+	TenancyMode string
 	// AttestVolumeEncryption is the preflight.attestVolumeEncryption chart
 	// value: the operator's attestation that the BYO Postgres and Redis
 	// volumes are backed by encrypted storage when the §12.9 line 1050
@@ -382,6 +390,7 @@ func Run(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
 		runObjectStoreT4EncryptionChecks,
 		runRuntimeClassChecks,
 		runPoolGracePeriodChecks,
+		runCredentialDeliveryChecks,
 		runPlaygroundChecks,
 		runCRDSchemaChecks,
 		runPrometheusOperatorChecks,
@@ -718,6 +727,40 @@ func runPoolGracePeriodChecks(ctx context.Context, reader client.Reader, _ Confi
 	return []CheckResult{{
 		Name:     "pool-termination-grace-period",
 		Decision: CheckTerminationGracePeriods(pools),
+	}}
+}
+
+// runCredentialDeliveryChecks runs the §4.9 install-time
+// credential-delivery scan. It lists every SandboxTemplate pool
+// definition and fails the multi-tenant install fail-closed when any pool
+// carries a forbidden deliveryMode combination, reusing the canonical
+// direct_mode_isolation.Decide the registration validation and admission
+// webhook already share. A SandboxTemplateList error other than a missing
+// CRD or NotFound fails the check fail-closed, inverting the advisory
+// node-drain-timeout sibling that treats a read failure as a pass.
+//
+// spec: §4.9; §13.1 (fail-closed install-time scan pattern).
+func runCredentialDeliveryChecks(ctx context.Context, reader client.Reader, cfg Config) []CheckResult {
+	// The scan enforces only in multi-tenant mode; a single-tenant or
+	// development install permits the combinations, so it neither lists
+	// pools nor fails on a read error. Gating the gather here keeps a
+	// single-tenant install from failing closed on a SandboxTemplate read.
+	if cfg.TenancyMode != direct_mode_isolation.TenancyMulti {
+		return []CheckResult{{
+			Name:     "credential-delivery-multitenant",
+			Decision: Decision{Passed: true},
+		}}
+	}
+	pools, err := gatherCredentialDeliveryPools(ctx, reader)
+	if err != nil {
+		return []CheckResult{{
+			Name:     "credential-delivery-multitenant",
+			Decision: Decision{Reason: "list SandboxTemplates: " + err.Error()},
+		}}
+	}
+	return []CheckResult{{
+		Name:     "credential-delivery-multitenant",
+		Decision: CheckCredentialDelivery(pools, cfg.TenancyMode, cfg.DevMode),
 	}}
 }
 

@@ -362,6 +362,70 @@ func cleanupPool(t *testing.T, c *kind.Cluster, probe, gatewayIP string, admin g
 	_ = gatewayRequest(t, c, probe, gatewayIP, "DELETE", "/v1/admin/pools/"+name, admin, "")
 }
 
+// diagnosis: the §4.9 layer-1 warm-pool credential-delivery gate did not
+// fail closed at pool admission. The test drives a pool that combines
+// deliveryMode: proxy with egressProfile: provider-direct through the live
+// POST /v1/admin/pools admission path and asserts it is rejected with 422
+// carrying the InvalidPoolEgressDeliveryCombo code, while the corrected
+// control pool (proxy + restricted) is admitted. An admitted adversarial
+// pool means the §13.2 NET-006 mutual-exclusivity boundary is bypassable at
+// registration: proxy mode keeps API keys off the pod, but provider-direct
+// egress opens a direct CIDR path to the same provider endpoints, and the
+// stored pool would reconcile into a SandboxTemplate the failurePolicy: Fail
+// layer-2 webhook then rejects, wedging the PoolScalingController. NET-006 is
+// rejected in every tenancy mode, so this runs on the standard install.
+// spec: 4.9, 13.2
+func TestPoolAdmissionCredentialDeliveryGate_spec_4_9(t *testing.T) {
+	c := kind.InstallLenny(t)
+	if !deploymentReadyT9(t, c, gatewayDeploymentName) {
+		t.Skipf("precondition not met: %s is not Ready; the admin API is the gateway", gatewayDeploymentName)
+	}
+	if !deploymentReadyT9(t, c, auditDeployment) {
+		t.Skipf("precondition not met: %s is not Ready; the registry is Postgres-backed", auditDeployment)
+	}
+
+	probe := "t9-padm-cred-probe"
+	gatewayIP := startGatewayProbe(t, c, probe)
+	admin := platformAdmin()
+	seedPoolAdmissionRuntimes(t, c, probe, gatewayIP, admin)
+
+	suffix := fmt.Sprintf("-%d", time.Now().UnixNano())
+	badName := "t9-padm-proxy-providerdirect" + suffix
+	ctlName := "t9-padm-proxy-restricted" + suffix
+
+	badBody := fmt.Sprintf(
+		`{"name":%q,"runtimeRef":%q,"isolationProfile":"sandboxed","executionMode":"session",`+
+			`"deliveryMode":"proxy","egressProfile":"provider-direct"}`,
+		badName, poolAdmissionRuntime,
+	)
+	bad := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/pools", admin, badBody)
+	if bad.curlExit != 0 {
+		t.Fatalf("admin pool create did not complete (curl exit %d, body %q)", bad.curlExit, bad.body)
+	}
+	if bad.statusCode != 422 {
+		cleanupPool(t, c, probe, gatewayIP, admin, badName)
+		t.Fatalf("§4.9/§13.2 violation: the proxy + provider-direct pool was admitted with status %d, "+
+			"expected 422; the NET-006 credential-delivery gate did not fail closed (body %q)",
+			bad.statusCode, bad.body)
+	}
+	if !strings.Contains(bad.body, "InvalidPoolEgressDeliveryCombo") {
+		t.Errorf("§13.2: the proxy + provider-direct rejection does not carry the "+
+			"InvalidPoolEgressDeliveryCombo code; the gate may be firing for the wrong reason (body %q)", bad.body)
+	}
+
+	ctlBody := fmt.Sprintf(
+		`{"name":%q,"runtimeRef":%q,"isolationProfile":"sandboxed","executionMode":"session",`+
+			`"deliveryMode":"proxy","egressProfile":"restricted"}`,
+		ctlName, poolAdmissionRuntime,
+	)
+	good := gatewayRequestRetry(t, c, probe, gatewayIP, "POST", "/v1/admin/pools", admin, ctlBody)
+	t.Cleanup(func() { cleanupPool(t, c, probe, gatewayIP, admin, ctlName) })
+	if good.curlExit != 0 || good.statusCode != 201 {
+		t.Errorf("control: the corrected proxy + restricted pool was rejected with status %d, expected 201; "+
+			"the NET-006 gate is over-broad (body %q)", good.statusCode, good.body)
+	}
+}
+
 // --- §5.2 step 7 vm-restart cross-tenant recycle-boundary retire ---
 //
 // The microvm cross-tenant gate above admits a scrubProfile: vm-restart

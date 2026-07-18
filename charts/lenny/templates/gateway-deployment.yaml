@@ -412,6 +412,11 @@ spec:
             {{- /* §17.6 line 365 / F-17.6.7: noEnvironmentPolicy is the
                 spec-canonical global.* platform default. */}}
             - --no-environment-policy={{ .Values.global.noEnvironmentPolicy }}
+            # §4.9 — the platform tenancy.mode the gateway enforces the two
+            # cross-tenant credential-delivery rejections against. The same
+            # value drives the lenny-webhook binary and the lenny-preflight
+            # Job, so every enforcement point keys off one tenancy signal.
+            - --tenancy-mode={{ .Values.tenancy.mode }}
             # spec: §15.5 item 1; docs/api/index.md line 124 —
             # F-15.5.11. Empty omits the flag so the middleware stays
             # inert until the operator declares a sunset window.

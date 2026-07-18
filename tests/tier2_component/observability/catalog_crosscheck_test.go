@@ -38,7 +38,32 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/inproceval"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
+	metricscatalog "github.com/lennylabs/lenny/pkg/observability/metrics"
 )
+
+// TestCredentialLeaseSweepCounterInCatalog confirms the §4.9 bounded
+// expired-lease sweep worker's metric is registered in the §16.1 metric
+// catalog as an unlabeled cumulative counter, so the sweep's emitted count
+// of removed expired lease rows is a first-class observable surface and
+// not an uncatalogued metric.
+//
+// spec: §4.9 line 1671 (sweep worker); §16.1 (metric catalog).
+//
+// diagnosis: the expired-lease sweep worker's counter
+// lenny_gateway_credential_leases_swept_total is missing from the §16.1
+// metric catalog or is registered with the wrong type. The sweep's count of
+// removed expired lease rows is then not a catalogued observable surface.
+// Register the metric as an unlabeled cumulative counter in the catalog.
+func TestCredentialLeaseSweepCounterInCatalog(t *testing.T) {
+	const name = "lenny_gateway_credential_leases_swept_total"
+	spec, ok := metricscatalog.LookupMetric(name)
+	if !ok {
+		t.Fatalf("§16.1 metric %q is missing from the catalog", name)
+	}
+	if spec.Type != metricscatalog.TypeCounter {
+		t.Errorf("%q type = %q, want counter", name, spec.Type)
+	}
+}
 
 // repoRoot walks up from the working directory to the module root.
 func repoRoot(t *testing.T) string {

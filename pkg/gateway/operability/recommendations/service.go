@@ -141,14 +141,14 @@ type Recommendation struct {
 type RecommendationsResponse struct {
 	Recommendations []Recommendation `json:"recommendations"`
 
-	// Degradation carries the §25.4 canonical envelope when the
+	// Degradation carries the §25.2 canonical envelope when the
 	// response is derived from anything other than the operator's
 	// Prometheus rules. The gateway's in-process evaluator runs the
 	// compiled-in defaults, so single-replica reads stamp the envelope
 	// with `thresholdSource: "compiled-in-defaults"` (§25.13 line 4848).
 	// `lenny-ops` overrides the envelope when it serves from the
 	// operator-customized Prometheus rule set.
-	// spec: §25.4 line 215.
+	// spec: §25.2.
 	Degradation *conventions.Degradation `json:"degradation,omitempty"`
 }
 

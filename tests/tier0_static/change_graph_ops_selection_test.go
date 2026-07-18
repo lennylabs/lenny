@@ -216,6 +216,27 @@ func TestChangeGraphOpsDedicatedSuitesSelectHigherTiers(t *testing.T) {
 	}
 }
 
+// spec: 25.4 (the lenny-ops service; mandatory standalone deployment)
+// diagnosis: cmd/lenny-ops has no change-graph glob entry, so a change to
+//
+//	the mandatory lenny-ops binary resolves to an empty tier set (static
+//	only) and its in-package unit suite (main_test.go,
+//	doctorremediator_test.go, webhookdelivery_test.go, and the rest of the
+//	cmd/lenny-ops/*_test.go files) is never selected by `lenny-test
+//	--changed`, `--pkg cmd/lenny-ops`, or `--since`. The sibling binaries
+//	cmd/lenny-gateway, cmd/lenny-test, and cmd/lenny-token-service each
+//	carry a change-graph entry; cmd/lenny-ops needs the same "unit"
+//	mapping in tests/change-graph.json.
+func TestChangeGraphLennyOpsBinarySelectsUnitTier(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "cmd/lenny-ops/main.go")
+	if !tiers["unit"] {
+		t.Errorf("a change to cmd/lenny-ops resolved to tiers %v; the mandatory lenny-ops binary owns an in-package unit suite, so the resolution must include %q",
+			sortedKeys(tiers), "unit")
+	}
+}
+
 // spec: 25.5 (operational event stream; webhook delivery and SSRF protections)
 // diagnosis: One of the §25.5 event-stream packages resolves to a tier
 //
@@ -254,6 +275,34 @@ func TestChangeGraphEventStreamPackagesSelectHigherTiers(t *testing.T) {
 				t.Errorf("a change to %s resolved to tiers %v; its §25.5 event-stream tests occupy the %s tier, so the resolution must include %q",
 					tc.pkg, sortedKeys(tiers), want, want)
 			}
+		}
+	}
+}
+
+// spec: 25.12 (MCP Management Server; the CI suite's two authorization
+// sweeps over every MCP tool, and the tier-3 initialize/tools/call wire
+// contract)
+// diagnosis: A change under pkg/ops/mcp no longer selects the tier-3
+//
+//	ops_endpoints contract suite or the tier-9 MCP management
+//	authorization sweep. tests/tier3_contract/ops_endpoints/mcp_test.go
+//	drives the §25.12 initialize/tools/call wire contract directly, and
+//	tests/tier9_security/mcp_management_authz_sweep_test.go iterates
+//	mcp.NewRegistry().All() to assert every generated tool enforces its
+//	scope and role gate. When the change graph omits the contract or
+//	security tier for pkg/ops/mcp, `lenny-test --changed`/`--since`
+//	under-selects and a broken MCP wire contract, or a newly generated
+//	tool that skips its scope or role gate, ships untested. Add the
+//	missing tier mapping(s) in tests/change-graph.json.
+func TestChangeGraphMCPPackageSelectsContractAndSecurityTiers(t *testing.T) {
+	t.Parallel()
+
+	tiers := resolveChangeGraphTiers(t, "pkg/ops/mcp/tools.go")
+
+	for _, want := range []string{"unit", "contract", "security"} {
+		if !tiers[want] {
+			t.Errorf("a change to pkg/ops/mcp resolved to tiers %v; expected it to include %q so the tier-3 ops_endpoints contract suite and the tier-9 MCP management authorization sweep are selected",
+				sortedKeys(tiers), want)
 		}
 	}
 }

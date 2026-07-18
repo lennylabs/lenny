@@ -5,15 +5,20 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log"
 	"sync"
 	"time"
 
+	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -74,6 +79,21 @@ type credRenewalWiring struct {
 	// requires the credential pool manager to emit both events; a nil
 	// emitter is a no-op.
 	emitter events.EventEmitter
+	// leases is the §4.9 gateway credential-lease store the LLM Proxy
+	// reads. The proxy-mode branch of the §4.9 Token Service
+	// unavailability guard advances a still-valid lease's
+	// ExpiresAt/RenewBefore here so the proxy's server-side expiry check
+	// honors the extension. Typed as the interface so it can hold the
+	// Postgres-backed pgstore.Store the proxy reads under a durable
+	// deployment. spec: §4.9 line 1470.
+	leases credleasestore.LeaseStore
+	// terminator force-transitions a session to its §8.8 expired terminal
+	// state. The §4.9 cumulative-extension cap routes a capped lease's
+	// session here with the expired:lease reason rather than into the
+	// Fallback Flow, so a permanently-open breaker tears the session down
+	// without re-minting against the still-open breaker. spec: §4.9 line
+	// 1470.
+	terminator sessionbudget.Terminator
 
 	mu sync.Mutex
 	// pools maps a tracked lease ID to the pool/provider it was minted
@@ -86,16 +106,20 @@ type credRenewalWiring struct {
 // runs without warm-pod placement; a renewal then refreshes the lease
 // record without a RotateCredentials push. emitter is the §4.0 events
 // sink for credential_rotated / credential_pool_exhausted; nil disables
-// emission without affecting the renewal lifecycle.
-func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter events.EventEmitter) *credRenewalWiring {
+// emission without affecting the renewal lifecycle. leases is the §4.9
+// credential-lease store the LLM Proxy reads (the proxy-mode extension
+// target); terminator drives the §4.9 cumulative-extension-cap teardown.
+func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter events.EventEmitter, leases credleasestore.LeaseStore, terminator sessionbudget.Terminator) *credRenewalWiring {
 	if assign == nil {
 		return nil
 	}
 	return &credRenewalWiring{
-		assign:   assign,
-		registry: registry,
-		emitter:  emitter,
-		pools:    make(map[string]renewalProvider),
+		assign:     assign,
+		registry:   registry,
+		emitter:    emitter,
+		leases:     leases,
+		terminator: terminator,
+		pools:      make(map[string]renewalProvider),
 	}
 }
 
@@ -111,13 +135,24 @@ func (w *credRenewalWiring) track(worker *credrenewal.Worker, pool, provider str
 	w.mu.Lock()
 	w.pools[lease.LeaseID] = renewalProvider{pool: pool, provider: provider, tenantID: lease.TenantID}
 	w.mu.Unlock()
-	worker.Track(credrenewal.Lease{
+	worker.Track(renewalLease(lease))
+}
+
+// renewalLease projects an assigned §4.9 credential.Lease onto the subset
+// the renewal worker tracks, stamping LeaseTTL from the lease's own minted
+// lifetime (ExpiresAt - IssuedAt, i.e. min(leaseTTLSeconds, providerMaxTTL)
+// per spec/04 line 1145) so the §4.9 cumulative-extension cap is
+// TTL-derived rather than falling back to DefaultMaxExtensions.
+// spec: §4.9 line 1470.
+func renewalLease(lease credential.Lease) credrenewal.Lease {
+	return credrenewal.Lease{
 		LeaseID:      lease.LeaseID,
 		SessionID:    lease.SessionID,
 		CredentialID: lease.CredentialID,
 		RenewBefore:  lease.RenewBefore,
 		ExpiresAt:    lease.ExpiresAt,
-	})
+		LeaseTTL:     lease.ExpiresAt.Sub(lease.IssuedAt),
+	}
 }
 
 // Renew issues a replacement lease for a lease approaching its
@@ -142,6 +177,14 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 	// the lease record, so the renewal mint does not need it here.
 	next, err := w.assign.Assign(rp.pool, lease.SessionID, "", rp.tenantID)
 	if err != nil {
+		if errors.Is(err, credassign.ErrTokenServiceUnavailable) {
+			// spec: §4.9 line 1470 — Token Service unavailability guard.
+			// Surface the breaker-open failure as the credrenewal sentinel
+			// so the worker holds and reschedules the still-valid lease
+			// instead of exhausting it into the Fallback Flow. The
+			// underlying cause is preserved so callers can still inspect it.
+			return credrenewal.Lease{}, fmt.Errorf("%w: %w", credrenewal.ErrRenewInfraUnavailable, err)
+		}
 		return credrenewal.Lease{}, err
 	}
 
@@ -156,6 +199,10 @@ func (w *credRenewalWiring) Renew(_ context.Context, lease credrenewal.Lease) (c
 		CredentialID: next.CredentialID,
 		RenewBefore:  next.RenewBefore,
 		ExpiresAt:    next.ExpiresAt,
+		// §4.9 cumulative-extension cap: carry the replacement lease's own
+		// TTL so the reset after a normal renewal grants the fresh lease's
+		// TTL-derived extension budget rather than DefaultMaxExtensions.
+		LeaseTTL: next.ExpiresAt.Sub(next.IssuedAt),
 	}, nil
 }
 
@@ -231,6 +278,76 @@ func (w *credRenewalWiring) onExhausted(lease credrenewal.Lease) {
 	delete(w.pools, lease.LeaseID)
 	w.mu.Unlock()
 	w.emitCredentialPoolExhausted(lease, rp.pool, rp.provider)
+}
+
+// onExtend is the §4.9 Token Service unavailability guard's extension
+// hook. It extends a still-valid lease's enforced deadline to
+// newExpiresAt without any Token Service call, dispatching by delivery
+// mode: a direct-mode lease re-arms the adapter expiry timer over the
+// ExtendCredentialLease RPC; a proxy-mode lease's ExpiresAt/RenewBefore
+// is advanced in the gateway lease store the LLM Proxy reads. An error
+// return signals the worker that the enforcement point was unreachable,
+// so it does not advance its own view of the deadline and the lease
+// falls through to the retry and Fallback path. spec: §4.9 line 1470.
+func (w *credRenewalWiring) onExtend(lease credrenewal.Lease, newExpiresAt time.Time) error {
+	if w == nil {
+		return nil
+	}
+	if w.leases == nil {
+		return fmt.Errorf("§4.9 extend: no lease store wired")
+	}
+	rec, ok := w.leases.GetByID(lease.LeaseID)
+	if !ok {
+		return fmt.Errorf("§4.9 extend: lease %s not in store", lease.LeaseID)
+	}
+	// The pre-extension ExpiresAt becomes the new RenewBefore, so the
+	// rescheduled renewal fires one buffer later. This mirrors the worker's
+	// own arithmetic (RenewBefore = old ExpiresAt).
+	newRenewBefore := lease.ExpiresAt
+	switch rec.DeliveryMode {
+	case credential.DeliveryProxy:
+		rec.ExpiresAt = newExpiresAt
+		rec.RenewBefore = newRenewBefore
+		// Both the in-memory Store and the Postgres-backed pgstore.Store
+		// implement Put on the LeaseStore interface, so the advance lands on
+		// whichever backend the proxy reads.
+		return w.leases.Put(rec)
+	default: // direct
+		if w.registry == nil {
+			return fmt.Errorf("§4.9 extend: no pod registry for direct-mode lease %s", lease.LeaseID)
+		}
+		w.mu.Lock()
+		rp := w.pools[lease.LeaseID]
+		w.mu.Unlock()
+		bind, ok := w.registry.Get(lease.SessionID)
+		if !ok || bind.Adapter == nil {
+			return fmt.Errorf("§4.9 extend: no pod binding for session %s", lease.SessionID)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
+		defer cancel()
+		return bind.Adapter.ExtendCredentialLease(ctx, lease.SessionID, rp.provider, lease.LeaseID, newExpiresAt)
+	}
+}
+
+// onExtensionCapReached is the §4.9 cumulative-extension-cap terminal
+// teardown. When a lease's breaker-open extension has reached its
+// original leaseTTLSeconds and the breaker is still open, the worker
+// drops the lease and calls this hook. It force-transitions the lease's
+// session to its §8.8 expired terminal state with the existing
+// expired:lease FailureReason (already the §8.8 reason for a §4.9
+// credential-lease expiry), which the §8.8 MCP adapter surfaces to
+// clients as a failed task carrying the expired:lease error code. It does
+// NOT enter the Fallback Flow: a re-mint against the still-open breaker
+// would re-enter the restart loop the guard prevents. spec: §4.9 line
+// 1470; §8.8 line 869.
+func (w *credRenewalWiring) onExtensionCapReached(lease credrenewal.Lease) {
+	if w == nil || w.terminator == nil {
+		return
+	}
+	w.mu.Lock()
+	delete(w.pools, lease.LeaseID)
+	w.mu.Unlock()
+	w.terminator.TerminateSession(lease.SessionID, string(sessionapi.FailureExpiredLease))
 }
 
 // emitCredentialRotated publishes the §16.6 credential_rotated event

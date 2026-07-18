@@ -104,6 +104,30 @@ func (s *Server) armExpiryTimer(provider string, lease *adapterv1.CredentialLeas
 	s.expiryTimers[provider] = &expiryTimer{leaseID: leaseID, handle: handle}
 }
 
+// extendExpiryTimer re-arms the direct-mode expiry timer for one provider
+// to a later deadline, without rewriting the credential file and without
+// touching s.credLeases. It is the §4.9 Token Service unavailability
+// guard's direct-mode enforcement point: advancing the timer advances the
+// enforced deadline in lockstep, so the direct-mode key never outlives the
+// current lease. If no timer is armed for the provider, or its lease id
+// differs from leaseID (the lease was replaced, or is proxy-mode with no
+// timer), it is a no-op. The re-armed timer still targets
+// onLeaseExpired(provider, leaseID), so a later expiry deletes the
+// provider's credential-file entry exactly as before, at the extended
+// deadline. Callers hold s.mu.
+//
+// spec: §4.9 line 1470.
+func (s *Server) extendExpiryTimer(provider, leaseID string, newExpiresAt time.Time) {
+	existing, ok := s.expiryTimers[provider]
+	if !ok || existing.leaseID != leaseID {
+		return
+	}
+	existing.handle.Stop()
+	delay := newExpiresAt.Sub(s.expiryClockNow())
+	handle := s.expiryAfter(delay, func() { s.onLeaseExpired(provider, leaseID) })
+	s.expiryTimers[provider] = &expiryTimer{leaseID: leaseID, handle: handle}
+}
+
 // cancelExpiryTimer stops and forgets the expiry timer for provider, if
 // one is armed. Callers hold s.mu.
 func (s *Server) cancelExpiryTimer(provider string) {

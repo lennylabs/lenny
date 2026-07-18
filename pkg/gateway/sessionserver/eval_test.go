@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
@@ -97,6 +98,22 @@ func postEvalAs(t *testing.T, h http.Handler, sessionID string, body sessionserv
 // wired over an in-memory counter. F-10.7.4 / F-11.2.19.
 func evalServerRL(t *testing.T, perSession, perTenant int, seed ...sessionstore.Session) http.Handler {
 	t.Helper()
+	return evalServerRLClock(t, nil, perSession, perTenant, seed...)
+}
+
+// settableClock is a settable clock so a test can advance server time
+// deterministically across a rate-limit window boundary.
+type settableClock struct{ t time.Time }
+
+func (c *settableClock) now() time.Time      { return c.t }
+func (c *settableClock) add(d time.Duration) { c.t = c.t.Add(d) }
+
+// evalServerRLClock is evalServerRL with an injectable clock so a test
+// can drive the eval rate limiter's notion of "now" across a
+// minute-window boundary. A nil clock leaves the server on its default
+// (real) clock.
+func evalServerRLClock(t *testing.T, clock func() time.Time, perSession, perTenant int, seed ...sessionstore.Session) http.Handler {
+	t.Helper()
 	store := memstore.New()
 	for _, s := range seed {
 		if err := store.Create(context.Background(), s); err != nil {
@@ -108,6 +125,7 @@ func evalServerRL(t *testing.T, perSession, perTenant int, seed ...sessionstore.
 		EvalRateLimitCounter:    ratelimit.NewMemory(),
 		EvalPerSessionPerMinute: perSession,
 		EvalPerTenantPerMinute:  perTenant,
+		Clock:                   clock,
 	})
 	return srv.Handler()
 }
@@ -173,6 +191,48 @@ func TestEvalRateLimitPerTenant_spec_10_7_938(t *testing.T) {
 	}
 	if rr.Header().Get("Retry-After") == "" {
 		t.Error("per-tenant 429 must carry a Retry-After header")
+	}
+}
+
+// TestEvalRateLimitFixedWindowBoundary_spec_10_7 pins §10.7: the
+// per-session eval-submission rate limit is enforced by the gateway via
+// Redis fixed-window per-minute counters, each keyed count resetting at
+// the top of every wall-clock minute. Within a single window the
+// per-minute ceiling holds, so a submission over the ceiling is rejected
+// with 429 and a Retry-After header. Crossing a wall-clock-minute
+// boundary resets the window and admits a fresh quota, which is the
+// bounded up-to-2x cross-boundary transient the spec documents: a burst
+// straddling a minute boundary can transiently reach up to twice the
+// ceiling before the window resets. F-10.7.4 / F-11.2.19.
+func TestEvalRateLimitFixedWindowBoundary_spec_10_7(t *testing.T) {
+	clock := &settableClock{t: time.Date(2026, 1, 1, 12, 0, 58, 0, time.UTC)} // 2s before the minute boundary
+	h := evalServerRLClock(t, clock.now, 3, -1, evalSession("sess_1", session.StateRunning))
+	body := sessionserver.EvalRequest{Scorer: "s", Score: evalScore(0.5)}
+
+	// Exhaust the per-session ceiling in the tail of the current window.
+	for i := 0; i < 3; i++ {
+		if rr := postEval(t, h, "sess_1", body); rr.Code != http.StatusCreated {
+			t.Fatalf("submission %d (tail of window): status %d, want 201", i+1, rr.Code)
+		}
+	}
+
+	// A fourth submission at the same clock is over the per-minute ceiling
+	// within the current window: the sustained per-minute limit holds.
+	rr := postEval(t, h, "sess_1", body)
+	if rr.Code != http.StatusTooManyRequests {
+		t.Fatalf("fourth submission within the same window: status %d, want 429 (the per-minute ceiling holds within a fixed window)", rr.Code)
+	}
+	if rr.Header().Get("Retry-After") == "" {
+		t.Error("429 response must carry a Retry-After header")
+	}
+
+	// Advance 3s, crossing the calendar-minute boundary into the next
+	// fixed window. The keyed count resets at the top of the wall-clock
+	// minute, so a fresh quota is admitted — the bounded up-to-2x
+	// cross-boundary transient the spec documents.
+	clock.add(3 * time.Second)
+	if rr := postEval(t, h, "sess_1", body); rr.Code != http.StatusCreated {
+		t.Fatalf("submission after the minute boundary: status %d, want 201 (a fixed window resets and admits a fresh quota)", rr.Code)
 	}
 }
 

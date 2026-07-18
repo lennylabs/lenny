@@ -401,8 +401,8 @@ func criticalAlerts() []Rule {
 			Expr:        `(max by (pool, provider) (lenny_credential_revoked_with_active_leases) > 0) or (max by (tenant_id, provider) (lenny_user_credential_revoked_with_active_leases) > 0)`,
 			For:         30 * time.Second,
 			Severity:    SeverityCritical,
-			Summary:     "Revoked credential still has active leases",
-			Description: "At least one credential in revoked state (pool-scoped or user-scoped) still has active leases alive against it for more than 30s, indicating revocation propagation failure and that the compromised key may still be in use.",
+			Summary:     "Revoked credential has an active lease not on the deny list",
+			Description: "At least one credential in revoked state (pool-scoped or user-scoped) still has an active lease that is not shadowed by a deny-list entry for more than 30s, indicating revocation propagation did not reach the deny list and that the compromised key may still be in use. The alert clears once every active lease against the credential is on the deny list or has been terminated in direct mode.",
 			// spec: §17.7 line 745 — slug matches docs/runbooks/credential-revocation.md.
 			RunbookURL: runbook("credential-revocation"),
 			SpecRef:    "§16.5",

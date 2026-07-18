@@ -46,8 +46,9 @@ type openSLOKind struct {
 
 // spec: §16.10 lines 742-746 ("the Helm chart renders the latency and
 // availability SLOs from §16.5 as OpenSLO v1 YAML documents ... the
-// chart emits a ConfigMap containing the OpenSLO SLO, SLI, and
-// AlertPolicy objects for the deployer's tooling to consume").
+// chart emits a ConfigMap containing the OpenSLO SLO, SLI, AlertPolicy,
+// and AlertNotificationTarget objects for the deployer's tooling to
+// consume").
 // diagnosis: a failure here means the generated §16.10 chart fragment
 // (charts/lenny/files/openslo.yaml, regenerate with `make generate`
 // after changing pkg/alerting/rules/openslo.go) contains a document
@@ -59,13 +60,6 @@ type openSLOKind struct {
 // index and kind against pkg/alerting/rules/openslo.go's RenderOpenSLO
 // to find which part of the render produced the offending shape.
 func TestOpenSLOChartFragmentMatchesSpecification(t *testing.T) {
-	t.Skip("the §16.10 export is not yet structurally conformant with the OpenSLO v1 object model: " +
-		"AlertPolicy.conditions carries two entries against the OpenSLO v1 one-condition-per-policy cap, " +
-		"AlertPolicy omits the notificationTargets the OpenSLO v1 object model requires, and SLO.alertPolicies " +
-		"renders bare strings instead of the required {alertPolicyRef: <name>} reference objects; populating a " +
-		"real notificationTargets needs new deployer-facing configuration this package does not have yet, so the " +
-		"fix awaits a spec decision rather than a test-only or mechanical code change")
-
 	root := schematest.RepoRoot(t)
 	raw, err := os.ReadFile(filepath.Join(root, openSLOChartFragmentPath))
 	if err != nil {
@@ -75,9 +69,10 @@ func TestOpenSLOChartFragmentMatchesSpecification(t *testing.T) {
 	schemasByKind := map[string]struct {
 		compileFragment string
 	}{
-		"SLI":         {compileFragment: "SLIDocument"},
-		"SLO":         {compileFragment: "SLODocument"},
-		"AlertPolicy": {compileFragment: "AlertPolicyDocument"},
+		"SLI":                     {compileFragment: "SLIDocument"},
+		"SLO":                     {compileFragment: "SLODocument"},
+		"AlertPolicy":             {compileFragment: "AlertPolicyDocument"},
+		"AlertNotificationTarget": {compileFragment: "AlertNotificationTargetDocument"},
 	}
 
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
@@ -108,7 +103,7 @@ func TestOpenSLOChartFragmentMatchesSpecification(t *testing.T) {
 		}
 		kindInfo, ok := schemasByKind[kindOnly.Kind]
 		if !ok {
-			t.Errorf("document %d has kind %q, want one of SLI, SLO, AlertPolicy", docCount, kindOnly.Kind)
+			t.Errorf("document %d has kind %q, want one of SLI, SLO, AlertPolicy, AlertNotificationTarget", docCount, kindOnly.Kind)
 			continue
 		}
 

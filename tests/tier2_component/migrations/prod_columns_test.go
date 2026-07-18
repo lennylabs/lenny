@@ -547,6 +547,20 @@ var prodMigrationSchema = []struct {
 	// migrations/0178_checkpoint_manifest_test.go. spec: §10.1 lines
 	// 141-151, §12.3.
 	{migration: "0178", table: "checkpoint_manifest", create: true},
+	// 0175 adds the §4.9 expires_at projection column to credential_leases:
+	// migration 0129 moved the lease body to an AES-256-GCM envelope, so the
+	// deny-list sweep and the fail-closed lease-existence count cannot read
+	// the lease's expiry without a KMS unwrap. The column is projected out of
+	// the encrypted body and stays nullable (a pre-backfill row reads NULL, an
+	// unknown-expiry sentinel the existence guard counts as active). The
+	// nullability, the credential_leases_expires_at_idx index the sweep filters
+	// on, and the NULL sentinel are asserted directly in
+	// migrations/credential_leases_expires_at_test.go. spec: §4.9.
+	{migration: "0175", table: "credential_leases", columns: []string{"expires_at"}},
+	// 0176 persists the §8.3 credential_origin_session_id on sessions so a
+	// `credentialPropagation: inherit` hop forwards the same origin
+	// credential pool through contiguous inherit hops.
+	{migration: "0176", table: "sessions", columns: []string{"credential_origin_session_id"}},
 }
 
 // spec: 12.2, 18.5

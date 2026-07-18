@@ -45,16 +45,17 @@ spec:
     - displayName: Session creation success rate >= 99.5%
       target: 0.995
   alertPolicies:
-    - session-creation-success-rate-burnrate
+    - alertPolicyRef: session-creation-success-rate-burnrate-fast
+    - alertPolicyRef: session-creation-success-rate-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: session-creation-success-rate-burnrate
+  name: session-creation-success-rate-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Session creation success rate >= 99.5%
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -69,6 +70,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: session-creation-success-rate-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: session-creation-success-rate-slow-burn
@@ -81,6 +95,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -121,16 +137,17 @@ spec:
     - displayName: Session creation latency P99 < 500ms
       target: 0.99
   alertPolicies:
-    - session-creation-latency-burnrate
+    - alertPolicyRef: session-creation-latency-burnrate-fast
+    - alertPolicyRef: session-creation-latency-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: session-creation-latency-burnrate
+  name: session-creation-latency-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Session creation latency P99 < 500ms
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -145,6 +162,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: session-creation-latency-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: session-creation-latency-slow-burn
@@ -157,6 +187,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -197,16 +229,17 @@ spec:
     - displayName: Session availability >= 99.9%
       target: 0.999
   alertPolicies:
-    - session-availability-burnrate
+    - alertPolicyRef: session-availability-burnrate-fast
+    - alertPolicyRef: session-availability-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: session-availability-burnrate
+  name: session-availability-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Session availability >= 99.9%
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -221,6 +254,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: session-availability-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: session-availability-slow-burn
@@ -233,6 +279,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -273,16 +321,17 @@ spec:
     - displayName: Gateway availability >= 99.95%
       target: 0.9995
   alertPolicies:
-    - gateway-availability-burnrate
+    - alertPolicyRef: gateway-availability-burnrate-fast
+    - alertPolicyRef: gateway-availability-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: gateway-availability-burnrate
+  name: gateway-availability-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Gateway availability >= 99.95%
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -297,6 +346,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: gateway-availability-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: gateway-availability-slow-burn
@@ -309,6 +371,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -349,16 +413,17 @@ spec:
     - displayName: Startup latency P95 < 2s (runc)
       target: 0.95
   alertPolicies:
-    - startup-latency-runc-burnrate
+    - alertPolicyRef: startup-latency-runc-burnrate-fast
+    - alertPolicyRef: startup-latency-runc-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: startup-latency-runc-burnrate
+  name: startup-latency-runc-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Startup latency P95 < 2s (runc)
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -373,6 +438,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: startup-latency-runc-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: startup-latency-runc-slow-burn
@@ -385,6 +463,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -425,16 +505,17 @@ spec:
     - displayName: Startup latency P95 < 5s (gVisor)
       target: 0.95
   alertPolicies:
-    - startup-latency-gvisor-burnrate
+    - alertPolicyRef: startup-latency-gvisor-burnrate-fast
+    - alertPolicyRef: startup-latency-gvisor-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: startup-latency-gvisor-burnrate
+  name: startup-latency-gvisor-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Startup latency P95 < 5s (gVisor)
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -449,6 +530,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: startup-latency-gvisor-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: startup-latency-gvisor-slow-burn
@@ -461,6 +555,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -501,16 +597,17 @@ spec:
     - displayName: Time to first token P95 < 10s
       target: 0.95
   alertPolicies:
-    - ttft-burnrate
+    - alertPolicyRef: ttft-burnrate-fast
+    - alertPolicyRef: ttft-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: ttft-burnrate
+  name: ttft-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Time to first token P95 < 10s
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -525,6 +622,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: ttft-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: ttft-slow-burn
@@ -537,6 +647,8 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
 ---
 apiVersion: openslo/v1
 kind: SLI
@@ -577,16 +689,17 @@ spec:
     - displayName: Checkpoint duration P95 < 2s (<= 100MB)
       target: 0.95
   alertPolicies:
-    - checkpoint-duration-burnrate
+    - alertPolicyRef: checkpoint-duration-burnrate-fast
+    - alertPolicyRef: checkpoint-duration-burnrate-slow
 ---
 apiVersion: openslo/v1
 kind: AlertPolicy
 metadata:
-  name: checkpoint-duration-burnrate
+  name: checkpoint-duration-burnrate-fast
   labels:
     deployment_tier: tier1
 spec:
-  description: Multi-window error-budget burn-rate policy for Checkpoint duration P95 < 2s (<= 100MB)
+  description: 'Error-budget burn-rate policy: Fast-window (1h) error-budget burn rate exceeds the page threshold.'
   alertWhenBreaching: true
   conditions:
     - kind: AlertCondition
@@ -601,6 +714,19 @@ spec:
           threshold: 14
           lookbackWindow: 1h
           alertAfter: 1h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertPolicy
+metadata:
+  name: checkpoint-duration-burnrate-slow
+  labels:
+    deployment_tier: tier1
+spec:
+  description: 'Error-budget burn-rate policy: Slow-window (6h) error-budget burn rate exceeds the warning threshold.'
+  alertWhenBreaching: true
+  conditions:
     - kind: AlertCondition
       metadata:
         name: checkpoint-duration-slow-burn
@@ -613,3 +739,13 @@ spec:
           threshold: 3
           lookbackWindow: 6h
           alertAfter: 6h
+  notificationTargets:
+    - targetRef: lenny-slo-notifications
+---
+apiVersion: openslo/v1
+kind: AlertNotificationTarget
+metadata:
+  name: lenny-slo-notifications
+spec:
+  description: Shared notification target for the Lenny SLO burn-rate alert policies.
+  target: webhook

@@ -126,9 +126,6 @@ exceptions:
   - section: "25.8"
     reason: deferred
     justification: Platform lifecycle management is built in Wave 4 (Phase 13).
-  - section: "25.12"
-    reason: deferred
-    justification: The MCP management server is built in Wave 4 (Phase 13).
   - section: "25.13"
     reason: deferred
     justification: Bundled alerting-rule chart wiring and tier-aware defaults ship in Wave 4 and Wave 5.

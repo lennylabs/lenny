@@ -123,6 +123,18 @@ type Request struct {
 	// spec: §8.4 lines 515-521. F-8.4.1, F-8.4.2, F-8.4.3.
 	ApprovalMode lease.ApprovalMode
 
+	// CredentialPropagation is the §8.3 credential propagation mode on
+	// the delegation lease. The empty string defaults to independent
+	// (the child gets its own credential lease). "inherit" draws the
+	// child's credential from the parent's origin pool, subject to the
+	// cross-environment provider-compatibility check; "deny" gives the
+	// child no LLM credentials. Any other value is rejected with
+	// *lease.InvalidCredentialPropagationError so the §8.5
+	// lenny/delegate_task handler surfaces INVALID_LEASE_FIELD.
+	//
+	// spec: §8.3.
+	CredentialPropagation lease.CredentialPropagation
+
 	// TreeVisibility is the §8.5 visibility boundary the parent declares
 	// on the child lease. Empty inherits the parent's effective value
 	// per the §8.3 inheritance rule (the child lease's declared value if
@@ -902,6 +914,15 @@ func (s *Service) validateDelegation(ctx context.Context, tenantID string, req R
 	if err := lease.ValidateApprovalMode(req.ApprovalMode); err != nil {
 		return admission{}, err
 	}
+	// §8.3: validate the credentialPropagation closed enum at the
+	// service boundary as defence-in-depth so a malformed value
+	// reaching the service from a non-MCP caller is rejected with
+	// *lease.InvalidCredentialPropagationError before any side effects.
+	// The §8.5 lenny/delegate_task handler maps the typed error to
+	// INVALID_LEASE_FIELD.
+	if err := lease.ValidateCredentialPropagation(req.CredentialPropagation); err != nil {
+		return admission{}, err
+	}
 	// §8.4 line 521: an `approvalMode: "deny"` lease short-circuits
 	// the delegation path before pod allocation and before the §4
 	// PreDelegation interceptor. The gateway maps ErrDelegationDenied
@@ -1316,6 +1337,25 @@ func (s *Service) reserveTreeBudget(ctx context.Context, tenantID string, req Re
 //
 // spec: §8.2 lines 59-61, 90; §8.7; §8.9 line 1010; §10.7 lines 868, 905.
 // F-8.1.2, F-8.2.7, F-8.7.1, F-8.9.8, F-10.7.5.
+// credentialOriginID resolves the credential-origin session id stamped on
+// a delegated child per §8.3 lines 472, 488. A `credentialPropagation:
+// inherit` hop forwards the parent's origin so contiguous `inherit` hops
+// share one origin pool, traced back to the last `independent` break or the
+// root; when the parent carries no explicit origin (a root or top-level
+// parent, whose read-path origin collapses to empty) the parent itself is
+// the origin. Every other mode — `independent`, `deny`, or an omitted value
+// that defaults to `independent` — establishes a new origin equal to the
+// child itself. spec: §8.3 lines 472, 488, 474.
+func credentialOriginID(mode lease.CredentialPropagation, parent sessionstore.Session, childID string) string {
+	if mode == lease.CredentialPropagationInherit {
+		if parent.CredentialOriginSessionID != "" {
+			return parent.CredentialOriginSessionID
+		}
+		return parent.ID
+	}
+	return childID
+}
+
 func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Request, adm admission, rootSessionID string) (sessionstore.Session, *ChildToken, error) {
 	parent := adm.parent
 	userID := req.UserID
@@ -1386,6 +1426,15 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 		IsolationProfile: adm.childProfile,
 		ParentSessionID:  parent.ID,
 		RootSessionID:    rootSessionID,
+		// §8.3 lines 472, 488 — the credential-origin pool a
+		// `credentialPropagation: inherit` hop draws from. An `inherit`
+		// child forwards the parent's origin (tracing one origin pool
+		// through contiguous `inherit` hops back to the last `independent`
+		// break or the root); an `independent`, `deny`, or omitted-mode
+		// child, like a root or top-level session, is its own origin. The
+		// §8.3 cross-environment compatibility check and the finalize-time
+		// assignment read this in O(1) rather than re-walking lineage.
+		CredentialOriginSessionID: credentialOriginID(req.CredentialPropagation, parent, childID),
 		// §10.7 lines 868, 905 — the child's delegation depth is the
 		// parent's depth + 1, fixed at admission. Recording it here lets
 		// the built-in eval endpoint populate EvalResult.delegation_depth

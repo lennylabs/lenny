@@ -110,8 +110,11 @@ func (s *Server) runRouteChainRange(w http.ResponseWriter, r *http.Request, phas
 // envelope for a PreRoute/PostRoute chain REJECT. It returns false in
 // every case (the caller always aborts); the bool exists so the audit
 // failure path can short-circuit the response code distinctly. A
-// fail-closed timeout/error (CodeInterceptorTimeout) maps to 503; a
-// deliberate REJECT maps to 403 INTERCEPTOR_REJECTED.
+// fail-closed timeout/error (CodeInterceptorTimeout) maps to 503; an
+// immutable-field violation (CodeInterceptorImmutableFieldViolation)
+// maps to 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION carrying
+// interceptor_ref, phase, and violated_fields; a deliberate REJECT maps
+// to 403 INTERCEPTOR_REJECTED.
 func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter, phase interceptor.Phase, tenantID, userID string, res interceptor.Result) bool {
 	if s.policyAuditSink != nil {
 		if err := s.policyAuditSink.RecordRejection(ctx, policy.RejectionContext{
@@ -130,6 +133,22 @@ func (s *Server) recordRouteRejection(ctx context.Context, w http.ResponseWriter
 				"interceptor_ref": res.RejectedBy,
 				"phase":           string(phase),
 				"timeout_ms":      res.TimeoutMs,
+			})
+		return false
+	}
+	// An external MODIFY that altered an immutable field surfaces as the
+	// §15.1 400 INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION (POLICY, non-retryable
+	// via errorclassify) carrying the offending interceptor, phase, and the
+	// violated field paths, so a caller or SIEM can distinguish identity or
+	// routing tampering from an ordinary policy REJECT.
+	// spec: §4.8 (immutable field enforcement), §15.1
+	// (INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION POLICY/400 with violated_fields).
+	if res.Code == interceptor.CodeInterceptorImmutableFieldViolation {
+		s.writeError(w, http.StatusBadRequest, interceptor.CodeInterceptorImmutableFieldViolation, res.Reason,
+			map[string]any{
+				"interceptor_ref": res.RejectedBy,
+				"phase":           string(phase),
+				"violated_fields": res.ViolatedFields,
 			})
 		return false
 	}

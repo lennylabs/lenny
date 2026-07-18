@@ -80,6 +80,18 @@ type Driver struct {
 	// underlying admin endpoint is idempotent on missing rows.
 	mu                  sync.Mutex
 	bootstrappedTenants map[string]struct{}
+
+	// sessionBearer, when non-empty, is presented as
+	// `Authorization: Bearer <token>` on the §15.1 session-surface calls
+	// (create, start, message, events stream, terminate, get, delete) in
+	// place of the X-Lenny-* dev headers. The admin/setup calls
+	// (BootstrapTenant, tenant cleanup, health) always use dev headers,
+	// so a test can provision a tenant with the dev-mode admin path and
+	// still drive the session journey itself through the standard §10.2
+	// Bearer chain that §27.3 confirms backs the `oidc` and `apiKey`
+	// playground auth modes. Empty by default, so every existing caller
+	// keeps the dev-header behaviour unchanged.
+	sessionBearer string
 }
 
 // Session is the parsed §15.1 POST /v1/sessions response — the subset
@@ -145,6 +157,13 @@ type Options struct {
 	// single request (excluding the event stream, which is unbounded
 	// by design). Default 30s.
 	HTTPTimeout time.Duration
+
+	// SessionBearer, when non-empty, drives the §15.1 session-surface
+	// calls through the standard §10.2 `Authorization: Bearer` chain
+	// instead of the X-Lenny-* dev headers. The admin/setup calls keep
+	// dev headers. Leave empty (the default) for the dev-header identity
+	// every existing tier-5/8/9 test relies on.
+	SessionBearer string
 }
 
 // New constructs a Driver bound to the e2e Kind cluster. It calls
@@ -197,6 +216,7 @@ func NewKeptForTarget(t testing.TB, target string, opts ...Options) *Driver {
 		stopPF:              stop,
 		hc:                  &http.Client{Timeout: o.HTTPTimeout},
 		bootstrappedTenants: make(map[string]struct{}),
+		sessionBearer:       o.SessionBearer,
 	}
 	// Confirm the port-forward terminates at a healthy gateway before
 	// the first call. The kind.PortForward helper already waits for the
@@ -293,7 +313,7 @@ func (d *Driver) CreateSession(ctx context.Context, tenantID, runtimeRef string)
 	// this override the gateway falls back to its default
 	// (`sandboxed`) and the lookup misses every pool.
 	body := fmt.Sprintf(`{"runtimeRef":%q,"isolationProfile":"standard"}`, runtimeRef)
-	res, err := d.doRequest(ctx, http.MethodPost, "/v1/sessions",
+	res, err := d.doSessionRequest(ctx, http.MethodPost, "/v1/sessions",
 		tenantAdmin(tenantID), strings.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
@@ -363,7 +383,7 @@ func (d *Driver) CreateAndStartWithPlan(ctx context.Context, tenantID, runtimeRe
 		lastBody   []byte
 	)
 	for attempt := 0; attempt < 6; attempt++ {
-		res, err := d.doRequest(ctx, http.MethodPost, "/v1/sessions/start",
+		res, err := d.doSessionRequest(ctx, http.MethodPost, "/v1/sessions/start",
 			tenantAdmin(tenantID), strings.NewReader(body))
 		if err != nil {
 			return nil, fmt.Errorf("create-and-start session: %w", err)
@@ -468,7 +488,7 @@ func retryAfterBackoff(header string) time.Duration {
 // start sequence, for example).
 func (d *Driver) Start(ctx context.Context, tenantID, sessionID string) (*Session, error) {
 	path := "/v1/sessions/" + sessionID + "/start"
-	res, err := d.doRequest(ctx, http.MethodPost, path,
+	res, err := d.doSessionRequest(ctx, http.MethodPost, path,
 		tenantAdmin(tenantID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("start session %q: %w", sessionID, err)
@@ -511,7 +531,7 @@ func (d *Driver) SendMessage(ctx context.Context, tenantID, sessionID, content s
 		return nil, fmt.Errorf("encode message: %w", err)
 	}
 	path := "/v1/sessions/" + sessionID + "/messages"
-	res, err := d.doRequest(ctx, http.MethodPost, path,
+	res, err := d.doSessionRequest(ctx, http.MethodPost, path,
 		tenantAdmin(tenantID), bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("send message: %w", err)
@@ -535,7 +555,7 @@ func (d *Driver) SendMessage(ctx context.Context, tenantID, sessionID, content s
 // returns the row in its terminal state.
 func (d *Driver) Terminate(ctx context.Context, tenantID, sessionID string) error {
 	path := "/v1/sessions/" + sessionID + "/terminate"
-	res, err := d.doRequest(ctx, http.MethodPost, path,
+	res, err := d.doSessionRequest(ctx, http.MethodPost, path,
 		tenantAdmin(tenantID), nil)
 	if err != nil {
 		return fmt.Errorf("terminate session %q: %w", sessionID, err)
@@ -584,7 +604,7 @@ func (d *Driver) Resume(ctx context.Context, tenantID, sessionID string) (*Sessi
 // (the row was already absent).
 func (d *Driver) DeleteSession(ctx context.Context, tenantID, sessionID string) error {
 	path := "/v1/sessions/" + sessionID
-	res, err := d.doRequest(ctx, http.MethodDelete, path,
+	res, err := d.doSessionRequest(ctx, http.MethodDelete, path,
 		tenantAdmin(tenantID), nil)
 	if err != nil {
 		return fmt.Errorf("delete session %q: %w", sessionID, err)
@@ -606,7 +626,7 @@ func (d *Driver) DeleteSession(ctx context.Context, tenantID, sessionID string) 
 // example).
 func (d *Driver) GetSession(ctx context.Context, tenantID, sessionID string) (*Session, error) {
 	path := "/v1/sessions/" + sessionID
-	res, err := d.doRequest(ctx, http.MethodGet, path,
+	res, err := d.doSessionRequest(ctx, http.MethodGet, path,
 		tenantAdmin(tenantID), nil)
 	if err != nil {
 		return nil, fmt.Errorf("get session %q: %w", sessionID, err)
@@ -642,7 +662,7 @@ func (d *Driver) StreamEvents(ctx context.Context, tenantID, sessionID string, a
 		cancel()
 		return nil, nil, fmt.Errorf("build events request: %w", err)
 	}
-	addDevHeaders(req, tenantAdmin(tenantID))
+	d.applySessionAuth(req, tenantAdmin(tenantID))
 	req.Header.Set("Accept", "text/event-stream")
 	if afterSeq > 0 {
 		req.Header.Set("Last-Event-ID", strconv.FormatUint(afterSeq, 10))
@@ -701,6 +721,36 @@ func addDevHeaders(req *http.Request, r devRole) {
 	req.Header.Set("X-Lenny-Tenant-ID", r.tenant)
 	req.Header.Set("X-Lenny-Roles", r.roles)
 	req.Header.Set("X-Lenny-User-ID", r.user)
+}
+
+// applySessionAuth attaches auth to a §15.1 session-surface request. When
+// the driver was constructed with a SessionBearer, the request carries the
+// standard §10.2 `Authorization: Bearer` credential and no dev headers;
+// otherwise it falls back to the dev-header identity derived from r. The
+// tenant a bearer-authenticated request acts in is the one encoded in the
+// bearer's `tenant_id` claim, so callers using a bearer must target that
+// tenant; r is ignored on the bearer path.
+func (d *Driver) applySessionAuth(req *http.Request, r devRole) {
+	if d.sessionBearer != "" {
+		req.Header.Set("Authorization", "Bearer "+d.sessionBearer)
+		return
+	}
+	addDevHeaders(req, r)
+}
+
+// doSessionRequest is doRequest for the §15.1 session-surface calls: it
+// applies session auth (bearer when configured, else dev headers) rather
+// than always attaching dev headers. The caller closes res.Body.
+func (d *Driver) doSessionRequest(ctx context.Context, method, path string, role devRole, body io.Reader) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, d.baseURL+path, body)
+	if err != nil {
+		return nil, err
+	}
+	d.applySessionAuth(req, role)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	return d.hc.Do(req)
 }
 
 // doRequest builds and executes one HTTP request through the

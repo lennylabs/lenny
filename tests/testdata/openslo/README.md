@@ -11,7 +11,8 @@ JSON Schema release artifact to vendor.
 `schema/openslo-v1.schema.json` is authored by this repository rather
 than vendored, and it transcribes the OpenSLO v1 README's "General
 Schema" and "Object Types" (`SLI`, `SLO`, `AlertPolicy`,
-`AlertCondition`) sections into JSON Schema draft 2020-12. Every
+`AlertCondition`, `AlertNotificationTarget`) sections into JSON Schema
+draft 2020-12. Every
 `required` and `enum`/`const` constraint in the file cites, in a
 `description` key alongside it, the README sentence it encodes, so a
 reviewer can check the transcription against the source without
@@ -26,13 +27,19 @@ example, `pkg/openslo/v1/alert_policy.go` calls
 `rules.SliceLength[[]AlertPolicyCondition](1, 1)` on
 `AlertPolicySpec.Conditions` and `rules.SliceMinLength(1)` on
 `AlertPolicySpec.NotificationTargets`, matching the README's "(max of
-one condition)" and "required field" notes respectively). Sloth, one
+one condition)" and "required field" notes respectively; and
+`pkg/openslo/v1/alert_notification_target.go` calls `rules.NotEmpty` on
+`AlertNotificationTargetSpec.Target`, matching the README's "target
+string, required field" note). Sloth, one
 of the OpenSLO-compatible tools §16.10 names, parses OpenSLO input
 through this same SDK lineage (`github.com/OpenSLO/oslo`, the SDK's
 prior module name), so a document this schema rejects is a document a
 real OpenSLO-conformant tool also rejects.
 
 `tests/tier0_static/openslo_export_test.go` validates the rendered
-chart fragment (`charts/lenny/files/openslo.yaml`) against the three
-per-kind subschemas (`#/$defs/SLIDocument`, `#/$defs/SLODocument`,
-`#/$defs/AlertPolicyDocument`) via `tests/testinfra/schematest`.
+chart fragment (`charts/lenny/files/openslo.yaml`) against the per-kind
+subschemas (`#/$defs/SLIDocument`, `#/$defs/SLODocument`,
+`#/$defs/AlertPolicyDocument`, `#/$defs/AlertNotificationTargetDocument`)
+via `tests/testinfra/schematest`. `AlertNotificationTargetDocument`
+requires `spec.target`, matching the go-sdk validator that calls
+`rules.NotEmpty` on `AlertNotificationTargetSpec.Target`.
