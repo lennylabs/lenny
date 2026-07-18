@@ -3491,7 +3491,8 @@
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryActiveUsesHistoricalP50WithBaselines",
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta",
         "pkg/ops/upgradeservice/upgradeservice_test.go::TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA",
-        "tests/tier0_static/upgrade_channel_key_render_test.go::TestUpgradeChannelKeyDisablesReleaseChannelURL"
+        "tests/tier0_static/upgrade_channel_key_render_test.go::TestUpgradeChannelKeyDisablesReleaseChannelURL",
+        "tests/tier11_docs/agent_operability_chart_paths_test.go::TestSpecAgentOperabilityChartPathsResolve"
       ],
       "packages": [
         "pkg/upgrade",
