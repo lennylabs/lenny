@@ -542,7 +542,7 @@ func TestSpecMapPackagesIncludeEveryTestReferencedPackage(t *testing.T) {
 //	tests/tier4_integration/alerting_rules_prometheus_firing_test.go for
 //	§25.13), so a `blocked_until_phase` on any of these sections
 //	misrepresents the section as not-yet-testable to a reader or to the
-//	coverage tooling, mirroring the T-25.9/§25.10 precedent
+//	coverage tooling, mirroring the §25.9/§25.10 precedent
 //	(TestSpecMapAuditQueryPackagesIncludeAdminImplementation /
 //	TestSpecMapDriftPackagesIncludeDiffAndSnapshotStore) that dropped the
 //	same stale field once each section's packages[] was backfilled.
