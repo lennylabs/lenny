@@ -3711,7 +3711,8 @@
       "tests": [
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
         "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadFields",
-        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels"
+        "tests/tier3_contract/cloudevents/cloudevents_test.go::TestCloudEventsAlertFiredPayloadCarriesLabels",
+        "tests/tier4_integration/multi_installation_watchdog_test.go::TestMultiInstallationWatchdogIndependentPerInstallation"
       ],
       "packages": [],
       "blocked_until_phase": "14",
