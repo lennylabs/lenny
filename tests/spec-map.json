@@ -3292,6 +3292,7 @@
         "pkg/ops/opsserver/escalations_test.go::TestListEscalationsPaginationReportsMore_spec_25_4",
         "pkg/ops/escalation/pgstore/pgstore_test.go::TestPgStoreKeysetPagination_spec_25_4",
         "pkg/ops/escalation/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
+        "pkg/ops/opsservice/selfchecks_test.go::TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494",
         "pkg/ops/probe/probe_test.go",
         "pkg/ops/conventions/conventions_test.go",
         "pkg/ops/coordination/pgstore/classify_test.go::TestClassifyErr_OperatorIntervention_spec_25_4",
