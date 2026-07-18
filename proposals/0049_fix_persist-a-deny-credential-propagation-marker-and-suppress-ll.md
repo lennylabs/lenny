@@ -1,6 +1,6 @@
 # Proposal: Persist a deny credential-propagation marker and suppress LLM-credential assignment for credentialPropagation: deny children
 
-- **Status:** Verified (2026-07-18). Converged after 2 adversarial review rounds (0 findings fixed); awaiting sign-off.
+- **Status:** Approved (2026-07-18). Converged after 2 adversarial review rounds (0 findings fixed). Both §9 open decisions resolved at sign-off: persist the boolean `CredentialDeny` marker (not a full enum column); keep the SPEC-1 §8.3 origin-chain clarification.
 - **Date:** 2026-07-18.
 - **Scope:** A spec-first correction of the §8.3 credential-propagation `deny` behavior in `spec/08_recursive-delegation.md` (the multi-hop origin-chain paragraph at `:474`), plus the persistence and gateway code that must honor it: a new `CredentialDeny` field on `sessionstore.Session` (`pkg/gateway/session/sessionstore/sessionstore.go`), a migration for the backing column (`migrations/0179_sessions_credential_deny.{up,down}.sql`), the Postgres bind/scan round-trip (`pkg/gateway/session/sessionstore/pgstore/pgstore.go`), the delegation-Service stamp on the child row (`pkg/gateway/mcpfabric/delegation/service.go`), and the finalize-time suppression in the §4.9 engine (`pkg/gateway/sessionserver/start.go`). The current implementation stamps a `deny` child as a self-origin session that is byte-identical to an `independent` child, so it mints an LLM credential for a child the spec forbids from receiving one. This proposal persists the missing `deny` bit and fails the child closed at credential assignment. It closes the two remaining pieces of T-8.3.1 (High). It adds no new SPI, changes no enum, and touches neither the §8.3 delegation-time availability pre-check nor the §8.4 `approvalMode` `deny` value.
 
@@ -264,11 +264,11 @@ Subsequent adversarial review rounds populate this section. The challenge-round 
 
 ### Persistence choice — boolean marker versus full enum column
 
-A minimal boolean `CredentialDeny` marker is recommended, because `CredentialOriginSessionID` already encodes `inherit` versus `independent` and the boolean adds only the missing `deny` bit. A full persisted `CredentialPropagation` enum column, as the T-8.3.1 finding text literally phrases it ("a persisted credentialPropagation mode column"), is more self-documenting but duplicates the origin-derived distinction and risks drift with the origin id. The reviewer ratifies which persistence surface to land.
+A minimal boolean `CredentialDeny` marker is recommended, because `CredentialOriginSessionID` already encodes `inherit` versus `independent` and the boolean adds only the missing `deny` bit. A full persisted `CredentialPropagation` enum column, as the T-8.3.1 finding text literally phrases it ("a persisted credentialPropagation mode column"), is more self-documenting but duplicates the origin-derived distinction and risks drift with the origin id. The reviewer ratifies which persistence surface to land. **Resolved at sign-off: the boolean `CredentialDeny` marker.**
 
 ### Whether the inherit-from-deny edge warrants the SPEC-1 clarification
 
-SPEC-1 documents a `deny` hop as an origin-chain terminator that holds no origin pool, in the `:474` parenthetical. Under `spec-driven-development` the clarification is included by default, but the behavior is already determined by the existing lines `:443`, `:470`, and `:490`, so the reviewer may judge the existing text sufficient and drop SPEC-1, handling the edge as a code-only deductive consequence. CODE-5 is anchored by the existing lines either way.
+SPEC-1 documents a `deny` hop as an origin-chain terminator that holds no origin pool, in the `:474` parenthetical. Under `spec-driven-development` the clarification is included by default, but the behavior is already determined by the existing lines `:443`, `:470`, and `:490`, so the reviewer may judge the existing text sufficient and drop SPEC-1, handling the edge as a code-only deductive consequence. CODE-5 is anchored by the existing lines either way. **Resolved at sign-off: keep SPEC-1.**
 
 ## 10. Files touched on application
 
