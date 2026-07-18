@@ -25,7 +25,7 @@ const (
 	HealthComponentPostgres            = "postgres"
 	HealthComponentRedis               = "redis"
 	HealthComponentObjectStore         = "objectStore"
-	HealthComponentCertManager         = "cert-manager"
+	HealthComponentCertManager         = "certManager" // spec: §25.7/§25.8 name the health API's cert-manager component "certManager" (camelCase)
 	HealthComponentGateway             = "gateway"
 	HealthComponentCircuitBreakerCache = "circuit-breaker-cache"
 )

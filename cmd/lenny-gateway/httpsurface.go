@@ -162,8 +162,12 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// gateway's mounted mesh certificate. Registered only when a cert path
 	// is configured (mTLS deployments); reports degraded inside the §16.5
 	// CertExpiryImminent window and unhealthy once expired or unreadable.
+	// The component name is "certManager" (camelCase) per spec §25.7/§25.8,
+	// matching rules.HealthComponentCertManager so the §16.5 alert overlay
+	// (keyed by this same name, see service.go's src.ComponentStatus(comp.Name))
+	// and the runbook `components:` front-matter lookup both resolve it.
 	if *adapterTLSCert != "" {
-		healthAgg.Register(backends.CertManager(backends.FileCertReader(*adapterTLSCert), "cert-manager"))
+		healthAgg.Register(backends.CertManager(backends.FileCertReader(*adapterTLSCert), "certManager"))
 	}
 	// When a backing service is wired, the §25.3 health API reports
 	// its real reachability instead of a static verdict.

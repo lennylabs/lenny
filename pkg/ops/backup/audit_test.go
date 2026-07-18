@@ -171,7 +171,7 @@ func TestRestoreLifecycleEmitsAudit_spec_25_11_4343(t *testing.T) {
 		t.Errorf("restore.started events = %+v, want one for %s actor=bob", started, res.RestoreID)
 	}
 
-	if _, err := svc.ResumeRestore(ctx, res.RestoreID); err != nil {
+	if _, err := svc.ResumeRestore(ctx, res.RestoreID, "bob"); err != nil {
 		t.Fatalf("ResumeRestore: %v", err)
 	}
 	if !rec.has(string(audit.EventRestoreResumed)) {
