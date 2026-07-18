@@ -3200,7 +3200,8 @@
         "pkg/gateway/externalapi/admin/scope_enforce_test.go::TestAdminScopeGateBlocksBeforeHandler",
         "tests/tier4_integration/agent_correlation_audit_test.go::TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF",
         "tests/tier4_integration/ops_endpoints_test.go::TestOpsRemediationIdempotencyReplayAgainstPostgresE2E",
-        "pkg/ops/me/service_test.go::TestService_Authorized_ScopeFilter"
+        "pkg/ops/me/service_test.go::TestService_Authorized_ScopeFilter",
+        "tests/tier4_integration/ops_mcp_scope_live_bearer_test.go::TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin",

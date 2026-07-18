@@ -298,7 +298,8 @@
       "security": [
         "tests/tier9_security/diagnostics_fix_guardrails_test.go",
         "tests/tier9_security/mcp_management_authz_sweep_test.go"
-      ]
+      ],
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
     },
     "tests/tier3_contract/ops_endpoints": {
       "unit": ["pkg/ops/opsserver/..."],
@@ -428,7 +429,8 @@
     "cmd/lenny-ops": {
       "unit": ["cmd/lenny-ops/..."],
       "component": ["cmd/lenny-ops/..."],
-      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"]
+      "e2e_kind": ["tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go"],
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
     },
     "cmd/lenny-backup": {
       "unit": ["cmd/lenny-backup/..."],
@@ -606,7 +608,8 @@
         "tests/tier3_contract/ops_endpoints/mcp_schema_conformance_test.go",
         "tests/tier3_contract/ops_endpoints/mcp_test.go"
       ],
-      "security": ["tests/tier9_security/mcp_management_authz_sweep_test.go"]
+      "security": ["tests/tier9_security/mcp_management_authz_sweep_test.go"],
+      "integration": ["tests/tier4_integration/ops_mcp_scope_live_bearer_test.go"]
     },
     "pkg/ops/me": {
       "unit": ["pkg/ops/me/..."]
