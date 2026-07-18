@@ -465,6 +465,57 @@ func TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer(t *testing.T) {
 	}
 }
 
+// spec: tests/README.md ("`spec-map-exceptions.yaml` | Spec sections
+//
+//	explicitly exempt from the 'every section has at least one test'
+//	rule, with justifications.")
+//
+// diagnosis: tests/spec-map-exceptions.yaml lists "25.5", "25.8", and
+//
+//	"25.13" with reason "deferred", using the same "is built in Wave 4
+//	(Phase 13)" justification pattern the §25.12 exception used before
+//	it was removed. Each of the three sections already carries real
+//	tests[] entries in spec-map.json (§25.5 has 23, §25.8 has 37, §25.13
+//	has 8) exercising an implementation package that is wired into a
+//	real binary: pkg/ops/events, pkg/ops/eventsubscription (+ pgstore),
+//	pkg/ops/opsservice, and pkg/webhookdelivery for §25.5;
+//	pkg/ops/upgradeservice and pkg/ops/configservice for §25.8;
+//	pkg/alerting/inproceval for §25.13. The exceptions file exists only
+//	to waive the "every section has at least one test" rule for a
+//	section that has none; all three sections already satisfy that rule
+//	on their own tests[] entries, so each exception is both unnecessary
+//	and factually wrong about the section being wholly deferred. §25.5
+//	does still have one genuinely unbuilt slice — the read-side Redis
+//	stream source and the Redis-down/gateway-down degradation matrix
+//	(pkg/ops/events package doc, "F-25.5.1 / F-25.5.14") — but, exactly
+//	like the remaining unbuilt slices of §25.12, that gap is already
+//	tracked precisely by a t.Skip scaffold carrying its own §25.5
+//	citation (tests/tier5_e2e_kind/event_buffer_fanout_test.go), so a
+//	section-wide deferral exception is not needed to account for it
+//	either.
+func TestSpecMapExceptionsDoesNotDeferShippedOperabilitySections(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	excepted := readSpecMapExceptedSections(t, root)
+	tests := readSpecMapTests(t)
+
+	for _, section := range []string{"25.5", "25.8", "25.13"} {
+		if excepted[section] {
+			t.Errorf("tests/spec-map-exceptions.yaml lists §%s as exempt from the "+
+				"\"every section has at least one test\" rule, but the section already "+
+				"carries real tests[] entries in spec-map.json against a shipped "+
+				"implementation package; remove the §%s entry", section, section)
+		}
+		if len(tests[section]) == 0 {
+			t.Errorf("spec-map.json §%s has no tests[] entries; if the section is genuinely "+
+				"unbuilt it should keep its spec-map-exceptions.yaml deferral, but that "+
+				"deferral should not coexist with claiming the section has zero coverage "+
+				"while also being described as shipped", section)
+		}
+	}
+}
+
 // spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
 //
 //	the tests, packages, migrations, and chart templates that encode

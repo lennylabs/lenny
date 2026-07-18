@@ -3278,6 +3278,7 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestOperabilityImplementationPackagesExist",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapPackagesIncludeEveryTestReferencedPackage",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapExceptionsDoesNotDeferShippedOperabilitySections",
         "tests/tier6_e2e_cloud/ops_surface_test.go::TestCloudOpsSurfaceHealthy",
         "tests/tier8_chaos/store_failure_test.go",
         "tests/tier0_static/degradation_envelope_citation_test.go::TestDegradationEnvelopeCitationsResolveToArchitectureOverview",
@@ -3399,7 +3400,9 @@
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
-        "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock"
+        "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock",
+        "tests/tier0_static/ops_rbac_test_yaml_citation_test.go::TestOpsRBACHelmTestCitesOnlyDurableSpecSections",
+        "charts/lenny/tests/ops-rbac_test.yaml"
       ],
       "packages": [
         "cmd/lenny-ops",
@@ -3528,6 +3531,10 @@
         "tests/tier3_contract/ops_endpoints/upgrade_test.go",
         "pkg/ops/opsserver/platform_upgrade_test.go",
         "pkg/ops/upgradeservice/upgradeservice_test.go",
+        "pkg/ops/upgradeservice/pgstore/pgstore_test.go::TestUpgradeStateRoundTrip_spec_25_8",
+        "pkg/ops/upgradeservice/pgstore/pgstore_test.go::TestUpgradeStateTerminalReplaces_spec_25_8",
+        "pkg/ops/upgradeservice/pgstore/pgstore_test.go::TestCheckCacheRoundTrip_spec_25_8",
+        "cmd/lenny-ops/opsroll_startup_durable_test.go::TestOpsRollStartupHookDurable_spec_25_8_3508",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreRoundTrip_spec_25_8",
         "pkg/ops/registryservice/pgstore_test.go::TestPgStoreDrivesImageResolution_spec_25_8",
         "pkg/ops/configservice/configservice_test.go::TestDiff_InSync_spec_25_8",
@@ -3561,11 +3568,14 @@
         "pkg/ops/opsinventory/upgrade_progress_test.go::TestUpgradeInventoryPausedReportsNoEta",
         "pkg/ops/upgradeservice/upgradeservice_test.go::TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA",
         "tests/tier0_static/upgrade_channel_key_render_test.go::TestUpgradeChannelKeyDisablesReleaseChannelURL",
-        "tests/tier11_docs/agent_operability_chart_paths_test.go::TestSpecAgentOperabilityChartPathsResolve"
+        "tests/tier11_docs/agent_operability_chart_paths_test.go::TestSpecAgentOperabilityChartPathsResolve",
+        "tests/tier6_e2e_cloud/platform_lifecycle_test.go::TestCloudPlatformVersionAggregation",
+        "tests/tier6_e2e_cloud/platform_lifecycle_test.go::TestCloudCertManagerHealthObservation"
       ],
       "packages": [
         "pkg/upgrade",
         "pkg/ops/upgradeservice",
+        "pkg/ops/upgradeservice/pgstore",
         "pkg/ops/versionsource",
         "pkg/ops/opsserver",
         "pkg/ops/registryservice",
@@ -3573,7 +3583,7 @@
         "pkg/releasechannel",
         "pkg/ops/configservice"
       ],
-      "notes": "§25.8 Platform Lifecycle Management. pkg/ops/upgradeservice and pkg/ops/configservice implement the upgrade and config-diff/apply surfaces; see TESTING.md §25 for the test plan. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
+      "notes": "§25.8 Platform Lifecycle Management. pkg/ops/upgradeservice and pkg/ops/configservice implement the upgrade and config-diff/apply surfaces; see TESTING.md §25 for the test plan. pkg/ops/upgradeservice/pgstore/pgstore_test.go and cmd/lenny-ops/opsroll_startup_durable_test.go are Postgres-backed component-level tests for the platform_upgrade_state singleton and platform_upgrade_check_cache round trips defined in the §25.8 Postgres Schema; they reside under pkg/ and cmd/lenny-ops/ rather than tests/tier2_component but are covered by the pkg/ops/upgradeservice/... and cmd/lenny-ops/... change-graph globs. The upgrade-check consumer fetches the signed release manifest over HTTP (pkg/releasechannel.HTTPSource) and verifies its Ed25519 X-Lenny-Release-Signature; the tier4/tier9/tier10 release_channel_* tests pin the fetch, signature-rejection, and manifest-schema contracts. TestPublicMutationAPIReachesActiveNonPausedFixedPhaseDurationsETA is currently skipped pending the open operator-paced-vs-autonomous architecture question (see TEST-GAPS.md). TestUpgradeChannelKeyDisablesReleaseChannelURL is currently skipped pending a spec-vs-chart naming reconciliation between the spec's platform.upgradeChannel disable key and the chart's platform.releaseChannel.url (see TEST-GAPS.md)."
     },
     "25.9": {
       "title": "Audit Log Query API",
