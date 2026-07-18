@@ -3327,6 +3327,8 @@
         "tests/tier9_security/ops_rbac_test.go::TestOpsRoleCeilingAdmitsPlatformAdmin_spec_25_4_1567",
         "tests/tier9_security/ops_rbac_test.go::TestOpsTenantAdminPlatformLockForbidden_spec_25_4_2128",
         "tests/tier9_security/ops_rbac_test.go::TestOpsScopeClaimNarrowsBelowRoleCeiling_spec_25_4_1569",
+        "tests/tier9_security/ops_inventory_isolation_test.go::TestOpsTenantAdminInventoryScopedToOwnAndTenant_spec_25_4_1840",
+        "tests/tier9_security/ops_inventory_isolation_test.go::TestOpsTenantAdminActorWildcardAutoRestricted_spec_25_4_1840",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsNetworkPolicyPosture_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsEgressBoundToAllowlist_spec_25_4",
         "tests/tier9_security/ops_network_policy_test.go::TestOpsWebhookEgressSSRFExceptBlocksPodIP_spec_25_4",
