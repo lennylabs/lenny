@@ -144,15 +144,22 @@ func TestResumeRestoreRequiresLock(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRestore: %v", err)
 	}
-	// With the lock still held, resume succeeds.
-	if _, err := svc.ResumeRestore(ctx, result.RestoreID); err != nil {
+	// With the lock still held by alice, alice's resume succeeds.
+	if _, err := svc.ResumeRestore(ctx, result.RestoreID, "alice"); err != nil {
 		t.Fatalf("ResumeRestore while holding the lock: %v", err)
+	}
+	// spec: §25.11 — "resume requires the caller to be the current
+	// acquiredBy of the restore:platform remediation lock." A held lock
+	// still fails a caller who is not its acquiredBy.
+	_, err = svc.ResumeRestore(ctx, result.RestoreID, "mallory")
+	if backup.CodeOf(err) != backup.ErrCodeRestoreLockRequired {
+		t.Errorf("error code = %q, want RESTORE_LOCK_REQUIRED for a caller who is not the current acquiredBy", backup.CodeOf(err))
 	}
 	// §25.11: once the lock is released, resume fails RESTORE_LOCK_REQUIRED.
 	if err := locker.Release(ctx); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
-	_, err = svc.ResumeRestore(ctx, result.RestoreID)
+	_, err = svc.ResumeRestore(ctx, result.RestoreID, "alice")
 	if backup.CodeOf(err) != backup.ErrCodeRestoreLockRequired {
 		t.Errorf("error code = %q, want RESTORE_LOCK_REQUIRED", backup.CodeOf(err))
 	}

@@ -3608,6 +3608,7 @@
         "cmd/lenny-gateway/replication_wiring_test.go",
         "tests/tier2_component/stores/backup_minio_roundtrip_test.go::TestBackupMinIORoundTrip",
         "tests/tier4_integration/backup_restore_test.go::TestBackupRestoreRoundTrip",
+        "tests/tier4_integration/backup_restore_resume_lock_test.go::TestRestoreResumeAfterLockStealRequiresCurrentHolder",
         "tests/tier4_integration/backup_binary_test.go::TestBackupBinaryFullModeAgainstPostgresAndMinIO",
         "tests/tier4_integration/backup_preview_test.go::TestRestorePreviewAndSafetyCheckAgainstPostgresE2E",
         "tests/tier4_integration/backup_degradation_test.go::TestBackupCreationFailsWhenPostgresDown",

@@ -391,7 +391,7 @@ func (s *Server) handleRestoreResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	restoreID := r.URL.Query().Get("restoreId")
-	result, err := s.backups.ResumeRestore(r.Context(), restoreID)
+	result, err := s.backups.ResumeRestore(r.Context(), restoreID, callerIdentity(r))
 	if err != nil {
 		writeBackupError(w, err)
 		return

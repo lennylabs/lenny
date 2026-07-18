@@ -254,8 +254,14 @@ func TestRestoreResumeLockRequired(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExecuteRestore: %v", err)
 	}
-	// Resuming while the lock is held succeeds.
-	rec := do(srv, http.MethodPost, "/v1/admin/restore/resume?restoreId="+result.RestoreID, "")
+	// spec: §25.11 — resume requires the caller to be the current
+	// acquiredBy of the restore:platform lock (alice, from StartedBy
+	// above), not merely that the lock is held by anyone.
+	req := httptest.NewRequest(http.MethodPost,
+		"/v1/admin/restore/resume?restoreId="+result.RestoreID, strings.NewReader(""))
+	req.Header.Set("X-Lenny-Caller", "alice")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("resume status = %d, want 202\nbody: %s", rec.Code, rec.Body.String())
 	}

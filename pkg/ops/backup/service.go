@@ -423,7 +423,7 @@ type BackupService interface {
 	SafetyCheckRestore(ctx context.Context, backupID string) (*RestoreSafetyCheck, error)
 	ExecuteRestore(ctx context.Context, req RestoreRequest) (*RestoreResult, error)
 	GetRestoreStatus(ctx context.Context, restoreID string) (*RestoreState, error)
-	ResumeRestore(ctx context.Context, restoreID string) (*RestoreResult, error)
+	ResumeRestore(ctx context.Context, restoreID, caller string) (*RestoreResult, error)
 	// ConfirmLegalHoldLedger records the §12.8 / §25.11 platform-admin
 	// confirmation that the legal-hold ledger is current after a
 	// gdpr.backup_reconcile_blocked stall (ledger restored in lockstep,

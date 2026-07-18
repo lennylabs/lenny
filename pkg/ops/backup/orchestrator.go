@@ -866,9 +866,17 @@ func (s *Service) ListRestores(ctx context.Context, filter RestoreFilter) ([]Res
 
 // ResumeRestore re-creates the restore Job for a partially-completed
 // restore, restoring only the shards that have not completed. §25.11
-// requires the caller to be the current holder of the restore:platform
-// lock; a released or stolen lock fails with RESTORE_LOCK_REQUIRED.
-func (s *Service) ResumeRestore(ctx context.Context, restoreID string) (*RestoreResult, error) {
+// requires the caller to be the current acquiredBy of the
+// restore:platform lock; a released, expired, or stolen-by-someone-else
+// lock fails with RESTORE_LOCK_REQUIRED.
+//
+// spec: §25.11 (Restore Failure and Recovery, "Resume") — "resume
+// requires the caller to be the current acquiredBy of the
+// restore:platform remediation lock. If the lock has been stolen by
+// another operator (Section 25.4 Stealing), the new holder is now
+// acquiredBy and may resume; the original caller must steal it back to
+// regain control."
+func (s *Service) ResumeRestore(ctx context.Context, restoreID, caller string) (*RestoreResult, error) {
 	if s.locker == nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "restore lock manager is not configured")
 	}
@@ -879,15 +887,18 @@ func (s *Service) ResumeRestore(ctx context.Context, restoreID string) (*Restore
 	if err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "read restore: %v", err)
 	}
-	// §25.11: resume requires the caller to hold the restore:platform
-	// lock. A released or expired lock fails with RESTORE_LOCK_REQUIRED.
-	_, held, err := s.locker.Holder(ctx)
+	// §25.11: resume requires the caller to be the current acquiredBy of
+	// the restore:platform lock, not merely that some caller holds it —
+	// a lock held by a different operator (e.g. after a §25.4 steal)
+	// fails RESTORE_LOCK_REQUIRED just like a released or expired lock,
+	// so only the current acquiredBy can resume.
+	owner, held, err := s.locker.Holder(ctx)
 	if err != nil {
 		return nil, codedError(ErrCodeStorageUnreachable, "read restore lock: %v", err)
 	}
-	if !held {
+	if !held || owner != caller {
 		return nil, codedError(ErrCodeRestoreLockRequired,
-			"the restore:platform lock is not held; re-acquire it before resuming")
+			"the restore:platform lock is not held by %q; re-acquire or steal it before resuming", caller)
 	}
 	launched, err := s.launcher.Launch(ctx, JobSpec{
 		Kind:      JobRestore,
