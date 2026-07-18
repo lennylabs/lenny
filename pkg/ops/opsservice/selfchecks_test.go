@@ -83,3 +83,80 @@ func TestK8sAPICheckNilClientUnhealthy(t *testing.T) {
 		t.Errorf("check name = %q, want %q", got.Name, CheckK8sAPI)
 	}
 }
+
+// TestSelfHealthCheckNamesAreSnakeCase pins the §25.4 self-health check
+// identifiers — the names carried in the GET /v1/admin/ops/health
+// "checks" array and in the "triggering check" field of
+// ops_health_status_changed events — to the snake_case convention the
+// spec itself uses for them: "immediate evaluation of the `postgres_pool`
+// check", "...`redis_consumer_lag`", "...`webhook_backlog` evaluation",
+// and "...`k8s_api` evaluation" (§25.4 "Event-driven supplements",
+// spec lines 2494-2497).
+//
+// This is a distinct namespace from the §25.3 gateway health API's
+// component names, which the runbook `components:` front matter and
+// §25.8's Cert-Manager Integration text document as camelCase
+// (`postgres`, `redis`, `objectStore`, `certManager`, `gateway`,
+// `credentialPools`, `controllers`, `circuitBreakers` — §25.7 "Runbook
+// Authoring Guidelines", spec line 3032: "`components` — maps to the
+// component names used in the health API response"). That "health API"
+// is the gateway's GET /v1/admin/health (§25.3), a different endpoint
+// from lenny-ops's own self-health surface here; the camelCase
+// certManager component name belongs to it and is pinned separately by
+// pkg/alerting/rules.HealthComponentCertManager. §25.4's self-health
+// checks, including CheckCertManager's cert-manager probe, follow the
+// snake_case convention documented in this section instead.
+func TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"postgres pool", CheckPostgresPool},
+		{"redis consumer lag", CheckRedisLag},
+		{"webhook backlog", CheckWebhookBacklog},
+		{"k8s api", CheckK8sAPI},
+		{"memory pressure", CheckMemoryPressure},
+		{"gateway auth", CheckGatewayAuth},
+		{"cert manager", CheckCertManager},
+	}
+	// spec: §25.4 lines 2494-2497 name postgres_pool, redis_consumer_lag,
+	// webhook_backlog, and k8s_api verbatim in snake_case; the sibling
+	// checks (memory_pressure, gateway_auth, cert_manager) follow the same
+	// convention within this self-health surface.
+	for _, c := range cases {
+		if c.want == "" {
+			t.Errorf("%s: check name constant is empty", c.name)
+			continue
+		}
+		for _, r := range c.want {
+			if r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				continue
+			}
+			t.Errorf("%s: check name %q is not snake_case (spec §25.4 lines 2494-2497)", c.name, c.want)
+			break
+		}
+	}
+	if CheckCertManager != "cert_manager" {
+		t.Errorf("CheckCertManager = %q, want %q (§25.4 self-health snake_case convention; the camelCase certManager name belongs to the distinct §25.3 gateway health API component list, §25.7 line 3032)", CheckCertManager, "cert_manager")
+	}
+}
+
+// TestGatewayAuthComponentNameMatchesOIDCLifecycleCitation pins the
+// §25.4 "OIDC Token Lifecycle (GatewayClient)" section's literal
+// component name for the gateway-auth self-health check against the
+// CheckGatewayAuth constant used to name that check in the
+// "triggeringChecks" field of the emitted ops_health_status_changed
+// event. That section states, verbatim, twice: "Continuous refresh
+// failures within the pre-expiry window emit `ops_health_status_changed`
+// with component `gateway-auth` degraded" and "the token is assumed
+// revoked and `ops_health_status_changed` emits with `gateway-auth`
+// unhealthy" — both citing the component in kebab-case.
+//
+// spec: §25.4 "OIDC Token Lifecycle (GatewayClient)" (lines 1999-2000).
+func TestGatewayAuthComponentNameMatchesOIDCLifecycleCitation_spec_25_4_1999(t *testing.T) {
+	t.Skip("spec self-contradiction: §25.4 \"OIDC Token Lifecycle\" cites the gateway-auth component in kebab-case (lines 1999-2000) while the Self-Health Checks naming convention pinned by TestSelfHealthCheckNamesAreSnakeCase_spec_25_4_2494 requires the same check name in snake_case (gateway_auth); which citation governs needs a spec decision, tracked separately in TEST-GAPS.md")
+	const specCitedComponentName = "gateway-auth"
+	if CheckGatewayAuth != specCitedComponentName {
+		t.Errorf("CheckGatewayAuth = %q, want %q per §25.4 lines 1999-2000", CheckGatewayAuth, specCitedComponentName)
+	}
+}
