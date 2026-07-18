@@ -186,7 +186,7 @@ func TestResolveCredentialPoolsInheritNarrowsToOrigin(t *testing.T) {
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
 	)
-	got, _, err := s.resolveCredentialPools(context.Background(), inheritedChildRow())
+	got, _, _, err := s.resolveCredentialPools(context.Background(), inheritedChildRow())
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestResolveCredentialPoolsSelfOriginUnconstrained(t *testing.T) {
 	)
 	row := sessionRow()
 	row.CredentialOriginSessionID = row.ID // self-origin: not an inherit child
-	got, _, err := s.resolveCredentialPools(context.Background(), row)
+	got, _, _, err := s.resolveCredentialPools(context.Background(), row)
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -242,7 +242,7 @@ func TestResolveCredentialPoolsEmptyOriginUnconstrained(t *testing.T) {
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
 	)
-	got, _, err := s.resolveCredentialPools(context.Background(), sessionRow()) // empty origin id
+	got, _, _, err := s.resolveCredentialPools(context.Background(), sessionRow()) // empty origin id
 	if err != nil {
 		t.Fatalf("resolveCredentialPools: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestResolveCredentialPoolsInheritFailsClosedOnMissingOrigin(t *testing.T) {
 	)
 	row := sessionRow()
 	row.CredentialOriginSessionID = "ghost-origin" // no such origin session row
-	_, _, err := s.resolveCredentialPools(context.Background(), row)
+	_, _, _, err := s.resolveCredentialPools(context.Background(), row)
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (fail closed on unresolvable origin)", err)
 	}
@@ -304,7 +304,7 @@ func TestResolveCredentialPoolsInheritFailsClosedOnMissingOriginRuntime(t *testi
 	}
 	row := sessionRow()
 	row.CredentialOriginSessionID = "origin-danglingrt"
-	_, _, err := s.resolveCredentialPools(context.Background(), row)
+	_, _, _, err := s.resolveCredentialPools(context.Background(), row)
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (fail closed on unresolvable origin runtime)", err)
 	}
@@ -329,7 +329,7 @@ func TestResolveCredentialPoolsInheritDisjointDenies(t *testing.T) {
 		poolFixture("claude-prod", "anthropic_direct", credentialpoolstore.CredentialActive),
 		poolFixture("bedrock-prod", "aws_bedrock", credentialpoolstore.CredentialActive),
 	)
-	_, _, err := s.resolveCredentialPools(context.Background(), inheritedChildRow())
+	_, _, _, err := s.resolveCredentialPools(context.Background(), inheritedChildRow())
 	if !errors.Is(err, credrouter.ErrNoCredentialAvailable) {
 		t.Errorf("resolveCredentialPools = %v, want ErrNoCredentialAvailable (disjoint origin∩child)", err)
 	}
