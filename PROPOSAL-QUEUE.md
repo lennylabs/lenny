@@ -35,6 +35,29 @@ branches land, keeping each worker's lane clear of the others' active spec
 sections; the §15 (C-13) and §7 (C-14) Highs are held back until proposal-A's
 C-01 pod/resume work lands, to avoid pod-claim/resume conflicts.
 
+**Coordinate through this file before and after every proposal.** Other
+runners are working proposals in parallel, so this file is the shared view of
+who holds what and what has landed. Read it at two points:
+
+- **Before starting a new proposal.** Take the highest-severity cluster whose
+  `assigned:` field names you and whose status is not yet `claimed`/`in-review`/
+  `landed`. Scan the other clusters' statuses first: skip anything another runner
+  has `claimed`/`converging`/`in-review`, and do not open a proposal that touches
+  the same spec sections or packages as another runner's in-flight cluster (the
+  `assigned:`/`root spec gap`/`proposal scope` lines say which areas are live).
+  If your only assigned clusters are blocked on another runner's unlanded work
+  (a `depends on` note), wait or tell the integrator via the inbox rather than
+  starting something in a conflicting area.
+- **After a proposal completes** (lands or goes to `in-review`). Re-read the file
+  before picking your next one: new clusters may have been added, assignments
+  may have changed, and other runners' clusters may have landed and freed up a
+  spec area that was previously off-limits. Do not assume your pre-proposal view
+  is still current.
+
+You do not edit assignments yourself (the integrator is the sole writer). If you
+need a cluster reassigned, split, or unblocked, append an item to the Integrator
+inbox at the bottom of this file on your own branch.
+
 **Status lifecycle** (per cluster):
 
 ```
