@@ -3342,7 +3342,9 @@
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsAdminMe",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsRemediationLockAcquireRelease",
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
-        "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock"
+        "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock",
+        "tests/tier0_static/ops_rbac_test_yaml_citation_test.go::TestOpsRBACHelmTestCitesOnlyDurableSpecSections",
+        "charts/lenny/tests/ops-rbac_test.yaml"
       ],
       "packages": [
         "cmd/lenny-ops",
