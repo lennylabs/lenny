@@ -53,16 +53,26 @@ func (s opsInventoryFixtureSource) List(context.Context, operations.Filter) ([]o
 func opsInventoryFixture() []operations.Operation {
 	started := time.Now().UTC()
 	return []operations.Operation{
-		{OperationID: "restore-alice-own", Kind: operations.KindRestore,
-			Status: operations.StatusInProgress, StartedBy: "alice@acme.com", StartedAt: started, TenantID: "acme"},
-		{OperationID: "restore-bob-peer", Kind: operations.KindRestore,
-			Status: operations.StatusInProgress, StartedBy: "bob@acme.com", StartedAt: started, TenantID: "acme"},
-		{OperationID: "restore-carol-other-tenant", Kind: operations.KindRestore,
-			Status: operations.StatusInProgress, StartedBy: "carol@globex.com", StartedAt: started, TenantID: "globex"},
-		{OperationID: "upgrade-dave-platform", Kind: operations.KindPlatformUpgrade,
-			Status: operations.StatusInProgress, StartedBy: "dave-platform", StartedAt: started},
-		{OperationID: "upgrade-alice-platform-self", Kind: operations.KindPlatformUpgrade,
-			Status: operations.StatusInProgress, StartedBy: "alice@acme.com", StartedAt: started},
+		{
+			OperationID: "restore-alice-own", Kind: operations.KindRestore,
+			Status: operations.StatusInProgress, StartedBy: "alice@acme.com", StartedAt: started, TenantID: "acme",
+		},
+		{
+			OperationID: "restore-bob-peer", Kind: operations.KindRestore,
+			Status: operations.StatusInProgress, StartedBy: "bob@acme.com", StartedAt: started, TenantID: "acme",
+		},
+		{
+			OperationID: "restore-carol-other-tenant", Kind: operations.KindRestore,
+			Status: operations.StatusInProgress, StartedBy: "carol@globex.com", StartedAt: started, TenantID: "globex",
+		},
+		{
+			OperationID: "upgrade-dave-platform", Kind: operations.KindPlatformUpgrade,
+			Status: operations.StatusInProgress, StartedBy: "dave-platform", StartedAt: started,
+		},
+		{
+			OperationID: "upgrade-alice-platform-self", Kind: operations.KindPlatformUpgrade,
+			Status: operations.StatusInProgress, StartedBy: "alice@acme.com", StartedAt: started,
+		},
 	}
 }
 

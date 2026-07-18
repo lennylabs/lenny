@@ -151,7 +151,8 @@ func TestLeaderElectedScheduledBackupAndRetentionCronFireOnce(t *testing.T) {
 	newReplica := func(t *testing.T, identity string) *opsservice.Service {
 		t.Helper()
 		elector, err := opsservice.NewLeaseElector(
-			ns, identity, clientset.CoreV1(), clientset.CoordinationV1(), leaderReplicaTimings)
+			ns, identity, clientset.CoreV1(), clientset.CoordinationV1(), leaderReplicaTimings,
+		)
 		if err != nil {
 			t.Fatalf("NewLeaseElector(%s): %v", identity, err)
 		}
