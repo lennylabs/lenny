@@ -31,9 +31,11 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 		return nil, err
 	}
 
-	// §4.7: Checkpoint and Interrupt are serialized per session. A
-	// rejected interrupt returns a BUSY status the gateway retries.
-	release, err := s.ops.Begin(ctx, opInterrupt)
+	// §4.7: Checkpoint and Interrupt are serialized pod-wide. An interrupt
+	// takes the whole-pod queue (the empty slot id), so it never coexists
+	// with pending per-slot checkpoints. A rejected interrupt returns a
+	// BUSY status the gateway retries.
+	release, err := s.ops.Begin(ctx, opInterrupt, "")
 	if err != nil {
 		if errors.Is(err, errOpBusy) {
 			return &adapterv1.InterruptResponse{Status: adapterv1.InterruptResponse_STATUS_BUSY}, nil

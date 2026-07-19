@@ -90,11 +90,14 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 			"adapter is not configured with a checkpoint transport")
 	}
 
-	// spec: §4.7 — the Checkpoint RPC shares the per-session op lock with
-	// Interrupt so at most one runs at a time. A barrier-window checkpoint
-	// runs through the same lock; the barrier's quiescence has already
-	// drained dispatch, so the lock is uncontended there by construction.
-	release, err := s.ops.Begin(ctx, opCheckpoint)
+	// spec: §4.7 — the Checkpoint RPC shares the pod-level op lock with
+	// Interrupt so at most one runs at a time. The lock admits one pending
+	// checkpoint per distinct slotId and promotes them in slot-ID order
+	// (spec: §5.2), so a concurrent-session drain checkpoints every slot.
+	// A barrier-window checkpoint runs through the same lock; the barrier's
+	// quiescence has already drained dispatch, so the lock is uncontended
+	// there by construction.
+	release, err := s.ops.Begin(ctx, opCheckpoint, start.GetSlotId().GetValue())
 	if err != nil {
 		// A busy lock is a gateway-side abort of this attempt; the gateway
 		// finalises the manifest row partial.
