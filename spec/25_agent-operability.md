@@ -2574,6 +2574,8 @@ A real-time feed of platform operational events. `lenny-ops` reads from the Redi
 | `DELETE` | `/v1/admin/event-subscriptions/{id}` | Delete a subscription |
 | `GET` | `/v1/admin/event-subscriptions/{id}/deliveries` | Recent delivery attempts |
 
+The `GET /v1/admin/event-subscriptions/{id}/deliveries` endpoint is paginated with the canonical Section 25.2 envelope. It accepts `?cursor=` (an opaque continuation token from the previous response) and `?limit=` (page size, default 100, max 1000). Delivery attempts are returned newest-first, keyset-paginated over the delivery record's primary key; `pagination.cursorKind` is `"pk"`. An omitted or empty `cursor` returns the first page. When the supplied cursor can no longer be honored (the referenced delivery has aged out under the `deliveryRetentionDays` retention purge), the response returns the canonical `pagination.gapDetected: true` envelope with `oldestAvailableCursor` set to the oldest retained delivery cursor, matching the gap semantics defined in Section 25.2.
+
 ### Go Interface
 
 ```go
