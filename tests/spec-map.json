@@ -3451,6 +3451,9 @@
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery",
         "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushReEmitsBufferedEventsAfterRedisRecovers",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage",
+        "tests/tier3_contract/ops_endpoints/deliveries_pagination_test.go::TestEventSubscriptionDeliveriesPaginationContract",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapEventStreamNotesDoNotOverclaimRedisSupport"
       ],
       "packages": [

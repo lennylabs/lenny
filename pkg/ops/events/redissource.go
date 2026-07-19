@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -367,99 +366,6 @@ func redisServedKind(cursorKind string) string {
 		return SourceKindRedis
 	}
 	return SourceKindMixed
-}
-
-// handleStreamRedis serves the §25.5 SSE stream from the Redis
-// ops:events:stream: it resumes the backlog via XRANGE from the resume
-// point, then tails live via XREAD BLOCK 0 on a per-connection cursor with
-// no consumer group. The resume point honors the cursor's source kind: a
-// redis cursor resumes directly by stream ID, while any other cursor (or a
-// Last-Event-ID header, always a CloudEvents id) translates by eventKey
-// scan. A resume point that has been evicted emits the :gap comment and
-// replays from the oldest retained entry. spec: §25.5 (XREAD BLOCK 0 live
-// tail, XRANGE resume, cross-source cursor translation, independent
-// per-connection cursor).
-func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher, r *http.Request, filter gwevents.EventFilter, cursorKind, resumeKey string) {
-	ctx := r.Context()
-
-	// Resolve the resume point through the same cross-source translation the
-	// poll path uses: a redis cursor reads by stream ID, any other cursor
-	// (or a Last-Event-ID CloudEvents id) translates by eventKey scan. A
-	// read error resolving the point falls back to replaying the whole
-	// retained window with the gap flag set.
-	start, gap, rerr := s.redisResumePoint(ctx, cursorKind, resumeKey)
-	if rerr != nil {
-		start = ""
-		gap = true
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.WriteHeader(http.StatusOK)
-
-	if _, deg, _ := s.streamState(); deg != nil {
-		writeSSEDegradation(w, deg)
-	}
-	if gap {
-		writeSSEGap(w, resumeKey)
-		s.observeGap()
-	}
-
-	// Capture a concrete live-tail resume position BEFORE scanning the
-	// backlog, so the tail is contiguous with the scan and drops no event in
-	// the seam between the backlog read and the blocking XREAD. Relying on the
-	// XREAD "$" sentinel would reopen that seam: "$" resolves server-side at
-	// read time, so an entry XADDed after the backlog scan returns but before
-	// the read blocks would be neither in the backlog nor after "$", and would
-	// be lost. This mirrors the buffer path's subscribe-before-scan guarantee.
-	// spec: §25.5 (independent per-connection cursor, contiguous backlog-to-
-	// live-tail).
-	headStreamID, _, haveHead, headErr := s.redis.head(ctx)
-
-	// Replay the backlog after the resume point (or from the oldest retained
-	// entry on a gap), tracking the last stream ID so the live tail continues
-	// from exactly where the backlog ended with no overlap.
-	lastStreamID := start
-	if entries, err := s.redis.ReadRange(ctx, start, 0); err == nil {
-		for _, e := range entries {
-			if filter.Matches(e.event.Event) {
-				writeSSEFrame(w, e.event)
-			}
-			lastStreamID = e.streamID
-		}
-	}
-	if lastStreamID == "" {
-		// Fresh connection with no resume cursor and an empty backlog: resume
-		// the tail from the head captured before the scan, or from the stream
-		// origin when the stream was empty, never the "$" sentinel.
-		lastStreamID = streamOrigin
-		if haveHead && headErr == nil {
-			lastStreamID = headStreamID
-		}
-	}
-	flusher.Flush()
-
-	// Live tail: each connection runs its own XREAD BLOCK 0 goroutine from
-	// its own position, so two subscribers each observe every matching event
-	// with no consumer-group competition.
-	live := make(chan gwevents.BufferedEvent, 64)
-	go s.redis.Tail(ctx, lastStreamID, live)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, open := <-live:
-			if !open {
-				return
-			}
-			if !filter.Matches(ev.Event) {
-				continue
-			}
-			writeSSEFrame(w, ev)
-			flusher.Flush()
-		}
-	}
 }
 
 // decodeRedisEntry rebuilds a BufferedEvent from one stream entry. The

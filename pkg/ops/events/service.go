@@ -88,6 +88,84 @@ type Service struct {
 	// buffer stays the lenny-ops-origin source for a dual outage. spec:
 	// §25.5.
 	redis *redisSource
+
+	// gateway, when non-nil, is the §25.5 Redis-down fall-back source: it
+	// fans GET /v1/admin/events/buffer across every gateway replica over the
+	// lenny-gateway-pods headless Service and the read surface merges the
+	// per-replica pages deduped by eventKey. It is selected only during a
+	// Redis-down / gateway-up outage (degradation case 1). Injected
+	// post-construction because the gateway client is built after the
+	// Service. spec: §25.5 (Redis-down gateway-buffer fallback).
+	gateway GatewayBufferSource
+
+	// redisReEmit, when non-nil, re-emits a locally-buffered event to the
+	// Redis ops:events:stream without re-publishing it to the local ring.
+	// It backs the §25.5 best-effort recovery flush: on a Redis down-to-up
+	// edge the replica re-emits the lenny-ops-originated events it buffered
+	// locally during the outage, deduped by eventKey. Injected
+	// post-construction from the same StreamEmitter the fan-out emitter
+	// writes through. spec: §25.5 (best-effort recovery flush).
+	redisReEmit func(context.Context, gwevents.OperationalEvent) error
+}
+
+// dataSource names the read source the §25.5 poll and SSE handlers serve a
+// request from. It is resolved from the live SourceHealth degradation matrix
+// so the actualSource label and the data path stay in agreement. spec: §25.5
+// (source selection from the degradation matrix).
+type dataSource int
+
+const (
+	// dsRedis serves from the Redis ops:events:stream (the merged
+	// cross-replica primary source).
+	dsRedis dataSource = iota
+	// dsGateway serves from the gateway event buffer fanned over the
+	// lenny-gateway-pods headless Service (Redis-down fall-back, case 1).
+	dsGateway
+	// dsLocalBuffer serves from this replica's own ring buffer (the
+	// lenny-ops-origin source: no Redis wired, or a dual outage, case 4).
+	dsLocalBuffer
+)
+
+// SetGatewayBufferSource injects the §25.5 Redis-down gateway-buffer
+// fall-back source. It is called once during wiring after the gateway
+// admin-API client is constructed, since the client does not exist at the
+// Service construction site. A nil source leaves the read surface serving
+// the local ring buffer during a Redis outage (no cross-process fetch).
+// spec: §25.5.
+func (s *Service) SetGatewayBufferSource(src GatewayBufferSource) {
+	s.gateway = src
+}
+
+// SetRedisReEmitter injects the §25.5 recovery-flush re-emit path: a
+// function that XADDs one event to the Redis ops:events:stream without
+// re-publishing it to the local ring. It is wired from the same
+// StreamEmitter the fan-out emitter uses. A nil re-emitter disables the
+// recovery flush (a no-Redis deployment has nothing to flush to). spec:
+// §25.5 (best-effort recovery flush).
+func (s *Service) SetRedisReEmitter(fn func(context.Context, gwevents.OperationalEvent) error) {
+	s.redisReEmit = fn
+}
+
+// selectSource resolves the §25.5 read source for the current request from
+// the live degradation matrix, and returns the degradation envelope to
+// attach and whether the dual Redis + gateway outage holds. It makes
+// streamState's actualSource label drive the real data-path selection: a
+// gateway-buffer label with no gateway client wired, or a redis-stream label
+// with no Redis client wired, both fall through to the local ring buffer so
+// the surface keeps serving lenny-ops-originated events. spec: §25.5.
+func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
+	actual, deg, dualDown := s.streamState()
+	switch actual {
+	case sourceRedisStream:
+		if s.redis != nil {
+			return dsRedis, deg, dualDown
+		}
+	case sourceGatewayBuffer:
+		if s.gateway != nil {
+			return dsGateway, deg, dualDown
+		}
+	}
+	return dsLocalBuffer, deg, dualDown
 }
 
 // subscription is one active SSE subscriber.
@@ -374,7 +452,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	// 503 the agent retries. The SSE surface still serves
 	// lenny-ops-originated events from the local buffer. spec: §25.5 lines
 	// 2768-2780.
-	_, deg, dualDown := s.streamState()
+	_, deg, dualDown := s.selectSource()
 	if dualDown {
 		writeStreamUnavailable(w)
 		return
@@ -413,9 +491,24 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // and serves from the oldest retained event. spec: §25.5 lines
 // 2666-2699.
 func (s *Service) pollPage(ctx context.Context, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
-	if s.redisPrimary() {
+	src, _, _ := s.selectSource()
+	switch src {
+	case dsRedis:
 		return s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+	case dsGateway:
+		return s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
 	}
+	return s.bufferPollPage(cursorKind, eventKey, filter, limit, desc)
+}
+
+// bufferPollPage serves the §25.5 polling page from this replica's local
+// ring buffer: the lenny-ops-origin source used when no Redis client is
+// wired or during a dual Redis + gateway outage. It resolves the incoming
+// opaque cursor to a buffer position by eventKey, runs the buffer query, and
+// wraps the result in the §25.2 canonical envelope. When the cursor's
+// eventKey is no longer retained (evicted), the page reports gapDetected and
+// serves from the oldest retained event. spec: §25.5 lines 2666-2699.
+func (s *Service) bufferPollPage(cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	var since uint64
 	servedKind := SourceKindBuffer
 	gap := false
@@ -512,71 +605,27 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 
 	resumeKind, resumeKey := resumeCursor(r)
 
-	// §25.5 source selection: when the Redis ops:events:stream is the active
-	// source, serve the SSE stream from it (XRANGE backlog resume + XREAD
-	// BLOCK 0 live tail on a per-connection cursor). The resume cursor's
-	// source kind decides how its position is resolved (redis stream ID vs
-	// eventKey scan). The in-memory subscription below is the local-buffer
-	// path used when Redis is unwired or unreachable.
-	if s.redisPrimary() {
-		s.handleStreamRedis(w, flusher, r, filter, resumeKind, resumeKey)
-		return
-	}
-
-	sub := s.subscribe(filter, 64)
-	defer s.unsubscribe(sub)
-
-	// Resolve the resume point. The subscription is already installed so
-	// no concurrent publish is missed between the backlog scan and live
-	// delivery.
-	var since uint64
-	gap := false
-	if resumeKey != "" {
-		if id, found := s.buffer.Lookup(resumeKey); found {
-			since = id
-		} else {
-			gap = true
-		}
-	}
-
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// §25.5 degradation cases 1 and 4: announce the fall-back source on
-	// the stream so the consumer learns it is receiving a degraded view —
-	// the gateway buffer during a Redis outage, or only this replica's
-	// lenny-ops-originated events during a dual Redis + gateway outage
-	// (the local ring buffer holds no gateway-originated events). spec:
-	// §25.5 lines 2768-2780.
-	if _, deg, _ := s.streamState(); deg != nil {
-		writeSSEDegradation(w, deg)
+	// §25.5 transparent source switching: one connection serves from the
+	// active source and follows the live SourceHealth signal across
+	// transitions (Redis stream ↔ gateway-buffer fan-out ↔ local ring
+	// buffer), announcing each transition on the stream. The last delivered
+	// eventKey is carried across a switch so the new source resumes with no
+	// drop, emitting a :gap comment when the new source cannot honour it.
+	// spec: §25.5 (transparent Redis to gateway-buffer switch and back).
+	sess := &streamSession{
+		s:        s,
+		w:        w,
+		flusher:  flusher,
+		filter:   filter,
+		lastKind: resumeKind,
+		lastKey:  resumeKey,
 	}
-
-	if gap {
-		writeSSEGap(w, resumeKey)
-		s.observeGap()
-	}
-	backlog := s.buffer.Query(since, filter, 0)
-	for _, ev := range backlog.Events {
-		writeSSEFrame(w, ev)
-	}
-	flusher.Flush()
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, open := <-sub.ch:
-			if !open {
-				return
-			}
-			writeSSEFrame(w, ev)
-			flusher.Flush()
-		}
-	}
+	sess.run(r.Context())
 }
 
 // resumeCursor reads the §25.5 SSE resume position and its source kind from

@@ -117,6 +117,19 @@ func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalE
 	return e.stream.Emit(ctx, event)
 }
 
+// ReEmit XADDs event to the §25.5 Redis ops:events:stream without
+// re-publishing it to the local ring buffer. It backs the §25.5 best-effort
+// recovery flush: on a Redis down-to-up edge the event stream re-emits the
+// lenny-ops-originated events it buffered locally during the outage, and
+// those events are already in the local ring, so re-emitting them through the
+// full fan-out Emit would double the local delivery. The StreamEmitter
+// preserves the event's existing eventKey, so consumer-side deduplication
+// still collapses a re-emitted event a consumer already saw. spec: §25.5
+// (best-effort recovery flush, eventKey dedup).
+func (e *redisFanOutEmitter) ReEmit(ctx context.Context, event events.OperationalEvent) error {
+	return e.stream.Emit(ctx, event)
+}
+
 // Compile-time guard that *redisFanOutEmitter satisfies the §4.0
 // EventEmitter contract.
 var _ events.EventEmitter = (*redisFanOutEmitter)(nil)

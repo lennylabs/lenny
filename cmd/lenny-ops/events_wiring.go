@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"os"
@@ -56,7 +57,14 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	w.eventStream = opsstream.New(streamOpts)
 	var opsEmitter events.EventEmitter = w.eventStream
 	if w.redisClient != nil {
-		opsEmitter = newRedisFanOutEmitter(w.redisClient, w.eventStream, w.replicaID, *w.f.eventsStreamMaxLen)
+		fanOut := newRedisFanOutEmitter(w.redisClient, w.eventStream, w.replicaID, *w.f.eventsStreamMaxLen)
+		// §25.5 best-effort recovery flush: on a Redis down-to-up edge the
+		// source-health probe re-emits the lenny-ops events buffered locally
+		// during the outage to the recovered stream, through the same
+		// StreamEmitter the fan-out writes to (ReEmit skips the local
+		// re-publish since the events are already in the ring).
+		w.eventStream.SetRedisReEmitter(fanOut.ReEmit)
+		opsEmitter = fanOut
 		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s (maxlen=%d)", eventbuffer.DefaultStreamKey, *w.f.eventsStreamMaxLen)
 	}
 	w.opsEmitter = opsEmitter
@@ -173,10 +181,43 @@ func (w *opsWiring) buildGatewayLink() {
 	}
 	w.gwClient = gwClient
 
+	// Inject the §25.5 Redis-down gateway-buffer fall-back source now that
+	// the gateway admin-API client exists (it was nil at the opsstream.New
+	// construction site). During a Redis outage the read surface fans GET
+	// /v1/admin/events/buffer across every gateway replica over the
+	// lenny-gateway-pods headless Service and merges the pages deduped by
+	// eventKey. spec: §25.5 (Redis-down gateway-buffer fallback).
+	if w.eventStream != nil {
+		w.eventStream.SetGatewayBufferSource(w.gwClient)
+	}
+
 	// Start the §25.5 source-health refresh now that both the Redis
 	// client and the gateway client exist. The loop is bounded by ctx,
-	// so it exits on shutdown. F-25.5.14.
+	// so it exits on shutdown. On a Redis down-to-up edge it drives the
+	// §25.5 best-effort recovery flush. F-25.5.14.
 	if w.srcHealth != nil {
-		go w.srcHealth.run(w.ctx, 15*time.Second, w.redisClient, w.gwClient)
+		go w.srcHealth.run(w.ctx, 15*time.Second, w.redisClient, w.gwClient, w.recoverEventStreamToRedis)
+	}
+}
+
+// recoverEventStreamToRedis is the §25.5 best-effort recovery-flush callback
+// the source-health probe invokes on a Redis down-to-up edge. It re-emits the
+// lenny-ops-originated events buffered locally during the outage to the
+// recovered ops:events:stream, deduped by eventKey, bounded so a slow flush
+// does not stall the probe loop. A re-emit failure is logged and does not
+// block serving. spec: §25.5 (best-effort recovery flush).
+func (w *opsWiring) recoverEventStreamToRedis(ctx context.Context) {
+	if w.eventStream == nil {
+		return
+	}
+	fctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	flushed, err := w.eventStream.FlushBufferedToRedis(fctx)
+	if err != nil {
+		log.Printf("lenny-ops: §25.5 recovery flush re-emitted %d event(s) with error: %v", flushed, err)
+		return
+	}
+	if flushed > 0 {
+		log.Printf("lenny-ops: §25.5 recovery flush re-emitted %d locally-buffered event(s) to Redis %s", flushed, eventbuffer.DefaultStreamKey)
 	}
 }

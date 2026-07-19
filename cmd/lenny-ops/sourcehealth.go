@@ -47,13 +47,30 @@ func (p *sourceHealthProbe) GatewayAvailable() bool { return p.gatewayUp.Load() 
 // response only during an actual Redis outage. A nil gwClient leaves the
 // gateway reported reachable (no probe wired). spec: §25.5 lines
 // 2768-2780.
-func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, redisCli redis.UniversalClient, gwClient *gateway.Client) {
+//
+// run also drives the §25.5 best-effort recovery flush: it remembers the
+// previous Redis reachability and, on a down-to-up edge, invokes
+// onRedisRecovered exactly once. The flush is a replica-level property,
+// independent of any open read connection, so a consumer that connects only
+// after Redis recovers still observes the events lenny-ops buffered locally
+// during the outage. A nil callback disables the flush. spec: §25.5
+// (best-effort recovery flush).
+func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, redisCli redis.UniversalClient, gwClient *gateway.Client, onRedisRecovered func(context.Context)) {
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
+	// Seed the edge detector with the optimistic startup state so a first
+	// probe that finds Redis already up is not treated as a recovery edge
+	// (nothing was buffered during an outage that never happened).
+	prevRedisUp := p.redisUp.Load()
 	refresh := func() {
-		p.redisUp.Store(probeRedis(ctx, redisCli))
+		nowUp := probeRedis(ctx, redisCli)
+		p.redisUp.Store(nowUp)
 		p.gatewayUp.Store(probeGateway(ctx, gwClient))
+		if nowUp && !prevRedisUp && onRedisRecovered != nil {
+			onRedisRecovered(ctx)
+		}
+		prevRedisUp = nowUp
 	}
 	refresh()
 	t := time.NewTicker(interval)
