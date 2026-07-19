@@ -17,7 +17,14 @@ not edit this file.
 the `assigned:` field. A worker takes only clusters assigned to it (or, with a
 single worker, any `open` cluster), and works highest-severity-first. When a
 worker's branch lands, the integrator marks the cluster `landed:<proposal>` and
-tops up that worker's assignments so it never idles on merge latency. With more
+tops up that worker's assignments so it never idles on merge latency.
+
+**Every active worker always holds at least one non-landed assigned cluster.**
+On every integration tick the integrator checks each worker's assignments: if a
+worker's only assigned clusters are `landed`, top it up immediately with the next
+well-isolated cluster (do not wait for the worker to go idle). A worker whose
+whole assignment set is landed has no runway and stalls. Keep at least one
+`open`/`assigned`/in-flight cluster per worker at all times. With more
 than one proposal worker, the integrator assigns each a disjoint set of clusters
 (explicit per-cluster assignment is race-free because the integrator is the sole
 writer of this file); clusters are grouped so each worker stays within a coherent
@@ -417,8 +424,8 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium
 
 ### C-36 — §25 alerting: WarmPoolReplenishmentSlow thresholds and alert payload labels — §25.13/§16.5/§25.17
-- **status:** open
-- **assigned:** (unassigned)
+- **status:** assigned:proposal-C (2026-07-19). proposal-C's observability/alerting lane — it landed C-19 (§16.10 OpenSLO export) and this is the alerting-rules surface (`pkg/alerting/rules`, §16.5/§25.13 thresholds + §25.17 `alert_fired`/`alert_resolved` payload labels). Sequence after C-42/C-13. Its §25.17 payload work is adjacent to C-44 (§25.4 self-health event, also `pkg/alerting/rules`), which is proposal-C's natural next after this to keep the alerting-rules code single-worker. §25-tagged but the alerting-rule spec/code is distinct from the section-25 closure machine's §25.4/§25.6/§25.8 ops-service test churn; flag the inbox if they collide.
+- **assigned:** proposal-C
 - **findings:** T-25.13.9, T-25.17.4, T-25.17.5
 - **root spec gap:** §16.5 and §25.13 define WarmPoolReplenishmentSlow with incompatible semantics (fixed 2× multiplier vs tier-dependent `ratioBelow`), and `alert_fired`/`alert_resolved` never carry the documented `labels` field, with the spec's own WarmPoolExhausted example needing firing-series labels no static `Rule.Labels` provides.
 - **proposal scope:** Pick the authoritative WarmPoolReplenishmentSlow definition and align chart/values; decide the `labels` field intent (merge static labels vs extend the ExprEvaluator/Alert contract to surface matched-series labels) and whether the contract change is in scope now.
