@@ -239,7 +239,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium (operationally High — see the discovered finding in TEST-GAPS.md: warm-pod PDB deadlocks node drains on the live cluster)
 
 ### C-17 — SSA conflict retry policy and counter semantics — §4.6/§16
-- **status:** assigned:proposal-B (2026-07-18). §4.6 pod-lifecycle/reconciler retry semantics — proposal-B's warm-pod lane (it landed C-16 §4.6.1). Isolated from proposal-A and proposal-C.
+- **status:** in-review:0051 (2026-07-19). §4.6 pod-lifecycle/reconciler retry semantics — proposal-B's warm-pod lane (it landed C-16 §4.6.1). Isolated from proposal-A and proposal-C.
 - **assigned:** proposal-B
 - **findings:** T-4.6.7
 - **root spec gap:** §4.6 and §16 contradict each other on when `lenny_crd_ssa_conflict_total` increments (only after 5 consecutive no-progress 409s vs on every conflict), and §4.6 requires the retry loop to continue past five with backoff while the code gives up and returns the error.
