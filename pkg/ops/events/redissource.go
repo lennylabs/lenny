@@ -38,8 +38,8 @@ type RedisStreamClient interface {
 // to. It pairs with the producer side (pkg/gateway/eventbuffer.StreamEmitter):
 // the emitter XADDs each event as a single "event" field carrying the
 // marshalled CloudEvents record, and this source reads that field back so
-// the poll envelope and SSE frame decode identically to the buffer-served
-// path.
+// the CloudEvents payload the poll envelope and SSE frame carry decodes
+// identically to the buffer-served path.
 //
 // Unlike the webhook worker's RedisEventSource, which holds one per-process
 // shared cursor, redisSource is cursor-free: each poll and each SSE
@@ -63,12 +63,14 @@ func newRedisSource(client RedisStreamClient, stream string) *redisSource {
 }
 
 // redisEntry is one decoded stream entry paired with its Redis stream ID.
-// The stream ID is the source-specific cursor position; the event is the
-// transport-neutral BufferedEvent the poll and SSE surfaces serve. The
-// BufferedEvent's monotonic ID is derived from the Redis stream position
-// (streamIDToSeq) so a Redis-served poll item carries a non-zero, ordered
-// id matching the buffer-served envelope; callers still key on the
-// CloudEvents id (Event.ID, the canonical eventKey) across sources.
+// The stream ID is the source-specific cursor position, carried in the
+// opaque pagination cursor; the event is the transport-neutral BufferedEvent
+// the poll and SSE surfaces serve. The BufferedEvent's top-level wrapper ID
+// is left zero: the per-replica buffer sequence the buffer-served path stamps
+// there is not carried in the XADD payload, so a Redis-served item cannot
+// reproduce it and does not substitute a source-position-dependent value in
+// its place. Callers key on the CloudEvents id (Event.ID, the canonical
+// eventKey) and the pagination cursor, both identical across sources.
 type redisEntry struct {
 	streamID string
 	event    gwevents.BufferedEvent
@@ -433,13 +435,18 @@ func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher,
 
 // decodeRedisEntry rebuilds a BufferedEvent from one stream entry. The
 // StreamEmitter stores the marshalled CloudEvents record under the single
-// "event" field; this reads that field back into the same OperationalEvent
-// so the poll envelope and SSE frame decode identically to the buffer-served
-// path. The monotonic BufferedEvent.ID is derived from the entry's Redis
-// stream position (streamIDToSeq) so the poll envelope's top-level id is
-// non-zero and ordered, matching the buffer-served envelope whose id carries
-// the per-replica buffer sequence. The SSE frame keys on the CloudEvents id
-// (Event.ID) and is unaffected by this wrapper id. spec: §25.5.
+// "event" field; this reads that field back into the same OperationalEvent,
+// so the CloudEvents payload every poll item and SSE frame carries decodes
+// byte-identically to the buffer-served path. The top-level wrapper
+// BufferedEvent.ID is left zero on a Redis-served item. The buffer-served
+// path stamps its per-replica in-memory buffer sequence there, and that
+// sequence is not carried in the XADD payload, so a stream entry cannot
+// reproduce it. Substituting the Redis stream position would present a
+// wrapper id of an entirely different magnitude than the buffer-served path,
+// making the envelope's id diverge by source; leaving it zero avoids that.
+// Ordering and resume key on the Redis stream position (carried in the
+// opaque pagination cursor) and the CloudEvents id (Event.ID, the canonical
+// eventKey), both identical across sources. spec: §25.5.
 func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	raw, ok := m.Values["event"]
 	if !ok {
@@ -458,20 +465,7 @@ func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return gwevents.BufferedEvent{}, false
 	}
-	return gwevents.BufferedEvent{ID: streamIDToSeq(m.ID), Event: ev}, true
-}
-
-// streamIDToSeq maps a Redis "ms-seq" stream ID to a monotonic uint64 that
-// orders identically to the stream position, so a Redis-served poll item
-// carries a non-zero, ordered BufferedEvent.ID matching the buffer-served
-// envelope. The millisecond time occupies the high bits and the
-// per-millisecond sequence the low 20 bits, preserving the (ms, seq)
-// ordering streamIDLess compares on. A zero stream ID (an unparseable or
-// empty position) maps to zero. spec: §25.5 (poll envelope parity across
-// sources).
-func streamIDToSeq(id string) uint64 {
-	ms, seq := parseStreamID(id)
-	return ms<<20 | (seq & 0xFFFFF)
+	return gwevents.BufferedEvent{Event: ev}, true
 }
 
 // streamIDLess reports whether stream ID a orders strictly before b. A Redis

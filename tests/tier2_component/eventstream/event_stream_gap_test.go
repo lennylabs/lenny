@@ -171,6 +171,68 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 	}
 }
 
+// TestOpsEventStreamPollItemIDNotSourceDependent pins that a Redis-served
+// poll item does not stamp a source-position-dependent value into the
+// envelope's top-level wrapper id. The buffer-served path sets that id to a
+// small per-replica in-memory sequence, which is not carried in the XADD
+// payload, so a Redis-served item cannot reproduce it. Deriving the wrapper
+// id from the Redis stream position instead would emit a value on the order
+// of 1e18, making the same /v1/admin/events envelope present item ids of an
+// entirely different magnitude depending on which source is active. The read
+// side leaves the wrapper id zero on a Redis-served item so the envelope does
+// not diverge by source, while the CloudEvents payload every item carries
+// stays byte-identical to the buffer-served path.
+//
+// spec: 25.5 (Polling Delivery — the poll envelope and SSE frame served from
+// the Redis ops:events:stream carry the same CloudEvents record as the
+// buffer-served path; ordering and resume run off the pagination cursor and
+// the CloudEvents id, not the wrapper id).
+// diagnosis: a failure means the Redis source stamped a stream-position-
+// derived value into the poll item's top-level id, so a consumer polling the
+// same lenny-ops endpoint receives item ids of a wildly different magnitude
+// depending on whether Redis or the local ring buffer is the active source,
+// and the two paths are not the source-independent envelope the read side
+// promises.
+func TestOpsEventStreamPollItemIDNotSourceDependent(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	const key = "ops:events:stream:wrapperid"
+	emitter := newStreamEmitter(t, rd.Client, key, 1000)
+	for i := 0; i < 4; i++ {
+		if err := emitter.Emit(ctx, alertEvent("pool/w")); err != nil {
+			t.Fatalf("emit event %d: %v", i, err)
+		}
+	}
+
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:    rd.Client,
+		RedisStreamKey: key,
+		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+	})
+
+	page := pollRedis(t, svc, "")
+	if page.Pagination.CursorKind != opsstream.SourceKindRedis {
+		t.Fatalf("poll cursorKind = %q, want redis (Redis must be the active source)", page.Pagination.CursorKind)
+	}
+	if len(page.Items) != 4 {
+		t.Fatalf("poll returned %d items, want the 4 emitted events", len(page.Items))
+	}
+	for i, item := range page.Items {
+		if item.ID != 0 {
+			t.Errorf("item %d wrapper id = %d, want 0: a Redis-served item must not stamp a source-position-dependent wrapper id", i, item.ID)
+		}
+		// The CloudEvents payload must still decode intact — the wrapper id is
+		// dropped, the record is not.
+		if item.Event.Type != "dev.lenny.alert_fired" {
+			t.Errorf("item %d event type = %q, want dev.lenny.alert_fired (payload must survive the decode)", i, item.Event.Type)
+		}
+		if item.Event.ID == "" {
+			t.Errorf("item %d has no CloudEvents id: the canonical eventKey must be present for cross-source resume", i)
+		}
+	}
+}
+
 // pollRedisLimited drives GET /v1/admin/events with an explicit page limit so
 // a test can obtain a mid-stream continuation cursor.
 func pollRedisLimited(t *testing.T, s *opsstream.Service, cursor string, limit int) opsstream.EventPage {

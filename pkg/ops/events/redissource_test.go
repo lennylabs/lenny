@@ -299,16 +299,19 @@ func TestStreamIDLess(t *testing.T) {
 	}
 }
 
-// spec: 25.5 (Redis-served poll envelope parity) — a Redis-served poll item
-// carries a non-zero, ordered BufferedEvent id derived from its stream
-// position, matching the buffer-served envelope whose id is the per-replica
-// monotonic sequence. A client discriminating page items by their top-level
-// id must not see it collapse to 0 on the Redis path.
-func TestRedisPollPage_ItemsCarryOrderedNonZeroIDs_spec_25_5(t *testing.T) {
+// spec: 25.5 (Redis-served poll envelope) — the top-level wrapper id of a
+// Redis-served poll item is left zero. The buffer-served path stamps its
+// per-replica in-memory buffer sequence there, and that sequence is not
+// carried in the XADD payload, so a Redis-served item cannot reproduce it.
+// Deriving the wrapper id from the Redis stream position would make the same
+// /v1/admin/events envelope present item ids of an entirely different
+// magnitude depending on the active source; the read side omits it instead so
+// the envelope does not diverge by source, while the CloudEvents payload (the
+// canonical id and record) stays intact.
+func TestRedisPollPage_ItemsDropSourceDependentWrapperID_spec_25_5(t *testing.T) {
 	f := &fakeStream{}
 	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
 	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
-	// Same millisecond, higher sequence: the derived id must still increase.
 	f.add("2-5", evt("ops:2:5", "dev.lenny.alert_fired"))
 	s := redisService(t, f)
 
@@ -317,11 +320,15 @@ func TestRedisPollPage_ItemsCarryOrderedNonZeroIDs_spec_25_5(t *testing.T) {
 		t.Fatalf("items = %d, want 3", len(page.Items))
 	}
 	for i, it := range page.Items {
-		if it.ID == 0 {
-			t.Errorf("item %d (%s) serializes id 0; the Redis-served poll envelope must carry the same non-zero id the buffer-served path does", i, it.Event.ID)
+		if it.ID != 0 {
+			t.Errorf("item %d (%s) wrapper id = %d, want 0: a Redis-served item must not stamp a source-position-dependent wrapper id", i, it.Event.ID, it.ID)
 		}
-		if i > 0 && page.Items[i-1].ID >= it.ID {
-			t.Errorf("item ids not strictly increasing with stream order: [%d]=%d then [%d]=%d", i-1, page.Items[i-1].ID, i, it.ID)
+		// The CloudEvents payload must still decode intact.
+		if it.Event.ID == "" {
+			t.Errorf("item %d has no CloudEvents id: the canonical eventKey must survive the decode", i)
+		}
+		if it.Event.Type != "dev.lenny.alert_fired" {
+			t.Errorf("item %d event type = %q, want dev.lenny.alert_fired", i, it.Event.Type)
 		}
 	}
 }
