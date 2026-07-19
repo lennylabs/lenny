@@ -55,8 +55,8 @@ func (s *stubStore) RecordDelivery(_ context.Context, d eventsubscription.Delive
 	return d, nil
 }
 
-func (s *stubStore) ListDeliveries(_ context.Context, _ string, _ int) ([]eventsubscription.Delivery, error) {
-	return nil, nil
+func (s *stubStore) ListDeliveries(_ context.Context, _ string, _ string, _ int) ([]eventsubscription.Delivery, eventsubscription.Pagination, error) {
+	return nil, eventsubscription.Pagination{}, nil
 }
 
 func (s *stubStore) DeleteExpired(_ context.Context, _ time.Time, _ int) (int, error) {

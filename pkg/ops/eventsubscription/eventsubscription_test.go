@@ -253,16 +253,130 @@ func TestServiceListDeliveries_spec_25_5(t *testing.T) {
 			t.Fatalf("RecordDelivery: %v", err)
 		}
 	}
-	got, err := svc.ListDeliveries(context.Background(), rev.ID, 0, platformAdmin)
+	got, _, err := svc.ListDeliveries(context.Background(), rev.ID, "", 0, platformAdmin)
 	if err != nil || len(got) != 2 {
 		t.Fatalf("ListDeliveries = %d (%v), want 2", len(got), err)
 	}
 	if got[0].ID < got[1].ID {
 		t.Errorf("deliveries not newest-first: %v", got)
 	}
-	if _, err := svc.ListDeliveries(context.Background(), "missing", 0, platformAdmin); es.CodeOf(err) != es.ErrCodeNotFound {
+	if _, _, err := svc.ListDeliveries(context.Background(), "missing", "", 0, platformAdmin); es.CodeOf(err) != es.ErrCodeNotFound {
 		t.Errorf("ListDeliveries missing err = %v, want SUBSCRIPTION_NOT_FOUND", err)
 	}
+}
+
+// TestMemoryStoreListDeliveriesKeysetPagination pins the §25.5 deliveries
+// keyset walk over the delivery primary key: an empty cursor returns the
+// newest page with a continuation cursor and hasMore, the continuation
+// cursor returns the adjacent page with no overlap and no gap, the final
+// page returns hasMore:false with an empty cursor, an empty subscription
+// returns an empty page with hasMore:false, and a cursor whose row has
+// aged out below the oldest retained delivery returns gapDetected with
+// oldestAvailableCursor rather than a silently empty page. The Memory
+// store mirrors the pgstore keyset so both back the same wire contract.
+//
+// spec: §25.5 (deliveries keyset pagination, gap on aged-out cursor).
+func TestMemoryStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
+	ctx := context.Background()
+	store := es.NewMemoryStore()
+	// Record five deliveries; the first four expire in the past so the
+	// retention sweep can age them out, the fifth survives. Ids are
+	// assigned 1..5 in insertion order.
+	past := time.Now().Add(-1 * time.Hour)
+	future := time.Now().Add(24 * time.Hour)
+	for i := 0; i < 5; i++ {
+		exp := past
+		if i == 4 {
+			exp = future
+		}
+		if _, err := store.RecordDelivery(ctx, es.Delivery{
+			SubscriptionID: "sub-1", EventID: "e", EventType: "t",
+			Status: es.DeliveryDelivered, ExpiresAt: exp,
+		}); err != nil {
+			t.Fatalf("RecordDelivery %d: %v", i, err)
+		}
+	}
+
+	// First page: newest two (ids 5,4), continuation cursor "4".
+	page1, meta1, err := store.ListDeliveries(ctx, "sub-1", "", 2)
+	if err != nil {
+		t.Fatalf("first page: %v", err)
+	}
+	if len(page1) != 2 || page1[0].ID != 5 || page1[1].ID != 4 {
+		t.Fatalf("first page ids = %v, want [5 4]", deliveryIDs(page1))
+	}
+	if !meta1.HasMore || meta1.Cursor != "4" || meta1.CursorKind != es.CursorKindPK {
+		t.Fatalf("first page meta = %+v, want hasMore, cursor 4, cursorKind pk", meta1)
+	}
+
+	// Second page from the continuation cursor: ids 3,2, no overlap.
+	page2, meta2, err := store.ListDeliveries(ctx, "sub-1", meta1.Cursor, 2)
+	if err != nil {
+		t.Fatalf("second page: %v", err)
+	}
+	if len(page2) != 2 || page2[0].ID != 3 || page2[1].ID != 2 {
+		t.Fatalf("second page ids = %v, want [3 2]", deliveryIDs(page2))
+	}
+	if !meta2.HasMore || meta2.Cursor != "2" {
+		t.Fatalf("second page meta = %+v, want hasMore, cursor 2", meta2)
+	}
+
+	// Final page: the last row (id 1), hasMore:false, empty cursor.
+	page3, meta3, err := store.ListDeliveries(ctx, "sub-1", meta2.Cursor, 2)
+	if err != nil {
+		t.Fatalf("final page: %v", err)
+	}
+	if len(page3) != 1 || page3[0].ID != 1 {
+		t.Fatalf("final page ids = %v, want [1]", deliveryIDs(page3))
+	}
+	if meta3.HasMore || meta3.Cursor != "" || meta3.GapDetected {
+		t.Fatalf("final page meta = %+v, want no more, empty cursor, no gap", meta3)
+	}
+
+	// An empty subscription returns an empty page with no gap.
+	empty, metaEmpty, err := store.ListDeliveries(ctx, "sub-none", "", 2)
+	if err != nil {
+		t.Fatalf("empty subscription: %v", err)
+	}
+	if len(empty) != 0 || metaEmpty.HasMore || metaEmpty.GapDetected {
+		t.Fatalf("empty subscription meta = %+v (%d rows), want empty non-gap page", metaEmpty, len(empty))
+	}
+
+	// Age out the four expired rows (ids 1-4). The oldest retained delivery
+	// is now id 5. A continuation cursor of "4" (its row purged, below the
+	// retention floor) must report a gap toward the oldest retained cursor
+	// rather than an indistinguishable empty page.
+	if purged, err := store.DeleteExpired(ctx, time.Now(), 100); err != nil || purged != 4 {
+		t.Fatalf("DeleteExpired = %d (%v), want 4", purged, err)
+	}
+	aged, metaAged, err := store.ListDeliveries(ctx, "sub-1", "4", 2)
+	if err != nil {
+		t.Fatalf("aged-out page: %v", err)
+	}
+	if len(aged) != 0 {
+		t.Fatalf("aged-out page returned %d rows, want 0", len(aged))
+	}
+	if !metaAged.GapDetected || metaAged.OldestAvailableCursor != "5" {
+		t.Fatalf("aged-out meta = %+v, want gapDetected with oldestAvailableCursor 5", metaAged)
+	}
+
+	// A malformed cursor cannot be honored and reports the same gap toward
+	// the oldest retained delivery.
+	_, metaBad, err := store.ListDeliveries(ctx, "sub-1", "not-an-int", 2)
+	if err != nil {
+		t.Fatalf("malformed cursor: %v", err)
+	}
+	if !metaBad.GapDetected || metaBad.OldestAvailableCursor != "5" {
+		t.Fatalf("malformed-cursor meta = %+v, want gapDetected with oldestAvailableCursor 5", metaBad)
+	}
+}
+
+func deliveryIDs(ds []es.Delivery) []int64 {
+	ids := make([]int64, len(ds))
+	for i, d := range ds {
+		ids[i] = d.ID
+	}
+	return ids
 }
 
 // spec: §25.5 lines 2795-2802 — an invalid severity in the filter is

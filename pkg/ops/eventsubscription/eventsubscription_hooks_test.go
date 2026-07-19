@@ -86,7 +86,7 @@ func TestMemoryStoreDeleteExpired_spec_25_5_2661(t *testing.T) {
 	if err != nil || n != 1 {
 		t.Fatalf("DeleteExpired(limit 100) = %d,%v, want 1,nil", n, err)
 	}
-	left, _ := store.ListDeliveries(context.Background(), "sub-1", 100)
+	left, _, _ := store.ListDeliveries(context.Background(), "sub-1", "", 100)
 	if len(left) != 1 || left[0].EventID != "fresh" {
 		t.Fatalf("remaining = %+v, want only the fresh row", left)
 	}

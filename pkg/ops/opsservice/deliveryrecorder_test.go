@@ -19,7 +19,7 @@ func TestStoreDeliveryRecorderWritesRow_spec_25_5_2701(t *testing.T) {
 	rec := NewStoreDeliveryRecorder(store, RetentionPolicy{Retention: 7 * 24 * time.Hour}, nil)
 	rec.RecordDelivery(context.Background(), "sub-1", "evt-1", 2, false)
 
-	got, err := store.ListDeliveries(context.Background(), "sub-1", 10)
+	got, _, err := store.ListDeliveries(context.Background(), "sub-1", "", 10)
 	if err != nil {
 		t.Fatalf("ListDeliveries: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestStoreDeliveryRecorderFailuresOnlyRetention_spec_25_5_2663(t *testing.T)
 	rec.RecordDelivery(context.Background(), "sub-1", "evt-1", 3, true)
 	rec.RecordDelivery(context.Background(), "sub-1", "evt-2", 1, false)
 
-	got, _ := store.ListDeliveries(context.Background(), "sub-1", 10)
+	got, _, _ := store.ListDeliveries(context.Background(), "sub-1", "", 10)
 	if len(got) != 2 {
 		t.Fatalf("deliveries = %d, want 2", len(got))
 	}
@@ -69,7 +69,7 @@ func TestStoreDeliveryRecorderDefaultRetention(t *testing.T) {
 	store := eventsubscription.NewMemoryStore()
 	rec := NewStoreDeliveryRecorder(store, RetentionPolicy{}, nil)
 	rec.RecordDelivery(context.Background(), "sub-1", "evt-1", 1, false)
-	got, _ := store.ListDeliveries(context.Background(), "sub-1", 10)
+	got, _, _ := store.ListDeliveries(context.Background(), "sub-1", "", 10)
 	if len(got) != 1 {
 		t.Fatalf("deliveries = %d, want 1", len(got))
 	}

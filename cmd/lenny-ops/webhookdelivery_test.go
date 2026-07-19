@@ -38,7 +38,7 @@ func TestDeliveryRetentionJobPurgesExpired_spec_25_5_2661(t *testing.T) {
 	if err := job.Run(context.Background()); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	left, _ := store.ListDeliveries(context.Background(), "sub-1", 100)
+	left, _, _ := store.ListDeliveries(context.Background(), "sub-1", "", 100)
 	if len(left) != 1 || left[0].EventID != "fresh" {
 		t.Fatalf("after retention sweep = %+v, want only the fresh row", left)
 	}
