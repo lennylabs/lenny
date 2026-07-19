@@ -45,6 +45,13 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 	if w.redisClient != nil {
 		w.srcHealth = newSourceHealthProbe()
 		streamOpts.SourceHealth = w.srcHealth
+		// The §25.5 read side consumes the same platform-scoped
+		// ops:events:stream the fan-out emitter and webhook worker use, so
+		// polling and SSE serve the merged cross-replica view (XRANGE
+		// polling / backlog resume, XREAD BLOCK 0 live tail) whenever the
+		// source-health probe reports Redis reachable.
+		streamOpts.RedisClient = w.redisClient
+		streamOpts.RedisStreamKey = eventbuffer.DefaultStreamKey
 	}
 	w.eventStream = opsstream.New(streamOpts)
 	var opsEmitter events.EventEmitter = w.eventStream

@@ -80,6 +80,14 @@ type Service struct {
 	webhook WebhookFanOut
 	onGap   func()
 	health  SourceHealth
+
+	// redis, when non-nil, is the §25.5 primary read source: the Redis
+	// ops:events:stream every replica XADDs to. It is selected over the
+	// local ring buffer whenever SourceHealth reports Redis reachable, so
+	// polling and SSE serve the merged cross-replica view. The local
+	// buffer stays the lenny-ops-origin source for a dual outage. spec:
+	// §25.5.
+	redis *redisSource
 }
 
 // subscription is one active SSE subscriber.
@@ -115,6 +123,17 @@ type Options struct {
 	// EVENT_STREAM_UNAVAILABLE (dual Redis + gateway outage). A nil value
 	// is treated as fully healthy. spec: §25.5 lines 2768-2780.
 	SourceHealth SourceHealth
+	// RedisClient, when non-nil, wires the §25.5 Redis ops:events:stream
+	// as the primary read source: XRANGE for polling and SSE backlog
+	// resume from Last-Event-ID, XREAD BLOCK 0 for the live per-connection
+	// SSE tail. It is selected over the local ring buffer whenever
+	// SourceHealth reports Redis reachable. A nil client keeps the local
+	// buffer as the only source (the cold-start / no-Redis deployment).
+	// spec: §25.5.
+	RedisClient RedisStreamClient
+	// RedisStreamKey overrides the default ops:events:stream key when
+	// RedisClient is set. An empty value uses the §25.5 default.
+	RedisStreamKey string
 }
 
 // New returns a Service.
@@ -127,7 +146,7 @@ func New(opts Options) *Service {
 	if replicaID == "" {
 		replicaID = "ops"
 	}
-	return &Service{
+	s := &Service{
 		buffer:    eventbuffer.NewEventBuffer(opts.Capacity),
 		now:       now,
 		replicaID: replicaID,
@@ -135,6 +154,20 @@ func New(opts Options) *Service {
 		onGap:     opts.OnGap,
 		health:    opts.SourceHealth,
 	}
+	if opts.RedisClient != nil {
+		s.redis = newRedisSource(opts.RedisClient, opts.RedisStreamKey)
+	}
+	return s
+}
+
+// redisPrimary reports whether the §25.5 Redis ops:events:stream is the
+// active read source: the client is wired and SourceHealth reports it
+// reachable. When true, polling and SSE serve the merged cross-replica view
+// from Redis; when false, the local ring buffer serves the request (the
+// gateway-buffer fall-back during a Redis-only outage is a separate path).
+// spec: §25.5 (source selection from the degradation matrix).
+func (s *Service) redisPrimary() bool {
+	return s.redis != nil && s.health != nil && s.health.RedisAvailable()
 }
 
 // observeGap fires the OnGap hook when configured. spec: §25.5 line 2788.
@@ -363,7 +396,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parseLimit(q)
 
-	page := s.pollPage(kind, eventKey, filter, limit, desc)
+	page := s.pollPage(r.Context(), kind, eventKey, filter, limit, desc)
 	// §25.5 degradation case 1: serving from the gateway-buffer fall-back
 	// during a Redis outage is reported as response metadata
 	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
@@ -379,7 +412,10 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // eventKey is no longer retained (evicted), the page reports gapDetected
 // and serves from the oldest retained event. spec: §25.5 lines
 // 2666-2699.
-func (s *Service) pollPage(cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+func (s *Service) pollPage(ctx context.Context, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+	if s.redisPrimary() {
+		return s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+	}
 	var since uint64
 	servedKind := SourceKindBuffer
 	gap := false
@@ -475,6 +511,17 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resumeKey := resumeEventKey(r)
+
+	// §25.5 source selection: when the Redis ops:events:stream is the active
+	// source, serve the SSE stream from it (XRANGE backlog resume + XREAD
+	// BLOCK 0 live tail on a per-connection cursor). The in-memory
+	// subscription below is the local-buffer path used when Redis is
+	// unwired or unreachable.
+	if s.redisPrimary() {
+		s.handleStreamRedis(w, flusher, r, filter, resumeKey)
+		return
+	}
+
 	sub := s.subscribe(filter, 64)
 	defer s.unsubscribe(sub)
 
