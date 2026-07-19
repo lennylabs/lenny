@@ -93,7 +93,7 @@ type Service struct {
 	// fans GET /v1/admin/events/buffer across every gateway replica over the
 	// lenny-gateway-pods headless Service and the read surface merges the
 	// per-replica pages deduped by eventKey. It is selected only during a
-	// Redis-down / gateway-up outage (degradation case 1). Injected
+	// Redis-down / gateway-up outage. Injected
 	// post-construction because the gateway client is built after the
 	// Service. spec: §25.5 (Redis-down gateway-buffer fallback).
 	gateway GatewayBufferSource
@@ -119,10 +119,10 @@ const (
 	// cross-replica primary source).
 	dsRedis dataSource = iota
 	// dsGateway serves from the gateway event buffer fanned over the
-	// lenny-gateway-pods headless Service (Redis-down fall-back, case 1).
+	// lenny-gateway-pods headless Service (the Redis-down fall-back).
 	dsGateway
 	// dsLocalBuffer serves from this replica's own ring buffer (the
-	// lenny-ops-origin source: no Redis wired, or a dual outage, case 4).
+	// lenny-ops-origin source: no Redis wired, or a dual outage).
 	dsLocalBuffer
 )
 
@@ -446,7 +446,7 @@ func parseSortOrder(q url.Values) (desc bool, err error) {
 // been evicted. spec: §25.5 lines 2687-2699; §25.2 lines 234-275.
 func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	// §25.5 degradation case 4: when both the Redis stream and the gateway
+	// §25.5 dual Redis + gateway outage: when both the Redis stream and the gateway
 	// buffer are unreachable, polling for gateway-originated events cannot
 	// be served and cannot partial-serve, so it fails with a transient
 	// 503 the agent retries. The SSE surface still serves
@@ -475,7 +475,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	limit := parseLimit(q)
 
 	page := s.pollPage(r.Context(), kind, eventKey, filter, limit, desc)
-	// §25.5 degradation case 1: serving from the gateway-buffer fall-back
+	// §25.5 Redis-down gateway-buffer fall-back: serving from the gateway buffer
 	// during a Redis outage is reported as response metadata
 	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
 	// lines 2768-2772.

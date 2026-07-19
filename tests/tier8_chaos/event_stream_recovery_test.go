@@ -143,29 +143,40 @@ func (s *syncBuffer) String() string {
 	return s.buf.String()
 }
 
-// spec: 25.5 (transparent Redis to gateway-buffer switch, recovery) — an open
-// SSE connection injected with a Redis outage mid-stream stays open, switches
-// to the gateway-buffer fan-out fall-back (announcing the degradation), and on
-// recovery switches back to the Redis XREAD tail announcing
-// :degradation {"level":"healthy"}. The pre-fix read surface only relabelled
-// the source without a cross-process fetch and never switched an open
-// connection back, so this exercises the live switch both ways.
+// spec: 25.5 (transparent Redis to gateway-buffer switch, recovery, cross-switch
+// no-drop) — an open SSE connection injected with a Redis outage mid-stream
+// stays open, switches to the gateway-buffer fan-out fall-back (announcing the
+// degradation), and on recovery switches back to the Redis XREAD tail announcing
+// :degradation {"level":"healthy"}. Across the switch each event is delivered
+// exactly once: the gateway StreamEmitter XADDs every gateway-originated event
+// to ops:events:stream as well as the per-replica buffer, so the Redis-served
+// window and the gateway-buffer window overlap; an event already delivered from
+// Redis must not be re-delivered when the connection re-polls the gateway
+// buffer. The pre-fix serveGateway opened each stint with a fresh delivered set
+// and ignored the carried resume position, so it re-delivered the whole
+// overlapping window; this asserts the overlapping event is delivered once.
 //
 // diagnosis: a failure means the §25.5 transparent source switch is broken —
 // the connection does not fall back to the gateway buffer during the outage
-// (no degradation announced, no gateway event served), or it does not return
-// to the Redis tail on recovery (no healthy announcement).
+// (no degradation announced, no gateway event served), it does not return to
+// the Redis tail on recovery (no healthy announcement), or it re-delivers an
+// event across the switch (the overlapping event appears more than once).
 func TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// A gateway replica serving one gateway-originated event from its buffer.
+	// The gateway replica's buffer window overlaps the Redis-served window: it
+	// holds the pre-outage event the connection already saw over Redis
+	// (ops-1:1000:1) plus a newer gateway-originated event (gw:2000:1). The
+	// overlap models the StreamEmitter writing gateway events to both Redis and
+	// the buffer, and is what makes a fresh-delivered-set serveGateway
+	// re-deliver the already-seen event.
 	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(gwevents.BufferedEventPage{Events: []gwevents.BufferedEvent{{
-			ID:    1,
-			Event: gwevents.OperationalEvent{ID: "gw:2000:1", Type: "dev.lenny.alert_fired", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2000, 0).UTC()},
-		}}})
+		_ = json.NewEncoder(w).Encode(gwevents.BufferedEventPage{Events: []gwevents.BufferedEvent{
+			{ID: 1, Event: gwevents.OperationalEvent{ID: "ops-1:1000:1", Type: "dev.lenny.drift_detected", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1000, 0).UTC()}},
+			{ID: 2, Event: gwevents.OperationalEvent{ID: "gw:2000:1", Type: "dev.lenny.alert_fired", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2000, 0).UTC()}},
+		}})
 	}))
 	defer gwSrv.Close()
 	gwClient, err := gateway.NewClient(gateway.Config{
@@ -203,10 +214,20 @@ func TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage(t *testing.T)
 	waitContains(t, rec, "ops-1:1000:1", 5*time.Second, "the Redis-served backlog event")
 
 	// Inject the Redis outage: the open connection switches to the gateway
-	// buffer, announces the degradation, and serves the gateway event.
+	// buffer, announces the degradation, and serves the newer gateway event.
+	// It must NOT re-serve ops-1:1000:1, which it already delivered from Redis
+	// and which also sits in the gateway buffer window (the overlap).
 	health.redis.Store(false)
 	waitContains(t, rec, "gateway-buffer", 5*time.Second, "the gateway-buffer degradation announcement")
 	waitContains(t, rec, "gw:2000:1", 5*time.Second, "the gateway-originated event from the fan-out fall-back")
+
+	// The gateway event reaches Redis too (the StreamEmitter XADDs it), so the
+	// switch back can resume from it cleanly. Emit it after the fall-back has
+	// served it and after the Redis tail was torn down, so no live tail races
+	// the fan-out on it.
+	if err := emitter.Emit(ctx, gwevents.OperationalEvent{ID: "gw:2000:1", Type: "dev.lenny.alert_fired", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2000, 0).UTC()}); err != nil {
+		t.Fatalf("emit gateway event to redis: %v", err)
+	}
 
 	// Recover Redis: the connection switches back to the XREAD tail and
 	// announces recovery.
@@ -215,6 +236,14 @@ func TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage(t *testing.T)
 
 	cancel()
 	<-done
+
+	// The pre-outage event was delivered once over Redis and sits in the
+	// gateway buffer window too; the switch into the fall-back must not
+	// re-deliver it. Count the SSE id: line, which appears once per delivered
+	// frame. The pre-fix serveGateway re-delivered it, yielding two id: lines.
+	if got := strings.Count(rec.String(), "id: ops-1:1000:1\n"); got != 1 {
+		t.Fatalf("overlapping pre-outage event delivered %d times across the source switch; want exactly 1:\n%s", got, rec.String())
+	}
 }
 
 func waitContains(t *testing.T, rec *syncBuffer, want string, timeout time.Duration, what string) {

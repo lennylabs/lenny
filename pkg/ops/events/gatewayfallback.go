@@ -28,7 +28,7 @@ const gatewayFetchTimeout = 5 * time.Second
 
 // GatewayBufferSource fans the §25.3 gateway event-buffer query across every
 // gateway replica over the lenny-gateway-pods headless Service. It is the
-// §25.5 Redis-down fall-back source (degradation case 1): with Redis
+// §25.5 Redis-down fall-back source: with Redis
 // unreachable and the gateway up, the read surface serves gateway-originated
 // events from the per-replica buffers rather than the local ring buffer,
 // which holds only lenny-ops-originated events.
@@ -134,7 +134,7 @@ func dedupKey(e gwevents.OperationalEvent) string {
 }
 
 // gatewayPollPage serves the §25.5 polling page from the gateway event-buffer
-// fan-out during a Redis-down / gateway-up outage (degradation case 1). It
+// fan-out during a Redis-down / gateway-up outage. It
 // merges the per-replica pages, applies the full §25.5 filter, resumes after
 // the incoming cursor's eventKey, and pages at limit. The response carries a
 // mixed cursorKind because the merged view spans replicas; a fan-out failure

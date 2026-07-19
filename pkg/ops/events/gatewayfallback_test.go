@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 
@@ -57,6 +58,101 @@ func bufEvt(id, typ string) gwevents.BufferedEvent {
 	return gwevents.BufferedEvent{ID: 1, Event: evt(id, typ)}
 }
 
+// oneShotGatewaySource returns a fixed set of per-replica pages and closes its
+// called channel on the first fan-out, so a serveGateway test can cancel the
+// connection after exactly one poll fill instead of waiting the full
+// gatewayPollInterval.
+type oneShotGatewaySource struct {
+	pages  [][]gwevents.BufferedEvent
+	called chan struct{}
+	once   sync.Once
+}
+
+func (o *oneShotGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.ReplicaResult, error) {
+	out := make([]gateway.ReplicaResult, 0, len(o.pages))
+	for _, evs := range o.pages {
+		body, _ := json.Marshal(gwevents.BufferedEventPage{Events: evs})
+		out = append(out, gateway.ReplicaResult{Endpoint: "https://pod", Body: body})
+	}
+	o.once.Do(func() { close(o.called) })
+	return out, nil
+}
+
+// spec: 25.5 (cross-switch no-drop, exactly-once across the source switch) — on
+// a switch into the gateway-buffer fall-back, the SSE handler resumes from the
+// eventKey it last delivered (over the Redis stream or an earlier gateway
+// stint) and streams only the events after it. The pre-fix serveGateway opened
+// each stint with a fresh delivered set and never read the carried lastKey, so
+// it re-delivered the whole matching buffer window; this fails against that
+// code by asserting the events at or before the resume point are not re-sent.
+func TestServeGateway_ResumesFromLastKeyNoRedelivery_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	src := &oneShotGatewaySource{
+		pages: [][]gwevents.BufferedEvent{{
+			bufEvt("gw-a:1000:1", "dev.lenny.alert_fired"),
+			bufEvt("gw-a:1000:2", "dev.lenny.alert_fired"),
+			bufEvt("gw-a:1000:3", "dev.lenny.alert_fired"),
+		}},
+		called: make(chan struct{}),
+	}
+	s.SetGatewayBufferSource(src)
+
+	rec := httptest.NewRecorder()
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw-a:1000:2"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-src.called; cancel() }()
+	sess.serveGateway(ctx)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "gw-a:1000:1") || strings.Contains(body, "gw-a:1000:2") {
+		t.Fatalf("events at or before the resume point were re-delivered:\n%s", body)
+	}
+	if !strings.Contains(body, "gw-a:1000:3") {
+		t.Fatalf("the event after the resume point was not delivered:\n%s", body)
+	}
+	if strings.Contains(body, ":gap") {
+		t.Fatalf("a resume point present in the window must not emit a :gap:\n%s", body)
+	}
+}
+
+// spec: 25.5 (cross-switch no-drop) — when the carried resume position is no
+// longer present in the gateway-buffer window, the SSE handler emits a :gap
+// comment and observes the gap counter before streaming the window, matching
+// the Redis and local-buffer resume paths. The pre-fix serveGateway ignored
+// lastKey entirely and emitted no gap, so a consumer could not tell it had lost
+// events across the switch; this fails against that code by asserting the gap
+// is now signalled.
+func TestServeGateway_MissingResumeEmitsGap_spec_25_5(t *testing.T) {
+	gaps := 0
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	src := &oneShotGatewaySource{
+		pages: [][]gwevents.BufferedEvent{{
+			bufEvt("gw-a:1000:5", "dev.lenny.alert_fired"),
+		}},
+		called: make(chan struct{}),
+	}
+	s.SetGatewayBufferSource(src)
+
+	rec := httptest.NewRecorder()
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw-a:1000:1"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-src.called; cancel() }()
+	sess.serveGateway(ctx)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, ":gap") {
+		t.Fatalf("a missing resume point must emit a :gap comment:\n%s", body)
+	}
+	if gaps != 1 {
+		t.Fatalf("gap counter observed %d times, want 1", gaps)
+	}
+	if !strings.Contains(body, "gw-a:1000:5") {
+		t.Fatalf("the window must still be delivered after a gap:\n%s", body)
+	}
+}
+
 // spec: 25.3 (cross-replica eventKey dedup, not a content hash) — the merge of
 // two per-replica buffer pages collapses a genuine repeat delivery of one
 // eventKey while preserving two distinct same-second alert_fired events from
@@ -96,7 +192,7 @@ func TestMergeReplicaBuffers_DedupsByEventKeyPreservesDistinct_spec_25_3(t *test
 }
 
 // spec: 25.5 (Redis-down gateway-buffer fallback, eventKey dedup) — with Redis
-// unreachable and the gateway up (degradation case 1), a poll serves the
+// unreachable and the gateway up, a poll serves the
 // gateway-originated events fanned from the gateway event buffer, deduped by
 // eventKey, and attaches the degradation envelope with actualSource
 // "gateway-buffer". The pre-fix read surface served only the local ring

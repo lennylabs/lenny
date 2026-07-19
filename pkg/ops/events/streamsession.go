@@ -13,7 +13,7 @@ import (
 )
 
 // gatewayPollInterval is the §25.5 SSE fall-back poll cadence: while serving
-// from the gateway-buffer fan-out (Redis-down, case 1), the handler re-polls
+// from the gateway-buffer fan-out during a Redis-down outage, the handler re-polls
 // every replica's buffer on this interval and streams the events it has not
 // yet delivered. spec: §25.5 ("poll the fan-out every 2 seconds while the
 // connection stays open").
@@ -175,14 +175,24 @@ func (st *streamSession) serveRedis(parent context.Context) {
 }
 
 // serveGateway serves the SSE stream from the gateway-buffer fan-out during a
-// Redis-down / gateway-up outage (degradation case 1). It re-polls every
+// Redis-down / gateway-up outage. It re-polls every
 // replica's buffer on gatewayPollInterval and streams the merged events it has
 // not yet delivered, deduplicated by eventKey so the repeated poll of the same
 // buffer window does not re-deliver an event. It returns when the request is
 // cancelled or SourceHealth moves the active source off the gateway buffer.
-// spec: §25.5 (SSE fall-back polls the fan-out every 2 seconds).
+//
+// On entry it seeds the resume position from the carried lastKey the same way
+// serveRedis and serveLocal do, so a switch into the gateway buffer (or a
+// fresh Last-Event-ID connection that opens directly in the fall-back) does
+// not re-deliver events already sent from the Redis stream or a prior gateway
+// stint. Because the gateway writes through eventbuffer.StreamEmitter, which
+// also XADDs every gateway-originated event to the Redis ops:events:stream,
+// the Redis-served window and the gateway-buffer window overlap; seeding from
+// lastKey is what keeps the switch exactly-once with no drop. spec: §25.5 (SSE
+// fall-back polls the fan-out every 2 seconds; cross-switch no-drop).
 func (st *streamSession) serveGateway(ctx context.Context) {
 	delivered := make(map[string]struct{})
+	resumed := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -191,6 +201,10 @@ func (st *streamSession) serveGateway(ctx context.Context) {
 			return
 		}
 		if merged, err := st.s.fetchGatewayBuffer(ctx, st.filter); err == nil {
+			if !resumed {
+				st.seedGatewayResume(merged, delivered)
+				resumed = true
+			}
 			for _, ev := range merged {
 				if _, seen := delivered[ev.Event.ID]; seen {
 					continue
@@ -212,9 +226,37 @@ func (st *streamSession) serveGateway(ctx context.Context) {
 	}
 }
 
+// seedGatewayResume seeds the delivered set from the carried resume position so
+// a switch into the gateway-buffer fall-back does not re-deliver events already
+// sent from the Redis stream or an earlier gateway stint. The merged window is
+// ordered oldest-first, so every event up to and including lastKey is marked
+// delivered; the poll loop then emits only the events after it. When lastKey is
+// set but absent from the window, a :gap comment is emitted and the gap counter
+// observed, matching the serveRedis and serveLocal resume paths, so the
+// consumer re-reads platform state before assuming continuity. spec: §25.5
+// (cross-switch no-drop, exactly-once across the source switch).
+func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, delivered map[string]struct{}) {
+	if st.lastKey == "" {
+		return
+	}
+	for i, ev := range window {
+		if ev.Event.ID == st.lastKey {
+			for _, seen := range window[:i+1] {
+				delivered[seen.Event.ID] = struct{}{}
+			}
+			return
+		}
+	}
+	// The resume position is no longer in the window: emit a :gap and deliver
+	// the whole window (nothing pre-marked), so the consumer re-reads platform
+	// state before assuming continuity.
+	writeSSEGap(st.w, st.lastKey)
+	st.s.observeGap()
+}
+
 // serveLocal serves the SSE stream from this replica's local ring buffer: the
 // lenny-ops-origin source used when no Redis client is wired or during a dual
-// Redis + gateway outage (degradation case 4). It replays the backlog after
+// Redis + gateway outage. It replays the backlog after
 // the carried resume position, then delivers live publishes until the request
 // is cancelled or SourceHealth moves the active source off the local buffer.
 // spec: §25.5 (line 2768-2780, dual-outage local-buffer serving).

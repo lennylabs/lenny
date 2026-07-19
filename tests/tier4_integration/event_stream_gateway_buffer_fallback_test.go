@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Tier-4 integration test for the §25.5 read-surface Redis-down /
-// gateway-up degradation case (degradation case 1): when Redis is
+// gateway-up degradation: when Redis is
 // unreachable but the gateway is up, the SSE/polling read surface falls
 // back to the gateway's in-memory event buffer (§25.3), fans the query
 // across every gateway replica over the lenny-gateway-pods headless
@@ -29,7 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
 
-// redisDownGatewayUp is the §25.5 degradation-case-1 source-health signal.
+// redisDownGatewayUp is the §25.5 Redis-down / gateway-up source-health signal.
 type redisDownGatewayUp struct{}
 
 func (redisDownGatewayUp) RedisAvailable() bool   { return false }
@@ -73,7 +73,7 @@ func bufEvent(id, typ string) gwevents.BufferedEvent {
 // alert never reached the response; this fails against that code and passes
 // once the cross-process fan-out fetch exists.
 //
-// diagnosis: a failure means the §25.5 case-1 read-surface fallback is broken:
+// diagnosis: a failure means the §25.5 Redis-down gateway-buffer read-surface fallback is broken:
 // during a Redis outage with the gateway up, a poll returns no gateway events
 // (the local-buffer-only path), or the merge loses a distinct same-second
 // alert from one replica, or fails to collapse a genuine repeat delivery of
