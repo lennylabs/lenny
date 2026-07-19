@@ -66,10 +66,11 @@ func newRedisSource(client RedisStreamClient, stream string) *redisSource {
 // The stream ID is the source-specific cursor position, carried in the
 // opaque pagination cursor; the event is the transport-neutral BufferedEvent
 // the poll and SSE surfaces serve. The BufferedEvent's top-level wrapper ID
-// is left zero: the per-replica buffer sequence the buffer-served path stamps
-// there is not carried in the XADD payload, so a Redis-served item cannot
-// reproduce it and does not substitute a source-position-dependent value in
-// its place. Callers key on the CloudEvents id (Event.ID, the canonical
+// is left zero. The buffer-served path stamps a per-replica in-memory buffer
+// sequence there, but that sequence is not carried in the XADD payload and is
+// projected away from the poll envelope on both paths (see EventPage.MarshalJSON),
+// so the wrapper id never reaches the wire and its Go-level value is
+// inconsequential. Callers key on the CloudEvents id (Event.ID, the canonical
 // eventKey) and the pagination cursor, both identical across sources.
 type redisEntry struct {
 	streamID string
@@ -91,6 +92,13 @@ const maxWindow = eventbuffer.DefaultStreamMaxLen
 // block gives every read a deadline, so a cancelled tail exits within one
 // interval. spec: §25.5 (XREAD BLOCK live tail on a per-connection cursor).
 const tailBlock = time.Second
+
+// streamOrigin is the XREAD starting position that reads from the very
+// beginning of the stream. The live SSE tail resumes from a concrete stream
+// ID rather than the "$" sentinel, which XREAD resolves server-side at read
+// time; on an empty stream a fresh tail starts here so a first entry XADDed
+// during the backlog-to-tail seam is still delivered. spec: §25.5.
+const streamOrigin = "0"
 
 // ReadRange returns the decoded stream entries after sinceStreamID, capped
 // at count (a non-positive count reads the whole retained window). An empty
@@ -397,6 +405,17 @@ func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher,
 		s.observeGap()
 	}
 
+	// Capture a concrete live-tail resume position BEFORE scanning the
+	// backlog, so the tail is contiguous with the scan and drops no event in
+	// the seam between the backlog read and the blocking XREAD. Relying on the
+	// XREAD "$" sentinel would reopen that seam: "$" resolves server-side at
+	// read time, so an entry XADDed after the backlog scan returns but before
+	// the read blocks would be neither in the backlog nor after "$", and would
+	// be lost. This mirrors the buffer path's subscribe-before-scan guarantee.
+	// spec: §25.5 (independent per-connection cursor, contiguous backlog-to-
+	// live-tail).
+	headStreamID, _, haveHead, headErr := s.redis.head(ctx)
+
 	// Replay the backlog after the resume point (or from the oldest retained
 	// entry on a gap), tracking the last stream ID so the live tail continues
 	// from exactly where the backlog ended with no overlap.
@@ -407,6 +426,15 @@ func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher,
 				writeSSEFrame(w, e.event)
 			}
 			lastStreamID = e.streamID
+		}
+	}
+	if lastStreamID == "" {
+		// Fresh connection with no resume cursor and an empty backlog: resume
+		// the tail from the head captured before the scan, or from the stream
+		// origin when the stream was empty, never the "$" sentinel.
+		lastStreamID = streamOrigin
+		if haveHead && headErr == nil {
+			lastStreamID = headStreamID
 		}
 	}
 	flusher.Flush()
@@ -438,15 +466,13 @@ func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher,
 // "event" field; this reads that field back into the same OperationalEvent,
 // so the CloudEvents payload every poll item and SSE frame carries decodes
 // byte-identically to the buffer-served path. The top-level wrapper
-// BufferedEvent.ID is left zero on a Redis-served item. The buffer-served
-// path stamps its per-replica in-memory buffer sequence there, and that
-// sequence is not carried in the XADD payload, so a stream entry cannot
-// reproduce it. Substituting the Redis stream position would present a
-// wrapper id of an entirely different magnitude than the buffer-served path,
-// making the envelope's id diverge by source; leaving it zero avoids that.
-// Ordering and resume key on the Redis stream position (carried in the
-// opaque pagination cursor) and the CloudEvents id (Event.ID, the canonical
-// eventKey), both identical across sources. spec: §25.5.
+// BufferedEvent.ID is left zero on a Redis-served item: the poll envelope
+// projects the wrapper id away on both the buffer and Redis paths (see
+// EventPage.MarshalJSON), so the item bytes on the wire are identical across
+// sources regardless of the Go-level wrapper value. Ordering and resume key
+// on the Redis stream position (carried in the opaque pagination cursor) and
+// the CloudEvents id (Event.ID, the canonical eventKey), both identical
+// across sources. spec: §25.5.
 func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	raw, ok := m.Values["event"]
 	if !ok {

@@ -256,19 +256,23 @@ func TestEventStreamPollingCursorContract(t *testing.T) {
 		t.Errorf("hasMore = %v, want true after a one-item page of three events", pag["hasMore"])
 	}
 	firstItem := items[0].(map[string]any)
+	firstEvent, _ := firstItem["event"].(map[string]any)
 	cursor, _ := pag["cursor"].(string)
 	if cursor == "" {
 		t.Fatal("first page returned no cursor")
 	}
-	// Second page with the cursor advances past the first event.
+	// Second page with the cursor advances past the first event. Event identity
+	// is the CloudEvents id under the item's "event" record; the poll item
+	// carries no buffer-internal wrapper id.
 	body2, _ := pollBody(t, srv, "/v1/admin/events?limit=1&cursor="+cursor)
 	items2, _ := body2["items"].([]any)
 	if len(items2) != 1 {
 		t.Fatalf("second page items = %d, want 1", len(items2))
 	}
 	secondItem := items2[0].(map[string]any)
-	if secondItem["id"] == firstItem["id"] {
-		t.Errorf("cursor did not advance: second page re-served event %v", firstItem["id"])
+	secondEvent, _ := secondItem["event"].(map[string]any)
+	if secondEvent["id"] == firstEvent["id"] {
+		t.Errorf("cursor did not advance: second page re-served event %v", firstEvent["id"])
 	}
 }
 

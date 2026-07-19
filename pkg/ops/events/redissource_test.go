@@ -299,38 +299,76 @@ func TestStreamIDLess(t *testing.T) {
 	}
 }
 
-// spec: 25.5 (Redis-served poll envelope) — the top-level wrapper id of a
-// Redis-served poll item is left zero. The buffer-served path stamps its
-// per-replica in-memory buffer sequence there, and that sequence is not
-// carried in the XADD payload, so a Redis-served item cannot reproduce it.
-// Deriving the wrapper id from the Redis stream position would make the same
-// /v1/admin/events envelope present item ids of an entirely different
-// magnitude depending on the active source; the read side omits it instead so
-// the envelope does not diverge by source, while the CloudEvents payload (the
-// canonical id and record) stays intact.
-func TestRedisPollPage_ItemsDropSourceDependentWrapperID_spec_25_5(t *testing.T) {
-	f := &fakeStream{}
-	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
-	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
-	f.add("2-5", evt("ops:2:5", "dev.lenny.alert_fired"))
-	s := redisService(t, f)
+// spec: 25.5 (the poll envelope served from the Redis ops:events:stream is
+// byte-identical to the buffer-served path) — the same events served through
+// the local ring buffer and through Redis marshal to the identical items array
+// on the wire. The buffer-internal wrapper sequence id (which the buffer path
+// stamps as 1,2,3 and the Redis path cannot reproduce) is projected away from
+// the poll item on both paths, so a consumer polling /v1/admin/events sees the
+// same bytes regardless of which source is active. A regression that leaks the
+// wrapper id would make the buffer path emit "id":1,2,3 and the Redis path
+// "id":0, and this test would fail.
+func TestPollEnvelope_ItemsByteIdenticalAcrossSources_spec_25_5(t *testing.T) {
+	events := []gwevents.OperationalEvent{
+		evt("ops:1:1", "dev.lenny.alert_fired"),
+		evt("ops:2:1", "dev.lenny.alert_fired"),
+		evt("ops:2:5", "dev.lenny.alert_fired"),
+	}
 
-	page := s.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)
-	if len(page.Items) != 3 {
-		t.Fatalf("items = %d, want 3", len(page.Items))
+	// Redis-served page.
+	f := &fakeStream{}
+	f.add("1-0", events[0])
+	f.add("2-0", events[1])
+	f.add("2-5", events[2])
+	redisItems := itemsJSON(t, redisService(t, f).pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false))
+
+	// Buffer-served page: the same events through the local ring buffer, whose
+	// wrapper ids are the monotonic 1,2,3 — which must not reach the wire.
+	buf := New(Options{Now: ts})
+	for _, e := range events {
+		if _, err := buf.Publish(context.Background(), e); err != nil {
+			t.Fatalf("publish %s: %v", e.ID, err)
+		}
 	}
-	for i, it := range page.Items {
-		if it.ID != 0 {
-			t.Errorf("item %d (%s) wrapper id = %d, want 0: a Redis-served item must not stamp a source-position-dependent wrapper id", i, it.Event.ID, it.ID)
+	bufferItems := itemsJSON(t, buf.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false))
+
+	if string(redisItems) != string(bufferItems) {
+		t.Errorf("poll items diverge by source:\n redis  = %s\n buffer = %s", redisItems, bufferItems)
+	}
+
+	// Structurally, no item may carry a top-level wrapper id, and each must
+	// carry the CloudEvents record under "event".
+	var items []map[string]json.RawMessage
+	if err := json.Unmarshal(redisItems, &items); err != nil {
+		t.Fatalf("decode items: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("items = %d, want 3", len(items))
+	}
+	for i, it := range items {
+		if _, leaked := it["id"]; leaked {
+			t.Errorf("item %d retains the buffer-internal wrapper id on the wire: %s", i, redisItems)
 		}
-		// The CloudEvents payload must still decode intact.
-		if it.Event.ID == "" {
-			t.Errorf("item %d has no CloudEvents id: the canonical eventKey must survive the decode", i)
-		}
-		if it.Event.Type != "dev.lenny.alert_fired" {
-			t.Errorf("item %d event type = %q, want dev.lenny.alert_fired", i, it.Event.Type)
+		if _, ok := it["event"]; !ok {
+			t.Errorf("item %d missing the CloudEvents event payload: %s", i, redisItems)
 		}
 	}
+}
+
+// itemsJSON marshals a poll page and returns the raw JSON of its items array,
+// so a test can compare the wire encoding across sources independent of the
+// source-specific pagination cursor.
+func itemsJSON(t *testing.T, page EventPage) []byte {
+	t.Helper()
+	raw, err := json.Marshal(page)
+	if err != nil {
+		t.Fatalf("marshal page: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal page: %v", err)
+	}
+	return m["items"]
 }
 
 // spec: 25.5 (SSE resume honors the cursor source_kind) — a redis-kind
@@ -438,6 +476,69 @@ func TestRedisTail_BoundedBlockExitsOnCancel_spec_25_5(t *testing.T) {
 	case <-done:
 	case <-time.After(3 * time.Second):
 		t.Fatal("Tail did not exit within 3s of context cancellation")
+	}
+}
+
+// startRecordingStream records the starting stream ID the live SSE tail
+// passes to XREAD, so a test can assert the tail resumes from a concrete
+// position rather than the "$" sentinel. XRead blocks on ctx so the handler's
+// live loop exits deterministically on cancel.
+type startRecordingStream struct {
+	fakeStream
+	firstStart chan string
+}
+
+func (s *startRecordingStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
+	if len(a.Streams) == 2 {
+		select {
+		case s.firstStart <- a.Streams[1]:
+		default:
+		}
+	}
+	<-ctx.Done()
+	cmd := redis.NewXStreamSliceCmd(ctx)
+	cmd.SetErr(redis.Nil)
+	return cmd
+}
+
+// spec: 25.5 (contiguous backlog-to-live-tail seam) — on a fresh SSE
+// connection with no resume cursor against an empty stream, the live tail must
+// resume from a concrete stream origin ("0"), not the XREAD "$" sentinel. "$"
+// resolves server-side at read time, so an event XADDed between the empty
+// backlog scan and the blocking read would be neither in the backlog nor after
+// "$", and would be dropped. Resuming from "0" reads from the beginning of the
+// stream and delivers it. This mirrors the buffer path's subscribe-before-scan
+// guarantee. A regression that lets the tail fall back to "$" fails here.
+func TestHandleStreamRedis_EmptyStreamTailsFromConcreteOrigin_spec_25_5(t *testing.T) {
+	rs := &startRecordingStream{firstStart: make(chan string, 1)}
+	s := New(Options{RedisClient: rs, SourceHealth: StaticSourceHealth{Redis: true, Gateway: true}, Now: ts})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/admin/events/stream", nil).WithContext(ctx)
+	done := make(chan struct{})
+	go func() {
+		s.HandleStream(rec, req)
+		close(done)
+	}()
+
+	select {
+	case start := <-rs.firstStart:
+		if start == "$" {
+			t.Errorf("live tail resumed from the $ sentinel on an empty fresh connect; an event XADDed in the backlog-to-tail seam would be dropped")
+		}
+		if start != streamOrigin {
+			t.Errorf("live tail start = %q, want the concrete stream origin %q", start, streamOrigin)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("live tail never issued an XREAD")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("handler did not exit within 3s of context cancellation")
 	}
 }
 

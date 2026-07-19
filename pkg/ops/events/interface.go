@@ -4,6 +4,7 @@ package events
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"time"
 
@@ -75,6 +76,61 @@ type EventPage struct {
 	// during a Redis outage). Omitted when serving from the primary
 	// source. spec: §25.5 lines 2768-2780.
 	Degradation *conventions.Degradation `json:"degradation,omitempty"`
+}
+
+// pollItem is the §25.5 poll-envelope item on the wire: the CloudEvents
+// record under "event", without the buffer-internal wrapper sequence id.
+// The wrapper id (gwevents.BufferedEvent.ID) is a per-replica in-memory
+// buffer position that the Redis ops:events:stream does not carry, so
+// including it would make the same /v1/admin/events envelope diverge by
+// active source — real monotonic sequence numbers when the local ring
+// buffer serves, zeros when Redis serves. Excluding it keeps the poll
+// envelope byte-identical whichever source is active; agents key on the
+// CloudEvents id (Event.ID) and the opaque pagination cursor, both
+// identical across sources. spec: §25.5 lines 2666-2699.
+type pollItem struct {
+	Event gwevents.OperationalEvent `json:"event"`
+}
+
+// eventPageWire is the on-the-wire form of EventPage: the item id wrapper
+// is projected away so the encoding is source-independent.
+type eventPageWire struct {
+	Items       []pollItem               `json:"items"`
+	Pagination  Pagination               `json:"pagination"`
+	Degradation *conventions.Degradation `json:"degradation,omitempty"`
+}
+
+// MarshalJSON serializes the §25.5 poll envelope with each item projected
+// to its CloudEvents record, dropping the buffer-internal wrapper sequence
+// id so the same page is byte-identical whether served from the local ring
+// buffer or the Redis ops:events:stream. spec: §25.5.
+func (p EventPage) MarshalJSON() ([]byte, error) {
+	items := make([]pollItem, len(p.Items))
+	for i := range p.Items {
+		items[i] = pollItem{Event: p.Items[i].Event}
+	}
+	return json.Marshal(eventPageWire{
+		Items:       items,
+		Pagination:  p.Pagination,
+		Degradation: p.Degradation,
+	})
+}
+
+// UnmarshalJSON reverses MarshalJSON: it reads the wire items back into
+// BufferedEvent values with a zero wrapper id (the wire does not carry one),
+// so a consumer that decodes an EventPage sees the CloudEvents record intact.
+func (p *EventPage) UnmarshalJSON(b []byte) error {
+	var wire eventPageWire
+	if err := json.Unmarshal(b, &wire); err != nil {
+		return err
+	}
+	p.Items = make([]gwevents.BufferedEvent, len(wire.Items))
+	for i := range wire.Items {
+		p.Items[i] = gwevents.BufferedEvent{Event: wire.Items[i].Event}
+	}
+	p.Pagination = wire.Pagination
+	p.Degradation = wire.Degradation
+	return nil
 }
 
 // Pagination is the §25.2 canonical pagination envelope shared by
