@@ -171,26 +171,24 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 	}
 }
 
-// TestOpsEventStreamPollItemHasNoWrapperID pins that a Redis-served poll item
-// carries no top-level buffer-internal wrapper id on the wire, so the poll
-// envelope is byte-identical to the buffer-served path. The buffer-served path
-// tags each event with a small per-replica in-memory sequence id, which the
-// Redis ops:events:stream does not carry; if that id reached the wire, the same
-// /v1/admin/events endpoint would present item ids that differ by active source
-// (real sequence numbers from the buffer, zeros from Redis). The read side
-// projects the wrapper id away on both paths, leaving each item as the
-// CloudEvents record under "event".
+// TestOpsEventStreamPollItemShape pins that a Redis-served poll item keeps the
+// buffer-served item shape on the wire: {"id":N,"event":{...}} with a
+// non-zero top-level wrapper id. The buffer-served path stamps a per-replica
+// in-memory sequence there; the Redis path stamps a synthetic per-source
+// position derived from the stream ID, so the /v1/admin/events envelope keeps
+// the same frozen item shape whichever source is active. Ordering and resume
+// run off the pagination cursor and the CloudEvents id rather than the
+// per-source wrapper id.
 //
 // spec: 25.5 (Polling Delivery — the poll envelope and SSE frame served from
-// the Redis ops:events:stream carry the same CloudEvents record as the
-// buffer-served path; ordering and resume run off the pagination cursor and
-// the CloudEvents id, not the wrapper id).
-// diagnosis: a failure means the poll wire still exposes the buffer-internal
-// wrapper id, so the same lenny-ops endpoint emits item ids of a different
-// magnitude depending on whether Redis or the local ring buffer is the active
-// source, and the two paths are not the source-independent envelope the read
-// side promises.
-func TestOpsEventStreamPollItemHasNoWrapperID(t *testing.T) {
+// the Redis ops:events:stream carry the same item shape and CloudEvents record
+// as the buffer-served path; ordering and resume run off the pagination cursor
+// and the CloudEvents id, not the wrapper id).
+// diagnosis: a failure means the Redis-served poll item dropped its top-level
+// wrapper id (diverging from the frozen buffer envelope) or stamped a
+// source-dependent zero, so the same lenny-ops endpoint no longer presents a
+// stable item shape across the local ring buffer and the Redis source.
+func TestOpsEventStreamPollItemShape(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
 
@@ -209,7 +207,8 @@ func TestOpsEventStreamPollItemHasNoWrapperID(t *testing.T) {
 	})
 
 	// Read the RAW poll body: the wire item must carry the CloudEvents record
-	// under "event" with no top-level buffer-internal wrapper id.
+	// under "event" and a top-level wrapper id (the per-source buffer
+	// position), the {"id":N,"event":{...}} shape the buffer path also emits.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events", nil)
 	svc.HandlePoll(rec, req)
@@ -232,8 +231,16 @@ func TestOpsEventStreamPollItemHasNoWrapperID(t *testing.T) {
 		t.Fatalf("poll returned %d items, want the 4 emitted events", len(body.Items))
 	}
 	for i, item := range body.Items {
-		if _, leaked := item["id"]; leaked {
-			t.Errorf("item %d carries a top-level wrapper id on the wire; the poll envelope must not expose the buffer-internal sequence: %v", i, item)
+		rawID, present := item["id"]
+		if !present {
+			t.Errorf("item %d dropped its top-level wrapper id; the Redis-served poll item must keep the {\"id\":N,\"event\":{...}} shape: %v", i, item)
+		} else {
+			var wrapperID uint64
+			if err := json.Unmarshal(rawID, &wrapperID); err != nil {
+				t.Errorf("item %d wrapper id did not decode as a number: %v", i, err)
+			} else if wrapperID == 0 {
+				t.Errorf("item %d carries a zero wrapper id; a Redis-served item must stamp a synthetic per-source position from its stream ID", i)
+			}
 		}
 		raw, ok := item["event"]
 		if !ok {

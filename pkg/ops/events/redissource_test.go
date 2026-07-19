@@ -299,16 +299,18 @@ func TestStreamIDLess(t *testing.T) {
 	}
 }
 
-// spec: 25.5 (the poll envelope served from the Redis ops:events:stream is
-// byte-identical to the buffer-served path) — the same events served through
-// the local ring buffer and through Redis marshal to the identical items array
-// on the wire. The buffer-internal wrapper sequence id (which the buffer path
-// stamps as 1,2,3 and the Redis path cannot reproduce) is projected away from
-// the poll item on both paths, so a consumer polling /v1/admin/events sees the
-// same bytes regardless of which source is active. A regression that leaks the
-// wrapper id would make the buffer path emit "id":1,2,3 and the Redis path
-// "id":0, and this test would fail.
-func TestPollEnvelope_ItemsByteIdenticalAcrossSources_spec_25_5(t *testing.T) {
+// spec: 25.5 (the poll envelope served from the Redis ops:events:stream keeps
+// the buffer-served item shape) — the /v1/admin/events item is
+// {"id":N,"event":{...}} whichever source is active. The buffer path stamps
+// its monotonic ring sequence in the wrapper id; the Redis path stamps a
+// synthetic per-source position derived from the stream ID. The CloudEvents
+// record under "event" is byte-identical across sources, and every item on
+// both paths carries a top-level wrapper id. A regression that dropped the
+// wrapper id from the buffer path (making the two byte-identical by removing
+// the frozen envelope field) would fail the top-level-id assertions below; a
+// regression that left the Redis wrapper id zero would fail the non-zero
+// synthetic-position assertion.
+func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 	events := []gwevents.OperationalEvent{
 		evt("ops:1:1", "dev.lenny.alert_fired"),
 		evt("ops:2:1", "dev.lenny.alert_fired"),
@@ -320,39 +322,85 @@ func TestPollEnvelope_ItemsByteIdenticalAcrossSources_spec_25_5(t *testing.T) {
 	f.add("1-0", events[0])
 	f.add("2-0", events[1])
 	f.add("2-5", events[2])
-	redisItems := itemsJSON(t, redisService(t, f).pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false))
+	redisItems := decodeItems(t, itemsJSON(t, redisService(t, f).pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)))
 
 	// Buffer-served page: the same events through the local ring buffer, whose
-	// wrapper ids are the monotonic 1,2,3 — which must not reach the wire.
+	// wrapper ids are the monotonic 1,2,3.
 	buf := New(Options{Now: ts})
 	for _, e := range events {
 		if _, err := buf.Publish(context.Background(), e); err != nil {
 			t.Fatalf("publish %s: %v", e.ID, err)
 		}
 	}
-	bufferItems := itemsJSON(t, buf.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false))
+	bufferItems := decodeItems(t, itemsJSON(t, buf.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)))
 
-	if string(redisItems) != string(bufferItems) {
-		t.Errorf("poll items diverge by source:\n redis  = %s\n buffer = %s", redisItems, bufferItems)
+	if len(redisItems) != 3 || len(bufferItems) != 3 {
+		t.Fatalf("items: redis=%d buffer=%d, want 3 each", len(redisItems), len(bufferItems))
 	}
+	for i := range redisItems {
+		// Each item on each source carries a top-level wrapper id (the frozen
+		// {"id":N,"event":{...}} shape) and the CloudEvents record under "event".
+		for _, side := range []struct {
+			name string
+			item map[string]json.RawMessage
+		}{{"redis", redisItems[i]}, {"buffer", bufferItems[i]}} {
+			if _, ok := side.item["id"]; !ok {
+				t.Errorf("%s item %d dropped its top-level wrapper id: %v", side.name, i, side.item)
+			}
+			if _, ok := side.item["event"]; !ok {
+				t.Errorf("%s item %d missing the CloudEvents event payload: %v", side.name, i, side.item)
+			}
+		}
+		// The CloudEvents payload is byte-identical across sources.
+		if string(redisItems[i]["event"]) != string(bufferItems[i]["event"]) {
+			t.Errorf("item %d CloudEvents record diverges by source:\n redis  = %s\n buffer = %s", i, redisItems[i]["event"], bufferItems[i]["event"])
+		}
+		// The Redis-served wrapper id is a non-zero synthetic per-source
+		// position, so the item shape stays stable without a source-dependent
+		// zero.
+		var redisID uint64
+		if err := json.Unmarshal(redisItems[i]["id"], &redisID); err != nil {
+			t.Errorf("redis item %d wrapper id did not decode as a number: %v", i, err)
+		} else if redisID == 0 {
+			t.Errorf("redis item %d wrapper id is zero; the Redis path must stamp a synthetic per-source position from the stream ID", i)
+		}
+	}
+}
 
-	// Structurally, no item may carry a top-level wrapper id, and each must
-	// carry the CloudEvents record under "event".
+// spec: 25.5 (Redis-served poll item keeps the buffer item shape with a
+// synthetic per-source wrapper position) — syntheticBufferID packs a Redis
+// "ms-seq" stream ID into a non-zero uint64 that increases in stream order, so
+// the wrapper id stamped on a Redis-served item is a meaningful per-source
+// position rather than a source-dependent zero.
+func TestSyntheticBufferID_MonotonicNonZero_spec_25_5(t *testing.T) {
+	ids := []string{"1-0", "2-0", "2-5", "3-0", "100-4095"}
+	var prev uint64
+	for i, id := range ids {
+		got := syntheticBufferID(id)
+		if got == 0 {
+			t.Errorf("syntheticBufferID(%q) = 0, want a non-zero per-source position", id)
+		}
+		if i > 0 && got <= prev {
+			t.Errorf("syntheticBufferID(%q) = %d not greater than prior %d; the position must increase in stream order", id, got, prev)
+		}
+		prev = got
+	}
+	// A malformed stream ID yields zero rather than a spurious position.
+	if got := syntheticBufferID("not-an-id"); got != 0 {
+		t.Errorf("syntheticBufferID(malformed) = %d, want 0", got)
+	}
+}
+
+// decodeItems unmarshals a raw items array into a slice of field maps so a
+// test can inspect each item's top-level fields (the wrapper id and the
+// CloudEvents record) independently.
+func decodeItems(t *testing.T, raw []byte) []map[string]json.RawMessage {
+	t.Helper()
 	var items []map[string]json.RawMessage
-	if err := json.Unmarshal(redisItems, &items); err != nil {
+	if err := json.Unmarshal(raw, &items); err != nil {
 		t.Fatalf("decode items: %v", err)
 	}
-	if len(items) != 3 {
-		t.Fatalf("items = %d, want 3", len(items))
-	}
-	for i, it := range items {
-		if _, leaked := it["id"]; leaked {
-			t.Errorf("item %d retains the buffer-internal wrapper id on the wire: %s", i, redisItems)
-		}
-		if _, ok := it["event"]; !ok {
-			t.Errorf("item %d missing the CloudEvents event payload: %s", i, redisItems)
-		}
-	}
+	return items
 }
 
 // itemsJSON marshals a poll page and returns the raw JSON of its items array,
