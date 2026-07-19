@@ -532,6 +532,17 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 				ChunkSizeBytes: c.chunkSize(),
 				ChunkEncoding:  string(c.chunkEncoding()),
 				DeadlineMs:     c.Deadline.Milliseconds(),
+				// spec: §5.2 (per-slot checkpoint granularity), §15
+				// (single-session runtimes never see a slotId). The wire
+				// field carries the raw binding.SlotID, empty for a
+				// maxConcurrentSessions: 1 pod so the attempt stays on the
+				// pod-global path. The manifest sentinel
+				// partialmanifeststore.SlotDefault ("default") scopes the
+				// intent row above and is never sent on the wire, because the
+				// adapter branches on non-empty slot_id presence and would
+				// route the "default" sentinel down the per-slot branch that
+				// has no assigned slot state.
+				SlotId: slotIDField(binding.SlotID),
 			},
 		},
 	}
@@ -571,6 +582,22 @@ func (c *Checkpointer) driveCheckpoint(ctx context.Context, binding *podsession.
 		baselineBytes:   sc.baselineBytes,
 	}
 	return d.run()
+}
+
+// slotIDField wraps a raw slot id into the wire SlotId message the
+// adapter routes a per-slot checkpoint on, returning nil for the empty
+// id so a maxConcurrentSessions: 1 attempt serializes no slot_id field
+// and the adapter stays on the pod-global checkpoint path. The gateway
+// never sends the manifest-side "default" sentinel here, because the
+// adapter keys on non-empty slot_id presence.
+//
+// spec: §15 (single-session runtimes never see a slotId); §5.2 (per-slot
+// checkpoint granularity).
+func slotIDField(id string) *adapterv1.SlotId {
+	if id == "" {
+		return nil
+	}
+	return &adapterv1.SlotId{Value: id}
 }
 
 // sessionCheckpointContext is the slice of session-row state a checkpoint
