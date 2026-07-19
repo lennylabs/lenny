@@ -198,10 +198,11 @@ func (c *SubscriptionCache) refresh(ctx context.Context) error {
 		gens[r.ID] = r.Generation
 		activeIDs = append(activeIDs, r.ID)
 		sub := WebhookSubscription{
-			ID:          r.ID,
-			CallbackURL: r.CallbackURL,
-			Types:       append([]string(nil), r.Types...),
-			Generation:  r.Generation,
+			ID:           r.ID,
+			CallbackURL:  r.CallbackURL,
+			Types:        append([]string(nil), r.Types...),
+			TenantFilter: r.TenantFilter,
+			Generation:   r.Generation,
 		}
 		// §25.5 recovers the plaintext signing key from the in-memory reveal
 		// cache populated at create/rotate; the store keeps only the hash.

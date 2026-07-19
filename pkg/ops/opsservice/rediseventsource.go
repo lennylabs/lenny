@@ -136,14 +136,19 @@ func decodeStreamEvent(m redis.XMessage) (WebhookEvent, bool) {
 	default:
 		return WebhookEvent{}, false
 	}
+	// lennytenantid is the §25.5 tenant label carried as a top-level
+	// CloudEvents extension attribute; an absent or empty value denotes a
+	// platform-scoped event that only a tenantFilter: "*" subscription
+	// receives. spec: 25.5
 	var ce struct {
-		ID   string `json:"id"`
-		Type string `json:"type"`
+		ID       string `json:"id"`
+		Type     string `json:"type"`
+		TenantID string `json:"lennytenantid"`
 	}
 	if err := json.Unmarshal(body, &ce); err != nil {
 		return WebhookEvent{}, false
 	}
-	return WebhookEvent{ID: ce.ID, Type: ce.Type, Body: body}, true
+	return WebhookEvent{ID: ce.ID, Type: ce.Type, TenantID: ce.TenantID, Body: body}, true
 }
 
 // Compile-time guard that *RedisEventSource satisfies EventSource.

@@ -184,10 +184,11 @@ func TestEscalationWebhookReachesReceiverWhilePostgresDown(t *testing.T) {
 	worker := opsservice.NewWebhookWorker(opsservice.WebhookWorkerConfig{
 		Events: source,
 		Subscriptions: staticSubscriptions{{
-			ID:          "sub-degraded-page",
-			CallbackURL: receiver.URL,
-			Secret:      secret,
-			Types:       []string{escalationType},
+			ID:           "sub-degraded-page",
+			CallbackURL:  receiver.URL,
+			Secret:       secret,
+			Types:        []string{escalationType},
+			TenantFilter: "*",
 		}},
 	})
 

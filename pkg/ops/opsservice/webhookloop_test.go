@@ -103,6 +103,7 @@ func TestWebhookWorkerDeliversMatchingEvent(t *testing.T) {
 		Subscriptions: staticSubs{{
 			ID: "sub-1", CallbackURL: "https://hook.example.com",
 			Secret: []byte("whsec_x"), Types: []string{"dev.lenny.alert_fired"},
+			TenantFilter: "*",
 		}},
 		Transport:    sink,
 		Recorder:     rec,
@@ -136,6 +137,7 @@ func TestWebhookWorkerSkipsNonMatchingSubscription(t *testing.T) {
 		Subscriptions: staticSubs{{
 			ID: "sub-pool", CallbackURL: "https://hook.example.com",
 			Secret: []byte("s"), Types: []string{"dev.lenny.pool_state_changed"},
+			TenantFilter: "*",
 		}},
 		Transport: sink,
 	})
@@ -144,6 +146,62 @@ func TestWebhookWorkerSkipsNonMatchingSubscription(t *testing.T) {
 	}
 	if got := sink.count(); got != 0 {
 		t.Errorf("delivery attempts = %d, want 0 (type filter excludes the event)", got)
+	}
+}
+
+// TestWebhookWorkerFiltersByTenant is the §25.5 delivery-time
+// tenant-isolation contract: an event is delivered to a subscription only
+// when the subscription's tenantFilter admits the event's tenant label. A
+// tenant-scoped subscription receives its own tenant's events, does not
+// receive another tenant's events, and does not receive platform-scoped
+// (no-label) events; a wildcard subscription receives all three. Against
+// the pre-fix type-only matcher every subscription received every event,
+// so the cross-tenant and platform-scoped assertions below fail without
+// the tenant predicate. spec: 25.5 (delivery-time tenantFilter,
+// platform-scoped rule)
+func TestWebhookWorkerFiltersByTenant(t *testing.T) {
+	cases := []struct {
+		name         string
+		tenantFilter string
+		eventTenant  string
+		wantDeliver  bool
+	}{
+		{"tenant sub gets its own tenant", "acme", "acme", true},
+		{"tenant sub drops another tenant", "acme", "globex", false},
+		{"tenant sub drops platform-scoped", "acme", "", false},
+		{"wildcard sub gets a tenant event", "*", "acme", true},
+		{"wildcard sub gets platform-scoped", "*", "", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			sink := &fakeSink{outcomes: []webhookdelivery.Outcome{{StatusCode: 200}}}
+			w := newWorker(t, WebhookWorkerConfig{
+				Events: &staticEvents{events: []WebhookEvent{
+					{ID: "evt-1", Type: "dev.lenny.alert_fired", TenantID: tc.eventTenant, Body: []byte(`{}`)},
+				}},
+				Subscriptions: staticSubs{{
+					ID: "sub-1", CallbackURL: "https://hook.example.com",
+					Secret: []byte("s"), TenantFilter: tc.tenantFilter,
+				}},
+				Transport: sink,
+			})
+			if err := w.Tick(context.Background()); err != nil {
+				t.Fatalf("Tick: %v", err)
+			}
+			want := 0
+			if tc.wantDeliver {
+				want = 1
+			}
+			if got := sink.count(); got != want {
+				t.Errorf("delivery attempts = %d, want %d (filter %q, event tenant %q)",
+					got, want, tc.tenantFilter, tc.eventTenant)
+			}
+			// The backlog gauge must drain to zero whether or not the event
+			// was delivered, so the tenant-filtered pairs do not leak.
+			if got := w.Backlog(); got != 0 {
+				t.Errorf("Backlog() = %d after the tick, want 0", got)
+			}
+		})
 	}
 }
 
@@ -160,7 +218,7 @@ func TestWebhookWorkerRetriesTransientFailure(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 		Recorder:      rec,
 		TrackingMode:  webhookdelivery.TrackingFull,
@@ -187,7 +245,7 @@ func TestWebhookWorkerExhaustsBudgetAndEmitsFailure(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-9", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 		Recorder:      rec,
 		TrackingMode:  webhookdelivery.TrackingFull,
@@ -217,7 +275,7 @@ func TestWebhookWorkerStopsOnPermanentFailure(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 	})
 	if err := w.Tick(context.Background()); err != nil {
@@ -238,7 +296,7 @@ func TestWebhookWorkerFailuresOnlyTrackingSkipsSuccess(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 		Recorder:      rec,
 		TrackingMode:  webhookdelivery.TrackingFailuresOnly,
@@ -303,7 +361,7 @@ func TestWebhookWorkerObservesDeliveryMetrics_spec_25_5_2790(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 		Metrics:       met,
 		Now:           clock,
@@ -332,7 +390,7 @@ func TestWebhookWorkerMetricsFailedStatus_spec_25_5_2790(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-9", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 		Metrics:       met,
 	})
@@ -351,8 +409,8 @@ func TestWebhookWorkerSkipsStaleGeneration_spec_25_5_2751(t *testing.T) {
 	sink := &fakeSink{outcomes: []webhookdelivery.Outcome{{StatusCode: 200}}}
 	subs := genSubs{
 		subs: []WebhookSubscription{
-			{ID: "live", CallbackURL: "https://h", Secret: []byte("s"), Generation: 3},
-			{ID: "stale", CallbackURL: "https://h", Secret: []byte("s"), Generation: 1},
+			{ID: "live", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*", Generation: 3},
+			{ID: "stale", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*", Generation: 1},
 		},
 		// "live" is still at generation 3; "stale" advanced to 2 (or was
 		// deleted) so its snapshot generation 1 no longer matches.
@@ -388,7 +446,7 @@ func TestWebhookWorkerBacklogClearsAfterTick(t *testing.T) {
 		Events: &staticEvents{events: []WebhookEvent{
 			{ID: "evt-1", Type: "dev.lenny.alert_fired", Body: []byte(`{}`)},
 		}},
-		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: "sub-1", CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 	})
 	if err := w.Tick(context.Background()); err != nil {

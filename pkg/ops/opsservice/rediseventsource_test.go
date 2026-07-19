@@ -127,6 +127,37 @@ func TestRedisEventSourceDeliversNewEvents_spec_25_3(t *testing.T) {
 	}
 }
 
+// TestRedisEventSourceParsesTenantID pins the §25.5 delivery-time tenant
+// label: decode reads the lennytenantid CloudEvents extension into the
+// WebhookEvent so the worker can gate delivery on it. A labeled event
+// carries its tenant; an event with no lennytenantid is platform-scoped
+// (empty TenantID). Against the pre-fix decode, which never read the
+// extension, the labeled-event assertion fails. spec: 25.5 (delivery-time
+// tenantFilter, platform-scoped rule)
+func TestRedisEventSourceParsesTenantID(t *testing.T) {
+	f := &fakeStreamReader{}
+	src := NewRedisEventSource(f, "")
+	if _, err := src.Poll(context.Background()); err != nil {
+		t.Fatalf("prime Poll: %v", err)
+	}
+	f.add("1-0", `{"id":"gw:1:1","type":"dev.lenny.alert_fired","lennytenantid":"acme"}`)
+	f.add("2-0", `{"id":"ops:1:1","type":"dev.lenny.platform_upgrade_started"}`)
+
+	got, err := src.Poll(context.Background())
+	if err != nil {
+		t.Fatalf("Poll: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("Poll returned %d events; want 2", len(got))
+	}
+	if got[0].TenantID != "acme" {
+		t.Errorf("labeled event TenantID = %q; want acme", got[0].TenantID)
+	}
+	if got[1].TenantID != "" {
+		t.Errorf("platform-scoped event TenantID = %q; want empty", got[1].TenantID)
+	}
+}
+
 // spec: §25.5 — a malformed stream entry is skipped, not fatal; the
 // cursor still advances past it so it is never retried.
 func TestRedisEventSourceSkipsMalformed_spec_25_5(t *testing.T) {

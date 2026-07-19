@@ -130,6 +130,39 @@ func TestSubscriptionCacheReturnsDefensiveCopy(t *testing.T) {
 	}
 }
 
+// TestSubscriptionCacheCarriesTenantFilter pins the §25.5 delivery-time
+// tenant gate: the refresh mapping must copy each record's tenantFilter
+// into the cached WebhookSubscription so the delivery worker can enforce
+// it. The pre-fix mapping dropped the field, so every cached subscription
+// carried an empty filter and the worker could not distinguish a
+// tenant-scoped subscription from a wildcard one. spec: 25.5 (delivery-
+// time tenantFilter)
+func TestSubscriptionCacheCarriesTenantFilter(t *testing.T) {
+	store := &stubStore{rows: []eventsubscription.Record{
+		{ID: "sub_wild", CallbackURL: "https://acme.example/w", TenantFilter: "*", Active: true},
+		{ID: "sub_acme", CallbackURL: "https://acme.example/a", TenantFilter: "acme", Active: true},
+	}}
+	cache := opsservice.NewSubscriptionCache(context.Background(), opsservice.SubscriptionCacheConfig{
+		Store:           store,
+		RefreshInterval: time.Hour,
+	})
+	defer cache.Stop()
+	got := cache.Subscriptions()
+	if len(got) != 2 {
+		t.Fatalf("Subscriptions: got %d rows, want 2", len(got))
+	}
+	byID := map[string]string{}
+	for _, s := range got {
+		byID[s.ID] = s.TenantFilter
+	}
+	if byID["sub_wild"] != "*" {
+		t.Errorf("sub_wild TenantFilter = %q, want %q", byID["sub_wild"], "*")
+	}
+	if byID["sub_acme"] != "acme" {
+		t.Errorf("sub_acme TenantFilter = %q, want %q", byID["sub_acme"], "acme")
+	}
+}
+
 func TestSubscriptionCacheRefreshUpdates(t *testing.T) {
 	store := &stubStore{}
 	cache := opsservice.NewSubscriptionCache(context.Background(), opsservice.SubscriptionCacheConfig{
