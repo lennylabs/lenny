@@ -297,10 +297,12 @@ func TestOpsEventStreamReadSurfaceE2E(t *testing.T) {
 			t.Fatalf("poll eventType filter missing escalation %s (saw %v)", want, seen)
 		}
 	}
-	// cursorKind is the opaque source kind (§25.5 buffer/redis/mixed). The
-	// v1 read surface serves from the in-memory buffer.
-	if page.cursorKind != "buffer" {
-		t.Fatalf("poll pagination.cursorKind = %q, want buffer", page.cursorKind)
+	// cursorKind is the opaque source kind (§25.5 buffer/redis/mixed). This
+	// binary runs with --redis-url wired and Redis reachable, so the healthy
+	// read surface serves the merged cross-replica view from the Redis
+	// ops:events:stream and reports the "redis" source kind.
+	if page.cursorKind != "redis" {
+		t.Fatalf("poll pagination.cursorKind = %q, want redis", page.cursorKind)
 	}
 	if page.headCursor == "" {
 		t.Fatalf("poll pagination.headCursor empty, want an opaque cursor")
