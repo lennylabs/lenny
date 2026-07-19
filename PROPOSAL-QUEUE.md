@@ -32,8 +32,12 @@ cluster C-18 (§4.8/§15.1) and the OpenSLO-export cluster C-19 (§16.10), both 
 landed (0039, 0041); C-18/C-19/C-38 landed (0039/0041/0042); its next isolated cluster is C-20 (§8.3 cross-environment delegation credential compatibility — clear of the section-25 machine's §25 churn, proposal-A's checkpoint/pod, and in a different package from proposal-B's §4.9 credential leasing). The
 integrator extends each worker's assignments from the remaining clusters as its
 branches land, keeping each worker's lane clear of the others' active spec
-sections; the §15 (C-13) and §7 (C-14) Highs are held back until proposal-A's
-C-01 pod/resume work lands, to avoid pod-claim/resume conflicts.
+sections. (2026-07-18 top-up: proposal-B took C-15 §4.4 + C-17 §4.6 to stay in
+its checkpoint/pod-lifecycle lane; proposal-C took C-13 §15 — reassigned from
+proposal-A — because its claim-per-request pod-binding is the same design as
+proposal-C's C-42, consolidating pod-claim onto one worker rather than making
+proposal-A a third pod-claim worker while it runs §25/§7. proposal-A keeps
+C-14 §7 as its next pod/resume High.)
 
 **Coordinate through this file before and after every proposal.** Other
 runners are working proposals in parallel, so this file is the shared view of
@@ -203,8 +207,8 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-13 — OpenAI-dialect built-in adapters pod-binding model — §15
-- **status:** open
-- **assigned:** (unassigned)
+- **status:** assigned:proposal-C (2026-07-18, reassigned from proposal-A's earmark). C-13's pod-binding question — how a single-shot request claims/dispatches/releases a warm pod — is the same claim-per-request design as proposal-C's active C-42 (§8.2 delegate-path pod allocation), so keeping both "claim-a-pod-per-request" clusters on one worker consolidates the pod-claim-model decision rather than making proposal-A a third pod-claim worker (proposal-A is on §25 C-02/C-03 and §7 C-14, a different area). Sequence after C-42; both share the warm-pool claim primitives (`poolstore`, `credrouter.PreClaim`), so coordinate with proposal-B's C-22 (§4.6 eviction) via the inbox if they collide.
+- **assigned:** proposal-C
 - **findings:** T-STD.4
 - **root spec gap:** The always-available OpenAI Chat and Open Responses adapters fail on any standard Helm deployment because they bypass the pod-claim path and are never bound to a pod, and the spec does not define how a single-shot adapter request claims/dispatches/releases a pod.
 - **proposal scope:** Define the pod-binding model for the OpenAI-dialect adapters under a PodExecutor (claim-per-request against the warm pool, a dedicated translator pool, or another design) so a non-continuous request completes within one HTTP call.
@@ -219,8 +223,8 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-15 — Checkpoint consistency tagging, isolation enforcement, and duration benchmarking — §4.4
-- **status:** open
-- **assigned:** (unassigned)
+- **status:** assigned:proposal-B (2026-07-18). Keeps §4.4 checkpoint work single-worker with proposal-B's active C-22 (§4.4 slot-aware checkpointing) — both touch `pkg/checkpoint`; sequence after C-22. Clear of proposal-A (§25/§7/§15) and proposal-C (§8.x).
+- **assigned:** proposal-B
 - **findings:** T-4.4.7, T-4.4.8
 - **root spec gap:** §4.4 says checkpoints are tagged consistency, produce consistent results only under the cooperative handshake, and must meet a duration SLO, but nothing persists a consistency tag on the record, nothing refuses the embedded SIGSTOP path under sandboxed/microvm isolation, and no client-reachable checkpoint-trigger surface exists to benchmark.
 - **proposal scope:** Decide whether the consistency classification is persisted on the checkpoint record, add an isolation-profile enforcement point rejecting embedded+sandboxed/microvm, and define the trigger surface (on-demand endpoint vs periodic) the duration benchmark observes. Builds on C-01.
@@ -235,8 +239,8 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** Medium (operationally High — see the discovered finding in TEST-GAPS.md: warm-pod PDB deadlocks node drains on the live cluster)
 
 ### C-17 — SSA conflict retry policy and counter semantics — §4.6/§16
-- **status:** open
-- **assigned:** (unassigned)
+- **status:** assigned:proposal-B (2026-07-18). §4.6 pod-lifecycle/reconciler retry semantics — proposal-B's warm-pod lane (it landed C-16 §4.6.1). Isolated from proposal-A and proposal-C.
+- **assigned:** proposal-B
 - **findings:** T-4.6.7
 - **root spec gap:** §4.6 and §16 contradict each other on when `lenny_crd_ssa_conflict_total` increments (only after 5 consecutive no-progress 409s vs on every conflict), and §4.6 requires the retry loop to continue past five with backoff while the code gives up and returns the error.
 - **proposal scope:** Resolve which increment semantics is authoritative and whether the loop continues past five (bounded or unbounded within one reconcile), then register the counter and the `crd_ssa_conflict_stuck` log so the behavior is implementable and testable.
