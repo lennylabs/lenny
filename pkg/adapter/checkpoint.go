@@ -40,10 +40,12 @@ func (s *Server) checkpointRoots() []workspace.NamedRoot {
 // probeWorkspaceBytes measures the on-disk workspace byte total for the
 // §4.4 line 254 pre-checkpoint size probe, summing every checkpoint root
 // the resume path replays so the gateway reserves quota against the whole
-// bundle rather than the workspace tree alone.
-func (s *Server) probeWorkspaceBytes() (int64, error) {
+// bundle rather than the workspace tree alone. It takes the precomputed
+// roots the handler resolved for the slot so the probe measures the same
+// subtree the archive captures.
+func (s *Server) probeWorkspaceBytes(roots []workspace.NamedRoot) (int64, error) {
 	var total int64
-	for _, root := range s.checkpointRoots() {
+	for _, root := range roots {
 		n, err := workspace.Size(root.Root)
 		if err != nil {
 			return 0, err
@@ -90,11 +92,24 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 			"adapter is not configured with a checkpoint transport")
 	}
 
-	// spec: §4.7 — the Checkpoint RPC shares the per-session op lock with
-	// Interrupt so at most one runs at a time. A barrier-window checkpoint
-	// runs through the same lock; the barrier's quiescence has already
-	// drained dispatch, so the lock is uncontended there by construction.
-	release, err := s.ops.Begin(ctx, opCheckpoint)
+	// spec: §5.2, §6.4 — resolve the checkpoint bundle for the target slot
+	// once. An absent slot_id yields the pod-global bundle unchanged; a
+	// named slot yields its slot subtree, and an unassigned slot is rejected
+	// with FailedPrecondition before the op lock is taken or any grant is
+	// minted.
+	roots, err := s.checkpointRootsForSlot(start.GetSlotId().GetValue())
+	if err != nil {
+		return err
+	}
+
+	// spec: §4.7 — the Checkpoint RPC shares the pod-level op lock with
+	// Interrupt so at most one runs at a time. The lock admits one pending
+	// checkpoint per distinct slotId and promotes them in slot-ID order
+	// (spec: §5.2), so a concurrent-session drain checkpoints every slot.
+	// A barrier-window checkpoint runs through the same lock; the barrier's
+	// quiescence has already drained dispatch, so the lock is uncontended
+	// there by construction.
+	release, err := s.ops.Begin(ctx, opCheckpoint, start.GetSlotId().GetValue())
 	if err != nil {
 		// A busy lock is a gateway-side abort of this attempt; the gateway
 		// finalises the manifest row partial.
@@ -118,7 +133,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// the runtime is quiesced, so a checkpoint that cannot be taken never
 	// pauses the agent. The gateway maps the FailedPrecondition onto
 	// lenny_checkpoint_size_exceeded_total and the checkpoint.skipped event.
-	wsBytes, err := s.probeWorkspaceBytes()
+	wsBytes, err := s.probeWorkspaceBytes(roots)
 	if err != nil {
 		return status.Errorf(codes.Internal, "probe workspace size: %v", err)
 	}
@@ -149,7 +164,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 		}()
 	}
 
-	failReason, serr := s.streamChunks(ctx, stream, start, trigger)
+	failReason, serr := s.streamChunks(ctx, stream, start, trigger, roots)
 	if serr != nil {
 		completeStatus, completeReason = "failed", serr.Error()
 		return serr
@@ -169,7 +184,7 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 // on a Failed frame or an Abort (so the caller reports a Full-level runtime a
 // failed checkpoint_complete) and an empty reason on the Summary success
 // path. A non-nil error is a gRPC-level failure of the stream itself.
-func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, start *adapterv1.CheckpointStart, trigger checkpoint.Trigger) (string, error) {
+func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_CheckpointServer, start *adapterv1.CheckpointStart, trigger checkpoint.Trigger, roots []workspace.NamedRoot) (string, error) {
 	// Archive the bundle into a pipe. The goroutine keeps the recover() →
 	// re-panic semantics §4.4 mandates: silently recovering the checkpoint
 	// goroutine panic without signaling unhealthiness would leave the agent
@@ -183,7 +198,7 @@ func (s *Server) streamChunks(ctx context.Context, stream adapterv1.Adapter_Chec
 				panic(r) // spec: §4.4 re-panic mandate.
 			}
 		}()
-		_, aerr := workspace.ArchiveTree(s.checkpointRoots(), pw)
+		_, aerr := workspace.ArchiveTree(roots, pw)
 		_ = pw.CloseWithError(aerr)
 	}()
 	defer func() { _ = pr.Close() }()

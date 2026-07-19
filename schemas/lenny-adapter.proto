@@ -1112,6 +1112,12 @@ message CheckpointStart {
   // checkpoint_id.
   string chunk_encoding = 4;
   int64 deadline_ms = 5;
+  // slot_id, when set, checkpoints this slot's per-slot workspace and
+  // session subtree (/workspace/slots/{slotId}/current and
+  // /sessions/{slotId}) instead of the pod-global roots. Empty when
+  // maxConcurrentSessions: 1 (the pod-global base layout). spec: §5.2
+  // (per-slot checkpoint granularity), §6.4 (per-slot layout).
+  SlotId slot_id = 6;
 }
 
 // CheckpointGrant is a single-chunk presigned PUT capability the gateway

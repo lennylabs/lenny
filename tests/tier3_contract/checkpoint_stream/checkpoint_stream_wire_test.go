@@ -109,12 +109,13 @@ func assertFields(t *testing.T, md protoreflect.MessageDescriptor, want []wantFi
 // and adapter select these arms by wire number, so a renumber breaks binary
 // compatibility silently without this pin.
 //
-// spec: 10.1 lines 130-132, 11.2 line 35, 4.7
+// spec: 10.1 lines 130-132, 11.2 line 35, 4.7, 5.2 (per-slot addressing)
 // diagnosis: The streaming Checkpoint wire contract diverged from the
 // gateway-driven grant/confirm protocol. An arm was renumbered, renamed, or
-// dropped, or CheckpointGrant.headers stopped being a map, which silently
-// breaks the gateway/adapter frame exchange. Re-edit
-// schemas/lenny-adapter.proto and run `make generate-proto`.
+// dropped, CheckpointGrant.headers stopped being a map, or CheckpointStart
+// lost its slot_id per-slot routing field, which silently breaks the
+// gateway/adapter frame exchange. Re-edit schemas/lenny-adapter.proto and
+// run `make generate-proto`.
 func TestCheckpointStreamMessageContract(t *testing.T) {
 	client := (&adapterv1.CheckpointRequest{}).ProtoReflect().Descriptor()
 	assertOneof(t, client, "msg", []wantField{
@@ -132,13 +133,28 @@ func TestCheckpointStreamMessageContract(t *testing.T) {
 		{name: "failed", number: 5},
 	})
 
-	assertFields(t, (&adapterv1.CheckpointStart{}).ProtoReflect().Descriptor(), []wantField{
+	startMD := (&adapterv1.CheckpointStart{}).ProtoReflect().Descriptor()
+	assertFields(t, startMD, []wantField{
 		{name: "checkpoint_id", number: 1},
 		{name: "trigger", number: 2},
 		{name: "chunk_size_bytes", number: 3},
 		{name: "chunk_encoding", number: 4},
 		{name: "deadline_ms", number: 5},
+		{name: "slot_id", number: 6},
 	})
+	// assertFields iterates only its want slice and never asserts the total
+	// field count, so a coordinated proto+regen renumber of the slot-routing
+	// field would pass unpinned. Assert CheckpointStart has exactly six fields
+	// and that slot_id is a SlotId message field, so the gateway-to-adapter
+	// slot addressing cannot silently break.
+	if got := startMD.Fields().Len(); got != 6 {
+		t.Errorf("CheckpointStart has %d fields, want 6", got)
+	}
+	if sf := startMD.Fields().ByName("slot_id"); sf == nil {
+		t.Error("CheckpointStart.slot_id field missing")
+	} else if sf.Kind() != protoreflect.MessageKind || sf.Message().FullName() != (&adapterv1.SlotId{}).ProtoReflect().Descriptor().FullName() {
+		t.Errorf("CheckpointStart.slot_id must be a SlotId message field, got kind %v message %v", sf.Kind(), sf.Message())
+	}
 	assertFields(t, (&adapterv1.ChunkReady{}).ProtoReflect().Descriptor(), []wantField{
 		{name: "index", number: 1},
 		{name: "length", number: 2},

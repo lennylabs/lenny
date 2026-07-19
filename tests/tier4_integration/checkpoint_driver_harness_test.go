@@ -69,6 +69,10 @@ type cpChunkedAdapter struct {
 	stallAfter int
 	// remintObserved records the grants the gateway minted per index.
 	remintObserved map[uint32]int
+	// recvSlotID records the slot_id the gateway put on the CheckpointStart
+	// frame, so a concurrent-pool test asserts each slot's stream carried
+	// its own slot identity (empty on a maxConcurrentSessions: 1 pod).
+	recvSlotID string
 
 	store *cpStore
 	mu    sync.Mutex
@@ -80,10 +84,21 @@ func (a *cpChunkedAdapter) grantCount(index uint32) int {
 	return a.remintObserved[index]
 }
 
+// receivedSlotID reports the slot_id the gateway sent on CheckpointStart.
+func (a *cpChunkedAdapter) receivedSlotID() string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.recvSlotID
+}
+
 func (a *cpChunkedAdapter) Checkpoint(stream grpc.BidiStreamingServer[adapterv1.CheckpointRequest, adapterv1.CheckpointResponse]) error {
-	if _, err := stream.Recv(); err != nil {
+	first, err := stream.Recv()
+	if err != nil {
 		return err
 	}
+	a.mu.Lock()
+	a.recvSlotID = first.GetStart().GetSlotId().GetValue()
+	a.mu.Unlock()
 	if err := stream.Send(&adapterv1.CheckpointResponse{
 		Msg: &adapterv1.CheckpointResponse_Probe{Probe: &adapterv1.CheckpointProbe{WorkspaceBytes: a.probeBytes}},
 	}); err != nil {
@@ -358,21 +373,58 @@ type cpDriverHarness struct {
 func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarness {
 	t.Helper()
 	store := newCPStore()
+	registry := podsession.NewRegistry()
+	sessions := memstore.New()
+	registerCPSlot(t, store, registry, sessions, adapter, cpSession, "")
+	return newCPCheckpointerHarness(store, registry, sessions)
+}
+
+// cpSlotSpec names one occupied slot in a concurrent (maxConcurrentSessions
+// > 1) pool: a session bound to a shared pod under a distinct slotID,
+// served by its own chunked producer.
+type cpSlotSpec struct {
+	sessionID string
+	slotID    string
+	adapter   *cpChunkedAdapter
+}
+
+// newCPConcurrentHarness stands up a concurrent pool: several slot-bound
+// sessions sharing one object store and one gateway checkpointer, each
+// bound to its own adapter under a distinct slotID. It drives the
+// gateway's per-slot checkpoint path (CheckpointStart carries the raw
+// binding slotID) so a test asserts each slot is captured independently.
+func newCPConcurrentHarness(t *testing.T, slots []cpSlotSpec) *cpDriverHarness {
+	t.Helper()
+	store := newCPStore()
+	registry := podsession.NewRegistry()
+	sessions := memstore.New()
+	for _, s := range slots {
+		registerCPSlot(t, store, registry, sessions, s.adapter, s.sessionID, s.slotID)
+	}
+	return newCPCheckpointerHarness(store, registry, sessions)
+}
+
+// registerCPSlot wires one slot-bound session: it points the adapter at
+// the shared store, dials it, registers the (session, slotID) binding, and
+// seeds the running session row.
+func registerCPSlot(t *testing.T, store *cpStore, registry *podsession.Registry, sessions sessionstore.Store, adapter *cpChunkedAdapter, sessionID, slotID string) {
+	t.Helper()
 	adapter.store = store
 	if adapter.putBytes == nil {
 		adapter.putBytes = map[int]int64{}
 	}
 	client := cpDialAdapter(t, adapter)
-
-	registry := podsession.NewRegistry()
-	registry.Put(&podsession.BindResult{SessionID: cpSession, TenantID: cpTenant, Adapter: client})
-	sessions := memstore.New()
+	registry.Put(&podsession.BindResult{SessionID: sessionID, TenantID: cpTenant, SlotID: slotID, Adapter: client})
 	if err := sessions.Create(context.Background(), sessionstore.Session{
-		ID: cpSession, TenantID: cpTenant, State: session.StateRunning, RuntimeRef: "echo",
+		ID: sessionID, TenantID: cpTenant, State: session.StateRunning, RuntimeRef: "echo",
 	}); err != nil {
-		t.Fatalf("seed session: %v", err)
+		t.Fatalf("seed session %s: %v", sessionID, err)
 	}
+}
 
+// newCPCheckpointerHarness wires the gateway checkpointer with the full
+// seam set over a shared store, registry, and session store.
+func newCPCheckpointerHarness(store *cpStore, registry *podsession.Registry, sessions sessionstore.Store) *cpDriverHarness {
 	manifests := partialmanifeststore.NewMemoryStore(nil)
 	quota := storagequota.NewMemory()
 	catalog := newCPCatalog()
@@ -397,12 +449,19 @@ func newCPDriverHarness(t *testing.T, adapter *cpChunkedAdapter) *cpDriverHarnes
 // attempt: the active partial row on an abort, or the finalised row the
 // session's recorded ref names on success.
 func (h *cpDriverHarness) latestManifest(t *testing.T) partialmanifeststore.Record {
+	return h.manifestForSession(t, cpSession)
+}
+
+// manifestForSession resolves the manifest row for a specific session's
+// latest attempt, so a concurrent-pool test can read each slot's row
+// independently.
+func (h *cpDriverHarness) manifestForSession(t *testing.T, sessionID string) partialmanifeststore.Record {
 	t.Helper()
-	rec, err := h.manifests.LatestActive(context.Background(), cpTenant, cpSession)
+	rec, err := h.manifests.LatestActive(context.Background(), cpTenant, sessionID)
 	if err == nil {
 		return rec
 	}
-	row, gerr := h.sessions.Get(context.Background(), cpTenant, cpSession)
+	row, gerr := h.sessions.Get(context.Background(), cpTenant, sessionID)
 	if gerr == nil && row.WorkspaceSnapshot != nil && row.WorkspaceSnapshot.Ref != "" {
 		r, e := h.manifests.Get(context.Background(), cpTenant, row.WorkspaceSnapshot.Ref)
 		if e == nil {
@@ -416,7 +475,7 @@ func (h *cpDriverHarness) latestManifest(t *testing.T) partialmanifeststore.Reco
 	if derr == nil {
 		var best partialmanifeststore.Record
 		for _, r := range deleted {
-			if r.TenantID == cpTenant && r.SessionID == cpSession && r.CreatedAt.After(best.CreatedAt) {
+			if r.TenantID == cpTenant && r.SessionID == sessionID && r.CreatedAt.After(best.CreatedAt) {
 				best = r
 			}
 		}
@@ -424,7 +483,7 @@ func (h *cpDriverHarness) latestManifest(t *testing.T) partialmanifeststore.Reco
 			return best
 		}
 	}
-	t.Fatalf("no manifest row found for %s/%s", cpTenant, cpSession)
+	t.Fatalf("no manifest row found for %s/%s", cpTenant, sessionID)
 	return partialmanifeststore.Record{}
 }
 

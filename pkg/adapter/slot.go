@@ -3,7 +3,11 @@
 package adapter
 
 import (
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+
 	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
+	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -126,6 +130,46 @@ func (s *Server) workspaceRootForSlot(slotID string) string {
 		return st.paths.Current
 	}
 	return s.WorkspaceRoot
+}
+
+// checkpointRootsForSlot returns the §4.4 checkpoint bundle for slotID.
+// For the single-session base path (slotID == "") it returns the pod-global
+// s.checkpointRoots() slice unchanged, so an absent slot_id checkpoints
+// byte-for-byte as before. For a concurrent slot it swaps both roots to the
+// slot subtree: /workspace/slots/{slotId}/current under WorkspacePrefix and
+// /sessions/{slotId} under SessionsPrefix, because the session tmpfs is
+// itself slot-scoped. A slot with no registry entry or no bound session is
+// rejected with FailedPrecondition so a checkpoint never captures an empty
+// or nonexistent subtree for an unassigned slot; the adapter fails closed
+// on the slot gate. spec: §5.2 (per-slot checkpoint granularity), §6.4
+// (slot-qualified export target /workspace/slots/{slotId}/current and
+// /sessions/{slotId}), §4.4 (durability contract).
+func (s *Server) checkpointRootsForSlot(slotID string) ([]workspace.NamedRoot, error) {
+	if !s.useSlot(slotID) {
+		return s.checkpointRoots(), nil
+	}
+	s.mu.Lock()
+	st, ok := s.slotStateLocked(slotID)
+	var current, sessions, sess string
+	if ok {
+		current = st.paths.Current
+		sessions = st.paths.Sessions
+		sess = st.sessionID
+	}
+	s.mu.Unlock()
+	if !ok || sess == "" {
+		return nil, status.Errorf(codes.FailedPrecondition,
+			"slot %s has no assigned session", slotID)
+	}
+	roots := []workspace.NamedRoot{
+		{Prefix: workspace.WorkspacePrefix, Root: current},
+	}
+	if sessions != "" {
+		roots = append(roots, workspace.NamedRoot{
+			Prefix: workspace.SessionsPrefix, Root: sessions,
+		})
+	}
+	return roots, nil
 }
 
 // removeSlotTree removes the slot's per-slot directory tree on cleanup.
