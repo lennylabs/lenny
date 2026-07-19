@@ -6,7 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -294,6 +296,141 @@ func TestStreamIDLess(t *testing.T) {
 		if got := streamIDLess(c.a, c.b); got != c.want {
 			t.Errorf("streamIDLess(%q,%q) = %v, want %v", c.a, c.b, got, c.want)
 		}
+	}
+}
+
+// spec: 25.5 (Redis-served poll envelope parity) — a Redis-served poll item
+// carries a non-zero, ordered BufferedEvent id derived from its stream
+// position, matching the buffer-served envelope whose id is the per-replica
+// monotonic sequence. A client discriminating page items by their top-level
+// id must not see it collapse to 0 on the Redis path.
+func TestRedisPollPage_ItemsCarryOrderedNonZeroIDs_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
+	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
+	// Same millisecond, higher sequence: the derived id must still increase.
+	f.add("2-5", evt("ops:2:5", "dev.lenny.alert_fired"))
+	s := redisService(t, f)
+
+	page := s.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)
+	if len(page.Items) != 3 {
+		t.Fatalf("items = %d, want 3", len(page.Items))
+	}
+	for i, it := range page.Items {
+		if it.ID == 0 {
+			t.Errorf("item %d (%s) serializes id 0; the Redis-served poll envelope must carry the same non-zero id the buffer-served path does", i, it.Event.ID)
+		}
+		if i > 0 && page.Items[i-1].ID >= it.ID {
+			t.Errorf("item ids not strictly increasing with stream order: [%d]=%d then [%d]=%d", i-1, page.Items[i-1].ID, i, it.ID)
+		}
+	}
+}
+
+// spec: 25.5 (SSE resume honors the cursor source_kind) — a redis-kind
+// ?cursor= (the kind a Redis poll mints, whose position is a Redis stream
+// ID) resumes the SSE backlog directly by stream ID: only events after the
+// cursor are replayed and no spurious :gap comment is emitted. A
+// pre-cancelled request context writes the backlog replay then returns
+// before the live tail.
+func TestHandleStreamRedis_RedisCursorResumesByStreamID_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
+	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
+	f.add("3-0", evt("ops:3:1", "dev.lenny.alert_fired"))
+	s := redisService(t, f)
+
+	// A redis-kind cursor at stream ID 2-0, as a Redis poll would mint it.
+	cursor := encodeCursor(SourceKindRedis, "2-0")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // backlog-only: replay the resume window, then return.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/v1/admin/events/stream?cursor="+cursor, nil).WithContext(ctx)
+	s.HandleStream(rec, req)
+
+	out := rec.Body.String()
+	if strings.Contains(out, ":gap") {
+		t.Errorf("redis cursor resume emitted a spurious :gap; it was mis-translated as an eventKey:\n%s", out)
+	}
+	if strings.Contains(out, "ops:1:1") || strings.Contains(out, "ops:2:1") {
+		t.Errorf("redis cursor resume replayed pre-cursor events (full-window replay):\n%s", out)
+	}
+	if !strings.Contains(out, "ops:3:1") {
+		t.Errorf("redis cursor resume did not replay the event after the cursor:\n%s", out)
+	}
+}
+
+// blockingStream models a real Redis XREAD BLOCK against go-redis v9: a
+// bounded block returns redis.Nil after the block elapses (or sooner when it
+// observes the request context), while BLOCK 0 blocks indefinitely and does
+// NOT observe a deadline-free context cancellation, matching go-redis v9,
+// which leaves an in-flight blocked read parked in IO wait after the context
+// is cancelled. It lets a tier-1 test pin that the live tail issues a bounded
+// block so a disconnected connection's goroutine exits rather than leaking.
+type blockingStream struct {
+	fakeStream
+	reads   chan time.Duration
+	release chan struct{}
+}
+
+func (b *blockingStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
+	select {
+	case b.reads <- a.Block:
+	default:
+	}
+	cmd := redis.NewXStreamSliceCmd(ctx)
+	if a.Block <= 0 {
+		// A literal BLOCK 0: block until the test releases this fake at
+		// cleanup, ignoring ctx cancellation as go-redis v9 does.
+		<-b.release
+		cmd.SetErr(redis.Nil)
+		return cmd
+	}
+	// A bounded block: wake when the block elapses or the read's context is
+	// cancelled, then report no new entry so the tail re-checks its context.
+	select {
+	case <-time.After(a.Block):
+	case <-ctx.Done():
+	}
+	cmd.SetErr(redis.Nil)
+	return cmd
+}
+
+// spec: 25.5 (XREAD BLOCK per-connection live tail) — the live SSE tail
+// issues a bounded XREAD BLOCK so a deadline-free context cancellation tears
+// the per-connection goroutine down within one block interval. go-redis v9
+// does not interrupt a blocked read on ctx cancellation, so a zero block
+// would leave the tail parked in IO wait and leak a goroutine per
+// disconnected SSE connection.
+func TestRedisTail_BoundedBlockExitsOnCancel_spec_25_5(t *testing.T) {
+	b := &blockingStream{reads: make(chan time.Duration, 4), release: make(chan struct{})}
+	t.Cleanup(func() { close(b.release) })
+	rs := newRedisSource(b, "")
+	ctx, cancel := context.WithCancel(context.Background())
+
+	out := make(chan gwevents.BufferedEvent)
+	done := make(chan struct{})
+	go func() {
+		// Drain until Tail closes out on exit.
+		for range out {
+		}
+		close(done)
+	}()
+	go rs.Tail(ctx, "", out)
+
+	select {
+	case got := <-b.reads:
+		if got <= 0 {
+			t.Fatalf("XREAD Block = %v; a bounded block is required so the tail exits on ctx cancel (BLOCK 0 leaks the goroutine)", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("Tail never issued an XREAD")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Tail did not exit within 3s of context cancellation")
 	}
 }
 

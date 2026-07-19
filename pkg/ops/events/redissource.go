@@ -65,9 +65,10 @@ func newRedisSource(client RedisStreamClient, stream string) *redisSource {
 // redisEntry is one decoded stream entry paired with its Redis stream ID.
 // The stream ID is the source-specific cursor position; the event is the
 // transport-neutral BufferedEvent the poll and SSE surfaces serve. The
-// BufferedEvent's monotonic ID is left zero because a Redis-sourced event
-// carries no per-replica buffer sequence; callers key on the CloudEvents
-// id (Event.ID, the canonical eventKey) instead.
+// BufferedEvent's monotonic ID is derived from the Redis stream position
+// (streamIDToSeq) so a Redis-served poll item carries a non-zero, ordered
+// id matching the buffer-served envelope; callers still key on the
+// CloudEvents id (Event.ID, the canonical eventKey) across sources.
 type redisEntry struct {
 	streamID string
 	event    gwevents.BufferedEvent
@@ -80,12 +81,13 @@ type redisEntry struct {
 const maxWindow = eventbuffer.DefaultStreamMaxLen
 
 // tailBlock bounds each XREAD BLOCK so the live tail sleeps inside Redis
-// (waking the instant a new entry is XADDed) yet re-checks its context on a
-// bounded interval. A blocked XREAD holds no read deadline, so an infinite
-// BLOCK 0 would never observe a cancelled context and would leak a goroutine
-// per disconnected SSE connection; a bounded block keeps the per-connection
-// tail cancellable while preserving the sleep-in-Redis behavior. spec: §25.5
-// (XREAD BLOCK live tail).
+// (waking the instant a new entry is XADDed, delivery-equivalent to BLOCK 0)
+// yet re-checks its context on a bounded interval. go-redis v9 does not
+// interrupt an in-flight blocked read on a deadline-free context
+// cancellation, so a literal BLOCK 0 read stays parked in IO wait after the
+// SSE connection disconnects and leaks a goroutine per connection. A bounded
+// block gives every read a deadline, so a cancelled tail exits within one
+// interval. spec: §25.5 (XREAD BLOCK live tail on a per-connection cursor).
 const tailBlock = time.Second
 
 // ReadRange returns the decoded stream entries after sinceStreamID, capped
@@ -185,10 +187,12 @@ func (rs *redisSource) findByEventKey(ctx context.Context, eventKey string) (str
 // terminal error. Each SSE connection runs its own Tail with its own
 // starting position, so the per-connection cursor is independent and no
 // consumer group is created. The block interval bounds cancellation latency
-// (see tailBlock); a transient Redis error is retried after a short pause
-// rather than closing the channel, matching the §25.5 live-tail resilience
-// the SSE surface depends on. spec: §25.5 (XREAD BLOCK per-connection live
-// tail).
+// (see tailBlock): go-redis v9 does not interrupt a blocked read on a
+// deadline-free context cancellation, so a bounded block is what lets a
+// disconnected connection's goroutine exit instead of parking in IO wait
+// forever. A transient Redis error is retried after a short pause rather
+// than closing the channel, matching the §25.5 live-tail resilience the SSE
+// surface depends on. spec: §25.5 (XREAD BLOCK per-connection live tail).
 func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<- gwevents.BufferedEvent) {
 	defer close(out)
 	lastID := lastStreamID
@@ -355,25 +359,27 @@ func redisServedKind(cursorKind string) string {
 }
 
 // handleStreamRedis serves the §25.5 SSE stream from the Redis
-// ops:events:stream: it resumes the backlog via XRANGE from Last-Event-ID,
-// then tails live via XREAD BLOCK 0 on a per-connection cursor with no
-// consumer group. A resume point that has been evicted emits the :gap
-// comment and replays from the oldest retained entry. spec: §25.5 (XREAD
-// BLOCK 0 live tail, XRANGE resume, independent per-connection cursor).
-func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher, r *http.Request, filter gwevents.EventFilter, resumeKey string) {
+// ops:events:stream: it resumes the backlog via XRANGE from the resume
+// point, then tails live via XREAD BLOCK 0 on a per-connection cursor with
+// no consumer group. The resume point honors the cursor's source kind: a
+// redis cursor resumes directly by stream ID, while any other cursor (or a
+// Last-Event-ID header, always a CloudEvents id) translates by eventKey
+// scan. A resume point that has been evicted emits the :gap comment and
+// replays from the oldest retained entry. spec: §25.5 (XREAD BLOCK 0 live
+// tail, XRANGE resume, cross-source cursor translation, independent
+// per-connection cursor).
+func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher, r *http.Request, filter gwevents.EventFilter, cursorKind, resumeKey string) {
 	ctx := r.Context()
 
-	// Resolve the resume point. A buffer/redis-agnostic Last-Event-ID is a
-	// CloudEvents id (eventKey), so translate it to a stream position by
-	// scanning; a miss means the resume point was evicted.
-	var start string
-	gap := false
-	if resumeKey != "" {
-		if streamID, found, err := s.redis.findByEventKey(ctx, resumeKey); err == nil && found {
-			start = streamID
-		} else {
-			gap = true
-		}
+	// Resolve the resume point through the same cross-source translation the
+	// poll path uses: a redis cursor reads by stream ID, any other cursor
+	// (or a Last-Event-ID CloudEvents id) translates by eventKey scan. A
+	// read error resolving the point falls back to replaying the whole
+	// retained window with the gap flag set.
+	start, gap, rerr := s.redisResumePoint(ctx, cursorKind, resumeKey)
+	if rerr != nil {
+		start = ""
+		gap = true
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -428,9 +434,12 @@ func (s *Service) handleStreamRedis(w http.ResponseWriter, flusher http.Flusher,
 // decodeRedisEntry rebuilds a BufferedEvent from one stream entry. The
 // StreamEmitter stores the marshalled CloudEvents record under the single
 // "event" field; this reads that field back into the same OperationalEvent
-// so the poll envelope and SSE frame are byte-identical to the buffer-served
-// path. The monotonic buffer ID is left zero: a Redis-sourced event carries
-// no per-replica buffer sequence, and the surfaces key on the CloudEvents id.
+// so the poll envelope and SSE frame decode identically to the buffer-served
+// path. The monotonic BufferedEvent.ID is derived from the entry's Redis
+// stream position (streamIDToSeq) so the poll envelope's top-level id is
+// non-zero and ordered, matching the buffer-served envelope whose id carries
+// the per-replica buffer sequence. The SSE frame keys on the CloudEvents id
+// (Event.ID) and is unaffected by this wrapper id. spec: §25.5.
 func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	raw, ok := m.Values["event"]
 	if !ok {
@@ -449,7 +458,20 @@ func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return gwevents.BufferedEvent{}, false
 	}
-	return gwevents.BufferedEvent{Event: ev}, true
+	return gwevents.BufferedEvent{ID: streamIDToSeq(m.ID), Event: ev}, true
+}
+
+// streamIDToSeq maps a Redis "ms-seq" stream ID to a monotonic uint64 that
+// orders identically to the stream position, so a Redis-served poll item
+// carries a non-zero, ordered BufferedEvent.ID matching the buffer-served
+// envelope. The millisecond time occupies the high bits and the
+// per-millisecond sequence the low 20 bits, preserving the (ms, seq)
+// ordering streamIDLess compares on. A zero stream ID (an unparseable or
+// empty position) maps to zero. spec: §25.5 (poll envelope parity across
+// sources).
+func streamIDToSeq(id string) uint64 {
+	ms, seq := parseStreamID(id)
+	return ms<<20 | (seq & 0xFFFFF)
 }
 
 // streamIDLess reports whether stream ID a orders strictly before b. A Redis

@@ -14,6 +14,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -167,6 +168,135 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 	}
 	if len(recovered.Items) == 0 {
 		t.Error("resuming from oldestAvailableCursor must serve the retained window")
+	}
+}
+
+// pollRedisLimited drives GET /v1/admin/events with an explicit page limit so
+// a test can obtain a mid-stream continuation cursor.
+func pollRedisLimited(t *testing.T, s *opsstream.Service, cursor string, limit int) opsstream.EventPage {
+	t.Helper()
+	url := fmt.Sprintf("/v1/admin/events?limit=%d", limit)
+	if cursor != "" {
+		url += "&cursor=" + cursor
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", url, nil)
+	s.HandlePoll(rec, req)
+	var page opsstream.EventPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatalf("decode poll body (status %d): %v", rec.Code, err)
+	}
+	return page
+}
+
+// collectSSEResume drives GET /v1/admin/events/stream over a live,
+// cancellable context (the Redis backlog XRANGE reads need a live context, so
+// a pre-cancelled request would spuriously fail the resume). It reads SSE
+// lines until the stream goes idle, then cancels and returns how many data:
+// frames and whether a :gap comment were emitted during the backlog replay.
+func collectSSEResume(t *testing.T, s *opsstream.Service, target string) (dataFrames int, sawGap bool) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	pr, pw := io.Pipe()
+	rw := &pipeResponseWriter{hdr: http.Header{}, w: pw}
+	req := httptest.NewRequest("GET", target, nil).WithContext(ctx)
+	go func() {
+		s.HandleStream(rw, req)
+		_ = pw.Close()
+	}()
+
+	lines := make(chan string, 128)
+	go func() {
+		sc := bufio.NewScanner(pr)
+		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
+		for sc.Scan() {
+			lines <- sc.Text()
+		}
+		close(lines)
+	}()
+
+	idle := time.NewTimer(1500 * time.Millisecond)
+	defer idle.Stop()
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				cancel()
+				return
+			}
+			switch {
+			case strings.HasPrefix(line, "data: "):
+				dataFrames++
+			case strings.HasPrefix(line, ":gap"):
+				sawGap = true
+			}
+			idle.Reset(1500 * time.Millisecond)
+		case <-idle.C:
+			cancel()
+			// Drain until the handler closes the pipe.
+			for range lines {
+			}
+			return
+		}
+	}
+}
+
+// TestOpsEventStreamSSEResumeHonorsRedisCursorSourceKind polls the Redis
+// source to obtain a redis-kind continuation cursor (whose position is a
+// Redis stream ID), then reconnects to the SSE stream via the documented
+// ?cursor= fallback and asserts the resume reads directly by stream ID: only
+// the events after the cursor are replayed and no spurious :gap comment is
+// emitted.
+//
+// spec: 25.5 (Cursor Model) — "When a caller sends a cursor from one source
+// to another that cannot honor it, lenny-ops translates by scanning for the
+// first event with a matching eventKey", and (SSE Delivery) — "Each SSE
+// connection gets an independent read cursor against the raw stream ...
+// clients reconnecting ... resume from the correct position via XRANGE". A
+// redis cursor's position is a stream ID, so the SSE resume must read it
+// directly by stream ID; only a buffer/mixed cursor or a Last-Event-ID
+// (a CloudEvents id) is translated by eventKey scan.
+// diagnosis: a failure means the SSE resume ignores the cursor's source_kind
+// and treats a redis cursor's stream-ID position as a CloudEvents eventKey.
+// The eventKey scan never matches, so the handler emits a :gap comment and
+// replays the entire retained window, double-delivering every event the
+// client already consumed on the poll path.
+func TestOpsEventStreamSSEResumeHonorsRedisCursorSourceKind(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	const key = "ops:events:stream:ssecursor"
+	emitter := newStreamEmitter(t, rd.Client, key, 1000)
+	for i := 0; i < 5; i++ {
+		if err := emitter.Emit(ctx, alertEvent("pool/e")); err != nil {
+			t.Fatalf("emit event %d: %v", i, err)
+		}
+	}
+
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:    rd.Client,
+		RedisStreamKey: key,
+		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+	})
+
+	// Poll the first two events to obtain a mid-stream redis-kind cursor.
+	page := pollRedisLimited(t, svc, "", 2)
+	if page.Pagination.CursorKind != opsstream.SourceKindRedis {
+		t.Fatalf("poll cursorKind = %q, want redis", page.Pagination.CursorKind)
+	}
+	cursor := page.Pagination.Cursor
+	if cursor == "" {
+		t.Fatal("poll returned no continuation cursor")
+	}
+
+	// Reconnect to SSE with that redis cursor. Only the three events after the
+	// cursor must be replayed, with no :gap comment.
+	frames, sawGap := collectSSEResume(t, svc, "/v1/admin/events/stream?cursor="+cursor)
+	if sawGap {
+		t.Error("redis-cursor SSE resume emitted a spurious :gap; the stream-ID position was mis-translated as an eventKey")
+	}
+	if frames != 3 {
+		t.Errorf("redis-cursor SSE resume replayed %d frames, want 3 (only events after the cursor, not the full window)", frames)
 	}
 }
 

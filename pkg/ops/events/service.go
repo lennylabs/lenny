@@ -510,15 +510,16 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resumeKey := resumeEventKey(r)
+	resumeKind, resumeKey := resumeCursor(r)
 
 	// §25.5 source selection: when the Redis ops:events:stream is the active
 	// source, serve the SSE stream from it (XRANGE backlog resume + XREAD
-	// BLOCK 0 live tail on a per-connection cursor). The in-memory
-	// subscription below is the local-buffer path used when Redis is
-	// unwired or unreachable.
+	// BLOCK 0 live tail on a per-connection cursor). The resume cursor's
+	// source kind decides how its position is resolved (redis stream ID vs
+	// eventKey scan). The in-memory subscription below is the local-buffer
+	// path used when Redis is unwired or unreachable.
 	if s.redisPrimary() {
-		s.handleStreamRedis(w, flusher, r, filter, resumeKey)
+		s.handleStreamRedis(w, flusher, r, filter, resumeKind, resumeKey)
 		return
 	}
 
@@ -578,18 +579,21 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// resumeEventKey reads the §25.5 SSE resume position from the request,
-// preferring the SSE-standard Last-Event-ID header (the CloudEvents id)
-// and falling back to ?cursor= (the opaque poll cursor, whose encoded
-// eventKey resolves to the same position). spec: §25.5 lines 2679-2680.
-func resumeEventKey(r *http.Request) string {
+// resumeCursor reads the §25.5 SSE resume position and its source kind from
+// the request. The SSE-standard Last-Event-ID header carries a CloudEvents
+// id (an eventKey with no source kind), so it resolves by eventKey scan and
+// reports an empty kind. The ?cursor= fallback carries the source kind the
+// poll minted, so a redis cursor resumes directly by its stream-ID position
+// while a buffer or mixed cursor translates by eventKey scan. spec: §25.5
+// lines 2679-2680 (Last-Event-ID / cursor resume, cross-source translation).
+func resumeCursor(r *http.Request) (kind, key string) {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
-		return v
+		return "", v
 	}
-	if _, key, err := decodeCursor(r.URL.Query().Get("cursor")); err == nil {
-		return key
+	if k, key, err := decodeCursor(r.URL.Query().Get("cursor")); err == nil {
+		return k, key
 	}
-	return ""
+	return "", ""
 }
 
 // writeSSEFrame writes one BufferedEvent as an SSE record per §25.5.
