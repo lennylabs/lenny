@@ -3458,6 +3458,7 @@
         "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage",
         "tests/tier3_contract/ops_endpoints/deliveries_pagination_test.go::TestEventSubscriptionDeliveriesPaginationContract",
         "tests/tier7a_load_local/ops_event_read_redis_deadline_test.go::TestRedisReadDeadlineKeepsPollAnsweringWhenRedisIsUnreachable",
+        "tests/tier7a_load_local/ops_event_read_redis_maxlen_resume_test.go::TestOpsEventPollResumesInsideTheReadDeadlineOnAMaxLenStream",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapEventStreamNotesDoNotOverclaimRedisSupport",
         "tests/tier2_component/eventstream/event_stream_active_connections_test.go::TestOpsEventStreamActiveConnectionsCountsRedisServedConnections",
         "tests/tier2_component/eventstream/event_stream_ahead_cursor_test.go::TestOpsEventStreamResumeAheadOfGatewayWindowReportsGap",
