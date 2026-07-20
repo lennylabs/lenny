@@ -684,3 +684,151 @@ func TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase(t *testing.T)
 			strings.Join(stale, "; "))
 	}
 }
+
+// eventStreamTestDirs are the repo-relative directories holding the §25.5 and
+// §25.3 event-stream tier tests. Each one exists to pin an event-stream
+// behavior, so a test living there that names either section in its `// spec:`
+// annotation belongs in that section's spec-map entry.
+var eventStreamTestDirs = []string{
+	"tests/tier2_component/eventstream",
+	"tests/tier7a_load_local",
+	"tests/tier8_chaos",
+	"tests/tier9_security",
+}
+
+// specAnnotatedTests returns, for each Test function declared under dir, the
+// spec sections its preceding `// spec:` annotation names, keyed by the
+// spec-map entry form "<repo-relative file>::<TestName>".
+//
+// The annotation is the comment block immediately above the function
+// declaration, which is where test-coverage.md places it. Sections are matched
+// as bare dotted ids so both "// spec: 25.5 (…)" and "// spec: §25.5 (…)" are
+// recognised.
+func specAnnotatedTests(t *testing.T, root, dir string) map[string][]string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, dir))
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	out := map[string][]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		rel := dir + "/" + e.Name()
+		body, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		var block []string
+		for _, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(trimmed, "//"):
+				block = append(block, trimmed)
+			case strings.HasPrefix(trimmed, "func Test"):
+				name := trimmed[len("func "):]
+				name = name[:strings.Index(name, "(")]
+				out[rel+"::"+name] = specSectionsIn(block)
+				block = nil
+			case trimmed == "":
+				// A blank line separates the annotation from unrelated
+				// comments above it, so the block restarts.
+				block = nil
+			default:
+				block = nil
+			}
+		}
+	}
+	return out
+}
+
+// specSectionsIn extracts the spec sections named on a `// spec:` line in the
+// comment block, normalised to bare dotted ids.
+func specSectionsIn(block []string) []string {
+	var out []string
+	for _, line := range block {
+		lower := strings.ToLower(line)
+		idx := strings.Index(lower, "spec:")
+		if idx < 0 {
+			continue
+		}
+		field := strings.NewReplacer("§", " ", "(", " ", ")", " ", ",", " ", ";", " ").Replace(line[idx+len("spec:"):])
+		for _, tok := range strings.Fields(field) {
+			tok = strings.Trim(tok, ".")
+			if strings.Count(tok, ".") == 1 && strings.IndexFunc(tok, func(r rune) bool { return r != '.' && (r < '0' || r > '9') }) < 0 {
+				out = append(out, tok)
+			}
+		}
+	}
+	return out
+}
+
+// spec: 25.5 (Operational Event Stream), 25.3 (Event Buffer) — the spec-map is
+// the harness's index from a spec section to the tests that verify it, so a
+// test that pins an event-stream behavior is only counted as coverage of that
+// section once it is registered there.
+//
+// diagnosis: a tier test under the event-stream directories annotates itself
+// with §25.5 or §25.3 but does not appear in that section's spec-map `tests`
+// list. The section's coverage ledger under-reports by exactly that test, and
+// an audit reading the spec-map would re-open a behavior as uncovered although
+// a passing test pins it. Add the "<file>::<TestName>" entry to the section.
+func TestSpecMapRegistersEveryEventStreamAnnotatedTest(t *testing.T) {
+	t.Parallel()
+	root := schematest.RepoRoot(t)
+	specMap := readSpecMapTests(t)
+
+	registered := map[string]map[string]bool{}
+	for _, section := range []string{"25.3", "25.5"} {
+		registered[section] = map[string]bool{}
+	}
+	// The map's paths are stripped of their "::TestName" suffix by
+	// readSpecMapTests, so the raw file is re-read for the qualified entries.
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
+	if err != nil {
+		t.Fatalf("read spec-map.json: %v", err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map.json: %v", err)
+	}
+	for section := range registered {
+		for _, entry := range doc.Sections[section].Tests {
+			registered[section][entry] = true
+			// A whole-file entry covers every test the file declares.
+			if idx := strings.Index(entry, "::"); idx < 0 {
+				registered[section][entry+"::*"] = true
+			}
+		}
+	}
+	if len(specMap["25.5"]) == 0 {
+		t.Fatal("spec-map §25.5 lists no tests")
+	}
+
+	var missing []string
+	for _, dir := range eventStreamTestDirs {
+		for entry, sections := range specAnnotatedTests(t, root, dir) {
+			file := entry[:strings.Index(entry, "::")]
+			for _, section := range sections {
+				reg, tracked := registered[section]
+				if !tracked {
+					continue
+				}
+				if reg[entry] || reg[file+"::*"] {
+					continue
+				}
+				missing = append(missing, "§"+section+" "+entry)
+			}
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("event-stream tests annotated with a spec section but absent from that section's spec-map entry:\n  %s",
+			strings.Join(missing, "\n  "))
+	}
+}
