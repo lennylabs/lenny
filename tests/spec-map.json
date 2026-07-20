@@ -3482,7 +3482,10 @@
         "tests/tier9_security/event_stream_read_tenant_isolation_test.go::TestOpsEventReadWithNoResolvedScopeServesNothing_spec_25_5",
         "tests/tier9_security/event_stream_read_tenant_isolation_test.go::TestOpsEventStreamTenantAdminSSEScopedToOwnTenant_spec_25_5",
         "tests/tier9_security/ops_event_buffer_fanout_authz_test.go::TestOpsGatewayBufferFanOutRequiresPlatformAdmin_spec_25_4_25_5",
-        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapRegistersEveryEventStreamAnnotatedTest"
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapRegistersEveryEventStreamAnnotatedTest",
+        "tests/tier7a_load_local/ops_event_stream_gateway_seed_drop_test.go::TestOpsEventStreamGatewayStintDeliversEventsOlderThanAnInterleavedLocalPublish",
+        "tests/tier7a_load_local/ops_event_stream_tail_unavailable_test.go::TestOpsEventStreamTailUnavailableDoesNotSpinAndFallsBack",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamAnnouncesTheDegradationEnvelopeOncePerTransition"
       ],
       "packages": [
         "pkg/ops/events",

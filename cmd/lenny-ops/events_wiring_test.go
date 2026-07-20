@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -94,6 +95,13 @@ func buildRedisDownWiring(t *testing.T, gatewayURL string) *opsWiring {
 	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
 	t.Cleanup(func() { _ = rdb.Close() })
 
+	// The gateway client registers its §25.4 metrics on the default
+	// registerer, so each composition-root build gets its own registry rather
+	// than colliding with a sibling test's.
+	prevRegisterer := prometheus.DefaultRegisterer
+	prometheus.DefaultRegisterer = prometheus.NewRegistry()
+	t.Cleanup(func() { prometheus.DefaultRegisterer = prevRegisterer })
+
 	w := &opsWiring{f: eventStreamWiringFlags(gatewayURL)}
 	w.replicaID = "ops-a"
 	w.ctx, w.stop = context.WithCancel(context.Background())
@@ -131,7 +139,7 @@ func awaitPoll(t *testing.T, w *opsWiring, want func(status int, src string, key
 // TestEventStreamWiringReportsUnavailableWhenNoGatewayReplicaServes exercises
 // the §25.5 read side through the real lenny-ops composition root: the
 // event-stream build step and the gateway-link build step, wired against an
-// unreachable Redis and a gateway that answers the liveness path but serves no
+// unreachable Redis and a gateway process that is up but refuses lenny-ops the
 // §25.3 buffer query. That is the deployed state the read side has to classify
 // honestly: the gateway admin API refuses a principal that does not hold the
 // platform-admin role it requires, and a wiring with no headless Service
@@ -150,10 +158,6 @@ func awaitPoll(t *testing.T, w *opsWiring, want func(status int, src string, key
 // gateway-originated events).
 func TestEventStreamWiringReportsUnavailableWhenNoGatewayReplicaServes_spec_25_5(t *testing.T) {
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == gatewayLivenessPath {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
 		if strings.HasPrefix(r.URL.Path, "/v1/admin/") {
 			w.WriteHeader(http.StatusForbidden)
 			return
@@ -176,3 +180,92 @@ func TestEventStreamWiringReportsUnavailableWhenNoGatewayReplicaServes_spec_25_5
 // sourceLabelGatewayBuffer is the §25.5 actualSource label the read surface
 // reports while serving from the gateway event buffer.
 const sourceLabelGatewayBuffer = "gateway-buffer"
+
+// TestEventStreamWiringClassifiesGatewayRefusalAsDualOutage asserts the §25.5
+// source-health signal and the data path it gates agree about the gateway. The
+// signal is measured on the surface the case-1 fall-back consumes, so a gateway
+// process that is serving but refuses lenny-ops the §25.3 buffer query is
+// classified down, and the read surface reports the dual-outage state it is
+// really in.
+//
+// A probe measured on an unauthenticated liveness endpoint answers a different
+// question ("is the gateway process up") and reports such a gateway reachable.
+// The read surface then classifies case 1, routes the request to a source that
+// returns nothing, and an open SSE connection parks in the gateway stint
+// re-polling a fan-out that never answers.
+//
+// spec: §25.5 (degradation matrix — case 1 requires a gateway that can serve
+// the buffer; both sources unreachable is the dual-outage case), §25.4
+// (lenny-ops reaches the admin API as a service account holding platform-admin).
+func TestEventStreamWiringClassifiesGatewayRefusalAsDualOutage_spec_25_5(t *testing.T) {
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			// The process is serving: a liveness probe finds this gateway up.
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	defer gw.Close()
+
+	w := buildRedisDownWiring(t, gw.URL)
+	go w.srcHealth.run(w.ctx, 200*time.Millisecond, w.redisClient, w.gwClient, redisEdgeCallbacks{})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for w.srcHealth.GatewayAvailable() && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if w.srcHealth.GatewayAvailable() {
+		t.Fatalf("the source-health signal reports the gateway available while it refuses lenny-ops the "+
+			"§25.3 buffer query; the read surface would classify §25.5 case 1 and serve from a source that "+
+			"answers nothing, labelling the empty result %q", sourceLabelGatewayBuffer)
+	}
+
+	status, src, keys := awaitPoll(t, w, func(status int, _ string, _ []string) bool {
+		return status == http.StatusServiceUnavailable
+	})
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("poll status=%d actualSource=%q items=%v, want 503: with Redis down and the gateway "+
+			"refusing the buffer query neither source can serve gateway-originated events", status, src, keys)
+	}
+}
+
+// TestEventStreamWiringClassifiesAServingGatewayAsCaseOne is the other half of
+// the same agreement: a gateway that does serve lenny-ops the §25.3 buffer
+// query is classified up, and the Redis-outage read is served from it and
+// labelled gateway-buffer.
+//
+// spec: §25.5 (degradation matrix — Redis down with the gateway up falls back
+// to the gateway event buffer).
+func TestEventStreamWiringClassifiesAServingGatewayAsCaseOne_spec_25_5(t *testing.T) {
+	const gwKey = "gw-1:3000:1"
+	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"events": []map[string]any{{
+			"id": 1,
+			"event": map[string]any{
+				"id":          gwKey,
+				"type":        "dev.lenny.alert_fired",
+				"specversion": "1.0",
+				"severity":    "warning",
+				"time":        time.Unix(3000, 0).UTC().Format(time.RFC3339),
+			},
+		}}})
+	}))
+	defer gw.Close()
+
+	w := buildRedisDownWiring(t, gw.URL)
+	// The fan-out reaches the replica through the discovery the client was
+	// built with; with no headless Service configured the gateway base URL is
+	// the single replica.
+	go w.srcHealth.run(w.ctx, 200*time.Millisecond, w.redisClient, w.gwClient, redisEdgeCallbacks{})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for !w.srcHealth.GatewayAvailable() && time.Now().Before(deadline) {
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !w.srcHealth.GatewayAvailable() {
+		t.Fatal("the source-health signal reports a gateway that serves the §25.3 buffer query as " +
+			"unavailable; the §25.5 case-1 fall-back would never be entered")
+	}
+}

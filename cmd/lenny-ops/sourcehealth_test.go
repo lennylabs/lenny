@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -25,18 +26,19 @@ func newProbeGatewayClient(t *testing.T, baseURL string) *gateway.Client {
 	return c
 }
 
-// TestProbeGatewayReportsReachableWhenGatewayRejectsTheCall covers the §25.5
-// case-1 branch of the degradation matrix: the gateway probe is a
-// reachability signal, so a gateway that answers reports up even when it
-// refuses the call. The lenny-ops service-account principal does not hold
-// the platform-admin role the gateway admin API requires, so a probe that
-// treated an authorization refusal as an outage would report every reachable
-// gateway as down, pin the read surface in the dual-outage case, and
-// suppress the gateway-buffer fall-back for the whole outage.
+// TestProbeGatewayReportsUnreachableWhenTheBufferQueryIsRefused covers the
+// §25.5 case-1 branch of the degradation matrix. The gateway half of the
+// source-health signal gates a data path, so it is measured on the surface
+// that data path consumes: the fall-back serves gateway-originated events by
+// fanning GET /v1/admin/events/buffer across the replicas. A gateway process
+// that is serving but refuses lenny-ops that query cannot answer the fall-back,
+// so classifying it up would route every Redis-outage read to a source that
+// returns nothing and label the empty result a healthy gateway-buffer page.
 //
-// spec: §25.5 (degradation matrix — Redis down with the gateway up falls
-// back to the gateway event buffer, rather than the dual-outage 503).
-func TestProbeGatewayReportsReachableWhenGatewayRejectsTheCall_spec_25_5(t *testing.T) {
+// spec: §25.5 (degradation matrix — actualSource names the source the response
+// was served from), §25.4 (lenny-ops reaches the admin API as a service
+// account holding platform-admin).
+func TestProbeGatewayReportsUnreachableWhenTheBufferQueryIsRefused_spec_25_5(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
 		status int
@@ -51,17 +53,19 @@ func TestProbeGatewayReportsReachableWhenGatewayRejectsTheCall_spec_25_5(t *test
 				w.WriteHeader(tc.status)
 			}))
 			defer srv.Close()
-			if !probeGateway(context.Background(), newProbeGatewayClient(t, srv.URL)) {
-				t.Fatalf("gateway answering HTTP %d reported unreachable; the answer proves the "+
-					"process is serving, so the §25.5 gateway-buffer fall-back is available",
-					tc.status)
+			if probeGateway(context.Background(), newProbeGatewayClient(t, srv.URL)) {
+				t.Fatalf("a gateway answering HTTP %d on the event-buffer query reported reachable; "+
+					"the §25.5 case-1 fall-back would be routed to a source that serves nothing and "+
+					"the empty result labelled a healthy gateway-buffer page", tc.status)
 			}
 		})
 	}
 }
 
 // TestProbeGatewayReportsHealthyGatewayReachable pins the ordinary case: a
-// gateway that answers the liveness path successfully is reachable.
+// gateway that serves lenny-ops the §25.3 event-buffer query is reachable, and
+// the probe measures that endpoint rather than a liveness path whose outcome
+// is independent of whether the fall-back can be served.
 //
 // spec: §25.5 (source health for the degradation matrix).
 func TestProbeGatewayReportsHealthyGatewayReachable_spec_25_5(t *testing.T) {
@@ -72,10 +76,11 @@ func TestProbeGatewayReportsHealthyGatewayReachable_spec_25_5(t *testing.T) {
 	}))
 	defer srv.Close()
 	if !probeGateway(context.Background(), newProbeGatewayClient(t, srv.URL)) {
-		t.Fatal("a gateway answering 200 reported unreachable")
+		t.Fatal("a gateway serving the event-buffer query reported unreachable")
 	}
-	if got := path.Load(); got != gatewayLivenessPath {
-		t.Fatalf("probe requested %v, want the unauthenticated liveness path %q", got, gatewayLivenessPath)
+	want, _, _ := strings.Cut(gatewayBufferProbePath, "?")
+	if got := path.Load(); got != want {
+		t.Fatalf("probe requested %v, want the §25.3 event-buffer endpoint %q the fall-back consumes", got, want)
 	}
 }
 
