@@ -75,8 +75,13 @@ type opsWiringFields struct {
 	elector        opsservice.Elector
 
 	// §25.5 event stream + webhook delivery.
-	eventStream        *opsstream.Service
-	srcHealth          *sourceHealthProbe
+	eventStream *opsstream.Service
+	srcHealth   *sourceHealthProbe
+	// flushRequests carries §25.5 recovery-flush requests from the two edge
+	// detectors (the source-health probe and the write path's first successful
+	// XADD after a failed one) to the flush worker, so neither detector runs
+	// the flush on its own goroutine. spec: §25.5 (best-effort recovery flush).
+	flushRequests      chan struct{}
 	opsEmitter         events.EventEmitter
 	eventSource        opsservice.EventSource
 	delivery           webhookDelivery

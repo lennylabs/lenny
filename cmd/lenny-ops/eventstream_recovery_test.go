@@ -156,18 +156,24 @@ func TestRecoveryFlushClosesAWindowTheProbeNeverObserved(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	w := &opsWiring{opsWiringFields: opsWiringFields{eventStream: local}}
-	// The write path's own recovery edge, the half the probe cannot observe.
-	em.onWriteRecovered = w.recoverEventStreamToRedis
-	p := newSourceHealthProbe()
+	w := &opsWiring{opsWiringFields: opsWiringFields{
+		eventStream:   local,
+		flushRequests: make(chan struct{}, eventStreamFlushSignals),
+	}}
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	// Both edges report to the flush worker, which is the only caller of the
+	// flush, so neither the probe loop nor an emitting subsystem runs it.
+	go w.runEventStreamFlushWorker(runCtx)
+	// The write path's own recovery edge, the half the probe cannot observe.
+	em.onWriteRecovered = w.requestEventStreamFlush
+	p := newSourceHealthProbe()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		p.run(runCtx, 20*time.Millisecond, client, nil, redisEdgeCallbacks{
 			onRedisDown:      w.openEventStreamOutageWindow,
-			onRedisRecovered: w.recoverEventStreamToRedis,
+			onRedisRecovered: func(context.Context) { w.requestEventStreamFlush() },
 		})
 	}()
 

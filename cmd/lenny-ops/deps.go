@@ -86,12 +86,16 @@ type redisFanOutEmitter struct {
 	// down-to-up cycle. spec: §25.5 (best-effort recovery flush).
 	writeFailed atomic.Bool
 
-	// onWriteRecovered, when non-nil, is invoked on the write path's
-	// failure-to-success edge. It is the same recovery-flush callback the
-	// source-health probe fires on its own edge; the flush is a no-op with no
-	// window open, and consuming the window is what keeps it to once per
-	// outage however many edges reported it.
-	onWriteRecovered func(context.Context)
+	// onWriteRecovered, when non-nil, is notified on the write path's
+	// failure-to-success edge. It signals the recovery-flush worker rather than
+	// running the flush: Emit is the EventEmitter every lenny-ops subsystem
+	// holds, so a flush on this goroutine would put a full retained-window scan
+	// and one XADD per buffered event in front of a controller reconcile. It
+	// reports an edge and returns. The same worker serves the source-health
+	// probe's own edge; the flush is a no-op with no window open, and consuming
+	// the window is what keeps it to once per outage however many edges
+	// reported it. spec: §25.5 (best-effort recovery flush).
+	onWriteRecovered func()
 }
 
 // newRedisFanOutEmitter constructs an emitter that writes every event
@@ -134,10 +138,12 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 // window at this event's ring position, so every event emitted in the
 // detection lag is re-emitted when Redis recovers instead of being abandoned.
 // The first XADD that succeeds after one failed is the matching up edge for
-// that window, and it drives the flush directly: an outage shorter than one
-// probe refresh interval is invisible to the source-health loop, so the window
-// this path opened would otherwise stay open until some later outage closed it.
-// spec: §25.5 (best-effort recovery flush).
+// that window, and it reports the edge to the recovery-flush worker: an outage
+// shorter than one probe refresh interval is invisible to the source-health
+// loop, so the window this path opened would otherwise stay open until some
+// later outage closed it. Reporting the edge is bounded work; the flush itself
+// runs on the worker, off this caller's goroutine. spec: §25.5 (best-effort
+// recovery flush).
 func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalEvent) error {
 	buffered, err := e.local.PublishBuffered(ctx, event)
 	if err != nil {
@@ -149,7 +155,7 @@ func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalE
 		return err
 	}
 	if e.writeFailed.CompareAndSwap(true, false) && e.onWriteRecovered != nil {
-		e.onWriteRecovered(ctx)
+		e.onWriteRecovered()
 	}
 	return nil
 }

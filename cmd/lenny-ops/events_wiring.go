@@ -68,12 +68,16 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 		// StreamEmitter the fan-out writes to (ReEmit skips the local
 		// re-publish since the events are already in the ring).
 		w.eventStream.SetRedisReEmitter(fanOut.ReEmit)
-		// The write path carries the other half of the recovery edge: an outage
-		// shorter than one source-health refresh interval is opened by a failed
-		// XADD and never observed by the probe, so the first XADD that succeeds
-		// after one failed drives the same flush. spec: §25.5 (best-effort
-		// recovery flush).
-		fanOut.onWriteRecovered = w.recoverEventStreamToRedis
+		// Both recovery edges reach the flush through a worker of their own, so
+		// neither the probe loop nor an emitting subsystem runs the flush
+		// inline. The write path carries the half the probe cannot observe: an
+		// outage shorter than one source-health refresh interval is opened by a
+		// failed XADD and never seen by the probe, so the first XADD that
+		// succeeds after one failed reports the same edge. spec: §25.5
+		// (best-effort recovery flush).
+		w.flushRequests = make(chan struct{}, eventStreamFlushSignals)
+		go w.runEventStreamFlushWorker(w.ctx)
+		fanOut.onWriteRecovered = w.requestEventStreamFlush
 		opsEmitter = fanOut
 		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s (maxlen=%d)", eventbuffer.DefaultStreamKey, *w.f.eventsStreamMaxLen)
 	}
@@ -207,13 +211,55 @@ func (w *opsWiring) buildGatewayLink() {
 
 	// Start the §25.5 source-health refresh now that both the Redis
 	// client and the gateway client exist. The loop is bounded by ctx,
-	// so it exits on shutdown. On a Redis down-to-up edge it drives the
-	// §25.5 best-effort recovery flush. F-25.5.14.
+	// so it exits on shutdown. On a Redis down-to-up edge it reports the
+	// §25.5 best-effort recovery flush to the flush worker. F-25.5.14.
 	if w.srcHealth != nil {
 		go w.srcHealth.run(w.ctx, 15*time.Second, w.redisClient, w.gwClient, redisEdgeCallbacks{
 			onRedisDown:      w.openEventStreamOutageWindow,
-			onRedisRecovered: w.recoverEventStreamToRedis,
+			onRedisRecovered: func(context.Context) { w.requestEventStreamFlush() },
 		})
+	}
+}
+
+// eventStreamFlushSignals is the depth of the recovery-flush request channel.
+// One slot is enough: a pending request already covers whatever window is open,
+// and the flush consumes the window rather than a queue of edges.
+const eventStreamFlushSignals = 1
+
+// requestEventStreamFlush reports a Redis down-to-up edge to the recovery-flush
+// worker without blocking the caller.
+//
+// Both edge detectors reach the flush through here: the replica-level
+// source-health probe, and the write path's first successful XADD after a
+// failed one. Neither can afford to run the flush itself. The probe loop must
+// keep refreshing the health the read surface selects its source from, and the
+// write path's Emit is the EventEmitter every lenny-ops subsystem holds, so a
+// full retained-window scan plus one XADD per buffered event on that goroutine
+// would stall a controller reconcile for as long as the flush takes. A dropped
+// send is correct: a request already queued drains the same outage window.
+// spec: §25.5 (the flush is best-effort and does not block serving).
+func (w *opsWiring) requestEventStreamFlush() {
+	if w.flushRequests == nil {
+		return
+	}
+	select {
+	case w.flushRequests <- struct{}{}:
+	default:
+	}
+}
+
+// runEventStreamFlushWorker drains recovery-flush requests until ctx is done,
+// so the §25.5 best-effort flush runs on a goroutine of its own rather than on
+// whichever caller observed the recovery edge. spec: §25.5 (best-effort
+// recovery flush, independent of any open read connection).
+func (w *opsWiring) runEventStreamFlushWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-w.flushRequests:
+			w.recoverEventStreamToRedis(ctx)
+		}
 	}
 }
 
