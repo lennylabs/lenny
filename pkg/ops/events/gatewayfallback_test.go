@@ -268,7 +268,7 @@ func TestSelectSource_GatewayLabelFallsToLocalWhenUnwired_spec_25_5(t *testing.T
 
 // spec: 25.5 (transparent Redis to gateway-buffer switch and recovery) — an
 // open SSE connection announces its degraded view with the :degradation
-// envelope, re-emitted on the fall-back cadence for the life of the stint, and
+// envelope once on entry to the stint rather than on a repeating cadence, and
 // announces its return to the healthy Redis source with
 // :degradation {"level":"healthy"} exactly once. The initial entry into a
 // healthy source writes nothing.
@@ -279,12 +279,13 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sess := &streamSession{s: s, w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 
-	// Serving the gateway fall-back announces the degradation on every tick, so
-	// a connection with nothing to deliver still learns its view is degraded.
-	sess.writeDegradationTick(false)
-	sess.writeDegradationTick(false)
-	if got := strings.Count(rec.Body.String(), sourceGatewayBuffer); got != 2 {
-		t.Fatalf("the gateway fall-back announced the degradation envelope %d times over two ticks, want one per tick:\n%s", got, rec.Body.String())
+	// Serving the gateway fall-back announces the degradation once. Repeating
+	// the check with the classification unchanged writes nothing further: the
+	// comment is a transition announcement, not a heartbeat.
+	sess.announceDegradation(false)
+	sess.announceDegradation(false)
+	if got := strings.Count(rec.Body.String(), sourceGatewayBuffer); got != 1 {
+		t.Fatalf("the gateway fall-back announced the degradation envelope %d times over two unchanged checks, want exactly 1:\n%s", got, rec.Body.String())
 	}
 
 	// Redis recovers: switching back to Redis announces recovery.

@@ -19,6 +19,7 @@
 package ops_endpoints_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -30,7 +31,10 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/redis/go-redis/v9"
 
@@ -728,5 +732,151 @@ func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
 		if id > capacity {
 			t.Errorf("items[].id = %d exceeds the ring-sequence domain (capacity %d); the endpoint emits a second items[].id value domain", id, capacity)
 		}
+	}
+}
+
+// flippableHealth is a §25.5 SourceHealth whose Redis reachability changes at
+// runtime, so a contract test can move an open SSE connection across a source
+// boundary and observe what the wire carries.
+type flippableHealth struct {
+	redis   atomic.Bool
+	gateway atomic.Bool
+}
+
+func (h *flippableHealth) RedisAvailable() bool   { return h.redis.Load() }
+func (h *flippableHealth) GatewayAvailable() bool { return h.gateway.Load() }
+
+// parkedTail is a §25.5 tail client whose XREAD BLOCK 0 parks until the tail
+// closes it, the way a real blocked read does, so a healthy Redis stint holds
+// the connection open instead of ending immediately.
+type parkedTail struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (p *parkedTail) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSliceCmd {
+	<-p.closed
+	cmd := redis.NewXStreamSliceCmd(ctx)
+	cmd.SetErr(errors.New("redis: client is closed"))
+	return cmd
+}
+
+func (p *parkedTail) Close() error {
+	p.once.Do(func() { close(p.closed) })
+	return nil
+}
+
+// tailableRedisStream is a fakeRedisStream whose live tail can be established.
+type tailableRedisStream struct{ fakeRedisStream }
+
+func (t *tailableRedisStream) TailClient() (opsstream.RedisTailClient, error) {
+	return &parkedTail{closed: make(chan struct{})}, nil
+}
+
+// TestEventStreamDegradationCommentIsAnnouncedPerTransitionContract pins the
+// exact :degradation line sequence an SSE consumer observes across
+// enter-degraded, idle, and recover. §25.5 states the comment as what a
+// degraded SSE response carries and as the announcement of a return to health,
+// so the connection emits one line on entering the degraded stint, nothing
+// while that classification holds however long the connection idles, and one
+// {"level":"healthy"} line on recovery.
+//
+// spec: 25.5 (Degradation — a degraded SSE response carries the canonical
+// degradation envelope in a :degradation comment line, and the switch back to
+// the healthy source is announced with :degradation {"level":"healthy"})
+// diagnosis: A failure means the degradation envelope is written on a repeating
+// timer rather than on the transition. The comment becomes a heartbeat on the
+// SSE wire, so a consumer counting :degradation lines, or an intermediary
+// framing them, sees a different stream than the one §25.5 describes, and the
+// line count grows with connection duration rather than with the number of
+// source transitions.
+func TestEventStreamDegradationCommentIsAnnouncedPerTransitionContract(t *testing.T) {
+	health := &flippableHealth{}
+	// Both sources unreachable: the connection serves this replica's own ring
+	// under the dual-outage envelope.
+	health.redis.Store(false)
+	health.gateway.Store(false)
+
+	stream := opsstream.New(opsstream.Options{
+		RedisClient:  &tailableRedisStream{},
+		SourceHealth: health,
+	})
+	if _, err := stream.Publish(context.Background(), gwevents.OperationalEvent{Type: "dev.lenny.alert_fired"}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+	httpSrv := httptest.NewServer(opsserver.New(opsserver.Options{EventStream: stream}))
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpSrv.URL+"/v1/admin/events/stream", nil)
+	if err != nil {
+		t.Fatalf("build SSE request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE connection: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var (
+		mu    sync.Mutex
+		lines []string
+	)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if line := sc.Text(); strings.HasPrefix(line, ":degradation") {
+				mu.Lock()
+				lines = append(lines, line)
+				mu.Unlock()
+			}
+		}
+	}()
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), lines...)
+	}
+
+	// Wait for the degraded stint's announcement, then idle well past the
+	// 2-second fall-back poll cadence a heartbeat would have followed.
+	waitFor(t, func() bool { return len(snapshot()) >= 1 }, "the degraded stint's :degradation announcement")
+	time.Sleep(5 * time.Second)
+	if got := snapshot(); len(got) != 1 {
+		t.Fatalf("an idle degraded connection emitted %d :degradation lines over 5s, want exactly 1 (the transition announcement): %v", len(got), got)
+	}
+
+	// Redis recovers: the connection switches back and announces it once.
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	waitFor(t, func() bool { return len(snapshot()) >= 2 }, "the recovery announcement")
+	time.Sleep(2 * time.Second)
+	cancel()
+	<-readDone
+
+	got := snapshot()
+	if len(got) != 2 {
+		t.Fatalf(":degradation lines = %d, want exactly 2 (one per transition): %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "lenny-ops-local-buffer") {
+		t.Errorf("first :degradation line = %q, want the dual-outage envelope naming the local buffer", got[0])
+	}
+	if !strings.Contains(got[1], `"level":"healthy"`) {
+		t.Errorf("second :degradation line = %q, want the recovery announcement", got[1])
+	}
+}
+
+// waitFor polls cond until it holds or the deadline passes.
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

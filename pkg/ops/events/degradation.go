@@ -146,8 +146,21 @@ func writeStreamUnavailable(w http.ResponseWriter) {
 // degradation envelope's actualSource / unavailableFields fields. spec:
 // §25.5 line 2779 (":degradation {...}" comment).
 func writeSSEDegradation(w http.ResponseWriter, deg *conventions.Degradation) {
-	if deg == nil {
+	line, ok := degradationComment(deg)
+	if !ok {
 		return
+	}
+	fmt.Fprint(w, line)
+}
+
+// degradationComment renders the §25.5 :degradation SSE comment line for deg
+// and reports whether there is one to write. Rendering is separate from writing
+// so a connection can compare the line it is about to write against the one it
+// last wrote and announce the envelope on entry to a degraded stint and on a
+// change of its contents, rather than repeating it. spec: §25.5 line 2779.
+func degradationComment(deg *conventions.Degradation) (string, bool) {
+	if deg == nil {
+		return "", false
 	}
 	payload := map[string]any{"actualSource": deg.ActualSource}
 	if len(deg.UnavailableFields) > 0 {
@@ -155,7 +168,7 @@ func writeSSEDegradation(w http.ResponseWriter, deg *conventions.Degradation) {
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return "", false
 	}
-	fmt.Fprintf(w, ":degradation %s\n", body)
+	return fmt.Sprintf(":degradation %s\n", body), true
 }
