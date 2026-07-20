@@ -67,14 +67,15 @@ type SubscriptionUpdate struct {
 }
 
 // EventPage is the canonical §25.5 polling-response envelope. Items is the
-// page of CloudEvents records, each carrying a top-level wrapper id derived
-// from that record's canonical eventKey (see readItemID). One rule produces the
-// field on every source, so it is stable for one event whether the Redis
-// stream, the gateway-buffer fan-out, or the local ring served the page, and
-// two items on one page never share it. It is a synthetic identity rather than
-// a position. Pagination follows the §25.2 canonical envelope. Agents resume on
-// the CloudEvents id (Event.ID) and the opaque pagination cursor. spec: §25.5
-// lines 2687-2699.
+// page of CloudEvents records, each carrying the §25.3 top-level wrapper id:
+// the monotonic position the source that served it assigned, which is the
+// emitting replica's ring position on the buffer-served and fan-out paths and
+// the Redis stream position on the Redis-served path. The id is per-source
+// rather than globally ordered, so agents deduplicate across sources on the
+// canonical eventKey and resume on the CloudEvents id (Event.ID) and the opaque
+// pagination cursor. Pagination follows the §25.2 canonical envelope. spec:
+// §25.5 lines 2687-2699; §25.3 (monotonic per-source id for cursor-based
+// polling).
 type EventPage struct {
 	Items      []gwevents.BufferedEvent `json:"items"`
 	Pagination Pagination               `json:"pagination"`

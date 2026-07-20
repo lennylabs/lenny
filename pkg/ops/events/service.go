@@ -619,10 +619,6 @@ func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions
 	// a caller whose context carries no resolved scope is served nothing. spec:
 	// §25.5 (SSE and polling apply the same tenant filter as delivery).
 	page.Items = s.filterForReader(ctx, page.Items)
-	// items[].id is stamped once, here, after the source page is assembled and
-	// filtered, so the field carries one value domain whichever source served
-	// the request rather than each source's own ring position. spec: §25.5.
-	page.Items = stampItemIDs(page.Items)
 	return page, deg, nil
 }
 

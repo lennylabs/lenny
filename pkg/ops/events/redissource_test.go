@@ -468,17 +468,17 @@ func TestRedisPollPage_DescAndEmptyResumeEcho_spec_25_5(t *testing.T) {
 }
 
 // spec: 25.5 (the poll envelope served from the Redis ops:events:stream keeps
-// the buffer-served item shape) — the /v1/admin/events item is
-// {"id":N,"event":{...}} whichever source is active. The buffer path stamps
-// its monotonic ring sequence in the wrapper id; the Redis path leaves it zero,
-// because the shared stream holds no per-replica ring position and one endpoint
-// must emit one value domain in items[].id. The CloudEvents record under
-// "event" is byte-identical across sources, and every item on both paths
-// carries a top-level wrapper id. A regression that dropped the wrapper id from
-// the buffer path would fail the top-level-id assertions below; a regression
-// that stamped a stream-derived value on the Redis path would fail the
-// single-value-domain assertion.
-func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
+// the buffer-served item encoding); 25.3 (each event is assigned a monotonic
+// uint64 ID, per source rather than globally ordered, used for cursor-based
+// polling) — the /v1/admin/events item is {"id":N,"event":{...}} whichever
+// source is active, and the CloudEvents record under "event" is byte-identical
+// across sources. The wrapper id is the serving source's own monotonic
+// position: the local ring's sequence on the buffer path, the Redis stream
+// position on the Redis path. It rises with the page on both, which is what a
+// caller ordering on it relies on. A regression that replaced either path's
+// position with a source-independent synthetic identity, such as a hash of the
+// eventKey, would break the monotonicity assertion below.
+func TestPollEnvelopeItemIDCarriesTheServingSourcePosition_spec_25_5_25_3(t *testing.T) {
 	events := []gwevents.OperationalEvent{
 		evt("ops:1:1", "dev.lenny.alert_fired"),
 		evt("ops:2:1", "dev.lenny.alert_fired"),
@@ -505,6 +505,7 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 	if len(redisItems) != 3 || len(bufferItems) != 3 {
 		t.Fatalf("items: redis=%d buffer=%d, want 3 each", len(redisItems), len(bufferItems))
 	}
+	var prevRedisID, prevBufferID uint64
 	for i := range redisItems {
 		// Each item on each source carries a top-level wrapper id (the frozen
 		// {"id":N,"event":{...}} shape) and the CloudEvents record under "event".
@@ -523,8 +524,8 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 		if string(redisItems[i]["event"]) != string(bufferItems[i]["event"]) {
 			t.Errorf("item %d CloudEvents record diverges by source:\n redis  = %s\n buffer = %s", i, redisItems[i]["event"], bufferItems[i]["event"])
 		}
-		// The wrapper id is derived from the item's canonical eventKey, so the
-		// same event carries the same items[].id whichever source served it.
+		// The wrapper id is the serving source's own monotonic position, so it
+		// rises with the page on each source independently.
 		var redisID, bufferID uint64
 		if err := json.Unmarshal(redisItems[i]["id"], &redisID); err != nil {
 			t.Errorf("redis item %d wrapper id did not decode as a number: %v", i, err)
@@ -532,12 +533,18 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 		if err := json.Unmarshal(bufferItems[i]["id"], &bufferID); err != nil {
 			t.Errorf("buffer item %d wrapper id did not decode as a number: %v", i, err)
 		}
-		if redisID != bufferID {
-			t.Errorf("item %d wrapper id diverges by source: redis=%d buffer=%d; items[].id must carry one value domain", i, redisID, bufferID)
+		if redisID == 0 || bufferID == 0 {
+			t.Errorf("item %d wrapper id is zero on a served record: redis=%d buffer=%d", i, redisID, bufferID)
 		}
-		if redisID == 0 {
-			t.Errorf("item %d wrapper id is zero on a record carrying an eventKey", i)
+		if i > 0 {
+			if redisID <= prevRedisID {
+				t.Errorf("redis item %d wrapper id = %d, want greater than the previous item's %d; §25.3 assigns a monotonic per-source id", i, redisID, prevRedisID)
+			}
+			if bufferID <= prevBufferID {
+				t.Errorf("buffer item %d wrapper id = %d, want greater than the previous item's %d; §25.3 assigns a monotonic per-source id", i, bufferID, prevBufferID)
+			}
 		}
+		prevRedisID, prevBufferID = redisID, bufferID
 	}
 }
 

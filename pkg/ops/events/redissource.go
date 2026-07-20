@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -248,9 +250,9 @@ func newRedisSource(client RedisStreamClient, stream string, maxWindow int64) *r
 // from; it never leaves the source, because the opaque pagination cursor
 // carries the canonical eventKey so it round-trips at the other sources. The
 // event is the transport-neutral BufferedEvent the poll and SSE surfaces
-// serve. Its top-level wrapper ID is left zero here and stamped by
-// stampItemIDs when the poll page is assembled, so items[].id is derived the
-// same way whichever source served the request. Callers resume on the
+// serve. Its top-level wrapper ID carries this source's own monotonic position,
+// packed from the stream ID by streamPosition, the same field the buffer-served
+// path fills with the emitting replica's ring position. Callers resume on the
 // CloudEvents id (Event.ID, the canonical eventKey) and the opaque pagination
 // cursor, both identical across sources.
 type redisEntry struct {
@@ -665,13 +667,16 @@ func redisServedKind(cursorKind string) string {
 // StreamEmitter stores the marshalled CloudEvents record under the single
 // "event" field; this reads that field back into the same OperationalEvent,
 // so the CloudEvents payload every poll item and SSE frame carries decodes
-// byte-identically to the buffer-served path. The top-level wrapper
-// BufferedEvent.ID is left zero: the Redis stream holds no per-replica ring
-// position, and the poll surface stamps that field from the canonical eventKey
-// once the page is assembled (see stampItemIDs), so no source's own position
-// reaches the wire. Ordering and the resume key rest on the opaque pagination
+// byte-identically to the buffer-served path.
+//
+// The top-level wrapper BufferedEvent.ID carries this source's own monotonic
+// position, the same field the buffer-served path fills with the emitting
+// replica's ring position (§25.3: a monotonic uint64 ID per source, used for
+// cursor-based polling). The XADD encoding carries no ring position, so the
+// position here is the Redis stream ID the entry was assigned, packed by
+// streamPosition. Ordering and the resume key rest on the opaque pagination
 // cursor and the CloudEvents id (Event.ID, the canonical eventKey), both
-// identical across sources. spec: §25.5.
+// identical across sources. spec: §25.5; §25.3 (monotonic per-source id).
 func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	raw, ok := m.Values["event"]
 	if !ok {
@@ -690,5 +695,39 @@ func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return gwevents.BufferedEvent{}, false
 	}
-	return gwevents.BufferedEvent{Event: ev}, true
+	return gwevents.BufferedEvent{ID: streamPosition(m.ID), Event: ev}, true
 }
+
+// streamPosition packs a Redis stream ID into the monotonic uint64 position the
+// §25.3 BufferedEvent.ID field carries, so a Redis-served poll page reports a
+// position in the same domain the buffer-served page does rather than a
+// synthetic identity.
+//
+// A stream ID is "<millisecondsSinceEpoch>-<sequence>", and Redis assigns them
+// in strictly increasing order, so the pair ordered lexicographically by
+// (milliseconds, sequence) is the stream's own monotonic position. Packing the
+// sequence into the low 20 bits preserves that order: Redis restarts the
+// sequence at zero each millisecond, and a single millisecond holding 2^20
+// entries is unreachable, while the milliseconds field has room until well past
+// any deployment lifetime. An unparseable ID reports zero, the same value the
+// buffer-served path carries for a record with no position. spec: §25.3 (each
+// event is assigned a monotonic uint64 ID used for cursor-based polling).
+func streamPosition(streamID string) uint64 {
+	ms, seq, ok := strings.Cut(streamID, "-")
+	if !ok {
+		return 0
+	}
+	msVal, err := strconv.ParseUint(ms, 10, 64)
+	if err != nil {
+		return 0
+	}
+	seqVal, err := strconv.ParseUint(seq, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return msVal<<streamPositionSeqBits | seqVal&(1<<streamPositionSeqBits-1)
+}
+
+// streamPositionSeqBits is the width reserved for a stream ID's per-millisecond
+// sequence inside the packed position.
+const streamPositionSeqBits = 20

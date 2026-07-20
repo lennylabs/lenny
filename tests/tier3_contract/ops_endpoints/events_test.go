@@ -703,22 +703,26 @@ func (f fanOutReplicas) FanOutGet(_ context.Context, _ string) ([]gateway.Replic
 	return out, nil
 }
 
-// TestEventStreamPollItemIDSingleValueDomainContract pins that
-// GET /v1/admin/events emits one value domain in items[].id whichever source
-// served the page. The field is derived from the item's canonical eventKey, the
-// one identity an event carries unchanged across the Redis ops:events:stream, a
-// gateway replica's ring, and this replica's local ring, so one event keeps one
-// items[].id across a source switch and two items on one page never share it.
+// TestEventStreamPollItemIDCarriesTheSourcePositionContract pins the value
+// domain of items[].id on GET /v1/admin/events. §25.3 defines the field as the
+// monotonic uint64 ID the source assigns each event, per source rather than
+// globally ordered, used for cursor-based polling, and the gateway serves that
+// same ring position on its own GET /v1/admin/events/buffer. The §25.5 read
+// surface carries it through: the local ring reports its own sequence, the
+// gateway-buffer fan-out reports each responding replica's position verbatim,
+// and the Redis-served page reports the stream's own monotonic position. The
+// identity that is stable for one event across sources is the canonical
+// eventKey the CloudEvents id carries, which is what a caller deduplicates on.
 //
-// spec: 25.5 (Polling Delivery — the poll envelope's items are CloudEvents
-// records and a caller resumes on the CloudEvents id and the opaque cursor)
-// diagnosis: A failure means items[].id is source-dependent again. Either the
-// same event carries a different wrapper id depending on which source served
-// it, so a consumer paging across a §25.5 source switch reads the field as a
-// jump in the stream, or one merged gateway-buffer page hands the caller
-// several distinct events sharing one id, because each responding replica
-// numbers its own ring from zero.
-func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
+// spec: 25.3 (each event is assigned a monotonic uint64 ID, per replica rather
+// than globally ordered, for cursor-based polling); 25.5 (Polling Delivery —
+// agents that need to deduplicate across sources use eventKey)
+// diagnosis: A failure means items[].id no longer carries the §25.3 source
+// position. One JSON field then means a monotonic position on the gateway's
+// buffer endpoint and something else on the §25.5 read surface, so a consumer
+// ordering or de-duplicating on it across the two endpoints reads a stream that
+// jumps, and the field loses the monotonicity §25.3 defines it by.
+func TestEventStreamPollItemIDCarriesTheSourcePositionContract(t *testing.T) {
 	seed := []gwevents.OperationalEvent{
 		{ID: "gw-a:1700000000000:1", Type: "dev.lenny.alert_fired", SpecVersion: "1.0"},
 		{ID: "gw-b:1700000000001:1", Type: "dev.lenny.pool_state_changed", SpecVersion: "1.0"},
@@ -741,14 +745,19 @@ func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
 	redisIDs := pollItemIDs(t, opsserver.New(opsserver.Options{EventStream: redisStream}))
 
 	// Source 3: the Redis-down gateway-buffer fan-out, assembled from two
-	// replicas that each numbered the event they hold as ring position 1.
+	// replicas whose buffer pages carry the ring positions each replica
+	// assigned.
+	const (
+		replicaOnePosition = 7
+		replicaTwoPosition = 4
+	)
 	fanOut := opsstream.New(opsstream.Options{
 		Capacity:     capacity,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
 	})
 	fanOut.SetGatewayBufferSource(fanOutReplicas{pages: [][]gwevents.BufferedEvent{
-		{{ID: 1, Event: seed[0]}},
-		{{ID: 1, Event: seed[1]}},
+		{{ID: replicaOnePosition, Event: seed[0]}},
+		{{ID: replicaTwoPosition, Event: seed[1]}},
 	}})
 	fanOutIDs := pollItemIDs(t, opsserver.New(opsserver.Options{EventStream: fanOut}))
 
@@ -761,22 +770,82 @@ func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
 		}
 	}
 
-	// One event keeps one items[].id across every source that can serve it.
-	for i := range seed {
-		if localIDs[i] != redisIDs[i] || localIDs[i] != fanOutIDs[i] {
-			t.Errorf("event %s items[].id = %d (local ring), %d (redis), %d (gateway buffer); the field changes meaning across the source switch",
-				seed[i].ID, localIDs[i], redisIDs[i], fanOutIDs[i])
-		}
-		if localIDs[i] == 0 {
-			t.Errorf("event %s carries items[].id = 0 on a record with an eventKey", seed[i].ID)
+	// The fan-out serves each responding replica's §25.3 buffer position
+	// unchanged, the same value that replica's own GET /v1/admin/events/buffer
+	// reports for the event.
+	if fanOutIDs[0] != replicaOnePosition || fanOutIDs[1] != replicaTwoPosition {
+		t.Errorf("gateway-buffer fan-out items[].id = %v, want the responding replicas' own positions %v; the §25.5 read surface must not redefine the §25.3 field",
+			fanOutIDs, []uint64{replicaOnePosition, replicaTwoPosition})
+	}
+
+	// The local ring reports its own monotonic sequence, starting at its first
+	// position rather than at an arbitrary synthetic value.
+	if localIDs[0] != 1 || localIDs[1] != 2 {
+		t.Errorf("local-ring items[].id = %v, want the ring's monotonic sequence [1 2]", localIDs)
+	}
+
+	// Every source's page rises monotonically, which is the property §25.3
+	// defines the field by and a caller ordering on it relies on.
+	for _, src := range []struct {
+		name string
+		ids  []uint64
+	}{{"local-ring", localIDs}, {"redis", redisIDs}} {
+		for i, id := range src.ids {
+			if id == 0 {
+				t.Errorf("%s item %d carries items[].id = 0 on a served record", src.name, i)
+			}
+			if i > 0 && id <= src.ids[i-1] {
+				t.Errorf("%s items[].id = %v is not monotonic across the page; §25.3 assigns a monotonic per-source id", src.name, src.ids)
+			}
 		}
 	}
 
-	// A merged fan-out page carries no duplicate items[].id, even though every
-	// responding replica numbered its own ring from the same position.
-	if fanOutIDs[0] == fanOutIDs[1] {
-		t.Errorf("the case-1 fan-out page emits colliding items[].id %d for two distinct events", fanOutIDs[0])
+	// The identity that is stable for one event across sources is the canonical
+	// eventKey the CloudEvents id carries, which the poll envelope serves
+	// unchanged from every source.
+	for _, src := range []struct {
+		name string
+		srv  *opsserver.Server
+	}{
+		{"local-ring", eventStreamServer(t, capacity, seed...)},
+		{"redis", opsserver.New(opsserver.Options{EventStream: redisStream})},
+		{"gateway-buffer", opsserver.New(opsserver.Options{EventStream: fanOut})},
+	} {
+		keys := pollItemEventKeys(t, src.srv)
+		if len(keys) != len(seed) || keys[0] != seed[0].ID || keys[1] != seed[1].ID {
+			t.Errorf("%s-served page eventKeys = %v, want %v; the cross-source identity is the CloudEvents id",
+				src.name, keys, []string{seed[0].ID, seed[1].ID})
+		}
 	}
+}
+
+// pollItemEventKeys returns the canonical eventKey each item on a poll page
+// carries in its CloudEvents id, the identity §25.5 has agents deduplicate on
+// across sources.
+func pollItemEventKeys(t *testing.T, srv *opsserver.Server) []string {
+	t.Helper()
+	body, _ := pollBody(t, srv, "/v1/admin/events")
+	raw, ok := body["items"].([]any)
+	if !ok {
+		t.Fatalf("poll response has no items array: %v", body)
+	}
+	keys := make([]string, 0, len(raw))
+	for i, it := range raw {
+		item, ok := it.(map[string]any)
+		if !ok {
+			t.Fatalf("item %d is not an object: %v", i, it)
+		}
+		ev, ok := item["event"].(map[string]any)
+		if !ok {
+			t.Fatalf("item %d carries no CloudEvents record: %v", i, item)
+		}
+		id, ok := ev["id"].(string)
+		if !ok {
+			t.Fatalf("item %d CloudEvents record carries no id: %v", i, ev)
+		}
+		keys = append(keys, id)
+	}
+	return keys
 }
 
 // flippableHealth is a §25.5 SourceHealth whose Redis reachability changes at
