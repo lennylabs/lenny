@@ -288,6 +288,37 @@ func TestPgStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	if len(aged) != 0 || !metaAged.GapDetected || metaAged.OldestAvailableCursor != "5" {
 		t.Fatalf("aged-out = %v meta %+v, want gapDetected with oldestAvailableCursor 5", deliveryIDs(aged), metaAged)
 	}
+
+	// A malformed (non-numeric) cursor cannot be honored. It reports a gap
+	// toward the oldest retained delivery (id 5, the sole survivor) rather than
+	// a silently empty page, so the caller resyncs from the retention floor.
+	badCur, metaBad, err := s.ListDeliveries(ctx, "sub_1", "not-a-cursor", 2)
+	if err != nil {
+		t.Fatalf("malformed-cursor page: %v", err)
+	}
+	if len(badCur) != 0 || !metaBad.GapDetected || metaBad.OldestAvailableCursor != "5" {
+		t.Fatalf("malformed cursor = %v meta %+v, want gapDetected with oldestAvailableCursor 5", deliveryIDs(badCur), metaBad)
+	}
+
+	// A malformed cursor for a subscription with no retained deliveries has no
+	// retention floor to point at, so it reports no gap and an empty page rather
+	// than a spurious gap signal.
+	if err := s.Create(ctx, es.Record{
+		ID: "sub_empty", CallbackURL: "https://acme.example/hook2",
+		Types:      []string{"dev.lenny.alert_fired"},
+		SecretHash: es.HashSecret(secret), SecretFingerprint: es.Fingerprint(secret),
+		CreatedBy: "alice@acme.com", TenantFilter: es.TenantFilterAll,
+		CreatedAt: now, UpdatedAt: now, Active: true,
+	}); err != nil {
+		t.Fatalf("Create(sub_empty): %v", err)
+	}
+	empties, metaEmpty, err := s.ListDeliveries(ctx, "sub_empty", "not-a-cursor", 2)
+	if err != nil {
+		t.Fatalf("malformed-cursor empty-subscription page: %v", err)
+	}
+	if len(empties) != 0 || metaEmpty.GapDetected || metaEmpty.OldestAvailableCursor != "" {
+		t.Fatalf("malformed cursor over an empty subscription = %v meta %+v, want no gap", deliveryIDs(empties), metaEmpty)
+	}
 }
 
 func deliveryIDs(ds []es.Delivery) []int64 {

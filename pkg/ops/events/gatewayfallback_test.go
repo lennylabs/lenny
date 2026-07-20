@@ -10,6 +10,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
@@ -276,5 +277,119 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	sess.writeTransition(dataSource(-1), dsRedis, nil)
 	if strings.TrimSpace(rec3.Body.String()) != "" {
 		t.Fatalf("healthy start must announce nothing, got:\n%s", rec3.Body.String())
+	}
+}
+
+// errBodyGatewaySource returns one healthy replica page alongside a failed
+// replica (Err set), an empty-body replica, and a malformed-JSON replica, so
+// the merge's best-effort skip of failed, empty, and unparseable replicas can
+// be exercised without a live gateway.
+type errBodyGatewaySource struct {
+	good []gwevents.BufferedEvent
+}
+
+func (f *errBodyGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.ReplicaResult, error) {
+	goodBody, _ := json.Marshal(gwevents.BufferedEventPage{Events: f.good})
+	return []gateway.ReplicaResult{
+		{Endpoint: "https://pod-a", Err: context.DeadlineExceeded},
+		{Endpoint: "https://pod-b", Body: nil},
+		{Endpoint: "https://pod-c", Body: []byte("{not json")},
+		{Endpoint: "https://pod-d", Body: goodBody},
+	}, nil
+}
+
+// spec: 25.3 (cross-replica eventKey dedup, best-effort fan-out) — a fan-out in
+// which some replicas fail, return an empty body, or return unparseable JSON is
+// best-effort: the failed, empty, and malformed replicas are skipped and the
+// merge proceeds with the replicas that did respond. This pins that a partial
+// gateway outage still serves the events from the healthy replicas rather than
+// dropping the whole page.
+func TestMergeReplicaBuffers_SkipsFailedEmptyAndMalformedReplicas_spec_25_3(t *testing.T) {
+	f := &errBodyGatewaySource{good: []gwevents.BufferedEvent{
+		bufEvt("gw-d:1000:1", "dev.lenny.alert_fired"),
+	}}
+	results, _ := f.FanOutGet(context.Background(), "")
+
+	merged := mergeReplicaBuffers(results)
+	if len(merged) != 1 || merged[0].Event.ID != "gw-d:1000:1" {
+		t.Fatalf("merge over a partial outage = %v, want the single healthy replica's event", merged)
+	}
+}
+
+// spec: 25.3 (oldest-first ordering by event time) — the merge orders events
+// oldest-first by event time, falling back to the eventKey only as a stable tie
+// break for same-time events. This pins that two events with distinct times are
+// ordered by time regardless of eventKey ordering.
+func TestMergeReplicaBuffers_OrdersByEventTime_spec_25_3(t *testing.T) {
+	early := bufEvt("gw-b:2000:1", "dev.lenny.alert_fired")
+	late := bufEvt("gw-a:1000:1", "dev.lenny.alert_fired")
+	early.Event.Time = ts().Add(-time.Hour)
+	late.Event.Time = ts()
+	// Feed the later event first so a stable sort must reorder by time.
+	f := &fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{late, early}}}
+	results, _ := f.FanOutGet(context.Background(), "")
+
+	merged := mergeReplicaBuffers(results)
+	if len(merged) != 2 || merged[0].Event.ID != "gw-b:2000:1" || merged[1].Event.ID != "gw-a:1000:1" {
+		t.Fatalf("merge ordering = %v, want the earlier-time event first", merged)
+	}
+}
+
+// spec: 25.5 (Redis-down gateway-buffer fallback, filter narrowing) —
+// fetchGatewayBuffer returns an error when no gateway source is wired and when
+// the fan-out itself fails, and it renders the event-type and severity filter
+// dimensions into the per-replica query so each pod narrows before responding.
+func TestFetchGatewayBuffer_ErrorsAndFilterQuery_spec_25_5(t *testing.T) {
+	// No gateway source wired: the fetch fails closed rather than serving an
+	// empty page as if the buffer were empty.
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	if _, err := s.fetchGatewayBuffer(context.Background(), gwevents.EventFilter{}); err == nil {
+		t.Fatal("fetchGatewayBuffer with no gateway source wired must return an error")
+	}
+
+	// A fan-out failure propagates as an error.
+	s.SetGatewayBufferSource(&fakeGatewaySource{err: context.DeadlineExceeded})
+	if _, err := s.fetchGatewayBuffer(context.Background(), gwevents.EventFilter{}); err == nil {
+		t.Fatal("fetchGatewayBuffer must propagate a fan-out failure")
+	}
+
+	// The event-type and severity dimensions ride to each replica as query
+	// params; the resource and time dimensions are applied locally.
+	q := bufferFilterQuery(gwevents.EventFilter{EventType: "alert_fired", Severity: "critical"})
+	if !strings.Contains(q, "eventType=alert_fired") || !strings.Contains(q, "severity=critical") {
+		t.Fatalf("buffer filter query = %q, want eventType and severity params", q)
+	}
+}
+
+// spec: 25.5 (Redis-down gateway-buffer fallback, eventKey resume) — the poll
+// page resumes after the cursor's eventKey, pages at the limit with hasMore,
+// and on a fan-out failure returns an empty page echoing the caller's cursor so
+// a retry resumes from the same position rather than losing it.
+func TestGatewayPollPage_ResumeLimitAndFetchError_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		bufEvt("gw-a:1000:1", "dev.lenny.alert_fired"),
+		bufEvt("gw-a:1000:2", "dev.lenny.alert_fired"),
+		bufEvt("gw-a:1000:3", "dev.lenny.alert_fired"),
+	}}})
+
+	// Resume after gw-a:1000:1 with a limit of 1: the page is the single event
+	// after the cursor, with hasMore true and a continuation cursor.
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{}, 1, false)
+	if len(page.Items) != 1 || page.Items[0].Event.ID != "gw-a:1000:2" {
+		t.Fatalf("resumed page = %v, want [gw-a:1000:2]", page.Items)
+	}
+	if !page.Pagination.HasMore {
+		t.Fatalf("resumed page must report hasMore with events remaining after the limit")
+	}
+
+	// A fan-out failure returns an empty page echoing the caller's cursor.
+	s.SetGatewayBufferSource(&fakeGatewaySource{err: context.DeadlineExceeded})
+	errPage := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:2", gwevents.EventFilter{}, 10, false)
+	if len(errPage.Items) != 0 {
+		t.Fatalf("fan-out failure must serve an empty page, got %d items", len(errPage.Items))
+	}
+	if errPage.Pagination.Cursor != encodeCursor(SourceKindMixed, "gw-a:1000:2") {
+		t.Fatalf("fan-out failure cursor = %q, want the echoed caller cursor", errPage.Pagination.Cursor)
 	}
 }

@@ -523,9 +523,10 @@ func TestWebhookDeliveryHMACContract(t *testing.T) {
 			{ID: eventID, Type: "dev.lenny.alert_fired", Body: body},
 		}},
 		Subscriptions: fixedSubscriptions{sub: opsservice.WebhookSubscription{
-			ID:          "sub-1",
-			CallbackURL: receiver.URL,
-			Secret:      secret,
+			ID:           "sub-1",
+			CallbackURL:  receiver.URL,
+			Secret:       secret,
+			TenantFilter: eventsubscription.TenantFilterAll,
 		}},
 	})
 
@@ -552,9 +553,10 @@ func TestWebhookDeliveryHMACContract(t *testing.T) {
 			{ID: eventID, Type: "dev.lenny.alert_fired", Body: body},
 		}},
 		Subscriptions: fixedSubscriptions{sub: opsservice.WebhookSubscription{
-			ID:          "sub-1",
-			CallbackURL: receiver.URL,
-			Secret:      secret,
+			ID:           "sub-1",
+			CallbackURL:  receiver.URL,
+			Secret:       secret,
+			TenantFilter: eventsubscription.TenantFilterAll,
 		}},
 	})
 	if err := worker2.Tick(context.Background()); err != nil {
