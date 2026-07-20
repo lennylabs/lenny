@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -51,6 +52,51 @@ func (f *fakeGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.Re
 	out := make([]gateway.ReplicaResult, 0, len(f.pages))
 	for _, evs := range f.pages {
 		body, _ := json.Marshal(gwevents.BufferedEventPage{Events: evs})
+		out = append(out, gateway.ReplicaResult{Endpoint: "https://pod", Body: body})
+	}
+	return out, nil
+}
+
+// recordingGatewaySource records the fan-out paths it was asked for and serves
+// no replicas, so a test can assert what the read side asks each gateway pod
+// for.
+type recordingGatewaySource struct {
+	paths []string
+}
+
+func (r *recordingGatewaySource) FanOutGet(_ context.Context, path string) ([]gateway.ReplicaResult, error) {
+	r.paths = append(r.paths, path)
+	return nil, nil
+}
+
+// filteringGatewaySource is a GatewayBufferSource that honours the §25.3
+// buffer endpoint's eventType and severity query params the way a real gateway
+// replica does, so a narrowing filter pushed to the replicas actually narrows
+// the window the read side receives. The plain fake ignores the query string,
+// which is what let a filter-driven empty fan-out pass unnoticed.
+type filteringGatewaySource struct {
+	pages [][]gwevents.BufferedEvent
+}
+
+func (f *filteringGatewaySource) FanOutGet(_ context.Context, path string) ([]gateway.ReplicaResult, error) {
+	q := url.Values{}
+	if i := strings.Index(path, "?"); i >= 0 {
+		parsed, err := url.ParseQuery(path[i+1:])
+		if err != nil {
+			return nil, err
+		}
+		q = parsed
+	}
+	replicaFilter := gwevents.EventFilter{EventType: q.Get("eventType"), Severity: q.Get("severity")}
+	out := make([]gateway.ReplicaResult, 0, len(f.pages))
+	for _, evs := range f.pages {
+		kept := make([]gwevents.BufferedEvent, 0, len(evs))
+		for _, ev := range evs {
+			if replicaFilter.Matches(ev.Event) {
+				kept = append(kept, ev)
+			}
+		}
+		body, _ := json.Marshal(gwevents.BufferedEventPage{Events: kept})
 		out = append(out, gateway.ReplicaResult{Endpoint: "https://pod", Body: body})
 	}
 	return out, nil
@@ -363,29 +409,32 @@ func TestMergeReplicaBuffers_OrdersByEventTime_spec_25_3(t *testing.T) {
 	}
 }
 
-// spec: 25.5 (Redis-down gateway-buffer fallback, filter narrowing) —
-// fetchGatewayBuffer returns an error when no gateway source is wired and when
-// the fan-out itself fails, and it renders the event-type and severity filter
-// dimensions into the per-replica query so each pod narrows before responding.
-func TestFetchGatewayBuffer_ErrorsAndFilterQuery_spec_25_5(t *testing.T) {
+// spec: 25.5 (Redis-down gateway-buffer fallback) — fetchGatewayBuffer returns
+// an error when no gateway source is wired and when the fan-out itself fails,
+// and it queries every replica for the unnarrowed window so the eviction
+// boundary the caller derives from it describes what the replicas retain.
+func TestFetchGatewayBuffer_ErrorsAndUnnarrowedQuery_spec_25_5(t *testing.T) {
 	// No gateway source wired: the fetch fails closed rather than serving an
 	// empty page as if the buffer were empty.
 	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
-	if _, err := s.fetchGatewayBuffer(context.Background(), gwevents.EventFilter{}); err == nil {
+	if _, err := s.fetchGatewayBuffer(context.Background()); err == nil {
 		t.Fatal("fetchGatewayBuffer with no gateway source wired must return an error")
 	}
 
 	// A fan-out failure propagates as an error.
 	s.SetGatewayBufferSource(&fakeGatewaySource{err: context.DeadlineExceeded})
-	if _, err := s.fetchGatewayBuffer(context.Background(), gwevents.EventFilter{}); err == nil {
+	if _, err := s.fetchGatewayBuffer(context.Background()); err == nil {
 		t.Fatal("fetchGatewayBuffer must propagate a fan-out failure")
 	}
 
-	// The event-type and severity dimensions ride to each replica as query
-	// params; the resource and time dimensions are applied locally.
-	q := bufferFilterQuery(gwevents.EventFilter{EventType: "alert_fired", Severity: "critical"})
-	if !strings.Contains(q, "eventType=alert_fired") || !strings.Contains(q, "severity=critical") {
-		t.Fatalf("buffer filter query = %q, want eventType and severity params", q)
+	// The per-replica request carries no filter query.
+	rec := &recordingGatewaySource{}
+	s.SetGatewayBufferSource(rec)
+	if _, err := s.fetchGatewayBuffer(context.Background()); err != nil {
+		t.Fatalf("fetchGatewayBuffer: %v", err)
+	}
+	if got := rec.paths[0]; got != gatewayBufferPath {
+		t.Fatalf("fan-out path = %q, want the unnarrowed %q", got, gatewayBufferPath)
 	}
 }
 
@@ -887,7 +936,7 @@ func TestServeGateway_AllReplicasRefused_AnnouncesLocalBufferDegradation_spec_25
 func TestFetchGatewayBuffer_OneReplicaAnsweringIsStillServed_spec_25_5(t *testing.T) {
 	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
 	s.SetGatewayBufferSource(&partialGatewaySource{})
-	merged, err := s.fetchGatewayBuffer(context.Background(), gwevents.EventFilter{})
+	merged, err := s.fetchGatewayBuffer(context.Background())
 	if err != nil {
 		t.Fatalf("a fan-out with one answering replica must serve: %v", err)
 	}
@@ -905,4 +954,89 @@ func (partialGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.Re
 		{Endpoint: "https://pod-a", Body: body},
 		{Endpoint: "https://pod-b", Err: &gateway.HTTPError{Status: http.StatusInternalServerError}},
 	}, nil
+}
+
+// spec: 25.5 (gapDetected and oldestAvailableCursor only when the cursor aged
+// out of every replica's ring) — a narrowing ?eventType= that no gateway
+// replica matches is not an eviction. The eviction boundary is derived from the
+// window the replicas retain, so the fan-out query carries no filter and a poll
+// for a lenny-ops-originated event type continues from its cursor. The pre-fix
+// read side pushed the filter to each replica and took the boundary from that
+// narrowed page, so an empty fan-out reported a gap and replayed the whole local
+// window on every poll; this fails against that code.
+func TestGatewayPollPage_NarrowedFilterMatchingNoGatewayEventIsNotAGap_spec_25_5(t *testing.T) {
+	base := ts()
+	gaps := 0
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	s.SetGatewayBufferSource(&filteringGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		{ID: 1, Event: timedEvt("gw-a:1000:1", "dev.lenny.alert_fired", base.Add(time.Second))},
+	}}})
+	for _, e := range []gwevents.OperationalEvent{
+		timedEvt("ops:2000:1", "dev.lenny.escalation_created", base.Add(2*time.Second)),
+		timedEvt("ops:3000:1", "dev.lenny.escalation_created", base.Add(3*time.Second)),
+	} {
+		if _, err := s.Publish(context.Background(), e); err != nil {
+			t.Fatalf("publish local event %s: %v", e.ID, err)
+		}
+	}
+
+	filter := gwevents.EventFilter{EventType: "escalation_created"}
+	page, err := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:2000:1", filter, 10, false)
+	if err != nil {
+		t.Fatalf("gatewayPollPage: %v", err)
+	}
+	if page.Pagination.GapDetected || gaps != 0 {
+		t.Fatalf("a filter no gateway replica matches was reported as an evicted cursor: %+v (gap counter %d)", page.Pagination, gaps)
+	}
+	if got := eventKeys(page.Items); len(got) != 1 || got[0] != "ops:3000:1" {
+		t.Fatalf("items = %v, want only the continuation ops:3000:1; the window before the cursor must not be re-served", got)
+	}
+
+	// A repeat poll from the position the response returned serves nothing and
+	// still reports no gap, so a caller polling in a loop does not receive the
+	// same window on every request.
+	repeat, err := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:3000:1", filter, 10, false)
+	if err != nil {
+		t.Fatalf("repeat gatewayPollPage: %v", err)
+	}
+	if repeat.Pagination.GapDetected || gaps != 0 {
+		t.Fatalf("repeat poll reported a gap: %+v (gap counter %d)", repeat.Pagination, gaps)
+	}
+	if got := eventKeys(repeat.Items); len(got) != 0 {
+		t.Fatalf("repeat poll re-served %v, want nothing new", got)
+	}
+}
+
+// spec: 25.5 (gapDetected and oldestAvailableCursor only when the cursor aged
+// out of every replica's ring) — a gateway that retains nothing (a freshly
+// restarted or idle replica) carries no evidence about the carried cursor, so
+// the poll continues from it against the local ring instead of reporting a gap
+// and replaying the window. It is the same rule the Redis source and the SSE
+// resume seed apply to an empty source window; the pre-fix poll path was the
+// one place that read an empty window as an eviction, and this fails against
+// that code.
+func TestGatewayPollPage_EmptyFanOutWindowIsNotAGap_spec_25_5(t *testing.T) {
+	base := ts()
+	gaps := 0
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{}}})
+	for _, e := range []gwevents.OperationalEvent{
+		timedEvt("ops:2000:1", "dev.lenny.escalation_created", base.Add(2*time.Second)),
+		timedEvt("ops:3000:1", "dev.lenny.escalation_created", base.Add(3*time.Second)),
+	} {
+		if _, err := s.Publish(context.Background(), e); err != nil {
+			t.Fatalf("publish local event %s: %v", e.ID, err)
+		}
+	}
+
+	page, err := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:2000:1", gwevents.EventFilter{}, 10, false)
+	if err != nil {
+		t.Fatalf("gatewayPollPage: %v", err)
+	}
+	if page.Pagination.GapDetected || gaps != 0 {
+		t.Fatalf("an empty gateway window was reported as an evicted cursor: %+v (gap counter %d)", page.Pagination, gaps)
+	}
+	if got := eventKeys(page.Items); len(got) != 1 || got[0] != "ops:3000:1" {
+		t.Fatalf("items = %v, want only the continuation ops:3000:1", got)
+	}
 }

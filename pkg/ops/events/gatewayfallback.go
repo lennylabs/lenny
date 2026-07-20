@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"sort"
 	"time"
 
@@ -44,18 +43,23 @@ type GatewayBufferSource interface {
 
 // fetchGatewayBuffer fans the §25.3 buffer query across every gateway replica
 // and returns the merged, eventKey-deduplicated events, ordered oldest-first.
-// The event-type and severity filters ride to each replica as query params so
-// each pod narrows before responding; the caller applies the full §25.5
-// filter (resource, time bounds) over the merged result. The whole fan-out is
-// bounded by gatewayFetchTimeout. spec: §25.5 (transparent source fall-back),
-// §25.3 (cross-replica eventKey dedup).
-func (s *Service) fetchGatewayBuffer(ctx context.Context, filter gwevents.EventFilter) ([]gwevents.BufferedEvent, error) {
+//
+// The query carries no filter: the caller applies the whole §25.5 filter over
+// the merged result instead. The window doubles as the eviction boundary for
+// cursor translation, and that boundary has to describe what the replicas
+// retain rather than what the caller asked for. Narrowing at the replicas would
+// make a filter no gateway event matches indistinguishable from a gateway ring
+// that has evicted everything, so an ordinary narrowed poll would report an
+// evicted cursor and replay its whole window. spec: §25.5 (transparent source
+// fall-back; gapDetected only when the cursor aged out of every replica's
+// ring), §25.3 (cross-replica eventKey dedup).
+func (s *Service) fetchGatewayBuffer(ctx context.Context) ([]gwevents.BufferedEvent, error) {
 	if s.gateway == nil {
 		return nil, fmt.Errorf("gateway buffer source not wired")
 	}
 	cctx, cancel := context.WithTimeout(ctx, gatewayFetchTimeout)
 	defer cancel()
-	results, err := s.gateway.FanOutGet(cctx, gatewayBufferPath+bufferFilterQuery(filter))
+	results, err := s.gateway.FanOutGet(cctx, gatewayBufferPath)
 	if err != nil {
 		return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
 	}
@@ -95,24 +99,6 @@ func replicasServed(results []gateway.ReplicaResult) error {
 		}
 	}
 	return fmt.Errorf("%w: %d replica(s) failed: %w", ErrGatewayBufferUnavailable, len(results), first)
-}
-
-// bufferFilterQuery renders the §25.3 buffer endpoint query string for the
-// event-type and severity dimensions the endpoint honours. The remaining
-// §25.5 filter dimensions (resource type/id, time bounds) are applied locally
-// over the merged result because the buffer endpoint does not accept them.
-func bufferFilterQuery(filter gwevents.EventFilter) string {
-	q := url.Values{}
-	if filter.EventType != "" {
-		q.Set("eventType", filter.EventType)
-	}
-	if filter.Severity != "" {
-		q.Set("severity", filter.Severity)
-	}
-	if len(q) == 0 {
-		return ""
-	}
-	return "?" + q.Encode()
 }
 
 // mergeReplicaBuffers merges the per-replica §25.3 buffer pages and
@@ -219,7 +205,7 @@ func dedupKey(e gwevents.OperationalEvent) string {
 // the same position. The EVENT_STREAM_DEGRADED envelope is attached by the
 // caller. spec: §25.5 (Redis-down gateway-buffer fallback, eventKey dedup).
 func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
-	merged, err := s.fetchGatewayBuffer(ctx, filter)
+	merged, err := s.fetchGatewayBuffer(ctx)
 	if err != nil {
 		// No replica served the query, so this response carries no
 		// gateway-originated events at all. Reporting an empty
@@ -230,13 +216,13 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 	}
 
 	// The eviction boundary is the oldest event the gateway replicas still
-	// retain, so it is taken from the fan-out result before the local ring is
-	// unioned in. The local ring holds only lenny-ops-originated events and,
-	// on a low-emission replica, retains events far older than anything the
-	// gateway replicas still hold; measuring against the union would put the
-	// boundary before every genuinely aged-out cursor and the gap would never
-	// be reported. spec: §25.5 (gapDetected and oldestAvailableCursor when the
-	// cursor aged out of every replica's ring).
+	// retain, so it is taken from the unfiltered fan-out result before the
+	// local ring is unioned in. The local ring holds only lenny-ops-originated
+	// events and, on a low-emission replica, retains events far older than
+	// anything the gateway replicas still hold; measuring against the union
+	// would put the boundary before every genuinely aged-out cursor and the gap
+	// would never be reported. spec: §25.5 (gapDetected and
+	// oldestAvailableCursor when the cursor aged out of every replica's ring).
 	oldestRetained := ""
 	if len(merged) > 0 {
 		oldestRetained = merged[0].Event.ID
@@ -321,24 +307,26 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 // before this replica's local ring is unioned in: the ring holds only
 // lenny-ops-originated events and outlives the gateway rings on a
 // low-emission replica, so measuring the boundary against the union would sit
-// it before every aged-out cursor and never report the gap. served is the
-// union actually being paged, which supplies the recovery cursor when the
-// fan-out came back empty — no gateway history is retained at all then, so
-// every carried position references evicted gateway events. An empty served
-// window carries no events to be missing, so it is never a gap. spec: §25.5
+// it before every aged-out cursor and never report the gap. An empty fan-out
+// window leaves it empty, and an empty window is no evidence of an eviction:
+// the replicas may simply be holding nothing (a restarted gateway, an idle one,
+// or a poll whose events all originate in lenny-ops). That case runs the
+// ordinary continuation, the same rule the Redis source and the SSE resume seed
+// apply to an empty source window. served is the union actually being paged; an
+// empty one carries no events to be missing, so it is never a gap. spec: §25.5
 // (gapDetected and oldestAvailableCursor when the cursor aged out of every
 // replica's ring; a gap when no event has a greater-or-equal eventKey).
 func gatewayCursorGap(position, oldestRetained string, served []gwevents.BufferedEvent) (gap, replay bool, oldestKey string) {
 	if position == "" || len(served) == 0 {
 		return false, false, ""
 	}
-	if oldestRetained == "" {
-		return true, true, served[0].Event.ID
-	}
-	if eventKeyLess(position, oldestRetained) {
+	if oldestRetained != "" && eventKeyLess(position, oldestRetained) {
 		return true, true, oldestRetained
 	}
 	if !windowHasAtOrAfter(served, position) {
+		if oldestRetained == "" {
+			return true, false, served[0].Event.ID
+		}
 		return true, false, oldestRetained
 	}
 	return false, false, ""

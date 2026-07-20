@@ -227,7 +227,13 @@ func TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261(t
 	})
 	// A gateway source is wired, so the Redis outage genuinely falls back to
 	// the gateway-buffer fan-out rather than resolving to the dual-outage case.
-	s.SetGatewayBufferSource(&fakeGatewaySource{})
+	// The replicas retain a window that starts after the cursor below, which is
+	// what makes that cursor unhonourable: the events it references aged out of
+	// every replica's ring. An empty fan-out window would say nothing about the
+	// cursor and is not a gap.
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		{ID: 1, Event: evt("gw-a:1700000000000000000:1", "dev.lenny.alert_fired")},
+	}}})
 	s.Publish(context.Background(), gwevents.OperationalEvent{Type: "alert_fired"})
 
 	// A cursor produced by the Redis stream, carrying an eventKey this

@@ -401,7 +401,7 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 		if st.s.sourceChanged(src) {
 			return
 		}
-		merged, err := st.s.fetchGatewayBuffer(ctx, st.filter)
+		merged, err := st.s.fetchGatewayBuffer(ctx)
 		if err != nil {
 			// No replica served the buffer query, so this connection is
 			// receiving lenny-ops-originated events only. The tick below
