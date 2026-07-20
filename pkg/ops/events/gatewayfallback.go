@@ -113,13 +113,52 @@ func mergeReplicaBuffers(results []gateway.ReplicaResult) []gwevents.BufferedEve
 			out = append(out, ev)
 		}
 	}
-	sort.SliceStable(out, func(i, j int) bool {
-		ti, tj := out[i].Event.Time, out[j].Event.Time
+	sortByTimeThenKey(out)
+	return out
+}
+
+// sortByTimeThenKey orders a merged window oldest-first by event time, with the
+// eventKey as a stable tie break so two same-instant events from two sources
+// keep a deterministic order.
+func sortByTimeThenKey(events []gwevents.BufferedEvent) {
+	sort.SliceStable(events, func(i, j int) bool {
+		ti, tj := events[i].Event.Time, events[j].Event.Time
 		if !ti.Equal(tj) {
 			return ti.Before(tj)
 		}
-		return out[i].Event.ID < out[j].Event.ID
+		return events[i].Event.ID < events[j].Event.ID
 	})
+}
+
+// unionLocalOrigin merges this replica's local ring into a gateway fan-out
+// window, deduplicated by eventKey and re-ordered oldest-first.
+//
+// The gateway rings buffer gateway-originated events only, and during a
+// Redis-down outage the XADD that would carry a lenny-ops-originated event to
+// the shared stream is failing, so the local ring is the only place those
+// events exist. Serving the fan-out alone would drop them for the whole outage,
+// making a Redis-only outage lose more than the strictly worse dual outage,
+// where the local ring is served. spec: §25.5 (the in-memory buffer stays the
+// canonical source of lenny-ops-originated events; eventKey dedup).
+func (s *Service) unionLocalOrigin(merged []gwevents.BufferedEvent, filter gwevents.EventFilter) []gwevents.BufferedEvent {
+	local := s.buffer.Query(0, filter, DefaultBufferCapacity).Events
+	if len(local) == 0 {
+		return merged
+	}
+	seen := make(map[string]struct{}, len(merged))
+	for _, ev := range merged {
+		seen[ev.Event.ID] = struct{}{}
+	}
+	out := make([]gwevents.BufferedEvent, 0, len(merged)+len(local))
+	out = append(out, merged...)
+	for _, ev := range local {
+		if _, ok := seen[ev.Event.ID]; ok {
+			continue
+		}
+		seen[ev.Event.ID] = struct{}{}
+		out = append(out, ev)
+	}
+	sortByTimeThenKey(out)
 	return out
 }
 
@@ -135,7 +174,9 @@ func dedupKey(e gwevents.OperationalEvent) string {
 
 // gatewayPollPage serves the §25.5 polling page from the gateway event-buffer
 // fan-out during a Redis-down / gateway-up outage. It
-// merges the per-replica pages, applies the full §25.5 filter, resumes after
+// merges the per-replica pages with this replica's local ring (the
+// lenny-ops-origin source, which no gateway replica buffers), applies the full
+// §25.5 filter, resumes after
 // the incoming cursor's eventKey, and pages at limit. The response carries a
 // mixed cursorKind because the merged view spans replicas; a fan-out failure
 // returns an empty page echoing the caller's cursor so a retry resumes from
@@ -150,6 +191,8 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 		}
 	}
 
+	merged = s.unionLocalOrigin(merged, filter)
+
 	matched := make([]gwevents.BufferedEvent, 0, len(merged))
 	for _, ev := range merged {
 		if filter.Matches(ev.Event) {
@@ -157,19 +200,23 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 		}
 	}
 
-	// Resume after the cursor's eventKey. A cursor whose eventKey is no
-	// longer in the merged window serves from the start of the window: the
-	// gateway buffer is an inherently bounded per-replica window, so a missing
-	// position is the ordinary catch-up case rather than a stream eviction to
-	// flag.
-	start := 0
-	if position != "" {
-		for i, ev := range matched {
-			if ev.Event.ID == position {
-				start = i + 1
-				break
-			}
-		}
+	// Resume at the continuation point: the first matching event ordering
+	// after the cursor's eventKey. A cursor absent from the window but inside
+	// its range is the ordinary source-switch case (the caller's last event
+	// originated where no gateway replica buffers it), so it resumes without a
+	// gap. A cursor ordering before the oldest entry the replicas still retain
+	// has aged out of the window, which the response reports with gapDetected
+	// and oldestAvailableCursor so the caller resyncs rather than silently
+	// re-consuming the window. The eviction test runs over the raw merged
+	// window rather than the filtered one, so narrowing ?eventType= or
+	// ?severity= is never misread as an eviction. spec: §25.5 (cross-source
+	// cursor translation with gapDetected and oldestAvailableCursor on a miss).
+	start := gatewayResumeIndex(matched, position)
+	gap := position != "" && len(merged) > 0 && eventKeyLess(position, merged[0].Event.ID)
+	if gap {
+		// Serve the whole retained window alongside the gap flag, matching the
+		// buffer- and Redis-served gap paths.
+		start = 0
 	}
 	window := matched[start:]
 
@@ -192,8 +239,36 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 	}
 	if n := len(window); n > 0 {
 		page.Pagination.Cursor = encodeCursor(SourceKindMixed, window[n-1].Event.ID)
-	} else if position != "" {
+	} else if position != "" && !gap {
 		page.Pagination.Cursor = encodeCursor(cursorKind, position)
 	}
+	if gap {
+		page.Pagination.GapDetected = true
+		page.Pagination.GapReason = "cursor could not be resolved against the current gateway-buffer window: the referenced event aged out of every replica's ring"
+		page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindMixed, merged[0].Event.ID)
+		page.Pagination.SuggestedAction = "resync"
+		s.observeGap()
+	}
 	return page
+}
+
+// gatewayResumeIndex returns the index in window of the first event ordering
+// after position, which is where a page resuming from that cursor starts. An
+// exact match resumes after it; an absent cursor resumes before the first
+// greater event so nothing after it is skipped; a cursor ordering after the
+// whole window yields an empty page. spec: §25.5 (cross-source cursor
+// translation, continuation at the first greater-or-equal eventKey).
+func gatewayResumeIndex(window []gwevents.BufferedEvent, position string) int {
+	if position == "" {
+		return 0
+	}
+	for i, ev := range window {
+		if ev.Event.ID == position {
+			return i + 1
+		}
+		if eventKeyLess(position, ev.Event.ID) {
+			return i
+		}
+	}
+	return len(window)
 }

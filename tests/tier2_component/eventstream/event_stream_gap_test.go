@@ -550,3 +550,76 @@ func (c *sseConn) expectSubject(t *testing.T, label, subject string) {
 	}
 	t.Fatalf("%s: never received a live frame with subject %q", label, subject)
 }
+
+// TestOpsEventStreamLiveTailWakesOnPublishAndExitsOnDisconnect pins the two
+// properties the live tail's bounded XREAD BLOCK stands on. §25.5 specifies
+// XREAD BLOCK 0 for the per-connection tail; the read side issues a bounded
+// block instead, because go-redis does not interrupt a deadline-free blocked
+// read when the connection context is cancelled, which would leak a goroutine
+// per disconnected SSE connection. The substitution is only sound while it
+// preserves BLOCK 0's delivery semantics, so this asserts an event XADDed while
+// a tail is parked arrives promptly, well inside the block interval, and that
+// the connection's goroutine unwinds once the context is cancelled. A tail
+// rewritten as a poll, or one whose block interval is raised into poll
+// territory, fails the first assertion; a tail that parks forever fails the
+// second.
+//
+// spec: 25.5 (SSE Delivery) — "reads Redis via XREAD BLOCK 0 in a goroutine ...
+// Each SSE connection gets an independent read cursor against the raw stream
+// with no consumer group."
+// diagnosis: a failure means the §25.5 live tail no longer sleeps inside Redis
+// waiting on the stream. Either it has degraded into interval polling, so every
+// operational event reaches subscribers late by up to one interval, or a
+// disconnected connection's tail goroutine no longer exits, leaking one
+// goroutine and one Redis connection per dropped SSE client.
+func TestOpsEventStreamLiveTailWakesOnPublishAndExitsOnDisconnect(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	const key = "ops:events:stream:tailwake"
+	emitter := newStreamEmitter(t, rd.Client, key, 1000)
+	if err := emitter.Emit(ctx, alertEvent("pool/backlog")); err != nil {
+		t.Fatalf("emit backlog event: %v", err)
+	}
+
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:    rd.Client,
+		RedisStreamKey: key,
+		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+	})
+
+	conn := openStream(t, svc)
+	conn.expectEventType(t, "backlog", "dev.lenny.alert_fired")
+
+	// The tail is now parked inside Redis. Let it settle into the block, then
+	// XADD and measure how long the frame takes to arrive.
+	time.Sleep(250 * time.Millisecond)
+	start := time.Now()
+	if err := emitter.Emit(ctx, alertEvent("pool/woken")); err != nil {
+		t.Fatalf("emit live event: %v", err)
+	}
+	conn.expectSubject(t, "tail", "pool/woken")
+	if latency := time.Since(start); latency > 500*time.Millisecond {
+		t.Fatalf("a live event took %s to reach the parked tail; the tail must wake on the XADD rather than on a poll interval", latency)
+	}
+
+	// Cancelling the connection unwinds the tail goroutine: the handler closes
+	// its response body, which ends the frame reader.
+	conn.close()
+	select {
+	case _, open := <-conn.events:
+		if open {
+			// Drain any frame already in flight, then require the close.
+			select {
+			case _, stillOpen := <-conn.events:
+				if stillOpen {
+					t.Fatal("the SSE frame channel stayed open after cancellation; the tail goroutine did not exit")
+				}
+			case <-time.After(5 * time.Second):
+				t.Fatal("the tail goroutine did not exit within 5s of the connection being cancelled")
+			}
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the tail goroutine did not exit within 5s of the connection being cancelled")
+	}
+}

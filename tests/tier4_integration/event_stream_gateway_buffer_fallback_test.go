@@ -18,9 +18,14 @@
 package tier4_integration_test
 
 import (
+	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -135,4 +140,222 @@ func TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown(t *test
 	if len(page.Items) != 3 {
 		t.Fatalf("served %d events; want 3 (two distinct alerts + one collapsed broadcast)", len(page.Items))
 	}
+}
+
+// bufEventAt builds a gateway-buffer event with an explicit emission instant so
+// a test can place a cursor before, inside, or after the retained window.
+func bufEventAt(id, typ string, sec int64) gwevents.BufferedEvent {
+	ev := bufEvent(id, typ)
+	ev.Event.Time = time.Unix(sec, 0).UTC()
+	return ev
+}
+
+// spec: 25.5 (cross-source cursor translation with gapDetected and
+// oldestAvailableCursor on a miss) — a poll served from the Redis-down
+// gateway-buffer fan-out with a cursor whose eventKey has aged out of every
+// replica's ring reports the canonical gap envelope and fires the
+// lenny_ops_events_stream_gaps_total counter, so a caller resyncs instead of
+// silently re-consuming the window. A cursor that is merely absent from the
+// window while ordering inside it is the ordinary source-switch case and
+// continues without a gap. The pre-fix fan-out poll path flagged neither: it
+// restarted from the head of the window with gapDetected false and never fired
+// the counter, so this fails against that code.
+//
+// diagnosis: a failure means the §25.5 gap contract is not honoured on the
+// gateway-buffer fall-back read path — an aged-out cursor is served as though
+// continuity held (the caller re-processes delivered events and silently misses
+// the evicted ones), or an ordinary cross-source switch is misreported as an
+// eviction and replays the window.
+func TestOpsEventStreamGatewayBufferPollReportsGapOnAgedOutCursor(t *testing.T) {
+	replica := bufferReplica(t, []gwevents.BufferedEvent{
+		bufEventAt("gw-a:2000:1", "dev.lenny.alert_fired", 2000),
+		bufEventAt("gw-a:2002:1", "dev.lenny.alert_fired", 2002),
+	})
+	client, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("test-token"),
+		Discovery:         gateway.StaticDiscovery{replica.URL},
+		PerRequestTimeout: 5 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+
+	var gaps atomic.Int64
+	svc := opsstream.New(opsstream.Options{
+		SourceHealth: redisDownGatewayUp{},
+		OnGap:        func() { gaps.Add(1) },
+	})
+	svc.SetGatewayBufferSource(client)
+
+	// A cursor minted before the retained window: the events between it and the
+	// oldest retained entry are gone.
+	aged := mixedCursor("gw-a:1000:1")
+	page := pollFallback(t, svc, aged)
+	if !page.Pagination.GapDetected {
+		t.Fatalf("an aged-out cursor must report pagination.gapDetected: true, got %+v", page.Pagination)
+	}
+	if page.Pagination.OldestAvailableCursor == "" {
+		t.Error("a detected gap must carry pagination.oldestAvailableCursor so the caller can resync")
+	}
+	if page.Pagination.SuggestedAction != "resync" {
+		t.Errorf("gap suggestedAction = %q, want resync", page.Pagination.SuggestedAction)
+	}
+	if n := gaps.Load(); n != 1 {
+		t.Errorf("lenny_ops_events_stream_gaps_total fired %d times, want 1 for the one gapped poll", n)
+	}
+
+	// A cursor absent from the window but ordering inside it continues from the
+	// next event with no gap: the caller's last event came from a source no
+	// gateway replica buffers.
+	inside := mixedCursor("ops:2001:1")
+	cont := pollFallback(t, svc, inside)
+	if cont.Pagination.GapDetected {
+		t.Fatalf("an ordinary cross-source switch must not report a gap: %+v", cont.Pagination)
+	}
+	if len(cont.Items) != 1 || cont.Items[0].Event.ID != "gw-a:2002:1" {
+		t.Fatalf("continuation served %d items (%+v), want only gw-a:2002:1", len(cont.Items), cont.Items)
+	}
+	if n := gaps.Load(); n != 1 {
+		t.Errorf("gap counter fired again on a continuation poll: %d", n)
+	}
+}
+
+// spec: 25.5 (the in-memory buffer stays the canonical source of
+// lenny-ops-originated events during a Redis-down / gateway-up outage) — with
+// Redis unreachable, a lenny-ops-originated event exists only in this replica's
+// local ring: no gateway replica buffers it and its XADD to the shared stream
+// is failing. The poll page and an open SSE connection must both carry it
+// alongside the gateway-originated events fetched from the fan-out. The pre-fix
+// read surface served the fan-out alone during this outage, so a Redis-only
+// outage dropped lenny-ops events entirely, observably losing more than the
+// strictly worse dual outage; this fails against that code.
+//
+// diagnosis: a failure means the §25.5 read surface drops lenny-ops-originated
+// events (escalations, drift, lock changes, ops self-health) for the duration
+// of a Redis-only outage — either the poll page omits them or an open SSE
+// connection in the gateway-buffer fall-back never receives them.
+func TestOpsEventStreamServesLocalOriginEventsDuringRedisOnlyOutage(t *testing.T) {
+	replica := bufferReplica(t, []gwevents.BufferedEvent{
+		bufEventAt("gw-a:3000:1", "dev.lenny.alert_fired", 3000),
+	})
+	client, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("test-token"),
+		Discovery:         gateway.StaticDiscovery{replica.URL},
+		PerRequestTimeout: 5 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+
+	svc := opsstream.New(opsstream.Options{SourceHealth: redisDownGatewayUp{}, ReplicaID: "ops-1"})
+	svc.SetGatewayBufferSource(client)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// An open SSE connection in the fall-back.
+	rec := newFallbackSink()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/admin/events/stream", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.HandleStream(rec, req)
+	}()
+	waitFor(t, rec, "gw-a:3000:1", 5*time.Second, "the gateway-originated event from the fan-out")
+
+	// lenny-ops emits its own event while Redis is down.
+	local := gwevents.OperationalEvent{
+		Type:        "dev.lenny.escalation_created",
+		SpecVersion: gwevents.CloudEventsSpecVersion,
+		Time:        time.Unix(3001, 0).UTC(),
+	}
+	if _, err := svc.Publish(ctx, local); err != nil {
+		t.Fatalf("publish local-origin event: %v", err)
+	}
+
+	waitFor(t, rec, "dev.lenny.escalation_created", 5*time.Second, "the lenny-ops-originated event on the open fall-back connection")
+
+	page := pollFallback(t, svc, "")
+	types := map[string]int{}
+	for _, item := range page.Items {
+		types[item.Event.Type]++
+	}
+	if types["dev.lenny.alert_fired"] != 1 {
+		t.Errorf("poll page lost the gateway-originated event: %v", types)
+	}
+	if types["dev.lenny.escalation_created"] != 1 {
+		t.Errorf("poll page dropped the lenny-ops-originated event during a Redis-only outage: %v", types)
+	}
+
+	cancel()
+	<-done
+}
+
+// mixedCursor builds the opaque §25.5 cursor a caller sends back: the
+// base64url of source_kind and the canonical eventKey. Agents treat it as
+// opaque; the test mints one so it can place a cursor before or inside the
+// retained window.
+func mixedCursor(eventKey string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(opsstream.SourceKindMixed + ":" + eventKey))
+}
+
+// pollFallback drives GET /v1/admin/events through the Service and decodes the
+// §25.5 poll envelope.
+func pollFallback(t *testing.T, svc *opsstream.Service, cursor string) opsstream.EventPage {
+	t.Helper()
+	target := "/v1/admin/events"
+	if cursor != "" {
+		target += "?cursor=" + cursor
+	}
+	rec := httptest.NewRecorder()
+	svc.HandlePoll(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poll status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var page opsstream.EventPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatalf("decode poll body: %v", err)
+	}
+	return page
+}
+
+// fallbackSink is a streaming ResponseWriter+Flusher readable while the SSE
+// handler writes to it from another goroutine.
+type fallbackSink struct {
+	mu  sync.Mutex
+	buf strings.Builder
+	hdr http.Header
+}
+
+func newFallbackSink() *fallbackSink { return &fallbackSink{hdr: http.Header{}} }
+
+func (s *fallbackSink) Header() http.Header { return s.hdr }
+func (s *fallbackSink) WriteHeader(int)     {}
+func (s *fallbackSink) Flush()              {}
+func (s *fallbackSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.Write(p)
+}
+
+func (s *fallbackSink) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.buf.String()
+}
+
+func waitFor(t *testing.T, sink *fallbackSink, want string, timeout time.Duration, what string) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Contains(sink.String(), want) {
+			return
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s (%q) on the SSE stream:\n%s", what, want, sink.String())
 }

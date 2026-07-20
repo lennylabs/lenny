@@ -170,8 +170,8 @@ func TestRedisPollPage_TranslatesBufferCursorByEventKey_spec_25_5(t *testing.T) 
 
 // spec: 25.5 (evicted-cursor gap: gapDetected + oldestAvailableCursor) — a
 // redis cursor whose stream ID predates the oldest retained entry reports a
-// gap and fires the gap counter, and a buffer cursor whose eventKey is no
-// longer present does the same.
+// gap and fires the gap counter, and a buffer cursor whose eventKey orders
+// before the oldest retained event does the same.
 func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 	f := &fakeStream{}
 	f.add("10-0", evt("ops:10:1", "dev.lenny.alert_fired"))
@@ -197,13 +197,71 @@ func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 		t.Errorf("oldestAvailableCursor = (%q,%q), want (redis,10-0)", k, pos)
 	}
 
-	// A buffer cursor whose eventKey is absent from the stream also gaps.
-	page2 := s.pollPage(context.Background(), SourceKindBuffer, "ops:gone:9", gwevents.EventFilter{}, 10, false)
+	// A buffer cursor whose eventKey orders before the oldest retained event
+	// also gaps: the events between it and the window were evicted.
+	page2 := s.pollPage(context.Background(), SourceKindBuffer, "ops:5:1", gwevents.EventFilter{}, 10, false)
 	if !page2.Pagination.GapDetected {
-		t.Error("an unresolvable buffer eventKey must report gapDetected")
+		t.Error("a buffer eventKey older than the retained window must report gapDetected")
 	}
 	if gaps != 2 {
 		t.Errorf("gap counter = %d, want 2 (one per gapped poll)", gaps)
+	}
+}
+
+// spec: 25.5 (cross-source cursor translation: the continuation point is the
+// first event ordering at or after the carried eventKey) — a cursor whose
+// eventKey is absent from the Redis stream but orders inside its retained
+// window is the ordinary source-switch case: the last event the caller
+// consumed came from a source that never XADDed it. The read resumes at the
+// next event in order, with no gap and no replay. The pre-fix resume required
+// the key verbatim and treated every miss as an eviction, so it reported a gap
+// and re-served the whole retained window; this fails against that code.
+func TestRedisPollPage_ContinuesFromAbsentKeyInsideWindow_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	f.add("10-0", evt("gw:10:1", "dev.lenny.alert_fired"))
+	f.add("12-0", evt("gw:12:1", "dev.lenny.alert_fired"))
+	gaps := 0
+	s := New(Options{
+		RedisClient:  f,
+		SourceHealth: StaticSourceHealth{Redis: true, Gateway: true},
+		OnGap:        func() { gaps++ },
+		Now:          ts,
+	})
+
+	// ops:11:1 is a lenny-ops event emitted while Redis was down, so it never
+	// reached the stream, but it orders between the two retained entries.
+	page := s.pollPage(context.Background(), SourceKindBuffer, "ops:11:1", gwevents.EventFilter{}, 10, false)
+	if page.Pagination.GapDetected {
+		t.Error("a cursor ordering inside the retained window must not report a gap")
+	}
+	if gaps != 0 {
+		t.Errorf("gap counter = %d, want 0 for an ordinary source switch", gaps)
+	}
+	if len(page.Items) != 1 || page.Items[0].Event.ID != "gw:12:1" {
+		t.Fatalf("resumed page = %v, want only gw:12:1 (the continuation, not the whole window)", eventKeys(page.Items))
+	}
+}
+
+// spec: 25.5 (cross-source cursor translation) — a cursor ordering after every
+// retained entry means the caller is current with this source, so the page is
+// empty rather than a gap or a replay.
+func TestRedisPollPage_CurrentCallerServedEmpty_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	f.add("10-0", evt("gw:10:1", "dev.lenny.alert_fired"))
+	gaps := 0
+	s := New(Options{
+		RedisClient:  f,
+		SourceHealth: StaticSourceHealth{Redis: true, Gateway: true},
+		OnGap:        func() { gaps++ },
+		Now:          ts,
+	})
+
+	page := s.pollPage(context.Background(), SourceKindBuffer, "ops:99:1", gwevents.EventFilter{}, 10, false)
+	if page.Pagination.GapDetected || gaps != 0 {
+		t.Error("a cursor newer than the whole retained window must not report a gap")
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("served %v, want an empty page", eventKeys(page.Items))
 	}
 }
 

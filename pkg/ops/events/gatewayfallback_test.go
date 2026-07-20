@@ -5,6 +5,7 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
@@ -392,4 +393,168 @@ func TestGatewayPollPage_ResumeLimitAndFetchError_spec_25_5(t *testing.T) {
 	if errPage.Pagination.Cursor != encodeCursor(SourceKindMixed, "gw-a:1000:2") {
 		t.Fatalf("fan-out failure cursor = %q, want the echoed caller cursor", errPage.Pagination.Cursor)
 	}
+}
+
+// spec: 25.5 (cross-source cursor translation with gapDetected and
+// oldestAvailableCursor on a miss) — a cursor whose eventKey has aged out of
+// every gateway replica's ring reports gapDetected with oldestAvailableCursor
+// and a resync action, and fires the gap counter, the same way the Redis and
+// local-buffer poll paths do. The pre-fix gatewayPollPage silently restarted
+// the window from its head with gapDetected false and no counter fire, so a
+// caller re-consumed events it had already processed while the envelope
+// asserted continuity; this fails against that code.
+func TestGatewayPollPage_GapOnAgedOutCursor_spec_25_5(t *testing.T) {
+	gaps := 0
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		bufEvt("gw-a:2000:1", "dev.lenny.alert_fired"),
+		bufEvt("gw-a:2000:2", "dev.lenny.alert_fired"),
+	}}})
+
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{}, 10, false)
+	if !page.Pagination.GapDetected {
+		t.Fatal("a cursor older than every retained gateway-buffer entry must report gapDetected")
+	}
+	if page.Pagination.OldestAvailableCursor != encodeCursor(SourceKindMixed, "gw-a:2000:1") {
+		t.Errorf("oldestAvailableCursor = %q, want the oldest retained merged entry", page.Pagination.OldestAvailableCursor)
+	}
+	if page.Pagination.SuggestedAction != "resync" {
+		t.Errorf("suggestedAction = %q, want resync", page.Pagination.SuggestedAction)
+	}
+	if gaps != 1 {
+		t.Errorf("gap counter fired %d times, want 1", gaps)
+	}
+	if len(page.Items) != 2 {
+		t.Errorf("a gapped page must still serve the retained window, got %d items", len(page.Items))
+	}
+}
+
+// spec: 25.5 (cross-source cursor translation) — a cursor absent from the
+// merged gateway window but ordering inside it is the ordinary source-switch
+// case (the caller's last event was a lenny-ops-originated one no gateway
+// replica buffers), so the page continues from the next event in order with no
+// gap. The eviction test runs over the raw merged window, so narrowing the
+// filter is not misread as an eviction either.
+func TestGatewayPollPage_ContinuesWithoutGapOnOrdinarySwitch_spec_25_5(t *testing.T) {
+	gaps := 0
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		bufEvt("gw-a:1000:1", "dev.lenny.alert_fired"),
+		bufEvt("gw-a:1000:3", "dev.lenny.pool_state_changed"),
+	}}})
+
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:1000:2", gwevents.EventFilter{}, 10, false)
+	if page.Pagination.GapDetected || gaps != 0 {
+		t.Fatal("a cursor ordering inside the retained window must not report a gap")
+	}
+	if len(page.Items) != 1 || page.Items[0].Event.ID != "gw-a:1000:3" {
+		t.Fatalf("served %v, want only the continuation gw-a:1000:3", page.Items)
+	}
+
+	// A filtered page whose cursor event does not match the filter is still a
+	// continuation rather than an eviction.
+	filtered := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{EventType: "pool_state_changed"}, 10, false)
+	if filtered.Pagination.GapDetected || gaps != 0 {
+		t.Fatalf("narrowing the filter must not be reported as a gap: %+v", filtered.Pagination)
+	}
+}
+
+// spec: 25.5 (the in-memory buffer stays the canonical source of
+// lenny-ops-originated events) — during a Redis-down / gateway-up outage the
+// poll page serves the union of the gateway fan-out and this replica's local
+// ring, deduped by eventKey. lenny-ops-originated events exist nowhere else for
+// the duration of the outage: no gateway replica buffers them and their XADD is
+// failing. The pre-fix poll served the fan-out alone, so a Redis-only outage
+// dropped them entirely, losing more than the strictly worse dual outage; this
+// fails against that code.
+func TestGatewayPollPage_UnionsLocalOriginEvents_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		bufEvt("gw-a:1000:1", "dev.lenny.alert_fired"),
+	}}})
+	if _, err := s.Publish(context.Background(), evt("ops:1000:2", "dev.lenny.escalation_created")); err != nil {
+		t.Fatalf("publish local event: %v", err)
+	}
+
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "", gwevents.EventFilter{}, 10, false)
+	got := eventKeys(page.Items)
+	if len(got) != 2 {
+		t.Fatalf("served %v, want both the gateway event and the local-origin one", got)
+	}
+	found := false
+	for _, k := range got {
+		if k == "ops:1000:2" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("served %v; the lenny-ops-originated event must stay observable during a Redis-only outage", got)
+	}
+}
+
+// spec: 25.5 (the in-memory buffer stays the canonical source of
+// lenny-ops-originated events) — an SSE connection served from the
+// gateway-buffer fall-back stays subscribed to this replica's local publishes,
+// so a lenny-ops-originated event emitted during the outage reaches the open
+// connection rather than waiting for Redis to recover. The pre-fix serveGateway
+// never subscribed, so the event was never delivered; this fails against that
+// code.
+func TestServeGateway_DeliversLiveLocalOriginEvents_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	src := &oneShotGatewaySource{
+		pages:  [][]gwevents.BufferedEvent{{bufEvt("gw-a:1000:1", "dev.lenny.alert_fired")}},
+		called: make(chan struct{}),
+	}
+	s.SetGatewayBufferSource(src)
+
+	rec := &syncRecorder{hdr: http.Header{}}
+	sess := &streamSession{s: s, w: rec, flusher: rec}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sess.serveGateway(ctx)
+	}()
+
+	// After the first fan-out fill, publish a lenny-ops-originated event; it
+	// must reach the connection between fan-out ticks.
+	<-src.called
+	if _, err := s.Publish(ctx, evt("ops:1000:2", "dev.lenny.escalation_created")); err != nil {
+		t.Fatalf("publish local event: %v", err)
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(rec.String(), "ops:1000:2") {
+		if time.Now().After(deadline) {
+			cancel()
+			<-done
+			t.Fatalf("the lenny-ops-originated event never reached the open fall-back connection:\n%s", rec.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	cancel()
+	<-done
+}
+
+// syncRecorder is a streaming ResponseWriter+Flusher safe to read while a
+// handler goroutine writes to it.
+type syncRecorder struct {
+	mu  sync.Mutex
+	buf strings.Builder
+	hdr http.Header
+}
+
+func (r *syncRecorder) Header() http.Header { return r.hdr }
+func (r *syncRecorder) WriteHeader(int)     {}
+func (r *syncRecorder) Flush()              {}
+func (r *syncRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.Write(p)
+}
+
+func (r *syncRecorder) String() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.String()
 }

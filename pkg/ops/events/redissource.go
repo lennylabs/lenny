@@ -83,14 +83,20 @@ type redisEntry struct {
 // most.
 const maxWindow = eventbuffer.DefaultStreamMaxLen
 
-// tailBlock bounds each XREAD BLOCK so the live tail sleeps inside Redis
-// (waking the instant a new entry is XADDed, delivery-equivalent to BLOCK 0)
-// yet re-checks its context on a bounded interval. go-redis v9 does not
-// interrupt an in-flight blocked read on a deadline-free context
-// cancellation, so a literal BLOCK 0 read stays parked in IO wait after the
-// SSE connection disconnects and leaks a goroutine per connection. A bounded
+// tailBlock bounds each XREAD BLOCK issued by the live tail.
+//
+// spec: §25.5 specifies XREAD BLOCK 0 for the per-connection live tail. This is
+// a deliberate deviation in the block argument alone, and it preserves the
+// delivery semantics the spec line is about: the tail sleeps inside Redis and
+// wakes the instant a new entry is XADDed, so an event is delivered as promptly
+// as under BLOCK 0 rather than on a poll interval. The deviation exists because
+// go-redis v9 does not interrupt an in-flight blocked read on a deadline-free
+// context cancellation: a literal BLOCK 0 read stays parked in IO wait after
+// the SSE connection disconnects, leaking a goroutine per connection. A bounded
 // block gives every read a deadline, so a cancelled tail exits within one
-// interval. spec: §25.5 (XREAD BLOCK live tail on a per-connection cursor).
+// interval. Both halves of that claim are pinned by test: delivery latency well
+// inside this interval, and goroutine exit after cancellation. Raising this
+// constant into poll territory breaks the first.
 const tailBlock = time.Second
 
 // redisReadTimeout bounds every non-tailing Redis read a single poll or SSE
@@ -186,14 +192,22 @@ func (rs *redisSource) bound(ctx context.Context, rev bool) (streamID, eventKey 
 	return msgs[0].ID, ev.Event.ID, true, nil
 }
 
-// findByEventKey locates the stream ID of the retained entry whose
-// CloudEvents id equals eventKey. It backs the §25.5 cross-source cursor
-// translation: a cursor minted by the in-memory buffer carries an eventKey,
-// and the Redis source resolves it to a stream position by scanning. found
-// is false when no retained entry matches (the event was evicted), which
-// the caller reports as a gap. spec: §25.5 ("translates by scanning for the
-// first event with a matching eventKey").
-func (rs *redisSource) findByEventKey(ctx context.Context, eventKey string) (streamID string, found bool, err error) {
+// resumeByEventKey translates a cursor minted by another source into the
+// exclusive Redis stream position to resume after, and reports whether the
+// cursor referenced a position the stream no longer retains.
+//
+// §25.5 locates the continuation point in the new source rather than requiring
+// the carried eventKey to be present verbatim: the scan stops at the first
+// retained entry whose eventKey orders at or after the cursor. An exact match
+// resumes immediately after that entry. A key that is absent but falls inside
+// the retained window resumes immediately before the first greater entry, so
+// the events after the cursor are delivered without replaying the window. That
+// case is the ordinary one on a source switch, where the last delivered event
+// originated somewhere that never XADDed it. Only a key ordering before the
+// oldest retained entry is a gap: the events between it and the window were
+// evicted before this caller read them. spec: §25.5 (cross-source cursor
+// translation, gapDetected on an evicted cursor).
+func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (start string, gap bool, err error) {
 	if eventKey == "" {
 		return "", false, nil
 	}
@@ -201,13 +215,31 @@ func (rs *redisSource) findByEventKey(ctx context.Context, eventKey string) (str
 	if err != nil {
 		return "", false, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
 	}
+	prev := ""
+	oldestKey := ""
 	for _, m := range msgs {
 		ev, ok := decodeRedisEntry(m)
-		if ok && ev.Event.ID == eventKey {
-			return m.ID, true, nil
+		if !ok {
+			continue
 		}
+		key := ev.Event.ID
+		if oldestKey == "" {
+			oldestKey = key
+		}
+		if key == eventKey {
+			return m.ID, false, nil
+		}
+		if eventKeyLess(eventKey, key) {
+			// The first entry ordering after the cursor: resume immediately
+			// before it so it is the next event delivered. A cursor ordering
+			// before the oldest retained entry lost the events in between.
+			return prev, eventKeyLess(eventKey, oldestKey), nil
+		}
+		prev = m.ID
 	}
-	return "", false, nil
+	// Every retained entry orders at or before the cursor: the caller is
+	// current with this window, so the next read starts after its newest entry.
+	return prev, false, nil
 }
 
 // Tail streams live events to out via a bounded XREAD BLOCK from
@@ -347,8 +379,8 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 // to resume after. It returns the exclusive start stream ID ("" reads from
 // the oldest retained entry) and whether the cursor referenced an evicted
 // position (a gap). A redis cursor reads by stream ID; any other source's
-// cursor is translated by eventKey scan. spec: §25.5 (cross-source cursor
-// translation).
+// cursor is translated to the first entry ordering at or after its eventKey
+// (see resumeByEventKey). spec: §25.5 (cross-source cursor translation).
 func (s *Service) redisResumePoint(ctx context.Context, cursorKind, position string) (start string, gap bool, err error) {
 	if position == "" {
 		return "", false, nil
@@ -365,16 +397,10 @@ func (s *Service) redisResumePoint(ctx context.Context, cursorKind, position str
 		}
 		return position, false, nil
 	}
-	// A cursor minted by another source (the in-memory buffer) carries an
-	// eventKey; translate it to a stream position by scanning.
-	streamID, found, ferr := s.redis.findByEventKey(ctx, position)
-	if ferr != nil {
-		return "", false, ferr
-	}
-	if !found {
-		return "", true, nil
-	}
-	return streamID, false, nil
+	// A cursor minted by another source (the in-memory buffer or a gateway
+	// replica's ring) carries an eventKey; translate it to a stream position by
+	// scanning for the continuation point.
+	return s.redis.resumeByEventKey(ctx, position)
 }
 
 // redisServedKind reports the §25.5 cursorKind for a page served from the

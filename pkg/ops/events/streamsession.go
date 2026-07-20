@@ -222,6 +222,16 @@ func (st *streamSession) serveRedis(parent context.Context) {
 // lastKey is what keeps the switch exactly-once with no drop. spec: §25.5 (SSE
 // fall-back polls the fan-out every 2 seconds; cross-switch no-drop).
 func (st *streamSession) serveGateway(ctx context.Context) {
+	// The gateway rings hold gateway-originated events only, so the local ring
+	// stays the source of this replica's own events for the duration of the
+	// outage: it is merged into every fan-out window and its live publishes are
+	// delivered between fan-out ticks. Without it a Redis-only outage would
+	// drop escalations, drift, and ops self-health entirely, losing more than
+	// the strictly worse dual outage, where the local ring is served. spec:
+	// §25.5 (the in-memory buffer is the lenny-ops-origin source).
+	sub := st.s.subscribe(st.filter, 64)
+	defer st.s.unsubscribe(sub)
+
 	delivered := make(map[string]struct{})
 	resumed := false
 	for {
@@ -232,55 +242,95 @@ func (st *streamSession) serveGateway(ctx context.Context) {
 			return
 		}
 		if merged, err := st.s.fetchGatewayBuffer(ctx, st.filter); err == nil {
-			if !resumed {
+			merged = st.s.unionLocalOrigin(merged, st.filter)
+			if !resumed && len(merged) > 0 {
 				st.seedGatewayResume(merged, delivered)
 				resumed = true
 			}
 			for _, ev := range merged {
-				if _, seen := delivered[ev.Event.ID]; seen {
-					continue
-				}
-				if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
-					continue
-				}
-				writeSSEFrame(st.w, ev)
-				delivered[ev.Event.ID] = struct{}{}
-				st.markDelivered(ev.Event.ID)
+				st.deliverOnce(ev, delivered)
 			}
 			st.flusher.Flush()
 		}
-		select {
-		case <-ctx.Done():
+		if !st.waitGatewayTick(ctx, sub, delivered) {
 			return
-		case <-time.After(gatewayPollInterval):
 		}
 	}
 }
 
+// waitGatewayTick waits out one fall-back poll interval, delivering this
+// replica's live local publishes as they arrive so a lenny-ops-originated event
+// reaches an open connection without waiting for the next fan-out tick. It
+// reports false when the connection is done. spec: §25.5 (the in-memory buffer
+// is the lenny-ops-origin source during a Redis-down outage).
+func (st *streamSession) waitGatewayTick(ctx context.Context, sub *subscription, delivered map[string]struct{}) bool {
+	tick := time.NewTimer(gatewayPollInterval)
+	defer tick.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		case <-tick.C:
+			return true
+		case ev, open := <-sub.ch:
+			if !open {
+				return false
+			}
+			if st.deliverOnce(ev, delivered) {
+				st.flusher.Flush()
+			}
+		}
+	}
+}
+
+// deliverOnce writes ev as an SSE frame unless it was already delivered on this
+// connection or the caller's filter or tenant scope excludes it, and reports
+// whether a frame was written. The delivered set is keyed on the eventKey, so
+// the same event reaching the connection from both the fan-out window and a
+// local publish is written once. spec: §25.5 (eventKey dedup across sources).
+func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent, delivered map[string]struct{}) bool {
+	if _, seen := delivered[ev.Event.ID]; seen {
+		return false
+	}
+	if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
+		return false
+	}
+	writeSSEFrame(st.w, ev)
+	delivered[ev.Event.ID] = struct{}{}
+	st.markDelivered(ev.Event.ID)
+	return true
+}
+
 // seedGatewayResume seeds the delivered set from the carried resume position so
 // a switch into the gateway-buffer fall-back does not re-deliver events already
-// sent from the Redis stream or an earlier gateway stint. The merged window is
-// ordered oldest-first, so every event up to and including lastKey is marked
-// delivered; the poll loop then emits only the events after it. When lastKey is
-// set but absent from the window, a :gap comment is emitted and the gap counter
-// observed, matching the serveRedis and serveLocal resume paths, so the
-// consumer re-reads platform state before assuming continuity. spec: §25.5
-// (cross-switch no-drop, exactly-once across the source switch).
+// sent from the Redis stream or an earlier gateway stint. Every merged event
+// ordering at or before lastKey is marked delivered, so the poll loop emits
+// only the continuation. Marking by order rather than by an exact match is what
+// makes the ordinary switch exactly-once: the last event delivered from Redis
+// is frequently a lenny-ops-originated one that no gateway replica ever
+// buffered, so requiring the key itself to be present would replay the whole
+// window on every switch. A :gap comment is emitted only when the whole window
+// orders after lastKey, which means the events between were evicted from every
+// replica's ring. spec: §25.5 (cross-switch no-drop, exactly-once across the
+// source switch).
 func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, delivered map[string]struct{}) {
 	if st.lastKey == "" {
 		return
 	}
-	for i, ev := range window {
-		if ev.Event.ID == st.lastKey {
-			for _, seen := range window[:i+1] {
-				delivered[seen.Event.ID] = struct{}{}
-			}
-			return
+	seeded := false
+	for _, ev := range window {
+		if ev.Event.ID == st.lastKey || eventKeyLess(ev.Event.ID, st.lastKey) {
+			delivered[ev.Event.ID] = struct{}{}
+			seeded = true
 		}
 	}
-	// The resume position is no longer in the window: emit a :gap and deliver
-	// the whole window (nothing pre-marked), so the consumer re-reads platform
-	// state before assuming continuity.
+	if seeded {
+		return
+	}
+	// Every retained event is newer than the resume position: the events
+	// between were evicted. Emit a :gap and deliver the whole window (nothing
+	// pre-marked) so the consumer re-reads platform state before assuming
+	// continuity.
 	writeSSEGap(st.w, st.lastKey)
 	st.s.observeGap()
 }
