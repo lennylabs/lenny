@@ -141,15 +141,17 @@ func TestSourceHealthProbeStartsOptimisticAndRefreshes_spec_25_5(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	var flushes atomic.Int64
+	var flushes, downs atomic.Int64
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		// A nil Redis client resolves to unreachable on the first refresh.
-		p.run(ctx, 50*time.Millisecond, nil, newProbeGatewayClient(t, srv.URL),
-			func(context.Context) { flushes.Add(1) })
+		p.run(ctx, 50*time.Millisecond, nil, newProbeGatewayClient(t, srv.URL), redisEdgeCallbacks{
+			onRedisDown:      func() { downs.Add(1) },
+			onRedisRecovered: func(context.Context) { flushes.Add(1) },
+		})
 	}()
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -164,6 +166,12 @@ func TestSourceHealthProbeStartsOptimisticAndRefreshes_spec_25_5(t *testing.T) {
 	}
 	if n := flushes.Load(); n != 0 {
 		t.Fatalf("the recovery flush fired %d time(s) with no down-to-up edge; it must fire only after Redis recovers", n)
+	}
+	// The up-to-down edge opens the recovery flush's outage window, so the
+	// flush that follows a later recovery re-emits the events buffered during
+	// the outage rather than the whole local ring.
+	if n := downs.Load(); n != 1 {
+		t.Fatalf("the outage-window edge fired %d time(s) for one observed Redis outage; want exactly 1", n)
 	}
 	cancel()
 	<-done

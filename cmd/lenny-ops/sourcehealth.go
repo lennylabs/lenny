@@ -24,6 +24,18 @@ type sourceHealthProbe struct {
 	gatewayUp atomic.Bool
 }
 
+// redisEdgeCallbacks carries the §25.5 replica-level Redis reachability edge
+// hooks the source-health loop fires. onRedisDown opens the recovery flush's
+// outage window by recording where the local ring stood when Redis went away;
+// onRedisRecovered flushes that window to the recovered stream. Keeping both on
+// the same detector is what scopes the flush to the outage: a recovery with no
+// preceding down edge has nothing to re-emit. spec: §25.5 (best-effort recovery
+// flush).
+type redisEdgeCallbacks struct {
+	onRedisDown      func()
+	onRedisRecovered func(context.Context)
+}
+
 // newSourceHealthProbe returns a probe that starts optimistic (both
 // sources reachable) so the read surface serves normally until the first
 // refresh resolves the live state, rather than 503-ing on a cold start.
@@ -50,13 +62,14 @@ func (p *sourceHealthProbe) GatewayAvailable() bool { return p.gatewayUp.Load() 
 // 2768-2780.
 //
 // run also drives the §25.5 best-effort recovery flush: it remembers the
-// previous Redis reachability and, on a down-to-up edge, invokes
-// onRedisRecovered exactly once. The flush is a replica-level property,
+// previous Redis reachability and fires the edge callbacks exactly once per
+// transition. The up-to-down edge opens the flush's outage window, and the
+// down-to-up edge flushes it. The flush is a replica-level property,
 // independent of any open read connection, so a consumer that connects only
 // after Redis recovers still observes the events lenny-ops buffered locally
-// during the outage. A nil callback disables the flush. spec: §25.5
+// during the outage. Nil callbacks disable the flush. spec: §25.5
 // (best-effort recovery flush).
-func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, redisCli redis.UniversalClient, gwClient *gateway.Client, onRedisRecovered func(context.Context)) {
+func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, redisCli redis.UniversalClient, gwClient *gateway.Client, edges redisEdgeCallbacks) {
 	if interval <= 0 {
 		interval = 15 * time.Second
 	}
@@ -68,8 +81,11 @@ func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, red
 		nowUp := probeRedis(ctx, redisCli)
 		p.redisUp.Store(nowUp)
 		p.gatewayUp.Store(probeGateway(ctx, gwClient))
-		if nowUp && !prevRedisUp && onRedisRecovered != nil {
-			onRedisRecovered(ctx)
+		switch {
+		case !nowUp && prevRedisUp && edges.onRedisDown != nil:
+			edges.onRedisDown()
+		case nowUp && !prevRedisUp && edges.onRedisRecovered != nil:
+			edges.onRedisRecovered(ctx)
 		}
 		prevRedisUp = nowUp
 	}

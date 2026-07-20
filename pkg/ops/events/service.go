@@ -102,6 +102,15 @@ type Service struct {
 	// Service. spec: §25.5 (Redis-down gateway-buffer fallback).
 	gateway GatewayBufferSource
 
+	// outageMu guards the recovery-flush outage window. outageFrom is the
+	// local ring position at the moment the replica-level source-health probe
+	// observed Redis going down, and inOutage records that such an edge was
+	// seen. Together they bound the §25.5 recovery flush to the events
+	// buffered during the outage. spec: §25.5 (best-effort recovery flush).
+	outageMu   sync.Mutex
+	outageFrom uint64
+	inOutage   bool
+
 	// redisReEmit, when non-nil, re-emits a locally-buffered event to the
 	// Redis ops:events:stream without re-publishing it to the local ring.
 	// It backs the §25.5 best-effort recovery flush: on a Redis down-to-up

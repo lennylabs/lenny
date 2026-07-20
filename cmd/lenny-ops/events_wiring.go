@@ -200,8 +200,23 @@ func (w *opsWiring) buildGatewayLink() {
 	// so it exits on shutdown. On a Redis down-to-up edge it drives the
 	// §25.5 best-effort recovery flush. F-25.5.14.
 	if w.srcHealth != nil {
-		go w.srcHealth.run(w.ctx, 15*time.Second, w.redisClient, w.gwClient, w.recoverEventStreamToRedis)
+		go w.srcHealth.run(w.ctx, 15*time.Second, w.redisClient, w.gwClient, redisEdgeCallbacks{
+			onRedisDown:      w.openEventStreamOutageWindow,
+			onRedisRecovered: w.recoverEventStreamToRedis,
+		})
 	}
+}
+
+// openEventStreamOutageWindow is the §25.5 callback the source-health probe
+// invokes when it first observes Redis unreachable. It records where the local
+// ring stood at the outage's start so the recovery flush re-emits the events
+// buffered during the outage rather than the whole ring. spec: §25.5
+// (best-effort recovery flush scoped to the outage window).
+func (w *opsWiring) openEventStreamOutageWindow() {
+	if w.eventStream == nil {
+		return
+	}
+	w.eventStream.MarkRedisOutage()
 }
 
 // recoverEventStreamToRedis is the §25.5 best-effort recovery-flush callback

@@ -18,17 +18,31 @@ import (
 // must reach the shared stream, or a consumer that connects only after Redis
 // is back never observes them.
 //
-// The flush reads the eventKeys already retained in the recovered stream and
-// re-emits only the local-ring events whose eventKey is absent, so an event
-// that did reach Redis before the outage is not duplicated on the stream and
-// an already-flushed event on a repeated edge is skipped. A per-event re-emit
-// failure is logged by the caller and does not stop the flush; the returned
-// count is the number re-emitted and the returned error is the last re-emit
-// failure (nil when every re-emit succeeded). A nil re-emit path or a
-// nil Redis source makes the flush a no-op (a no-Redis deployment has nothing
-// to flush to). spec: §25.5 (best-effort recovery flush, eventKey dedup).
+// The flush is bounded by the outage window: MarkRedisOutage records the local
+// ring position at the down edge, and only the events buffered after it are
+// re-emitted. The window is the boundary that keeps the flush from re-emitting
+// events that already reached Redis long before the outage: the shared stream
+// is trimmed at its MAXLEN by every producer's traffic while the local ring
+// holds this replica's own events for far longer, so an event's absence from
+// the stream's retained window says nothing about whether it was ever XADDed.
+// Re-emitting on that signal alone would put an already-delivered event back at
+// the head of the stream, where a consumer resuming by stream position receives
+// it a second time. The retained-eventKey check stays as a secondary guard so a
+// repeated edge does not flush one window twice.
+//
+// A per-event re-emit failure is logged by the caller and does not stop the
+// flush; the returned count is the number re-emitted and the returned error is
+// the last re-emit failure (nil when every re-emit succeeded). A nil re-emit
+// path, a nil Redis source, or a recovery with no observed outage makes the
+// flush a no-op. spec: §25.5 (best-effort recovery flush, eventKey dedup).
 func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 	if s.redisReEmit == nil || s.redis == nil {
+		return 0, nil
+	}
+	since, outage := s.takeOutageWindow()
+	if !outage {
+		// No down edge was observed, so this replica buffered nothing that
+		// failed to reach Redis and has nothing to re-emit.
 		return 0, nil
 	}
 
@@ -37,11 +51,7 @@ func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 		return 0, fmt.Errorf("read retained eventKeys: %w", err)
 	}
 
-	// Snapshot the whole local ring: it holds only this replica's
-	// lenny-ops-originated events, and the eventKey filter below drops the
-	// ones already on the stream, so re-emitting from the full ring covers
-	// the outage window without tracking a separate watermark.
-	buffered := s.buffer.Query(0, gwevents.EventFilter{}, 0).Events
+	buffered := s.buffer.Query(since, gwevents.EventFilter{}, DefaultBufferCapacity).Events
 
 	flushed := 0
 	seen := make(map[string]struct{}, len(buffered))
@@ -67,6 +77,38 @@ func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 		flushed++
 	}
 	return flushed, lastErr
+}
+
+// MarkRedisOutage opens the §25.5 recovery-flush outage window by recording the
+// local ring position at the moment the replica-level source-health probe
+// observes Redis going down. Every event this replica buffers from here until
+// the flush is one whose XADD to the shared stream failed, so the window is
+// exactly the set the flush must re-emit. A second call while an outage is
+// already open keeps the original position, so a flapping probe does not narrow
+// the window past events it has yet to flush. spec: §25.5 (best-effort recovery
+// flush scoped to the outage window).
+func (s *Service) MarkRedisOutage() {
+	s.outageMu.Lock()
+	defer s.outageMu.Unlock()
+	if s.inOutage {
+		return
+	}
+	_, headID, _, _, _ := s.buffer.Bounds()
+	s.outageFrom = headID
+	s.inOutage = true
+}
+
+// takeOutageWindow returns the ring position the open outage window starts
+// after and closes the window, so one down-to-up edge flushes it once. It
+// reports false when no outage was observed since the last flush.
+func (s *Service) takeOutageWindow() (since uint64, open bool) {
+	s.outageMu.Lock()
+	defer s.outageMu.Unlock()
+	if !s.inOutage {
+		return 0, false
+	}
+	s.inOutage = false
+	return s.outageFrom, true
 }
 
 // retainedEventKeys returns the set of CloudEvents ids currently retained in
