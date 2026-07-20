@@ -517,14 +517,20 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 		if string(redisItems[i]["event"]) != string(bufferItems[i]["event"]) {
 			t.Errorf("item %d CloudEvents record diverges by source:\n redis  = %s\n buffer = %s", i, redisItems[i]["event"], bufferItems[i]["event"])
 		}
-		// The Redis-served wrapper id is zero: items[].id is the local ring's
-		// per-replica sequence, and stamping a stream-derived value there would
-		// put a second value domain behind the same field.
-		var redisID uint64
+		// The wrapper id is derived from the item's canonical eventKey, so the
+		// same event carries the same items[].id whichever source served it.
+		var redisID, bufferID uint64
 		if err := json.Unmarshal(redisItems[i]["id"], &redisID); err != nil {
 			t.Errorf("redis item %d wrapper id did not decode as a number: %v", i, err)
-		} else if redisID != 0 {
-			t.Errorf("redis item %d wrapper id = %d, want 0; a Redis-served item must not carry a second items[].id value domain", i, redisID)
+		}
+		if err := json.Unmarshal(bufferItems[i]["id"], &bufferID); err != nil {
+			t.Errorf("buffer item %d wrapper id did not decode as a number: %v", i, err)
+		}
+		if redisID != bufferID {
+			t.Errorf("item %d wrapper id diverges by source: redis=%d buffer=%d; items[].id must carry one value domain", i, redisID, bufferID)
+		}
+		if redisID == 0 {
+			t.Errorf("item %d wrapper id is zero on a record carrying an eventKey", i)
 		}
 	}
 }

@@ -41,6 +41,7 @@ import (
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
@@ -681,39 +682,54 @@ func pollItemIDs(t *testing.T, srv *opsserver.Server) []uint64 {
 	return ids
 }
 
+// fanOutReplicas is a §25.5 gateway-buffer fan-out source serving one fixed
+// §25.3 buffer page per gateway replica, so a contract test can assemble the
+// Redis-down case-1 page from more than one replica without a live gateway.
+// Each replica numbers its own ring from zero, which is what makes a merged
+// page the place two items can arrive carrying the same wrapper id.
+type fanOutReplicas struct {
+	pages [][]gwevents.BufferedEvent
+}
+
+func (f fanOutReplicas) FanOutGet(_ context.Context, _ string) ([]gateway.ReplicaResult, error) {
+	out := make([]gateway.ReplicaResult, 0, len(f.pages))
+	for _, evs := range f.pages {
+		body, err := json.Marshal(gwevents.BufferedEventPage{Events: evs})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, gateway.ReplicaResult{Endpoint: "https://gw", Body: body})
+	}
+	return out, nil
+}
+
 // TestEventStreamPollItemIDSingleValueDomainContract pins that
 // GET /v1/admin/events emits one value domain in items[].id whichever source
-// served the page. The field is the lenny-ops ring buffer's per-replica
-// sequence; a page served from the Redis ops:events:stream carries no such
-// position and leaves it zero. A client paging across a source switch, which
-// §25.5 permits within one paging session, therefore never sees the field jump
-// between value domains.
+// served the page. The field is derived from the item's canonical eventKey, the
+// one identity an event carries unchanged across the Redis ops:events:stream, a
+// gateway replica's ring, and this replica's local ring, so one event keeps one
+// items[].id across a source switch and two items on one page never share it.
 //
 // spec: 25.5 (Polling Delivery — the poll envelope's items are CloudEvents
 // records and a caller resumes on the CloudEvents id and the opaque cursor)
-// diagnosis: A failure means the Redis-served poll path stamps a wrapper id
-// from a different value domain than the buffer-served path. The same endpoint
-// hands one client items[].id values that jump by many orders of magnitude
-// across a source switch, with nothing on the wire distinguishing them, so a
-// consumer that treats the field as a position reads the switch as a huge jump
-// forward or backward in the stream.
+// diagnosis: A failure means items[].id is source-dependent again. Either the
+// same event carries a different wrapper id depending on which source served
+// it, so a consumer paging across a §25.5 source switch reads the field as a
+// jump in the stream, or one merged gateway-buffer page hands the caller
+// several distinct events sharing one id, because each responding replica
+// numbers its own ring from zero.
 func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
 	seed := []gwevents.OperationalEvent{
-		{ID: "ops:1:1", Type: "dev.lenny.alert_fired", SpecVersion: "1.0"},
-		{ID: "ops:2:1", Type: "dev.lenny.pool_state_changed", SpecVersion: "1.0"},
+		{ID: "gw-a:1700000000000:1", Type: "dev.lenny.alert_fired", SpecVersion: "1.0"},
+		{ID: "gw-b:1700000000001:1", Type: "dev.lenny.pool_state_changed", SpecVersion: "1.0"},
 	}
-
-	// The buffer-served page establishes the domain: the ring's monotonic
-	// per-replica sequence, bounded by the ring capacity.
 	const capacity = 16
-	bufferSrv := eventStreamServer(t, capacity, seed...)
-	bufferIDs := pollItemIDs(t, bufferSrv)
-	if len(bufferIDs) != len(seed) {
-		t.Fatalf("buffer-served page items = %d, want %d", len(bufferIDs), len(seed))
-	}
 
-	// The Redis-served page must stay inside that domain rather than opening a
-	// second one.
+	// Source 1: this replica's local ring, the source a replica with no Redis
+	// client wired serves from.
+	localIDs := pollItemIDs(t, eventStreamServer(t, capacity, seed...))
+
+	// Source 2: the Redis ops:events:stream, the healthy-state primary.
 	f := &fakeRedisStream{}
 	f.add("1700000000000-0", seed[0])
 	f.add("1700000000001-0", seed[1])
@@ -722,16 +738,44 @@ func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
 		RedisClient:  f,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 	})
-	redisSrv := opsserver.New(opsserver.Options{EventStream: redisStream})
-	redisIDs := pollItemIDs(t, redisSrv)
-	if len(redisIDs) != len(seed) {
-		t.Fatalf("Redis-served page items = %d, want %d", len(redisIDs), len(seed))
+	redisIDs := pollItemIDs(t, opsserver.New(opsserver.Options{EventStream: redisStream}))
+
+	// Source 3: the Redis-down gateway-buffer fan-out, assembled from two
+	// replicas that each numbered the event they hold as ring position 1.
+	fanOut := opsstream.New(opsstream.Options{
+		Capacity:     capacity,
+		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
+	})
+	fanOut.SetGatewayBufferSource(fanOutReplicas{pages: [][]gwevents.BufferedEvent{
+		{{ID: 1, Event: seed[0]}},
+		{{ID: 1, Event: seed[1]}},
+	}})
+	fanOutIDs := pollItemIDs(t, opsserver.New(opsserver.Options{EventStream: fanOut}))
+
+	for _, src := range []struct {
+		name string
+		ids  []uint64
+	}{{"local-ring", localIDs}, {"redis", redisIDs}, {"gateway-buffer", fanOutIDs}} {
+		if len(src.ids) != len(seed) {
+			t.Fatalf("%s-served page items = %d, want %d", src.name, len(src.ids), len(seed))
+		}
 	}
 
-	for _, id := range append(append([]uint64{}, bufferIDs...), redisIDs...) {
-		if id > capacity {
-			t.Errorf("items[].id = %d exceeds the ring-sequence domain (capacity %d); the endpoint emits a second items[].id value domain", id, capacity)
+	// One event keeps one items[].id across every source that can serve it.
+	for i := range seed {
+		if localIDs[i] != redisIDs[i] || localIDs[i] != fanOutIDs[i] {
+			t.Errorf("event %s items[].id = %d (local ring), %d (redis), %d (gateway buffer); the field changes meaning across the source switch",
+				seed[i].ID, localIDs[i], redisIDs[i], fanOutIDs[i])
 		}
+		if localIDs[i] == 0 {
+			t.Errorf("event %s carries items[].id = 0 on a record with an eventKey", seed[i].ID)
+		}
+	}
+
+	// A merged fan-out page carries no duplicate items[].id, even though every
+	// responding replica numbered its own ring from the same position.
+	if fanOutIDs[0] == fanOutIDs[1] {
+		t.Errorf("the case-1 fan-out page emits colliding items[].id %d for two distinct events", fanOutIDs[0])
 	}
 }
 

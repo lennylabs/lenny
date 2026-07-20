@@ -248,9 +248,9 @@ func newRedisSource(client RedisStreamClient, stream string, maxWindow int64) *r
 // from; it never leaves the source, because the opaque pagination cursor
 // carries the canonical eventKey so it round-trips at the other sources. The
 // event is the transport-neutral BufferedEvent the poll and SSE surfaces
-// serve. Its top-level wrapper ID is left zero, because that field is the local
-// ring's per-replica sequence and the Redis stream carries no such position:
-// one endpoint emits one value domain in items[].id. Callers resume on the
+// serve. Its top-level wrapper ID is left zero here and stamped by
+// stampItemIDs when the poll page is assembled, so items[].id is derived the
+// same way whichever source served the request. Callers resume on the
 // CloudEvents id (Event.ID, the canonical eventKey) and the opaque pagination
 // cursor, both identical across sources.
 type redisEntry struct {
@@ -636,15 +636,12 @@ func redisServedKind(cursorKind string) string {
 // "event" field; this reads that field back into the same OperationalEvent,
 // so the CloudEvents payload every poll item and SSE frame carries decodes
 // byte-identically to the buffer-served path. The top-level wrapper
-// BufferedEvent.ID is a synthetic per-source position derived from the Redis
-// BufferedEvent.ID is left zero: it is the local ring's per-replica sequence,
-// and the Redis stream holds no such position. Stamping a value derived from
-// the stream ID there would put a second value domain behind the same
-// items[].id field, so the same client paging across a source switch would see
-// the field jump between a small ring sequence and a millisecond-derived
-// integer. Ordering and the resume key rest on the opaque pagination cursor and
-// the CloudEvents id (Event.ID, the canonical eventKey), both identical across
-// sources. spec: §25.5.
+// BufferedEvent.ID is left zero: the Redis stream holds no per-replica ring
+// position, and the poll surface stamps that field from the canonical eventKey
+// once the page is assembled (see stampItemIDs), so no source's own position
+// reaches the wire. Ordering and the resume key rest on the opaque pagination
+// cursor and the CloudEvents id (Event.ID, the canonical eventKey), both
+// identical across sources. spec: §25.5.
 func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	raw, ok := m.Values["event"]
 	if !ok {
