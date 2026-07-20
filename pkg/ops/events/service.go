@@ -19,11 +19,15 @@
 // platform-upgrade lifecycle, ops self-health). Both feed the same
 // Redis stream (§25.5 "Both write to the same Redis stream"); the
 // Service consumes either side via Publish, which keeps the in-memory
-// transport-agnostic. The Redis stream source and the Redis-down /
-// gateway-down degradation matrix are F-25.5.1 / F-25.5.14; this
-// package serves the §25.5 read surface over the buffer source and
-// encodes the source kind into every cursor so the surface is
-// forward-compatible when the Redis source lands.
+// transport-agnostic. The read side selects its source from SourceHealth:
+// the Redis ops:events:stream is primary (redissource.go: XRANGE for
+// polling and Last-Event-ID resume, XREAD BLOCK 0 for the live SSE tail),
+// a cross-process fan-out of the gateway event buffer over the
+// lenny-gateway-pods headless Service (deduped by eventKey) is the
+// Redis-down fallback, and the in-memory ring buffer remains the
+// lenny-ops-origin source and the dual-down floor. Every cursor encodes
+// its source kind so a mid-connection source switch translates by
+// eventKey and reports gapDetected on an evicted event.
 package events
 
 import (

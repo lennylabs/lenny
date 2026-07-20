@@ -3314,6 +3314,7 @@
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
         "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey",
+        "tests/tier7a_load_local/event_buffer_fanout_dedup_test.go::TestGatewayBufferFanOutDedupIsConcurrentSafeAndDeterministic",
         "tests/tier8_chaos/store_failure_test.go",
         "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesTriggeringCheck_spec_25_3",
         "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesRecoveredCheck_spec_25_3",
@@ -3441,6 +3442,7 @@
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go::TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation",
+        "tests/tier9_security/event_stream_read_tenant_isolation_test.go::TestOpsEventPollTenantAdminScopedToOwnTenant_spec_25_5",
         "cmd/lenny-ops/eventmetrics_stream_test.go::TestEventsStreamLengthGaugeAtMaxLen_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
@@ -3466,7 +3468,7 @@
         "cmd/lenny-ops"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.5 Operational Event Stream. See TESTING.md §25 for the test plan. pkg/ops/events serves the SSE and polling read surface from its own in-memory ring buffer; the read-side Redis stream source and the Redis-down/gateway-down degradation matrix are still F-25.5.1/F-25.5.14, tracked by the tests/tier5_e2e_kind/event_buffer_fanout_test.go t.Skip scaffold and named in the package's own doc comment. pkg/ops/opsservice.RedisEventSource and the Redis fan-out emitter feed the webhook delivery worker (a distinct consumer from the SSE/polling Service) via cmd/lenny-ops/events_wiring.go. pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
+      "notes": "§25.5 Operational Event Stream. See TESTING.md §25 for the test plan. pkg/ops/events now consumes the Redis ops:events:stream (pkg/ops/events/redissource.go: XRANGE for polling and Last-Event-ID resume, XREAD BLOCK 0 for the live SSE tail) and falls back to a cross-process fan-out of the gateway event buffer over the lenny-gateway-pods headless Service (deduped by eventKey) when Redis is down, keeping its in-memory ring buffer as the local-origin source and best-effort re-flushing buffered events to Redis on recovery; the read-side Redis source and the Redis-down/gateway-down degradation matrix formerly tracked as F-25.5.1/F-25.5.14 are built by proposal 0049 and exercised by the un-skipped tests/tier5_e2e_kind/event_buffer_fanout_test.go, tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go, tests/tier8_chaos/event_stream_recovery_test.go, and tests/tier2_component/eventstream tests. pkg/ops/opsservice.RedisEventSource and the Redis fan-out emitter feed the webhook delivery worker (a distinct consumer from the SSE/polling Service) via cmd/lenny-ops/events_wiring.go. pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go) and applies the read-time tenant filter resolved from the caller; pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046) with keyset deliveries pagination; pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker and now carries the per-subscription TenantFilter; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
     },
     "25.6": {
       "title": "Diagnostic Endpoints",
