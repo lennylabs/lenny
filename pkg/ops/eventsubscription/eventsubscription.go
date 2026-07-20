@@ -970,12 +970,29 @@ func (m *MemoryStore) ListDeliveries(_ context.Context, subID string, cursor str
 		page.HasMore = true
 		page.Cursor = strconv.FormatInt(out[len(out)-1].ID, 10)
 	}
-	if haveCursor && len(out) == 0 {
-		if oldest, ok := m.oldestDeliveryIDLocked(subID); ok && cursorID < oldest {
+	// Honorability is a property of the cursor's own row rather than of the
+	// page size: the retention purge expires a delivered row at the shorter
+	// retention while a failed row with a smaller id survives, so a purged
+	// cursor commonly still returns a full page whose rows skip everything
+	// purged in between. Mirrors the pgstore check. spec: §25.5 (gap on
+	// aged-out cursor).
+	if haveCursor && !m.deliveryExistsLocked(subID, cursorID) {
+		if oldest, ok := m.oldestDeliveryIDLocked(subID); ok {
 			page.MarkGap(GapReasonAgedOut, strconv.FormatInt(oldest, 10))
 		}
 	}
 	return out, page, nil
+}
+
+// deliveryExistsLocked reports whether subID still retains the delivery row
+// with id. The caller must hold m.mu. spec: §25.5 (gap on aged-out cursor).
+func (m *MemoryStore) deliveryExistsLocked(subID string, id int64) bool {
+	for _, d := range m.deliveries {
+		if d.SubscriptionID == subID && d.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // oldestDeliveryIDLocked returns the smallest retained delivery id for

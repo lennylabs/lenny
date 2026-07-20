@@ -379,6 +379,62 @@ func TestMemoryStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	}
 }
 
+// TestMemoryStoreListDeliveriesGapOnPurgedCursorWithSurvivingOlderRows pins
+// that the deliveries cursor honorability test is a property of the cursor's
+// own row rather than of whether the continuation page came back empty.
+// Delivery expiry is not monotonic in the primary key: the recorder applies
+// the longer failures-only retention to a failed delivery and the shorter
+// retention to a delivered one, so the purge removes rows anywhere in the id
+// range. A caller whose cursor named a purged delivered row, while failed rows
+// with smaller ids survive, receives a full continuation page; without the gap
+// envelope the rows purged between its last page and that one vanish from its
+// view with no signal.
+//
+// spec: §25.5 (deliveries keyset pagination, gapDetected with
+// oldestAvailableCursor when the supplied cursor can no longer be honored).
+func TestMemoryStoreListDeliveriesGapOnPurgedCursorWithSurvivingOlderRows_spec_25_5(t *testing.T) {
+	ctx := context.Background()
+	store := es.NewMemoryStore()
+	past := time.Now().Add(-1 * time.Hour)
+	future := time.Now().Add(24 * time.Hour)
+
+	// ids 1,2 failed (long retention), id 3 delivered (short retention, the
+	// cursor's row), id 4 failed.
+	for i := 0; i < 4; i++ {
+		d := es.Delivery{
+			SubscriptionID: "sub-1", EventID: "e", EventType: "t",
+			Status: es.DeliveryFailed, ExpiresAt: future,
+		}
+		if i == 2 {
+			d.Status = es.DeliveryDelivered
+			d.ExpiresAt = past
+		}
+		if _, err := store.RecordDelivery(ctx, d); err != nil {
+			t.Fatalf("RecordDelivery %d: %v", i, err)
+		}
+	}
+	if purged, err := store.DeleteExpired(ctx, time.Now(), 100); err != nil || purged != 1 {
+		t.Fatalf("DeleteExpired = %d (%v), want the single delivered row", purged, err)
+	}
+
+	rows, meta, err := store.ListDeliveries(ctx, "sub-1", "3", 10)
+	if err != nil {
+		t.Fatalf("purged-cursor page: %v", err)
+	}
+	if len(rows) != 2 || rows[0].ID != 2 || rows[1].ID != 1 {
+		t.Fatalf("purged-cursor page ids = %v, want [2 1]", deliveryIDs(rows))
+	}
+	if !meta.GapDetected || meta.GapReason != es.GapReasonAgedOut || meta.OldestAvailableCursor != "1" {
+		t.Fatalf("purged-cursor meta = %+v, want gapDetected with reason %q and oldestAvailableCursor 1: "+
+			"the cursor's own row was purged while older rows survived", meta, es.GapReasonAgedOut)
+	}
+
+	// A cursor whose row is still retained keeps the clean-page contract.
+	if _, healthy, err := store.ListDeliveries(ctx, "sub-1", "2", 10); err != nil || healthy.GapDetected {
+		t.Errorf("retained-cursor meta = %+v (%v), want no gap", healthy, err)
+	}
+}
+
 func deliveryIDs(ds []es.Delivery) []int64 {
 	ids := make([]int64, len(ds))
 	for i, d := range ds {

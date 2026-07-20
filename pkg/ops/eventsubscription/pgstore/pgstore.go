@@ -228,21 +228,49 @@ func (s *Store) ListDeliveries(ctx context.Context, subID string, cursor string,
 		page.HasMore = true
 		page.Cursor = strconv.FormatInt(out[len(out)-1].ID, 10)
 	}
-	// An empty continuation page can mean the natural end of the history or
-	// a cursor that aged out below the retention floor. Distinguish them:
-	// when the cursor points below the oldest retained delivery, rows
-	// between it and the floor were purged, so report a gap. spec: §25.5
-	// (gap on aged-out cursor).
-	if haveCursor && len(out) == 0 {
-		oldest, ok, err := s.oldestDeliveryID(ctx, subID)
-		if err != nil {
+	// Whether the cursor can still be honored is a property of the cursor's
+	// own row, independent of how many rows the continuation query returned.
+	// Delivery expiry is not monotonic in the primary key: a successful
+	// delivery expires at the shorter retention while a failed one with a
+	// smaller id survives under the longer failures-only retention, so
+	// DeleteExpired punches holes anywhere in the id range. A cursor whose
+	// row was purged therefore commonly returns a full page whose rows skip
+	// everything purged between it and the page, which is the silent loss
+	// the gap envelope exists to report. spec: §25.5 (gap on aged-out
+	// cursor).
+	if haveCursor {
+		if err := s.markGapIfCursorPurged(ctx, subID, cursorID, &page); err != nil {
 			return nil, eventsubscription.Pagination{}, err
-		}
-		if ok && cursorID < oldest {
-			page.MarkGap(eventsubscription.GapReasonAgedOut, strconv.FormatInt(oldest, 10))
 		}
 	}
 	return out, page, nil
+}
+
+// markGapIfCursorPurged marks page with the §25.5 aged-out gap envelope when
+// the delivery the cursor names is no longer retained for subID, pointing the
+// caller at the oldest retained delivery. spec: §25.5 (gap on aged-out
+// cursor).
+func (s *Store) markGapIfCursorPurged(ctx context.Context, subID string, cursorID int64, page *eventsubscription.Pagination) error {
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM ops_event_deliveries WHERE subscription_id = $1 AND id = $2)`,
+		subID, cursorID).Scan(&exists); err != nil {
+		return fmt.Errorf("resolve deliveries cursor %d for %s: %w", cursorID, subID, err)
+	}
+	if exists {
+		return nil
+	}
+	oldest, ok, err := s.oldestDeliveryID(ctx, subID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Nothing is retained for the subscription at all, so there is no
+		// recovery cursor to publish and no rows the caller could be missing.
+		return nil
+	}
+	page.MarkGap(eventsubscription.GapReasonAgedOut, strconv.FormatInt(oldest, 10))
+	return nil
 }
 
 // oldestDeliveryID returns the smallest retained delivery id for subID,

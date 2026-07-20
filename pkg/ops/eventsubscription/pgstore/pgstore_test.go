@@ -4,6 +4,7 @@ package pgstore_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -327,6 +328,76 @@ func TestPgStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	if len(empties) != 0 || metaEmpty.GapDetected || metaEmpty.OldestAvailableCursor != "" {
 		t.Fatalf("malformed cursor over an empty subscription = %v meta %+v, want no gap", deliveryIDs(empties), metaEmpty)
 	}
+
+	// The retention purge is not monotonic in the primary key: a delivered
+	// row expires at the shorter `Retention` while a failed row with a
+	// smaller id survives under the longer `FailuresOnlyRetention`, so
+	// DeleteExpired punches holes anywhere in the id range. A cursor whose
+	// own row was purged while older rows survive returns a full
+	// continuation page, and without a gap signal the caller silently loses
+	// everything purged between its last page and that one.
+	t.Run("purged cursor over surviving older rows reports a gap", func(t *testing.T) {
+		if err := s.Create(ctx, es.Record{
+			ID: "sub_split", CallbackURL: "https://acme.example/hook3",
+			Types:      []string{"dev.lenny.alert_fired"},
+			SecretHash: es.HashSecret(secret), SecretFingerprint: es.Fingerprint(secret),
+			CreatedBy: "alice@acme.com", TenantFilter: es.TenantFilterAll,
+			CreatedAt: now, UpdatedAt: now, Active: true,
+		}); err != nil {
+			t.Fatalf("Create(sub_split): %v", err)
+		}
+		var ids []int64
+		for i := 0; i < 4; i++ {
+			d := es.Delivery{
+				SubscriptionID: "sub_split", EventID: "e", EventType: "dev.lenny.alert_fired",
+				// The failed rows carry the longer failures-only retention and
+				// outlive the delivered row that sits between them.
+				Status: es.DeliveryFailed, ExpiresAt: now.Add(24 * time.Hour),
+			}
+			if i == 2 {
+				d.Status = es.DeliveryDelivered
+				d.ExpiresAt = now.Add(-1 * time.Hour)
+			}
+			rec, err := s.RecordDelivery(ctx, d)
+			if err != nil {
+				t.Fatalf("RecordDelivery(sub_split) %d: %v", i, err)
+			}
+			ids = append(ids, rec.ID)
+		}
+		if purged, err := s.DeleteExpired(ctx, now, 100); err != nil || purged != 1 {
+			t.Fatalf("DeleteExpired = %d (%v), want the single delivered row", purged, err)
+		}
+
+		cursor := strconv.FormatInt(ids[2], 10)
+		rows, meta, err := s.ListDeliveries(ctx, "sub_split", cursor, 10)
+		if err != nil {
+			t.Fatalf("purged-cursor page: %v", err)
+		}
+		if len(rows) != 2 || rows[0].ID != ids[1] || rows[1].ID != ids[0] {
+			t.Fatalf("purged-cursor page ids = %v, want [%d %d]", deliveryIDs(rows), ids[1], ids[0])
+		}
+		if !meta.GapDetected || meta.GapReason != es.GapReasonAgedOut {
+			t.Fatalf("purged-cursor meta = %+v, want gapDetected with reason %q: the cursor's own row was "+
+				"purged while older rows survived, so the caller lost the rows in between with no signal",
+				meta, es.GapReasonAgedOut)
+		}
+		if want := strconv.FormatInt(ids[0], 10); meta.OldestAvailableCursor != want {
+			t.Errorf("purged-cursor oldestAvailableCursor = %q, want %q", meta.OldestAvailableCursor, want)
+		}
+		if meta.SuggestedAction != es.SuggestedActionResync {
+			t.Errorf("purged-cursor suggestedAction = %q, want %q", meta.SuggestedAction, es.SuggestedActionResync)
+		}
+
+		// A cursor whose row is still retained keeps the clean-page contract:
+		// the gap signal must not fire on an ordinary continuation.
+		_, healthy, err := s.ListDeliveries(ctx, "sub_split", strconv.FormatInt(ids[1], 10), 10)
+		if err != nil {
+			t.Fatalf("retained-cursor page: %v", err)
+		}
+		if healthy.GapDetected {
+			t.Errorf("retained-cursor meta = %+v, want no gap", healthy)
+		}
+	})
 }
 
 func deliveryIDs(ds []es.Delivery) []int64 {
