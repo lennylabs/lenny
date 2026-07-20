@@ -273,14 +273,21 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 	}
 	// addGatewayOnly models a gateway-originated event emitted while Redis is
 	// unreachable: the XADD failed, so it exists only in the replica's ring.
-	addGatewayOnly := func(subject string, nonce int) {
+	// emittedAt is explicit so a test step can place two events at the same
+	// emission instant, where the merged fan-out window's only tie break is the
+	// eventKey's trailing numeric nonce.
+	addGatewayOnlyAt := func(subject string, emittedAt int64, nonce int) {
 		t.Helper()
 		ev := newEvent(subject)
-		ev.ID = fmt.Sprintf("gw-1:%d:%d", time.Now().UnixNano(), nonce)
+		ev.ID = fmt.Sprintf("gw-1:%d:%d", emittedAt, nonce)
 		ev.SpecVersion = gwevents.CloudEventsSpecVersion
-		ev.Time = time.Now().UTC()
+		ev.Time = time.Unix(0, emittedAt).UTC()
 		window.add(ev)
 		order = append(order, ev.ID)
+	}
+	addGatewayOnly := func(subject string, nonce int) {
+		t.Helper()
+		addGatewayOnlyAt(subject, time.Now().UnixNano(), nonce)
 	}
 
 	// publishLocal models a lenny-ops-originated event: it lands in this
@@ -326,6 +333,17 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 	health.redis.Store(false)
 	addGatewayOnly("pool/gateway-only", 900)
 	awaitAll(t, readers, len(order), "the gateway-buffer fall-back event")
+
+	// Two gateway-only events sharing one emission instant. Their event times
+	// are equal, so the merged fan-out window's only tie break is the eventKey's
+	// trailing nonce, which is numeric: a byte comparison orders nonce 10 ahead
+	// of nonce 9 while the cursor scan resolves nonce 9 first. Ordering the
+	// window one way and resolving the cursor the other re-delivers or reorders
+	// the pair on every connection.
+	tieAt := time.Now().UnixNano()
+	addGatewayOnlyAt("pool/gateway-tie-low-nonce", tieAt, 9)
+	addGatewayOnlyAt("pool/gateway-tie-high-nonce", tieAt, 10)
+	awaitAll(t, readers, len(order), "the same-instant gateway-buffer pair")
 
 	// A lenny-ops-originated event during the same outage: no gateway replica
 	// buffers it and its XADD is failing, so this replica's local ring is the

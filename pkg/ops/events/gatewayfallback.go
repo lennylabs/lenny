@@ -142,13 +142,26 @@ func mergeReplicaBuffers(results []gateway.ReplicaResult) []gwevents.BufferedEve
 // sortByTimeThenKey orders a merged window oldest-first by event time, with the
 // eventKey as a stable tie break so two same-instant events from two sources
 // keep a deterministic order.
+//
+// The tie break is eventKeyLess, the same relation every cursor operation over
+// this window resolves against (gatewayResumeIndex, gatewayCursorGap,
+// windowHasAtOrAfter, and seedGatewayResume). gatewayResumeIndex is a single
+// forward scan that stops at the first event ordering after the carried
+// position, so it is only correct while the window it scans is already in that
+// order. A plain byte comparison of the eventKey disagrees with it whenever two
+// events share an emission instant, because the key's trailing nonce is
+// numeric: "r:100:10" sorts before "r:100:9" bytewise while nonce 9 precedes
+// nonce 10. Ordering the window one way and resolving the cursor the other
+// re-delivers the event the caller last consumed. spec: §25.5 (delivery in
+// eventKey order across a source switch; continuation at the first
+// greater-or-equal eventKey).
 func sortByTimeThenKey(events []gwevents.BufferedEvent) {
 	sort.SliceStable(events, func(i, j int) bool {
 		ti, tj := events[i].Event.Time, events[j].Event.Time
 		if !ti.Equal(tj) {
 			return ti.Before(tj)
 		}
-		return events[i].Event.ID < events[j].Event.ID
+		return eventKeyLess(events[i].Event.ID, events[j].Event.ID)
 	})
 }
 

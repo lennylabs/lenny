@@ -1040,3 +1040,43 @@ func TestGatewayPollPage_EmptyFanOutWindowIsNotAGap_spec_25_5(t *testing.T) {
 		t.Fatalf("items = %v, want only the continuation ops:3000:1", got)
 	}
 }
+
+// spec: 25.5 (delivery in eventKey order across a source switch; continuation
+// at the first greater-or-equal eventKey) — the merged fan-out window is
+// ordered by the same relation the cursor scan resolves against, so a
+// same-instant nonce tie does not re-deliver the event the caller already
+// consumed.
+//
+// The eventKey's trailing nonce is numeric, so a byte comparison of two
+// same-emittedAt keys from one replica orders "gw-a:2000:10" before
+// "gw-a:2000:9" while eventKeyLess orders nonce 9 first. gatewayResumeIndex is
+// a single forward scan that assumes the window is already in eventKeyLess
+// order; against the byte-ordered window it stops at index 0 and serves nonce 9
+// again. This test fails against that ordering.
+func TestGatewayPollPage_SameInstantNonceTieDoesNotRedeliver_spec_25_5(t *testing.T) {
+	at := ts()
+	// Two events emitted by one gateway replica in the same instant: the tie
+	// break is the numeric nonce alone.
+	nine := gwevents.BufferedEvent{Event: timedEvt("gw-a:2000:9", "dev.lenny.alert_fired", at)}
+	ten := gwevents.BufferedEvent{Event: timedEvt("gw-a:2000:10", "dev.lenny.alert_fired", at)}
+
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts})
+	// Feed the higher nonce first so the merge has to order them.
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{ten, nine}}})
+
+	results, _ := (&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{ten, nine}}}).FanOutGet(context.Background(), "")
+	if got := eventKeys(mergeReplicaBuffers(results)); len(got) != 2 || got[0] != "gw-a:2000:9" || got[1] != "gw-a:2000:10" {
+		t.Fatalf("merged order = %v, want eventKey order [gw-a:2000:9 gw-a:2000:10]", got)
+	}
+
+	page, err := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:2000:9", gwevents.EventFilter{}, 10, false)
+	if err != nil {
+		t.Fatalf("gatewayPollPage: %v", err)
+	}
+	if page.Pagination.GapDetected {
+		t.Fatalf("a cursor inside the window was reported as a gap: %+v", page.Pagination)
+	}
+	if got := eventKeys(page.Items); len(got) != 1 || got[0] != "gw-a:2000:10" {
+		t.Fatalf("items = %v, want only the continuation gw-a:2000:10", got)
+	}
+}
