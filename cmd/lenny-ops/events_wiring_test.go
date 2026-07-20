@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 )
 
 func boolPtr(b bool) *bool                  { return &b }
@@ -28,6 +30,7 @@ func eventStreamWiringFlags(gatewayURL string) *opsFlags {
 		leaderElectNS:                strPtr("lenny-system"),
 		opsServiceName:               strPtr("lenny-ops"),
 		eventsStreamMaxLen:           int64Ptr(1000),
+		eventsTailBlock:              durPtr(opsstream.DefaultTailBlock),
 		bearerTrustHMACKeyFile:       strPtr(""),
 		webhookAllowHTTP:             boolPtr(false),
 		webhookBlockedCIDRs:          strPtr(""),

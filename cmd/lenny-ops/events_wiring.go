@@ -53,6 +53,7 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 		// source-health probe reports Redis reachable.
 		streamOpts.RedisClient = w.redisClient
 		streamOpts.RedisStreamKey = eventbuffer.DefaultStreamKey
+		streamOpts.TailBlock = *w.f.eventsTailBlock
 	}
 	w.eventStream = opsstream.New(streamOpts)
 	var opsEmitter events.EventEmitter = w.eventStream

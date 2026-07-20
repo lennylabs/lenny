@@ -555,7 +555,7 @@ func (b *blockingStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.X
 func TestRedisTail_BoundedBlockExitsOnCancel_spec_25_5(t *testing.T) {
 	b := &blockingStream{reads: make(chan time.Duration, 4), release: make(chan struct{})}
 	t.Cleanup(func() { close(b.release) })
-	rs := newRedisSource(b, "")
+	rs := newRedisSource(b, "", 0)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	out := make(chan gwevents.BufferedEvent)
@@ -654,4 +654,32 @@ func eventKeys(items []gwevents.BufferedEvent) []string {
 		out[i] = it.Event.ID
 	}
 	return out
+}
+
+// spec: 25.5 (per-connection live tail) — the tail's XREAD BLOCK argument is
+// the cancellation latency of a disconnected connection's goroutine, and the
+// value the spec states (an unbounded block) is not usable because go-redis
+// does not interrupt one on context cancellation. The default therefore stays
+// short: a value in poll territory would make a disconnected connection's tail
+// outlive it by that long, and would read as a poll loop rather than the
+// blocking tail the spec describes. Operators tune it through Options.TailBlock.
+func TestDefaultTailBlockStaysShort_spec_25_5(t *testing.T) {
+	if DefaultTailBlock <= 0 {
+		t.Fatalf("DefaultTailBlock = %s; an unbounded block leaks a goroutine per disconnected SSE connection", DefaultTailBlock)
+	}
+	const ceiling = 2 * time.Second
+	if DefaultTailBlock > ceiling {
+		t.Fatalf("DefaultTailBlock = %s; want at most %s so a cancelled tail exits promptly", DefaultTailBlock, ceiling)
+	}
+}
+
+// spec: 25.5 (per-connection live tail) — an operator override reaches the
+// XREAD the tail issues, and a non-positive value falls back to the default.
+func TestTailBlockIsOperatorTunable_spec_25_5(t *testing.T) {
+	if got := newRedisSource(&fakeStream{}, "", 5*time.Second).block; got != 5*time.Second {
+		t.Errorf("configured tail block = %s, want 5s", got)
+	}
+	if got := newRedisSource(&fakeStream{}, "", 0).block; got != DefaultTailBlock {
+		t.Errorf("unset tail block = %s, want the %s default", got, DefaultTailBlock)
+	}
 }

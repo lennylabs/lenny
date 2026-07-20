@@ -50,15 +50,21 @@ type RedisStreamClient interface {
 type redisSource struct {
 	client RedisStreamClient
 	stream string
+	// block is the XREAD BLOCK argument the live tail issues (see
+	// DefaultTailBlock).
+	block time.Duration
 }
 
 // newRedisSource returns a redisSource reading stream from client. An empty
 // stream falls back to the §25.5 default ops:events:stream key.
-func newRedisSource(client RedisStreamClient, stream string) *redisSource {
+func newRedisSource(client RedisStreamClient, stream string, block time.Duration) *redisSource {
 	if stream == "" {
 		stream = eventbuffer.DefaultStreamKey
 	}
-	return &redisSource{client: client, stream: stream}
+	if block <= 0 {
+		block = DefaultTailBlock
+	}
+	return &redisSource{client: client, stream: stream, block: block}
 }
 
 // redisEntry is one decoded stream entry paired with its Redis stream ID.
@@ -83,21 +89,23 @@ type redisEntry struct {
 // most.
 const maxWindow = eventbuffer.DefaultStreamMaxLen
 
-// tailBlock bounds each XREAD BLOCK issued by the live tail.
+// DefaultTailBlock bounds each XREAD BLOCK issued by the live SSE tail unless
+// an operator overrides it through Options.TailBlock.
 //
-// spec: §25.5 specifies XREAD BLOCK 0 for the per-connection live tail. This is
-// a deliberate deviation in the block argument alone, and it preserves the
-// delivery semantics the spec line is about: the tail sleeps inside Redis and
-// wakes the instant a new entry is XADDed, so an event is delivered as promptly
-// as under BLOCK 0 rather than on a poll interval. The deviation exists because
-// go-redis v9 does not interrupt an in-flight blocked read on a deadline-free
-// context cancellation: a literal BLOCK 0 read stays parked in IO wait after
-// the SSE connection disconnects, leaking a goroutine per connection. A bounded
-// block gives every read a deadline, so a cancelled tail exits within one
-// interval. Both halves of that claim are pinned by test: delivery latency well
-// inside this interval, and goroutine exit after cancellation. Raising this
-// constant into poll territory breaks the first.
-const tailBlock = time.Second
+// spec: §25.5 specifies XREAD BLOCK 0 for the per-connection live tail. A
+// bounded block preserves the delivery semantics that line is about: the tail
+// sleeps inside Redis and wakes the instant a new entry is XADDed, so an event
+// is delivered as promptly as under BLOCK 0 rather than on a poll interval. The
+// bound exists because go-redis v9 does not interrupt an in-flight blocked read
+// on a deadline-free context cancellation: a literal BLOCK 0 read stays parked
+// in IO wait after the SSE connection disconnects, leaking a goroutine per
+// connection. A bounded block gives every read a deadline, so a cancelled tail
+// exits within one interval, and that interval is the cancellation latency the
+// operator is tuning. Both halves of that claim are pinned by test: delivery
+// latency well inside the interval, and goroutine exit after cancellation.
+// Raising this into poll territory breaks the first, so it is the value to
+// lower rather than raise.
+const DefaultTailBlock = time.Second
 
 // redisReadTimeout bounds every non-tailing Redis read a single poll or SSE
 // setup issues (the cursor resolve, the head/oldest bounds, and the backlog
@@ -247,7 +255,7 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 // terminal error. Each SSE connection runs its own Tail with its own
 // starting position, so the per-connection cursor is independent and no
 // consumer group is created. The block interval bounds cancellation latency
-// (see tailBlock): go-redis v9 does not interrupt a blocked read on a
+// (see DefaultTailBlock): go-redis v9 does not interrupt a blocked read on a
 // deadline-free context cancellation, so a bounded block is what lets a
 // disconnected connection's goroutine exit instead of parking in IO wait
 // forever. A transient Redis error is retried after a short pause rather
@@ -267,7 +275,7 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 		}
 		res, err := rs.client.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{rs.stream, lastID},
-			Block:   tailBlock,
+			Block:   rs.block,
 			Count:   maxWindow,
 		}).Result()
 		if err != nil {
