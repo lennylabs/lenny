@@ -370,23 +370,27 @@ func (rs *redisSource) retains(ctx context.Context, streamID string) (bool, erro
 // cursor referenced a position the stream no longer retains.
 //
 // §25.5 locates the continuation point in the new source rather than requiring
-// the carried eventKey to be present verbatim. An exact match resumes
-// immediately after that entry. A key that is absent but falls inside the
-// retained window resumes after the last retained entry whose eventKey orders
-// at or before the cursor, so the events after the cursor are delivered without
-// replaying the window. That case is the ordinary one on a source switch, where
-// the last delivered event originated somewhere that never XADDed it.
+// the carried eventKey to be present verbatim: the position is the first
+// retained entry whose eventKey orders at or after the cursor. An exact match
+// resumes immediately after that entry. A key that is absent but falls inside
+// the retained window resumes immediately before the first entry ordering after
+// it, so that entry and everything following it in stream order are delivered.
+// That case is the ordinary one on a source switch, where the last delivered
+// event originated somewhere that never XADDed it.
 //
-// The scan covers the whole retained window rather than stopping at the first
-// entry ordering after the cursor, because stream order and eventKey order do
-// not always agree. The best-effort recovery flush re-emits events buffered
-// during a Redis outage with their original eventKeys, so those entries land at
-// the stream tail carrying keys older than entries already sitting at earlier
-// positions. Stopping at the first greater key would resolve the position to
-// somewhere before that out-of-order tail, rewinding a caller that had already
-// read past it and re-delivering the whole retained window on every subsequent
-// read. Taking the last entry at or before the cursor keeps the position
-// forward-only across the flush.
+// Resolving to the first entry at or after the cursor rather than to the last
+// entry at or before it is what keeps a switch back to Redis drop-free. Stream
+// order and eventKey order do not always agree: the best-effort recovery flush
+// re-emits events buffered during a Redis outage with their original eventKeys,
+// so those entries land at the stream tail carrying keys older than the entries
+// around them. A stream reading [older entries, peer-replica events XADDed
+// after recovery, flushed outage-window events] therefore holds its oldest keys
+// last. Taking the last entry ordering at or before the cursor resolves the
+// position to that flushed tail and starts the read after it, so the
+// post-recovery peer events sitting in front of it are never delivered at all.
+// A drop is unrecoverable, where the events the out-of-order tail replays are
+// collapsed by the SSE session's delivered set and by the consumer-side
+// eventKey deduplication §25.5 assigns that job to.
 //
 // The gap covers both ends of the retained window. A key ordering before the
 // oldest retained entry lost the events in between, which were evicted before
@@ -408,16 +412,21 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 		return "", false, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
 	}
 	var (
-		// prev is the stream ID of the last entry whose eventKey orders at or
-		// before the cursor: the position to resume after.
+		// resume is the exclusive read position: the stream ID the following
+		// XRANGE starts after. It is the matching entry itself on an exact
+		// match, and otherwise the entry sitting immediately before the first
+		// one ordering after the cursor, so that entry is delivered.
+		resume string
+		// resolved records that the continuation point has been found, after
+		// which prev stops advancing.
+		resolved bool
+		// prev is the stream ID of the entry scanned immediately before the
+		// current one, the exclusive position that delivers the current entry.
 		prev string
 		// lowestKey is the smallest retained eventKey, which bounds the window
 		// below. It is tracked by order rather than by stream position, since
 		// the recovery flush can place an older key at the tail.
 		lowestKey string
-		// atOrAfter records that some retained entry orders after the cursor,
-		// so the stream can honour the position.
-		atOrAfter bool
 		decoded   bool
 	)
 	for _, m := range msgs {
@@ -430,23 +439,29 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 		if lowestKey == "" || eventKeyLess(key, lowestKey) {
 			lowestKey = key
 		}
-		if key == eventKey {
-			return m.ID, false, nil
+		// The scan continues past the continuation point so lowestKey covers
+		// the whole retained window, which is what decides the below-window
+		// gap. The out-of-order flushed tail means the oldest key can sit
+		// anywhere in the stream.
+		if !resolved {
+			switch {
+			case key == eventKey:
+				resume, resolved = m.ID, true
+			case eventKeyLess(eventKey, key):
+				resume, resolved = prev, true
+			default:
+				prev = m.ID
+			}
 		}
-		if eventKeyLess(eventKey, key) {
-			atOrAfter = true
-			continue
-		}
-		prev = m.ID
 	}
 	if !decoded {
 		// An empty stream carries no evidence either way, so it is not a gap.
 		return "", false, nil
 	}
-	if atOrAfter {
+	if resolved {
 		// A cursor ordering before every retained entry lost the events in
 		// between, which were evicted before this caller read them.
-		return prev, eventKeyLess(eventKey, lowestKey), nil
+		return resume, eventKeyLess(eventKey, lowestKey), nil
 	}
 	// Every retained entry orders before the cursor, so no entry has a
 	// greater-or-equal eventKey and the stream cannot honour the position. The
