@@ -392,12 +392,24 @@ func (st *streamSession) serveLocal(ctx context.Context) {
 	}
 }
 
-// markDelivered records the last delivered eventKey so a source switch resumes
-// with no drop. The kind is left empty (a CloudEvents id) so a switch to
-// another source resolves it by eventKey scan. spec: §25.5 (cross-switch
+// markDelivered advances the last delivered eventKey so a source switch
+// resumes with no drop. The kind is left empty (a CloudEvents id) so a switch
+// to another source resolves it by eventKey scan. spec: §25.5 (cross-switch
 // no-drop ordering).
+//
+// The position only ever moves forward. The recovery flush re-emits events
+// buffered during a Redis outage, which lands them at the head of the stream
+// carrying eventKeys that order before entries this connection already
+// consumed. Taking such a key as the new resume position would rewind the
+// session, and the next source switch would then re-deliver everything after
+// it, breaking the exactly-once invariant the resume position exists to hold.
+// A redis-kind carried position is a stream ID rather than an eventKey, so the
+// first delivery replaces it outright.
 func (st *streamSession) markDelivered(eventKey string) {
 	if eventKey == "" {
+		return
+	}
+	if st.lastKey != "" && st.lastKind != SourceKindRedis && !eventKeyLess(st.lastKey, eventKey) {
 		return
 	}
 	st.lastKey = eventKey
