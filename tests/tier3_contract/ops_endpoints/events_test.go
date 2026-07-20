@@ -569,3 +569,50 @@ func TestWebhookDeliveryHMACContract(t *testing.T) {
 		t.Errorf("delivery ids after two deliveries = %d, want 2 (each attempt gets a unique X-Lenny-Delivery-Id)", len(got.deliveryIDs))
 	}
 }
+
+// serveSSERaw issues an SSE request against the assembled server with a
+// pre-cancelled context and returns the raw response body, so a test can pin
+// the comment lines (":degradation", ":gap") the frame parser discards.
+func serveSSERaw(t *testing.T, srv *opsserver.Server, target string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req.WithContext(ctx))
+	return rec.Body.String()
+}
+
+// TestEventStreamNoRedisWiredEmitsNoDegradationEnvelopeContract pins the §25.5
+// degradation matrix at the wire: it keys on the two source-health signals and
+// enumerates exactly three read-side states, of which Redis-reachable is the
+// healthy, envelope-free one. A lenny-ops replica with no Redis client wired is
+// in that healthy state, so GET /v1/admin/events serializes no degradation
+// object and an SSE connection emits no :degradation comment.
+//
+// spec: 25.5 (Degradation — the read surface attaches the EVENT_STREAM_DEGRADED
+// envelope when serving from the gateway-buffer fall-back during a Redis
+// outage, and the lenny-ops-local-buffer envelope when both sources are
+// unreachable)
+// diagnosis: A failure means the read surface reports a fourth degradation
+// state that the §25.5 matrix does not define. Every poll response from a
+// Redis-less deployment carries a degradation object on an otherwise healthy
+// 200, and every SSE connection opens with a :degradation comment, so a
+// consumer that treats the envelope as an outage signal reads a permanent
+// outage that is not happening.
+func TestEventStreamNoRedisWiredEmitsNoDegradationEnvelopeContract(t *testing.T) {
+	srv := eventStreamServer(
+		t, 0,
+		gwevents.OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"},
+	)
+
+	body, _ := pollBody(t, srv, "/v1/admin/events")
+	if deg, ok := body["degradation"]; ok {
+		t.Errorf("poll response carried a degradation object (%v) from a replica with no Redis client wired; §25.5 classifies that state healthy", deg)
+	}
+
+	raw := serveSSERaw(t, srv, "/v1/admin/events/stream")
+	if strings.Contains(raw, ":degradation") {
+		t.Errorf("SSE connection emitted a :degradation comment from a replica with no Redis client wired: %q", raw)
+	}
+}

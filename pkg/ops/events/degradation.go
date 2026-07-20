@@ -111,28 +111,6 @@ func gatewayFallbackState() (actualSource string, deg *conventions.Degradation, 
 	}, false
 }
 
-// localOnlyState returns the §25.5 classification of a replica with no Redis
-// read source wired: the primary cross-replica source is absent, so polling and
-// SSE serve this replica's own ring buffer and gateway-originated events are
-// not observable at all.
-//
-// It is reported as a degradation rather than as a healthy read, because the
-// response is otherwise indistinguishable from one served from the merged
-// cross-replica stream while carrying only a fraction of the events. The level
-// is degraded rather than failed: the surface still serves, so polling answers
-// 200 with the envelope attached rather than 503. spec: §25.5 lines 2768-2780
-// (actualSource names the source the response was served from).
-func localOnlyState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
-	return sourceOpsLocalBuffer, &conventions.Degradation{
-		Level:             conventions.DegradationDegraded,
-		PrimarySource:     sourceRedisStream,
-		ActualSource:      sourceOpsLocalBuffer,
-		FallbackPath:      []string{sourceRedisStream, sourceOpsLocalBuffer},
-		UnavailableFields: []string{"gateway-events"},
-		Warnings:          []string{"no Redis ops:events:stream read source is wired; serving lenny-ops-originated events from this replica's buffer only"},
-	}, false
-}
-
 // dualOutageState returns the §25.5 case-4 classification: the local ring is
 // the only observable source and gateway-originated events are unavailable.
 // It is reached both from the health matrix (Redis and gateway both

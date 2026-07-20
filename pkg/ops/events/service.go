@@ -181,7 +181,14 @@ func (s *Service) SetRedisReEmitter(fn func(context.Context, gwevents.Operationa
 // to fetch from, so the response carries the case-4 lenny-ops-local-buffer
 // envelope and polling returns 503 EVENT_STREAM_UNAVAILABLE. Labelling that
 // response gateway-buffer while serving this replica's ring would report a
-// cross-replica view the caller is not receiving. spec: §25.5.
+// cross-replica view the caller is not receiving.
+//
+// The §25.5 degradation matrix keys on SourceHealth alone and enumerates three
+// read-side states: Redis reachable (healthy, no envelope), Redis unreachable
+// with the gateway reachable, and both unreachable. A deployment with no Redis
+// client wired at all is not one of them: it is a healthy replica whose only
+// source is its own ring, so it serves that ring and attaches no envelope.
+// spec: §25.5 (lines 2768-2780).
 func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
 	actual, deg, dualDown := s.streamState()
 	switch actual {
@@ -189,11 +196,8 @@ func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
 		if s.redis != nil {
 			return dsRedis, deg, dualDown
 		}
-		// No Redis read source is wired, so the cross-replica stream this
-		// classification names cannot serve the request and this replica's own
-		// ring does instead. Reporting that as healthy would present a
-		// single-replica view as the merged one. spec: §25.5.
-		_, deg, dualDown = localOnlyState()
+		// No Redis read source is wired, so the healthy classification is
+		// served from this replica's own ring with no envelope attached.
 		return dsLocalBuffer, deg, dualDown
 	case sourceGatewayBuffer:
 		if s.gateway != nil {

@@ -275,12 +275,12 @@ func TestStaticSourceHealth(t *testing.T) {
 	}
 }
 
-// spec: §25.5 lines 2768-2780 (the degradation envelope's actualSource names
-// the source the response was served from) — a replica with no Redis read
-// source wired serves polling and SSE from its own ring buffer, which holds
-// only the events this replica originated. The response says so rather than
-// presenting a single-replica view as the merged cross-replica one.
-func TestReadSurface_NoRedisWired_ReportsLocalBufferDegradation_spec_25_5(t *testing.T) {
+// spec: §25.5 lines 2768-2780 (the degradation matrix keys on the two source-
+// health signals and enumerates Redis-reachable as the healthy, envelope-free
+// state) — a replica with no Redis client wired is healthy, not degraded. Its
+// poll response carries no degradation envelope and its SSE connection emits no
+// :degradation comment, so the three-case matrix stays the whole matrix.
+func TestReadSurface_NoRedisWired_ServesHealthyWithNoDegradationEnvelope_spec_25_5(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 	publishOne(s, "dev.lenny.alert_fired")
 
@@ -293,11 +293,8 @@ func TestReadSurface_NoRedisWired_ReportsLocalBufferDegradation_spec_25_5(t *tes
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if page.Degradation == nil {
-		t.Fatal("a poll served from this replica's ring with no Redis source wired carried no degradation envelope, so the caller cannot tell it is missing every other replica's events")
-	}
-	if page.Degradation.ActualSource != "lenny-ops-local-buffer" {
-		t.Errorf("actualSource = %q, want lenny-ops-local-buffer", page.Degradation.ActualSource)
+	if page.Degradation != nil {
+		t.Errorf("poll carried a degradation envelope (%+v) on a healthy replica with no Redis client wired; §25.5 classifies that state healthy", page.Degradation)
 	}
 	if len(page.Items) != 1 {
 		t.Errorf("page served %d item(s), want the one locally published event", len(page.Items))
@@ -313,7 +310,7 @@ func TestReadSurface_NoRedisWired_ReportsLocalBufferDegradation_spec_25_5(t *tes
 	}()
 	cancel()
 	<-done
-	if !strings.Contains(sink.Body.String(), "lenny-ops-local-buffer") {
-		t.Errorf("the stream announced no local-buffer degradation with no Redis source wired: %q", sink.Body.String())
+	if strings.Contains(sink.Body.String(), ":degradation") {
+		t.Errorf("the stream emitted a :degradation comment on a healthy replica with no Redis client wired: %q", sink.Body.String())
 	}
 }
