@@ -225,6 +225,9 @@ func TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261(t
 		Now:          ts,
 		SourceHealth: StaticSourceHealth{Redis: false, Gateway: true},
 	})
+	// A gateway source is wired, so the Redis outage genuinely falls back to
+	// the gateway-buffer fan-out rather than resolving to the dual-outage case.
+	s.SetGatewayBufferSource(&fakeGatewaySource{})
 	s.Publish(context.Background(), gwevents.OperationalEvent{Type: "alert_fired"})
 
 	// A cursor produced by the Redis stream, carrying an eventKey this

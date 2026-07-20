@@ -12,7 +12,19 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
+
+// stubGatewaySource is a wired §25.5 gateway-buffer fall-back source that
+// reports no gateway-originated events. Wiring it is what makes a Redis outage
+// the case-1 gateway-buffer fall-back: with no source wired the read surface
+// resolves to the case-4 dual outage, because gateway-originated events then
+// have nowhere to fetch from.
+type stubGatewaySource struct{}
+
+func (stubGatewaySource) FanOutGet(context.Context, string) ([]gateway.ReplicaResult, error) {
+	return nil, nil
+}
 
 // publishOne records one lenny-ops-originated event into the service buffer.
 func publishOne(s *opsstream.Service, typ string) {
@@ -29,6 +41,7 @@ func TestHandlePoll_RedisDown_AttachesDegradation_spec_25_5(t *testing.T) {
 		Now:          fixedNow,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
 	})
+	s.SetGatewayBufferSource(stubGatewaySource{})
 	publishOne(s, "dev.lenny.alert_fired")
 
 	rec := httptest.NewRecorder()
@@ -172,6 +185,7 @@ func TestHandleStream_RedisDown_DegradationComment_spec_25_5(t *testing.T) {
 		Now:          fixedNow,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
 	})
+	s.SetGatewayBufferSource(stubGatewaySource{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
 	rec := newStreamingRecorder()

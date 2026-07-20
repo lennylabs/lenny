@@ -165,7 +165,14 @@ func (s *Service) SetRedisReEmitter(fn func(context.Context, gwevents.Operationa
 // streamState's actualSource label drive the real data-path selection: a
 // gateway-buffer label with no gateway client wired, or a redis-stream label
 // with no Redis client wired, both fall through to the local ring buffer so
-// the surface keeps serving lenny-ops-originated events. spec: §25.5.
+// the surface keeps serving lenny-ops-originated events.
+//
+// A Redis-down classification with no gateway source wired is the dual-outage
+// case however the gateway probe reads: gateway-originated events have nowhere
+// to fetch from, so the response carries the case-4 lenny-ops-local-buffer
+// envelope and polling returns 503 EVENT_STREAM_UNAVAILABLE. Labelling that
+// response gateway-buffer while serving this replica's ring would report a
+// cross-replica view the caller is not receiving. spec: §25.5.
 func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
 	actual, deg, dualDown := s.streamState()
 	switch actual {
@@ -177,6 +184,8 @@ func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
 		if s.gateway != nil {
 			return dsGateway, deg, dualDown
 		}
+		_, deg, dualDown = dualOutageState()
+		return dsLocalBuffer, deg, dualDown
 	}
 	return dsLocalBuffer, deg, dualDown
 }

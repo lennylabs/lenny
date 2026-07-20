@@ -227,18 +227,42 @@ func TestHandlePoll_RedisDownServesGatewayBuffer_spec_25_5(t *testing.T) {
 	}
 }
 
-// spec: 25.5 (source selection from the degradation matrix) — a Redis-down /
-// gateway-up state selects the gateway buffer only when a gateway source is
-// wired; with none wired the read surface falls through to the local ring
-// buffer rather than 503-ing or serving nothing.
+// spec: 25.5 (source selection from the degradation matrix, dual-outage case)
+// — a Redis-down state selects the gateway buffer only when a gateway source is
+// wired. With none wired, gateway-originated events have nowhere to fetch from,
+// so the read surface serves this replica's ring under the case-4
+// lenny-ops-local-buffer envelope with gateway-events unavailable, and polling
+// returns 503 EVENT_STREAM_UNAVAILABLE. Reporting actualSource gateway-buffer
+// while serving the local ring would announce a cross-replica view the caller
+// is not receiving.
 func TestSelectSource_GatewayLabelFallsToLocalWhenUnwired_spec_25_5(t *testing.T) {
 	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
-	if src, _, _ := s.selectSource(); src != dsLocalBuffer {
+	src, deg, dualDown := s.selectSource()
+	if src != dsLocalBuffer {
 		t.Fatalf("no gateway source wired: selectSource = %v, want dsLocalBuffer", src)
 	}
+	if !dualDown {
+		t.Error("no gateway source wired during a Redis outage must resolve to the dual-outage case")
+	}
+	if deg == nil || deg.ActualSource != sourceOpsLocalBuffer {
+		t.Fatalf("degradation envelope = %+v; want actualSource %q", deg, sourceOpsLocalBuffer)
+	}
+	if len(deg.UnavailableFields) != 1 || deg.UnavailableFields[0] != "gateway-events" {
+		t.Errorf("unavailableFields = %v; want [gateway-events]", deg.UnavailableFields)
+	}
+
+	rec := httptest.NewRecorder()
+	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("poll status = %d; want 503 EVENT_STREAM_UNAVAILABLE", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), codeEventStreamUnavailable) {
+		t.Errorf("poll body = %s; want %s", rec.Body.String(), codeEventStreamUnavailable)
+	}
+
 	s.SetGatewayBufferSource(&fakeGatewaySource{})
-	if src, _, _ := s.selectSource(); src != dsGateway {
-		t.Fatalf("gateway source wired: selectSource = %v, want dsGateway", src)
+	if src, _, dual := s.selectSource(); src != dsGateway || dual {
+		t.Fatalf("gateway source wired: selectSource = %v (dualDown=%t), want dsGateway", src, dual)
 	}
 }
 

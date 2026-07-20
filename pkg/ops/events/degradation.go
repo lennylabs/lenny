@@ -99,15 +99,25 @@ func (s *Service) streamState() (actualSource string, deg *conventions.Degradati
 		// Case 4 — Redis AND gateway unreachable: only this replica's
 		// local ring buffer (lenny-ops-originated events) is observable.
 		// Gateway-originated events have nowhere to land.
-		return sourceOpsLocalBuffer, &conventions.Degradation{
-			Level:             conventions.DegradationFailed,
-			PrimarySource:     sourceRedisStream,
-			ActualSource:      sourceOpsLocalBuffer,
-			FallbackPath:      []string{sourceRedisStream, sourceGatewayBuffer, sourceOpsLocalBuffer},
-			UnavailableFields: []string{"gateway-events"},
-			Warnings:          []string{"both the Redis stream and the gateway buffer are unreachable; serving lenny-ops-originated events only"},
-		}, true
+		return dualOutageState()
 	}
+}
+
+// dualOutageState returns the §25.5 case-4 classification: the local ring is
+// the only observable source and gateway-originated events are unavailable.
+// It is reached both from the health matrix (Redis and gateway both
+// unreachable) and from source selection, where a Redis-down classification
+// with no gateway source wired resolves to the same data path and must carry
+// the same label. spec: §25.5 lines 2768-2780 (dual-outage case).
+func dualOutageState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
+	return sourceOpsLocalBuffer, &conventions.Degradation{
+		Level:             conventions.DegradationFailed,
+		PrimarySource:     sourceRedisStream,
+		ActualSource:      sourceOpsLocalBuffer,
+		FallbackPath:      []string{sourceRedisStream, sourceGatewayBuffer, sourceOpsLocalBuffer},
+		UnavailableFields: []string{"gateway-events"},
+		Warnings:          []string{"both the Redis stream and the gateway buffer are unreachable; serving lenny-ops-originated events only"},
+	}, true
 }
 
 // writeStreamUnavailable writes the §25.5 503 EVENT_STREAM_UNAVAILABLE
