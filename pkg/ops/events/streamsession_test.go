@@ -3,6 +3,7 @@
 package events
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,44 +11,43 @@ import (
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 )
 
+// keyedFrame builds a BufferedEvent carrying eventKey.
+func keyedFrame(eventKey string) gwevents.BufferedEvent {
+	return gwevents.BufferedEvent{Event: gwevents.OperationalEvent{
+		ID:          eventKey,
+		Type:        "dev.lenny.escalation_created",
+		SpecVersion: gwevents.CloudEventsSpecVersion,
+	}}
+}
+
 // spec: 25.5 (eventKey dedup across sources, exactly-once across the source
-// switch) — the Redis-served SSE path writes a frame only for an event whose
-// eventKey orders strictly after the last position the connection delivered.
-// The best-effort recovery flush re-emits the events a replica buffered during
-// a Redis outage with their original eventKeys, so they reach an open
-// connection's live tail carrying keys it already received from the local ring
-// or the gateway-buffer fall-back during that outage. The pre-fix path wrote a
-// frame for every entry the backlog scan and the tail produced, so those events
-// were delivered a second time on the switch back to Redis.
-func TestDeliverForward_SkipsKeysAlreadyDeliveredOnThisConnection_spec_25_5(t *testing.T) {
+// switch) — the connection's delivered set spans every source it serves from,
+// so an event the recovery flush re-emits onto the Redis stream after the
+// connection already received it from the local ring during the outage is not
+// written a second time. The flushed entries carry their original eventKeys and
+// land at the stream tail, ordering before entries already delivered, so a
+// Redis stint that writes a frame for every entry it reads delivers them again.
+func TestDeliverOnce_SkipsKeysAlreadyDeliveredOnThisConnection_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
 	st := &streamSession{w: rec, flusher: rec}
 
-	frame := func(key string) gwevents.BufferedEvent {
-		return gwevents.BufferedEvent{Event: gwevents.OperationalEvent{
-			ID:          key,
-			Type:        "dev.lenny.escalation_created",
-			SpecVersion: gwevents.CloudEventsSpecVersion,
-		}}
-	}
-
-	// The connection delivers two events while serving the outage from the
-	// local ring.
+	// The connection delivers two lenny-ops events from the local ring while
+	// Redis is down.
 	for _, key := range []string{"ops:20:1", "ops:25:1"} {
-		if !st.deliverForward(frame(key)) {
+		if !st.deliverOnce(keyedFrame(key)) {
 			t.Fatalf("event %s was not delivered on a fresh connection", key)
 		}
 	}
 	// Redis recovers and the flush re-emits both with their original keys, so
-	// they arrive again on the Redis tail.
+	// they reach the connection again on the Redis tail.
 	for _, key := range []string{"ops:20:1", "ops:25:1"} {
-		if st.deliverForward(frame(key)) {
+		if st.deliverOnce(keyedFrame(key)) {
 			t.Errorf("the flushed event %s was delivered a second time on the same connection", key)
 		}
 	}
 	// A post-recovery event with a later key still flows.
-	if !st.deliverForward(frame("gw:30:1")) {
-		t.Error("a post-recovery event ordering after the resume position was not delivered")
+	if !st.deliverOnce(keyedFrame("gw:30:1")) {
+		t.Error("a post-recovery event was not delivered")
 	}
 
 	if got := strings.Count(rec.Body.String(), "id: "); got != 3 {
@@ -55,5 +55,56 @@ func TestDeliverForward_SkipsKeysAlreadyDeliveredOnThisConnection_spec_25_5(t *t
 	}
 	if st.lastKey != "gw:30:1" {
 		t.Errorf("resume position = %q; want gw:30:1 (the flush must not rewind it)", st.lastKey)
+	}
+}
+
+// spec: 25.5 (eventKey dedup across sources) — an event the connection has not
+// been written is delivered even when its eventKey orders before everything it
+// already received. That is the ordinary state after a recovery flush for a
+// connection that opened between Redis becoming reachable and the flush
+// running: the outage-window events are new to it and arrive out of order. A
+// dedup keyed on ordering rather than on what was actually delivered drops them.
+func TestDeliverOnce_DeliversAnOlderKeyTheConnectionHasNotSeen_spec_25_5(t *testing.T) {
+	rec := httptest.NewRecorder()
+	st := &streamSession{w: rec, flusher: rec}
+
+	if !st.deliverOnce(keyedFrame("gw:30:1")) {
+		t.Fatal("the post-recovery event was not delivered")
+	}
+	if !st.deliverOnce(keyedFrame("ops:20:1")) {
+		t.Fatal("a flushed outage-window event the connection never received was dropped")
+	}
+	// The resume position stays forward-only even though an older key arrived.
+	if st.lastKey != "gw:30:1" {
+		t.Errorf("resume position = %q; want gw:30:1", st.lastKey)
+	}
+}
+
+// spec: 25.5 (eventKey dedup across sources) — the delivered set is bounded so
+// a long-lived SSE connection's memory does not grow with everything it has
+// ever been written. The retained window still covers every replay the read
+// side can produce, so a key inside it is still deduplicated.
+func TestDeliveredKeys_BoundsTheRetainedWindow_spec_25_5(t *testing.T) {
+	var d deliveredKeys
+	for i := 0; i < deliveredKeyWindow+10; i++ {
+		if !d.add(fmt.Sprintf("ops:%d:1", i)) {
+			t.Fatalf("key %d was reported as already delivered", i)
+		}
+	}
+	if got := len(d.order); got != deliveredKeyWindow {
+		t.Errorf("retained %d keys; want the window bound %d", got, deliveredKeyWindow)
+	}
+	if len(d.seen) != deliveredKeyWindow {
+		t.Errorf("the index holds %d keys; want %d (an evicted key must leave the index)", len(d.seen), deliveredKeyWindow)
+	}
+	if !d.has("ops:15:1") {
+		t.Error("a key inside the retained window is no longer deduplicated")
+	}
+	if d.has("ops:0:1") {
+		t.Error("the oldest key was not evicted once the window filled")
+	}
+	// An event with no eventKey cannot be deduplicated against anything.
+	if !d.add("") || !d.add("") {
+		t.Error("an event carrying no eventKey must not be collapsed into a single delivery")
 	}
 }

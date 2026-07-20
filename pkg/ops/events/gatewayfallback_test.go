@@ -267,10 +267,11 @@ func TestSelectSource_GatewayLabelFallsToLocalWhenUnwired_spec_25_5(t *testing.T
 }
 
 // spec: 25.5 (transparent Redis to gateway-buffer switch and recovery) — an
-// open SSE connection announces each source transition: entering the
-// gateway-buffer fall-back writes the :degradation envelope; returning to the
-// healthy Redis source writes :degradation {"level":"healthy"}. The initial
-// entry into a healthy source writes nothing.
+// open SSE connection announces its degraded view with the :degradation
+// envelope, re-emitted on the fall-back cadence for the life of the stint, and
+// announces its return to the healthy Redis source with
+// :degradation {"level":"healthy"} exactly once. The initial entry into a
+// healthy source writes nothing.
 func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	health := newMutableHealth(false, true)
 	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: health, Now: ts})
@@ -278,11 +279,12 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sess := &streamSession{s: s, w: rec, flusher: rec}
 
-	// Entering the gateway fall-back from the start announces the degradation.
-	_, degGw, _ := s.selectSource()
-	sess.writeTransition(dataSource(-1), dsGateway, degGw)
-	if !strings.Contains(rec.Body.String(), sourceGatewayBuffer) {
-		t.Fatalf("gateway entry did not announce the degradation envelope:\n%s", rec.Body.String())
+	// Serving the gateway fall-back announces the degradation on every tick, so
+	// a connection with nothing to deliver still learns its view is degraded.
+	sess.writeDegradationTick(false)
+	sess.writeDegradationTick(false)
+	if got := strings.Count(rec.Body.String(), sourceGatewayBuffer); got != 2 {
+		t.Fatalf("the gateway fall-back announced the degradation envelope %d times over two ticks, want one per tick:\n%s", got, rec.Body.String())
 	}
 
 	// Redis recovers: switching back to Redis announces recovery.
@@ -290,7 +292,7 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	rec2 := httptest.NewRecorder()
 	sess.w = rec2
 	sess.flusher = rec2
-	sess.writeTransition(dsGateway, dsRedis, nil)
+	sess.announceRecovery(dsGateway, dsRedis)
 	if !strings.Contains(rec2.Body.String(), "\"level\":\"healthy\"") {
 		t.Fatalf("switch back to Redis did not announce recovery:\n%s", rec2.Body.String())
 	}
@@ -299,7 +301,7 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	rec3 := httptest.NewRecorder()
 	sess.w = rec3
 	sess.flusher = rec3
-	sess.writeTransition(dataSource(-1), dsRedis, nil)
+	sess.announceRecovery(dataSource(-1), dsRedis)
 	if strings.TrimSpace(rec3.Body.String()) != "" {
 		t.Fatalf("healthy start must announce nothing, got:\n%s", rec3.Body.String())
 	}

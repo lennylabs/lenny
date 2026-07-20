@@ -663,3 +663,194 @@ func TestOpsEventStreamPollingAdvancesAcrossAnOutOfOrderRecoveryFlush(t *testing
 		}
 	}
 }
+
+// spec: 25.5 ("Events continue to flow to the SSE client with the canonical
+// degradation envelope embedded in a periodic :degradation comment line") — the
+// envelope is a recurring signal for the duration of a Redis outage rather than
+// a single announcement on the transition. A connection that sits in the
+// degraded stint while nothing is published must keep receiving it, so a
+// consumer that joined mid-outage or missed the first comment still learns its
+// view is degraded, and the connection carries a write that keeps an
+// intermediary from idling it out. The recovery announcement stays a single
+// edge event. The pre-fix handler wrote the envelope once on entering the
+// degraded source and then only when the fan-out flipped between serving and
+// unavailable, so an idle connection received exactly one comment however long
+// the outage lasted; this fails against that code.
+//
+// diagnosis: a failure means an SSE consumer holding a connection through a
+// Redis outage stops being told its view is degraded — it sees one comment and
+// then silence, so a consumer that reconnects or joins mid-outage cannot tell a
+// degraded stream from a healthy idle one — or the recovery comment is emitted
+// more than once per recovery edge, which reads as repeated recoveries.
+func TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// A gateway replica that answers with an empty buffer window: the
+	// connection has nothing to deliver for the whole outage.
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(gwevents.BufferedEventPage{})
+	}))
+	defer gwSrv.Close()
+	gwClient, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("t"),
+		Discovery:         gateway.StaticDiscovery{gwSrv.URL},
+		PerRequestTimeout: 3 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("gateway client: %v", err)
+	}
+
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
+		RedisStreamKey: "ops:events:stream:degperiodic",
+		SourceHealth:   health,
+		ReplicaID:      "ops-1",
+	})
+	svc.SetGatewayBufferSource(gwClient)
+
+	rec := newSyncBuffer()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/admin/events/stream", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.HandleStream(rec, req)
+	}()
+
+	// The outage starts and nothing is published for its duration.
+	health.redis.Store(false)
+	deadline := time.Now().Add(20 * time.Second)
+	for strings.Count(rec.String(), ":degradation") < 3 {
+		if time.Now().After(deadline) {
+			t.Fatalf("an idle connection received %d :degradation comments over %s of Redis outage; the envelope must be re-emitted for the duration of the outage:\n%s",
+				strings.Count(rec.String(), ":degradation"), 20*time.Second, rec.String())
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if got := strings.Count(rec.String(), "\"level\":\"healthy\""); got != 0 {
+		t.Fatalf("the stream announced recovery %d times during the outage:\n%s", got, rec.String())
+	}
+
+	// Recovery: the healthy announcement is a single edge event.
+	health.redis.Store(true)
+	waitContains(t, rec, "\"level\":\"healthy\"", 10*time.Second, "the recovery announcement on switch back to Redis")
+	time.Sleep(2 * gatewayFallbackPollInterval)
+	if got := strings.Count(rec.String(), "\"level\":\"healthy\""); got != 1 {
+		t.Errorf("recovery announced %d times for one recovery edge; want exactly 1:\n%s", got, rec.String())
+	}
+
+	cancel()
+	<-done
+}
+
+// gatewayFallbackPollInterval mirrors the §25.5 SSE fall-back poll cadence, the
+// interval the degradation envelope is re-emitted on while Redis is down.
+const gatewayFallbackPollInterval = 2 * time.Second
+
+// spec: 25.5 (eventKey dedup across sources, exactly-once across the source
+// switch) — an SSE connection held open across a Redis outage receives this
+// replica's own events from the local ring while Redis is down. On recovery the
+// best-effort flush re-emits exactly those events to ops:events:stream with
+// their original eventKeys, so they reach the connection a second time on its
+// live tail, arriving after entries carrying newer keys. The connection tracks
+// what it has been written, so each event is delivered once however many sources
+// hand it over. The pre-fix Redis stint wrote a frame for every entry its tail
+// produced, so every connection open across a recovery received the whole outage
+// window twice.
+//
+// diagnosis: a failure means an SSE consumer that holds a connection through a
+// Redis outage is re-delivered every lenny-ops event of that outage when the
+// recovery flush runs, so an agent acts on the same escalation or drift event
+// twice; or the post-recovery event never arrives, meaning the switch back to
+// the Redis tail dropped the live stream.
+func TestOpsEventStreamOpenConnectionSeesFlushedEventsOnceAcrossRecovery(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const streamKey = "ops:events:stream:flushsse"
+
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(false)
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
+		RedisStreamKey: streamKey,
+		SourceHealth:   health,
+		ReplicaID:      "ops-1",
+	})
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
+		Client:    rd.Client,
+		Buffer:    eventbuffer.NewEventBuffer(0),
+		StreamKey: streamKey,
+		MaxLen:    1000,
+		ReplicaID: "gw-1",
+	})
+	svc.SetRedisReEmitter(emitter.Emit)
+
+	if err := emitter.Emit(ctx, gwevents.OperationalEvent{
+		ID: "gw-1:1000:1", Type: "dev.lenny.alert_fired",
+		SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1000, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("seed the stream: %v", err)
+	}
+
+	rec := newSyncBuffer()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/admin/events/stream", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.HandleStream(rec, req)
+	}()
+	waitContains(t, rec, "id: gw-1:1000:1\n", 10*time.Second, "the Redis-served backlog event")
+
+	// The outage: no gateway buffer is reachable either, so the connection
+	// serves this replica's ring, which is where the events it emits now land.
+	health.redis.Store(false)
+	waitContains(t, rec, "lenny-ops-local-buffer", 10*time.Second, "the dual-outage degradation announcement")
+	svc.MarkRedisOutage()
+	outage := []string{"ops-1:2000:1", "ops-1:2001:1"}
+	for _, key := range outage {
+		if _, err := svc.Publish(ctx, gwevents.OperationalEvent{
+			ID: key, Type: "dev.lenny.escalation_created",
+			SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2000, 0).UTC(),
+		}); err != nil {
+			t.Fatalf("publish outage event %s: %v", key, err)
+		}
+		waitContains(t, rec, "id: "+key+"\n", 10*time.Second, "the outage-window event served from the local ring")
+	}
+
+	// Recovery: the connection returns to the Redis tail, the gateway resumes
+	// XADDing, and only then does the flush re-emit the outage window.
+	health.redis.Store(true)
+	waitContains(t, rec, "\"level\":\"healthy\"", 10*time.Second, "the recovery announcement")
+	if err := emitter.Emit(ctx, gwevents.OperationalEvent{
+		ID: "gw-1:3000:1", Type: "dev.lenny.alert_fired",
+		SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(3000, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("emit the post-recovery event: %v", err)
+	}
+	waitContains(t, rec, "id: gw-1:3000:1\n", 10*time.Second, "the post-recovery event on the Redis tail")
+
+	if n, err := svc.FlushBufferedToRedis(ctx); err != nil || n != len(outage) {
+		t.Fatalf("recovery flush = (%d, %v); want the %d outage-window events", n, err, len(outage))
+	}
+	// Give the live tail time to hand the flushed entries to the connection.
+	time.Sleep(3 * time.Second)
+
+	cancel()
+	<-done
+
+	body := rec.String()
+	for _, key := range append(append([]string{}, outage...), "gw-1:1000:1", "gw-1:3000:1") {
+		if got := strings.Count(body, "id: "+key+"\n"); got != 1 {
+			t.Errorf("the open connection received %s %d time(s); want exactly 1:\n%s", key, got, body)
+		}
+	}
+}

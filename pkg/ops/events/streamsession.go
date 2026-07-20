@@ -9,7 +9,6 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 // gatewayPollInterval is the §25.5 SSE fall-back poll cadence: while serving
@@ -42,6 +41,13 @@ type streamSession struct {
 	// kind (empty or non-redis so a switch resolves it by eventKey scan).
 	lastKind string
 	lastKey  string
+
+	// delivered is the bounded set of eventKeys already written on this
+	// connection. It spans every source the session serves from, so an event
+	// that reaches the connection from two sources, or that the recovery flush
+	// re-emits onto the Redis stream out of stream order, is written once.
+	// spec: §25.5 (eventKey dedup across sources).
+	delivered deliveredKeys
 
 	// scope / scoped carry the §25.5 read-caller tenant scope resolved at the
 	// opsserver boundary. When scoped is true, admits gates every frame so a
@@ -76,8 +82,8 @@ func (st *streamSession) admits(ev gwevents.OperationalEvent) bool {
 func (st *streamSession) run(ctx context.Context) {
 	prev := dataSource(-1)
 	for {
-		src, deg, _ := st.s.selectSource()
-		st.writeTransition(prev, src, deg)
+		src, _, _ := st.s.selectSource()
+		st.announceRecovery(prev, src)
 		// The source resolved here is carried into the serve loop so the
 		// stint's stay-put check tests the same classification that chose the
 		// data path, rather than re-deriving it from the live signal. spec:
@@ -97,27 +103,43 @@ func (st *streamSession) run(ctx context.Context) {
 	}
 }
 
-// writeTransition announces a source change on the stream. Entering a
-// degraded source (gateway buffer or local ring) writes the :degradation
-// envelope so the consumer learns it is receiving a degraded view. Returning
-// to the healthy Redis source from a degraded one writes
-// :degradation {"level":"healthy"}. The initial entry writes nothing when the
-// source is healthy. A :gap comment on a switch back to Redis is emitted by
-// serveRedis when the resume position cannot be honoured. spec: §25.5 (lines
-// 2768-2780, transparent switch and recovery).
-func (st *streamSession) writeTransition(prev, src dataSource, deg *conventions.Degradation) {
-	switch src {
-	case dsRedis:
-		if prev != dataSource(-1) && prev != dsRedis {
-			writeSSEHealthy(st.w)
-			st.flusher.Flush()
-		}
-	default:
-		if deg != nil {
-			writeSSEDegradation(st.w, deg)
-			st.flusher.Flush()
-		}
+// announceRecovery writes :degradation {"level":"healthy"} when the session
+// returns to the healthy Redis source from a degraded one, so the consumer
+// learns the stream has recovered. It fires once per recovery, and not on the
+// initial entry to a healthy source. The degraded envelope is not written here:
+// each degraded serve loop emits it periodically for the duration of its stint
+// (see writeDegradationTick). A :gap comment on a switch back to Redis is
+// emitted by serveRedis when the resume position cannot be honoured. spec:
+// §25.5 (lines 2768-2780, transparent switch and recovery).
+func (st *streamSession) announceRecovery(prev, src dataSource) {
+	if src != dsRedis || prev == dataSource(-1) || prev == dsRedis {
+		return
 	}
+	writeSSEHealthy(st.w)
+	st.flusher.Flush()
+}
+
+// writeDegradationTick re-renders the §25.5 degradation envelope for the
+// current degraded stint and writes it as a :degradation comment.
+//
+// §25.5 states the envelope as a periodic comment for the duration of a Redis
+// outage rather than a single announcement on the transition. A connection that
+// joins mid-outage, or that sits in a degraded stint for minutes because
+// nothing is published, would otherwise have no recurring signal that its view
+// is degraded, and no write at all to keep an intermediary from idling the
+// connection out. The envelope is re-rendered each tick so a change in the
+// fall-back's own reachability is reflected: fanOutDown selects the dual-outage
+// envelope, which is what the connection is receiving when no gateway replica
+// answered the buffer query. spec: §25.5 (events continue to flow to the SSE
+// client with the canonical degradation envelope embedded in a periodic
+// :degradation comment line).
+func (st *streamSession) writeDegradationTick(fanOutDown bool) {
+	_, deg, _ := st.s.selectSource()
+	if fanOutDown {
+		_, deg, _ = dualOutageState()
+	}
+	writeSSEDegradation(st.w, deg)
+	st.flusher.Flush()
 }
 
 // serveRedis serves the SSE stream from the Redis ops:events:stream: it
@@ -162,7 +184,7 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 	lastStreamID := start
 	if entries, err := s.redis.ReadRange(setupCtx, start, 0); err == nil {
 		for _, e := range entries {
-			st.deliverForward(e.event)
+			st.deliverOnce(e.event)
 			lastStreamID = e.streamID
 		}
 	}
@@ -196,47 +218,11 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 			if !open {
 				return
 			}
-			if st.deliverForward(ev) {
+			if st.deliverOnce(ev) {
 				st.flusher.Flush()
 			}
 		}
 	}
-}
-
-// deliverForward writes ev as an SSE frame when the caller's filter and tenant
-// scope admit it and its eventKey orders strictly after the last position this
-// connection delivered, and reports whether a frame was written.
-//
-// The forward-only check is what makes the Redis-served path exactly-once
-// across a recovery. The best-effort recovery flush re-emits the events this
-// replica buffered during a Redis outage with their original eventKeys, so they
-// arrive at the stream tail carrying keys the connection already consumed
-// during the outage from the gateway-buffer fall-back or the local ring.
-// Writing them again would re-deliver events the connection has, which is the
-// same rewind markDelivered refuses on the resume position. spec: §25.5
-// (eventKey dedup across sources, exactly-once across the source switch).
-func (st *streamSession) deliverForward(ev gwevents.BufferedEvent) bool {
-	if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
-		return false
-	}
-	if !st.aheadOfDelivered(ev.Event.ID) {
-		return false
-	}
-	writeSSEFrame(st.w, ev)
-	st.markDelivered(ev.Event.ID)
-	return true
-}
-
-// aheadOfDelivered reports whether eventKey orders strictly after the last
-// position this connection delivered. A connection that has delivered nothing
-// admits everything, and an event carrying no eventKey is admitted because it
-// cannot be ordered against the resume position. spec: §25.5 (cross-switch
-// no-drop ordering).
-func (st *streamSession) aheadOfDelivered(eventKey string) bool {
-	if st.lastKey == "" || eventKey == "" {
-		return true
-	}
-	return eventKeyLess(st.lastKey, eventKey)
 }
 
 // serveGateway serves the SSE stream from the gateway-buffer fan-out during a
@@ -266,9 +252,13 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 	sub := st.s.subscribe(st.filter, 64)
 	defer st.s.unsubscribe(sub)
 
-	delivered := make(map[string]struct{})
+	// The envelope is announced on entry, before the first fan-out poll, so a
+	// connection learns its view is degraded without waiting on a cross-replica
+	// fetch, and re-announced on every poll thereafter.
+	st.writeDegradationTick(false)
+
 	resumed := false
-	unavailable := false
+	first := true
 	for {
 		if ctx.Err() != nil {
 			return
@@ -279,35 +269,31 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 		merged, err := st.s.fetchGatewayBuffer(ctx, st.filter)
 		if err != nil {
 			// No replica served the buffer query, so this connection is
-			// receiving lenny-ops-originated events only. Announce the
-			// dual-outage envelope once so the consumer stops reading the
-			// stream as a cross-replica view, and keep serving the local ring.
-			// spec: §25.5 (dual-outage local-buffer serving).
-			if !unavailable {
-				_, deg, _ := dualOutageState()
-				writeSSEDegradation(st.w, deg)
-				st.flusher.Flush()
-				unavailable = true
-			}
+			// receiving lenny-ops-originated events only. The tick below
+			// announces the dual-outage envelope so the consumer stops reading
+			// the stream as a cross-replica view, and the local ring keeps
+			// serving. spec: §25.5 (dual-outage local-buffer serving).
 			merged = nil
-		} else if unavailable {
-			// A replica answered again: the connection is back to the
-			// gateway-buffer fall-back view.
-			_, deg, _ := st.s.selectSource()
-			writeSSEDegradation(st.w, deg)
-			st.flusher.Flush()
-			unavailable = false
 		}
+		// The degradation envelope is written on every fall-back poll, so an
+		// idle connection keeps receiving it for the life of the outage. The
+		// first poll re-announces only when the fan-out turned out to be
+		// unreachable, which upgrades the entry announcement to the dual-outage
+		// envelope the connection is actually being served under.
+		if !first || err != nil {
+			st.writeDegradationTick(err != nil)
+		}
+		first = false
 		window := st.s.unionLocalOrigin(merged, st.filter)
 		if !resumed && err == nil && len(window) > 0 {
-			st.seedGatewayResume(window, delivered)
+			st.seedGatewayResume(window)
 			resumed = true
 		}
 		for _, ev := range window {
-			st.deliverOnce(ev, delivered)
+			st.deliverOnce(ev)
 		}
 		st.flusher.Flush()
-		if !st.waitGatewayTick(ctx, sub, delivered) {
+		if !st.waitGatewayTick(ctx, sub) {
 			return
 		}
 	}
@@ -318,7 +304,7 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 // reaches an open connection without waiting for the next fan-out tick. It
 // reports false when the connection is done. spec: §25.5 (the in-memory buffer
 // is the lenny-ops-origin source during a Redis-down outage).
-func (st *streamSession) waitGatewayTick(ctx context.Context, sub *subscription, delivered map[string]struct{}) bool {
+func (st *streamSession) waitGatewayTick(ctx context.Context, sub *subscription) bool {
 	tick := time.NewTimer(gatewayPollInterval)
 	defer tick.Stop()
 	for {
@@ -331,7 +317,7 @@ func (st *streamSession) waitGatewayTick(ctx context.Context, sub *subscription,
 			if !open {
 				return false
 			}
-			if st.deliverOnce(ev, delivered) {
+			if st.deliverOnce(ev) {
 				st.flusher.Flush()
 			}
 		}
@@ -340,18 +326,26 @@ func (st *streamSession) waitGatewayTick(ctx context.Context, sub *subscription,
 
 // deliverOnce writes ev as an SSE frame unless it was already delivered on this
 // connection or the caller's filter or tenant scope excludes it, and reports
-// whether a frame was written. The delivered set is keyed on the eventKey, so
-// the same event reaching the connection from both the fan-out window and a
-// local publish is written once. spec: §25.5 (eventKey dedup across sources).
-func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent, delivered map[string]struct{}) bool {
-	if _, seen := delivered[ev.Event.ID]; seen {
+// whether a frame was written.
+//
+// Every source the session serves from writes through it, so the dedup holds
+// across a source switch as well as within one stint: the same event reaching
+// the connection from the fan-out window and from a live local publish is
+// written once, and so is an outage-window event the recovery flush re-emits
+// onto the Redis stream after the connection already received it from the local
+// ring. Ordering alone cannot decide the latter, because the flush places those
+// events at the stream tail carrying keys older than everything around them,
+// and a connection that never received them must still be delivered them. spec:
+// §25.5 (eventKey dedup across sources, exactly-once across the source switch).
+func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent) bool {
+	if st.delivered.has(ev.Event.ID) {
 		return false
 	}
 	if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
 		return false
 	}
 	writeSSEFrame(st.w, ev)
-	delivered[ev.Event.ID] = struct{}{}
+	st.delivered.add(ev.Event.ID)
 	st.markDelivered(ev.Event.ID)
 	return true
 }
@@ -374,14 +368,14 @@ func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent, delivered map[st
 // the window stays marked delivered and nothing is re-sent. spec: §25.5
 // (cross-switch no-drop, exactly-once across the source switch; a :gap when no
 // event has a greater-or-equal eventKey).
-func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, delivered map[string]struct{}) {
+func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent) {
 	if st.lastKey == "" {
 		return
 	}
 	seeded := false
 	for _, ev := range window {
 		if eventKeyAtOrAfter(st.lastKey, ev.Event.ID) {
-			delivered[ev.Event.ID] = struct{}{}
+			st.delivered.add(ev.Event.ID)
 			seeded = true
 		}
 	}
@@ -413,20 +407,26 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 	}
 	backlog := st.s.buffer.Query(since, st.filter, 0)
 	for _, ev := range backlog.Events {
-		if !st.admits(ev.Event) {
-			continue
-		}
-		writeSSEFrame(st.w, ev)
-		st.markDelivered(ev.Event.ID)
+		st.deliverOnce(ev)
 	}
 	st.flusher.Flush()
+	// The local ring is a degraded source whenever it is reached from a Redis
+	// outage, so the envelope is written on entry and re-written on the
+	// fall-back cadence for the life of the stint. A deployment with no Redis
+	// wired is not degraded and renders no envelope, so this writes nothing.
+	// spec: §25.5 (periodic :degradation comment).
+	st.writeDegradationTick(false)
 
 	ticker := time.NewTicker(sourceCheckInterval)
 	defer ticker.Stop()
+	degTicker := time.NewTicker(gatewayPollInterval)
+	defer degTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-degTicker.C:
+			st.writeDegradationTick(false)
 		case <-ticker.C:
 			if st.s.sourceChanged(src) {
 				return
@@ -435,12 +435,9 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 			if !open {
 				return
 			}
-			if !st.admits(ev.Event) {
-				continue
+			if st.deliverOnce(ev) {
+				st.flusher.Flush()
 			}
-			writeSSEFrame(st.w, ev)
-			st.markDelivered(ev.Event.ID)
-			st.flusher.Flush()
 		}
 	}
 }
