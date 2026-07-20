@@ -224,6 +224,289 @@ func answerQuiesceAndReadComplete(fr *fakeLifecycleRuntime) <-chan lcFrame {
 	return out
 }
 
+// slotCheckpointServer extends a concurrentServer with the workspace root,
+// staging dir, and checkpoint transport the Checkpoint handler requires,
+// which concurrentServer omits. The handler guards on WorkspaceRoot == ""
+// before slot resolution runs, so a per-slot checkpoint test must set these
+// three fields or every case would reject at the config guard before the
+// slot gate. It returns the server so callers assign slots via StartSession
+// before serving.
+func slotCheckpointServer(t *testing.T, transport adapter.CheckpointTransport) *adapter.Server {
+	t.Helper()
+	s, _ := concurrentServer(t)
+	s.WorkspaceRoot = t.TempDir()
+	s.StagingDir = t.TempDir()
+	s.CheckpointTransport = transport
+	return s
+}
+
+// seedFile writes content at path, creating parent directories as needed.
+func seedFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %q: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("seed file %q: %v", path, err)
+	}
+}
+
+// spec: §5.2 (per-slot checkpoint granularity), §6.4 line 393 (slot-qualified
+// export target /workspace/slots/{slotId}/current and /sessions/{slotId}) —
+// a CheckpointStart carrying a slot_id captures only that slot's live
+// workspace and session subtree, not the pod-global base tree. The
+// non-happy path this pins is a concurrent-session pod whose checkpoint
+// archives the empty pod-global /workspace/current base tree and no slot's
+// live workspace, which the pre-fix pod-global checkpointRoots() did.
+func TestCheckpointStreamCapturesSlotSubtree_spec_5_2(t *testing.T) {
+	transport := &recordingTransport{}
+	s := slotCheckpointServer(t, transport)
+	ctx := context.Background()
+	if _, err := s.StartSession(ctx, slotStartReq("sess-a", "slot-a")); err != nil {
+		t.Fatalf("StartSession(slot-a): %v", err)
+	}
+	seedFile(t, filepath.Join(s.WorkspaceBase, "slots", "slot-a", "current", "notes.txt"), "slot-a workspace state")
+	seedFile(t, filepath.Join(s.SessionsRoot, "slot-a", "history.jsonl"), "slot-a conversation")
+	// A pod-global decoy under the base WorkspaceRoot must never be captured
+	// by a per-slot checkpoint.
+	seedFile(t, filepath.Join(s.WorkspaceRoot, "decoy.txt"), "pod-global decoy")
+
+	client, _ := adapterClient(t, s)
+	stream, err := client.Checkpoint(ctx)
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-slot-a",
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+			ChunkSizeBytes: 1 << 20,
+			SlotId:         &adapterv1.SlotId{Value: "slot-a"},
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+	summary, failed, probe := driveCheckpoint(t, stream, nil)
+	if failed != nil {
+		t.Fatalf("per-slot checkpoint failed unexpectedly: %+v", failed)
+	}
+	if summary == nil || probe == nil || probe.GetWorkspaceBytes() <= 0 {
+		t.Fatalf("expected a positive probe and Summary, got probe=%+v summary=%+v", probe, summary)
+	}
+
+	// Reassemble the bundle and confirm it carries the slot's workspace and
+	// session subtree under both prefixes and omits the pod-global decoy.
+	wsOut, sessOut := t.TempDir(), t.TempDir()
+	if _, err := workspace.ExtractTree(
+		[]workspace.NamedRoot{
+			{Prefix: workspace.WorkspacePrefix, Root: wsOut},
+			{Prefix: workspace.SessionsPrefix, Root: sessOut},
+		},
+		bytes.NewReader(transport.allBodies()),
+	); err != nil {
+		t.Fatalf("extract per-slot bundle: %v", err)
+	}
+	if got, err := os.ReadFile(filepath.Join(wsOut, "notes.txt")); err != nil || string(got) != "slot-a workspace state" {
+		t.Fatalf("slot workspace file = %q (err %v), want the slot-a workspace content", got, err)
+	}
+	if got, err := os.ReadFile(filepath.Join(sessOut, "history.jsonl")); err != nil || string(got) != "slot-a conversation" {
+		t.Fatalf("slot session file = %q (err %v), want the slot-a session content", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(wsOut, "decoy.txt")); !os.IsNotExist(err) {
+		t.Errorf("pod-global decoy captured by a per-slot checkpoint; the archive is not slot-scoped")
+	}
+}
+
+// spec: §5.2 (per-slot addressing), §4.4 (durability contract) — a
+// CheckpointStart naming a slot with no bound session is rejected with
+// FailedPrecondition before any grant is minted, so a checkpoint never
+// archives an empty or nonexistent subtree for an unassigned slot. Two arms
+// are pinned: a slot that was never assigned (no registry entry) and a slot
+// whose registry entry exists with an empty sessionID (materialized by a
+// pre-StartSession FinalizeWorkspace but idle). The non-happy path is a
+// checkpoint minting grants and uploading for a slot that holds no session.
+func TestCheckpointStreamRejectsUnassignedSlot_spec_5_2(t *testing.T) {
+	transport := &recordingTransport{}
+	s := slotCheckpointServer(t, transport)
+	ctx := context.Background()
+
+	// Assigned-but-idle arm: FinalizeWorkspace creates the slot registry
+	// entry and its on-disk tree ahead of StartSession, so the slot exists
+	// with an empty sessionID.
+	if _, err := s.FinalizeWorkspace(ctx, &adapterv1.FinalizeWorkspaceRequest{
+		SessionId: &adapterv1.SessionId{Value: "sess-idle"},
+		SlotId:    &adapterv1.SlotId{Value: "slot-idle"},
+		WorkspacePlan: &adapterv1.WorkspacePlan{
+			SchemaVersion: 1,
+			Sources: []*adapterv1.WorkspaceSource{
+				{Type: "inlineFile", Path: "seed.txt", Content: "x", Mode: "0644"},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("FinalizeWorkspace(slot-idle): %v", err)
+	}
+
+	client, _ := adapterClient(t, s)
+	for _, slot := range []string{"slot-unknown", "slot-idle"} {
+		stream, err := client.Checkpoint(ctx)
+		if err != nil {
+			t.Fatalf("open Checkpoint stream for %s: %v", slot, err)
+		}
+		if err := stream.Send(&adapterv1.CheckpointRequest{
+			Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+				CheckpointId:   "gw-ckpt-" + slot,
+				Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+				ChunkSizeBytes: 1 << 20,
+				SlotId:         &adapterv1.SlotId{Value: slot},
+			}},
+		}); err != nil {
+			t.Fatalf("send start for %s: %v", slot, err)
+		}
+		if _, rerr := stream.Recv(); status.Code(rerr) != codes.FailedPrecondition {
+			t.Fatalf("code for %s = %v, want FailedPrecondition for a slot with no bound session", slot, status.Code(rerr))
+		}
+	}
+	transport.mu.Lock()
+	defer transport.mu.Unlock()
+	if len(transport.puts) != 0 {
+		t.Fatalf("a grant was used for an unassigned slot: %d PUTs", len(transport.puts))
+	}
+}
+
+// driveCheckpointConc runs the gateway side of a Checkpoint stream from a
+// goroutine, answering each ChunkReady with a grant carrying the given URL
+// so a shared transport can group PUTs per slot. It returns errors rather
+// than calling t.Fatal, which is unsafe off the test goroutine. An op-lock
+// abort (a coalesced slot in the pre-fix lock) surfaces here as a
+// codes.Aborted error from Recv.
+func driveCheckpointConc(stream adapterv1.Adapter_CheckpointClient, url string) (*adapterv1.CheckpointSummary, *adapterv1.CheckpointFailed, error) {
+	for {
+		msg, err := stream.Recv()
+		if err != nil {
+			return nil, nil, err
+		}
+		switch m := msg.GetMsg().(type) {
+		case *adapterv1.CheckpointResponse_ChunkReady:
+			grant := &adapterv1.CheckpointGrant{
+				Index:         m.ChunkReady.GetIndex(),
+				Url:           url,
+				ContentLength: m.ChunkReady.GetLength(),
+			}
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Grant{Grant: grant},
+			}); err != nil {
+				return nil, nil, err
+			}
+		case *adapterv1.CheckpointResponse_Summary:
+			return m.Summary, nil, nil
+		case *adapterv1.CheckpointResponse_Failed:
+			return nil, m.Failed, nil
+		}
+	}
+}
+
+// spec: §5.2 (one slot's checkpoint upload at a time, in slot-ID order) —
+// three or more per-slot checkpoints opened concurrently on one pod are each
+// admitted and each captures its own slot's subtree; none is coalesced away.
+// The non-happy path is the pre-fix depth-one op lock coalescing the third
+// and later slots into the queued one, returning codes.Aborted and
+// terminating those slots uncheckpointed.
+func TestCheckpointStreamConcurrentPerSlotAllCaptured_spec_5_2(t *testing.T) {
+	transport := &recordingTransport{}
+	s := slotCheckpointServer(t, transport)
+	ctx := context.Background()
+	slots := []string{"slot-1", "slot-2", "slot-3"}
+	for _, slot := range slots {
+		if _, err := s.StartSession(ctx, slotStartReq("sess-"+slot, slot)); err != nil {
+			t.Fatalf("StartSession(%s): %v", slot, err)
+		}
+		seedFile(t, filepath.Join(s.WorkspaceBase, "slots", slot, "current", slot+".txt"), "content-"+slot)
+	}
+	client, _ := adapterClient(t, s)
+
+	type result struct {
+		slot    string
+		summary *adapterv1.CheckpointSummary
+		failed  *adapterv1.CheckpointFailed
+		err     error
+	}
+	results := make([]result, len(slots))
+	var wg sync.WaitGroup
+	for i, slot := range slots {
+		wg.Add(1)
+		go func(i int, slot string) {
+			defer wg.Done()
+			stream, err := client.Checkpoint(ctx)
+			if err != nil {
+				results[i] = result{slot: slot, err: err}
+				return
+			}
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+					CheckpointId:   "gw-ckpt-" + slot,
+					Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC,
+					ChunkSizeBytes: 1 << 20,
+					SlotId:         &adapterv1.SlotId{Value: slot},
+				}},
+			}); err != nil {
+				results[i] = result{slot: slot, err: err}
+				return
+			}
+			summary, failed, err := driveCheckpointConc(stream, "https://objectstore.example/"+slot)
+			results[i] = result{slot: slot, summary: summary, failed: failed, err: err}
+		}(i, slot)
+	}
+	wg.Wait()
+
+	// Every slot's checkpoint completed with a Summary: none coalesced into
+	// codes.Aborted and none dropped.
+	for _, r := range results {
+		if r.err != nil {
+			t.Fatalf("%s checkpoint errored (a coalesced op lock returns codes.Aborted=%v): %v", r.slot, status.Code(r.err), r.err)
+		}
+		if r.failed != nil {
+			t.Fatalf("%s checkpoint failed: %+v", r.slot, r.failed)
+		}
+		if r.summary == nil {
+			t.Fatalf("%s checkpoint produced no Summary", r.slot)
+		}
+	}
+
+	// Each slot's uploaded bytes reassemble into that slot's subtree alone.
+	transport.mu.Lock()
+	byURL := map[string][]byte{}
+	for _, p := range transport.puts {
+		byURL[p.url] = append(byURL[p.url], p.body...)
+	}
+	transport.mu.Unlock()
+	for _, slot := range slots {
+		body, ok := byURL["https://objectstore.example/"+slot]
+		if !ok {
+			t.Fatalf("%s uploaded no chunk", slot)
+		}
+		out := t.TempDir()
+		if _, err := workspace.ExtractTree(
+			[]workspace.NamedRoot{{Prefix: workspace.WorkspacePrefix, Root: out}},
+			bytes.NewReader(body),
+		); err != nil {
+			t.Fatalf("extract %s bundle: %v", slot, err)
+		}
+		got, err := os.ReadFile(filepath.Join(out, slot+".txt"))
+		if err != nil || string(got) != "content-"+slot {
+			t.Fatalf("%s workspace file = %q (err %v), want content-%s", slot, got, err, slot)
+		}
+		// No sibling slot's file leaked into this slot's checkpoint.
+		for _, other := range slots {
+			if other == slot {
+				continue
+			}
+			if _, err := os.Stat(filepath.Join(out, other+".txt")); !os.IsNotExist(err) {
+				t.Errorf("%s checkpoint carried %s's file; per-slot capture is not isolated", slot, other)
+			}
+		}
+	}
+}
+
 // spec: §4.4 line 241, §15.4.3 — a Full-level runtime quiesces cooperatively
 // across the chunked stream, and the adapter's checkpoint_complete frame
 // carries status "failed" with a reason when a chunk PUT is rejected by the
