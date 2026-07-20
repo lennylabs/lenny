@@ -27,10 +27,11 @@ type sourceHealthProbe struct {
 // redisEdgeCallbacks carries the §25.5 replica-level Redis reachability edge
 // hooks the source-health loop fires. onRedisDown opens the recovery flush's
 // outage window by recording where the local ring stood when Redis went away;
-// onRedisRecovered flushes that window to the recovered stream. Keeping both on
-// the same detector is what scopes the flush to the outage: a recovery with no
-// preceding down edge has nothing to re-emit. spec: §25.5 (best-effort recovery
-// flush).
+// onRedisRecovered flushes that window to the recovered stream and is a no-op
+// when no window is open, so a reachable Redis with nothing buffered costs
+// nothing. The window is also opened by a failed XADD, which the probe never
+// observes, so the flush is offered on every reachable refresh rather than on a
+// down-to-up edge alone. spec: §25.5 (best-effort recovery flush).
 type redisEdgeCallbacks struct {
 	onRedisDown      func()
 	onRedisRecovered func(context.Context)
@@ -61,10 +62,14 @@ func (p *sourceHealthProbe) GatewayAvailable() bool { return p.gatewayUp.Load() 
 // gateway reported reachable (no probe wired). spec: §25.5 lines
 // 2768-2780.
 //
-// run also drives the §25.5 best-effort recovery flush: it remembers the
-// previous Redis reachability and fires the edge callbacks exactly once per
-// transition. The up-to-down edge opens the flush's outage window, and the
-// down-to-up edge flushes it. The flush is a replica-level property,
+// run also drives the §25.5 best-effort recovery flush. The up-to-down edge
+// opens the flush's outage window once per observed outage. The flush itself is
+// offered on every refresh that finds Redis reachable, because the window has a
+// second opener the probe never observes: a failed XADD opens it at the event
+// that failed, so an interruption shorter than one refresh interval produces a
+// window with no accompanying down edge. Firing only on the edge would abandon
+// those events and leave the stale window to widen the next flush into
+// already-delivered history. The flush is a replica-level property,
 // independent of any open read connection, so a consumer that connects only
 // after Redis recovers still observes the events lenny-ops buffered locally
 // during the outage. Nil callbacks disable the flush. spec: §25.5
@@ -84,7 +89,15 @@ func (p *sourceHealthProbe) run(ctx context.Context, interval time.Duration, red
 		switch {
 		case !nowUp && prevRedisUp && edges.onRedisDown != nil:
 			edges.onRedisDown()
-		case nowUp && !prevRedisUp && edges.onRedisRecovered != nil:
+		case nowUp && edges.onRedisRecovered != nil:
+			// Every refresh that finds Redis reachable offers the flush its
+			// chance, rather than only the refresh that follows an observed
+			// down edge. The outage window is opened by two signals and the
+			// probe sees only one of them: a failed XADD opens it the instant
+			// the write fails, so a Redis interruption shorter than one refresh
+			// interval leaves a window open that no down-to-up edge would ever
+			// close. The flush is a no-op with no window open, and consuming
+			// the window is what makes it fire once per outage.
 			edges.onRedisRecovered(ctx)
 		}
 		prevRedisUp = nowUp
