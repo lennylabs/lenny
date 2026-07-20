@@ -364,16 +364,17 @@
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
         "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
       ],
       "packages": [
         "pkg/admission/ownership",
-        "pkg/controller/poolscaling"
+        "pkg/controller/poolscaling",
+        "pkg/controller/ssaretry"
       ],
       "depends_on_sections": [
         "4.6"
