@@ -734,6 +734,10 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		lastKind: resumeKind,
 		lastKey:  resumeKey,
 		scope:    scope,
+		// The dedup set spans every source the session serves from, so it is
+		// sized to the largest window the session can replay. spec: §25.5
+		// (exactly-once across the source switch).
+		delivered: deliveredKeys{window: s.deliveredKeyWindow()},
 	}
 	// The connection is counted for its whole life, from the moment the session
 	// is built to the moment it returns, so the §25.5 active-connection gauge is

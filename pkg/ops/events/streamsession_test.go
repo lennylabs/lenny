@@ -85,17 +85,17 @@ func TestDeliverOnce_DeliversAnOlderKeyTheConnectionHasNotSeen_spec_25_5(t *test
 // ever been written. The retained window still covers every replay the read
 // side can produce, so a key inside it is still deduplicated.
 func TestDeliveredKeys_BoundsTheRetainedWindow_spec_25_5(t *testing.T) {
-	var d deliveredKeys
-	for i := 0; i < deliveredKeyWindow+10; i++ {
+	d := deliveredKeys{window: bufferReplayWindow}
+	for i := 0; i < bufferReplayWindow+10; i++ {
 		if !d.add(fmt.Sprintf("ops:%d:1", i)) {
 			t.Fatalf("key %d was reported as already delivered", i)
 		}
 	}
-	if got := len(d.order); got != deliveredKeyWindow {
-		t.Errorf("retained %d keys; want the window bound %d", got, deliveredKeyWindow)
+	if got := len(d.order); got != bufferReplayWindow {
+		t.Errorf("retained %d keys; want the window bound %d", got, bufferReplayWindow)
 	}
-	if len(d.seen) != deliveredKeyWindow {
-		t.Errorf("the index holds %d keys; want %d (an evicted key must leave the index)", len(d.seen), deliveredKeyWindow)
+	if len(d.seen) != bufferReplayWindow {
+		t.Errorf("the index holds %d keys; want %d (an evicted key must leave the index)", len(d.seen), bufferReplayWindow)
 	}
 	if !d.has("ops:15:1") {
 		t.Error("a key inside the retained window is no longer deduplicated")
@@ -106,5 +106,30 @@ func TestDeliveredKeys_BoundsTheRetainedWindow_spec_25_5(t *testing.T) {
 	// An event with no eventKey cannot be deduplicated against anything.
 	if !d.add("") || !d.add("") {
 		t.Error("an event carrying no eventKey must not be collapsed into a single delivery")
+	}
+}
+
+// spec: 25.5 (eventKey dedup across sources, exactly-once across the source
+// switch) — the delivered set must cover the largest window a session can
+// replay. Whenever Redis is wired that is the stream's retained window, so the
+// bound tracks the configured stream length rather than the local ring
+// capacity, which is smaller.
+func TestDeliveredKeyWindow_CoversTheRedisRetainedWindow_spec_25_5(t *testing.T) {
+	local := New(Options{})
+	if got := local.deliveredKeyWindow(); got != bufferReplayWindow {
+		t.Errorf("no Redis wired: window = %d, want the buffer replay bound %d", got, bufferReplayWindow)
+	}
+
+	const maxLen = int64(bufferReplayWindow) * 3
+	wired := New(Options{RedisClient: &fakeStream{}, RedisStreamMaxLen: maxLen})
+	if got := wired.deliveredKeyWindow(); int64(got) != maxLen {
+		t.Errorf("Redis wired at maxlen %d: window = %d, want %d; a session that replays the retained window would re-deliver everything past the bound", maxLen, got, maxLen)
+	}
+
+	// A stream shorter than the local replay window does not shrink the bound:
+	// the gateway-buffer and local-ring windows are still replayable.
+	short := New(Options{RedisClient: &fakeStream{}, RedisStreamMaxLen: 10})
+	if got := short.deliveredKeyWindow(); got != bufferReplayWindow {
+		t.Errorf("short stream: window = %d, want the buffer replay bound %d", got, bufferReplayWindow)
 	}
 }
