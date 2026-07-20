@@ -188,7 +188,7 @@ func efOpenBreakerOn(t *testing.T, c *kind.Cluster, pod, name string) bool {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	body := strings.NewReader(`{"reason":"tier-5 cross-replica fan-out probe","limitTier":"soft"}`)
+	body := strings.NewReader(`{"reason":"tier-5 cross-replica fan-out probe","limit_tier":"runtime","scope":{"runtime":"echo"}}`)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		baseURL+"/v1/admin/circuit-breakers/"+name+"/open", body)
 	if err != nil {

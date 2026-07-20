@@ -35,9 +35,12 @@ import (
 )
 
 // replayStream is an in-process ops:events:stream holding a fixed retained
-// window. failNextScan makes the next range read fail once, which is how the
+// window. failNext makes the next range read fail once, which is how the
 // test drives the read side down its resume-failure path (a connection reset
-// landing on the cursor scan) deterministically.
+// landing on the cursor scan) deterministically. The eventKey resume scan runs
+// the retained window via XREVRANGE (redisSource.resumeByEventKey ->
+// retainedWindow), so both the forward and the reverse range read honour the
+// gate; whichever the resume issues first takes the injected failure.
 type replayStream struct {
 	mu       sync.Mutex
 	msgs     []redis.XMessage
@@ -95,15 +98,37 @@ func (r *replayStream) XRangeN(ctx context.Context, stream, start, stop string, 
 	return cmd
 }
 
-// XRevRangeN serves the newest-first bound read the head cursor needs.
+// XRevRangeN serves the newest-first read used both by the head-cursor prime
+// (count == 1) and by the eventKey resume scan (retainedWindow, the full window
+// newest-first). The resume scan honours failNext so an armed failure lands on
+// the returning connection's cursor scan the same way it would on the forward
+// range read.
 func (r *replayStream) XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
 	cmd := redis.NewXMessageSliceCmd(ctx)
+	if r.failNext.CompareAndSwap(true, false) {
+		cmd.SetErr(errors.New("redis: connection reset by peer"))
+		return cmd
+	}
 	msgs := r.snapshot()
 	if len(msgs) == 0 || count <= 0 {
 		cmd.SetVal(nil)
 		return cmd
 	}
-	cmd.SetVal([]redis.XMessage{msgs[len(msgs)-1]})
+	// The head-cursor prime asks for a single newest entry; the retained-window
+	// resume scan asks for the whole window. Honour count so the prime keeps its
+	// one-entry contract while the resume scan sees every retained key.
+	if count == 1 {
+		cmd.SetVal([]redis.XMessage{msgs[len(msgs)-1]})
+		return cmd
+	}
+	rev := make([]redis.XMessage, len(msgs))
+	for i, m := range msgs {
+		rev[len(msgs)-1-i] = m
+	}
+	if count > 0 && int64(len(rev)) > count {
+		rev = rev[:count]
+	}
+	cmd.SetVal(rev)
 	return cmd
 }
 

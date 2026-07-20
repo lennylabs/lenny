@@ -3456,6 +3456,7 @@
         "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown",
         "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushReEmitsBufferedEventsAfterRedisRecovers",
         "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamFallbackDeliversGatewayEventsEmittedAfterTheSwitch",
         "tests/tier3_contract/ops_endpoints/deliveries_pagination_test.go::TestEventSubscriptionDeliveriesPaginationContract",
         "tests/tier7a_load_local/ops_event_read_redis_deadline_test.go::TestRedisReadDeadlineKeepsPollAnsweringWhenRedisIsUnreachable",
         "tests/tier7a_load_local/ops_event_read_redis_maxlen_resume_test.go::TestOpsEventPollResumesInsideTheReadDeadlineOnAMaxLenStream",

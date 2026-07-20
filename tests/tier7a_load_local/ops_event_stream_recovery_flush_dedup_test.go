@@ -32,9 +32,11 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
-// gatedStreamClient holds the first XRANGE the recovery flush issues open after
-// Redis has answered it, so a test can land a concurrent emit inside the flush
-// at a controlled point. Everything else forwards straight through.
+// gatedStreamClient holds the first retained-window scan the recovery flush
+// issues open after Redis has answered it, so a test can land a concurrent emit
+// inside the flush at a controlled point. The flush reads its retained window
+// via XREVRANGE (redisSource.retainedWindow), so the gate is on XRevRangeN;
+// everything else forwards straight through.
 type gatedStreamClient struct {
 	opsstream.RedisStreamClient
 	once    sync.Once
@@ -50,8 +52,8 @@ func newGatedStreamClient(inner opsstream.RedisStreamClient) *gatedStreamClient 
 	}
 }
 
-func (g *gatedStreamClient) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
-	cmd := g.RedisStreamClient.XRangeN(ctx, stream, start, stop, count)
+func (g *gatedStreamClient) XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	cmd := g.RedisStreamClient.XRevRangeN(ctx, stream, start, stop, count)
 	first := false
 	g.once.Do(func() { first = true })
 	if !first {
