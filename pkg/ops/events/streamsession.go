@@ -77,12 +77,6 @@ type streamSession struct {
 	// matrix alone. It is nil whenever the session is on the source the matrix
 	// selected. spec: §25.5 lines 2768-2780.
 	forcedDeg *conventions.Degradation
-
-	// lastDegLine is the last :degradation comment written on this connection.
-	// It is what makes the envelope a transition announcement: a stint whose
-	// envelope has not changed re-writes nothing. Cleared when the connection
-	// returns to a healthy source. spec: §25.5 line 2779.
-	lastDegLine string
 }
 
 // admits reports whether the SSE caller may observe ev under the §25.5
@@ -214,33 +208,36 @@ func (s *Service) tailFallbackSource() (dataSource, *conventions.Degradation) {
 // returns to the healthy Redis source from a degraded one, so the consumer
 // learns the stream has recovered. It fires once per recovery, and not on the
 // initial entry to a healthy source. The degraded envelope is not written here:
-// each degraded serve loop announces it on entry to its stint (see
-// announceDegradation). A :gap comment on a switch back to Redis is emitted by
-// serveRedis when the resume position cannot be honoured. spec: §25.5 (lines
-// 2768-2780, transparent switch and recovery).
+// each degraded serve loop re-emits it on the fall-back cadence for the
+// duration of its stint (see announceDegradation). A :gap comment on a switch
+// back to Redis is emitted by serveRedis when the resume position cannot be
+// honoured. spec: §25.5 (lines 2768-2780, transparent switch and recovery).
 func (st *streamSession) announceRecovery(prev, src dataSource) {
 	if src != dsRedis || prev == dataSource(-1) || prev == dsRedis {
 		return
 	}
 	writeSSEHealthy(st.w)
 	st.flusher.Flush()
-	// The connection is healthy again, so a later degraded stint announces its
-	// envelope afresh even when it is the same envelope this stint carried.
-	st.lastDegLine = ""
 }
 
-// announceDegradation writes the §25.5 :degradation comment when the envelope
-// the connection is being served under changes: on entry to a degraded stint,
-// and whenever the envelope's contents change mid-stint (the gateway fan-out
-// going unreachable upgrades the case-1 envelope to the dual-outage one, which
-// is what the connection is then receiving). A connection already announced
-// under the same envelope is written nothing, so the comment stays a transition
-// announcement rather than a heartbeat on the wire.
+// announceDegradation writes the §25.5 :degradation comment for the degraded
+// stint the connection is currently serving. It is called on entry to the stint
+// and again on every fall-back poll tick, so the envelope repeats on a fixed
+// cadence for as long as the connection stays degraded.
 //
-// The envelope is re-rendered on every call so the comparison is against the
-// current classification rather than a remembered source label. spec: §25.5
-// line 2779 (a degraded SSE response carries the canonical degradation envelope
-// in a :degradation comment line).
+// The cadence is what the spec asks for: events continue to flow to the SSE
+// client with the canonical degradation envelope embedded in a periodic
+// :degradation comment line. A consumer that attaches mid-outage, and one whose
+// intermediary buffered or dropped an earlier line, both learn within one poll
+// interval that they are reading the gateway-buffer fall-back rather than a
+// healthy stream. A single announcement on entry leaves both of them reading a
+// truncated event flow as a healthy one.
+//
+// The envelope is re-rendered on every call rather than remembered, so a change
+// in the fall-back's own reachability is reflected: fanOutDown selects the
+// dual-outage envelope, which is what the connection receives once no gateway
+// replica answers the buffer query. spec: §25.5 line 2691 (a periodic
+// :degradation comment line carries the canonical degradation envelope).
 func (st *streamSession) announceDegradation(fanOutDown bool) {
 	_, deg, _ := st.s.selectSource()
 	if st.forcedDeg != nil {
@@ -254,14 +251,10 @@ func (st *streamSession) announceDegradation(fanOutDown bool) {
 	}
 	line, ok := degradationComment(deg)
 	if !ok {
-		// Not degraded: the next entry into a degraded stint announces afresh.
-		st.lastDegLine = ""
+		// Not degraded, so there is no envelope to carry. A deployment with no
+		// Redis wired reaches the local ring in this state.
 		return
 	}
-	if line == st.lastDegLine {
-		return
-	}
-	st.lastDegLine = line
 	fmt.Fprint(st.w, line)
 	st.flusher.Flush()
 }
@@ -393,7 +386,7 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 
 	// The envelope is announced on entry, before the first fan-out poll, so a
 	// connection learns its view is degraded without waiting on a cross-replica
-	// fetch.
+	// fetch, and re-emitted on every poll thereafter.
 	st.announceDegradation(false)
 
 	// The resume position is captured once, at stint entry, rather than read
@@ -405,6 +398,7 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 	// spec: §25.5 (cross-switch no-drop, exactly-once across the source switch).
 	entryKey := st.lastKey
 	resumed := false
+	first := true
 	for {
 		if ctx.Err() != nil {
 			return
@@ -421,12 +415,16 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 			// serving. spec: §25.5 (dual-outage local-buffer serving).
 			merged = nil
 		}
-		// The envelope is re-checked on every fall-back poll and written only
-		// when it changed, so a fan-out that becomes unreachable mid-stint
-		// upgrades the entry announcement to the dual-outage envelope the
-		// connection is then actually being served under, and a stint whose
-		// classification holds writes nothing further.
-		st.announceDegradation(err != nil)
+		// The envelope is re-emitted on every fall-back poll, so an idle
+		// connection keeps receiving it for the life of the outage. The first
+		// poll re-emits only when the fan-out turned out to be unreachable,
+		// which upgrades the entry announcement to the dual-outage envelope the
+		// connection is actually being served under; otherwise it would repeat
+		// the entry announcement immediately rather than one interval later.
+		if !first || err != nil {
+			st.announceDegradation(err != nil)
+		}
+		first = false
 		window := st.s.unionLocalOrigin(merged, st.filter)
 		// The seed runs on the first tick the fan-out answers, whether or not
 		// that window carried events: an empty window has nothing to pre-mark,
@@ -566,17 +564,22 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 	}
 	st.flusher.Flush()
 	// The local ring is a degraded source whenever it is reached from a Redis
-	// outage, so the envelope is announced on entry to the stint. A deployment
-	// with no Redis wired is not degraded and renders no envelope, so this
-	// writes nothing. spec: §25.5 line 2779 (:degradation comment).
+	// outage, so the envelope is announced on entry and re-emitted on the
+	// fall-back cadence for the life of the stint. A deployment with no Redis
+	// wired is not degraded and renders no envelope, so this writes nothing.
+	// spec: §25.5 line 2691 (periodic :degradation comment).
 	st.announceDegradation(false)
 
 	ticker := time.NewTicker(sourceCheckInterval)
 	defer ticker.Stop()
+	degTicker := time.NewTicker(gatewayPollInterval)
+	defer degTicker.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-degTicker.C:
+			st.announceDegradation(false)
 		case <-ticker.C:
 			if st.s.sourceChanged(src) {
 				return

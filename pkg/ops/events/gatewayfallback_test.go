@@ -312,12 +312,13 @@ func TestSelectSource_GatewayLabelFallsToLocalWhenUnwired_spec_25_5(t *testing.T
 	}
 }
 
-// spec: 25.5 (transparent Redis to gateway-buffer switch and recovery) — an
-// open SSE connection announces its degraded view with the :degradation
-// envelope once on entry to the stint rather than on a repeating cadence, and
-// announces its return to the healthy Redis source with
-// :degradation {"level":"healthy"} exactly once. The initial entry into a
-// healthy source writes nothing.
+// spec: 25.5 (transparent Redis to gateway-buffer switch and recovery; the
+// canonical degradation envelope is embedded in a periodic :degradation comment
+// line) — an open SSE connection re-emits the :degradation envelope on every
+// fall-back poll for the life of a degraded stint, so a consumer that attaches
+// mid-outage learns its view is degraded, and announces its return to the
+// healthy Redis source with :degradation {"level":"healthy"} exactly once. The
+// initial entry into a healthy source writes nothing.
 func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	health := newMutableHealth(false, true)
 	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: health, Now: ts})
@@ -325,13 +326,13 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
 	sess := &streamSession{s: s, w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 
-	// Serving the gateway fall-back announces the degradation once. Repeating
-	// the check with the classification unchanged writes nothing further: the
-	// comment is a transition announcement, not a heartbeat.
+	// Serving the gateway fall-back carries the envelope on every poll tick,
+	// with the classification unchanged, so the consumer keeps learning its view
+	// is degraded for as long as the outage lasts.
 	sess.announceDegradation(false)
 	sess.announceDegradation(false)
-	if got := strings.Count(rec.Body.String(), sourceGatewayBuffer); got != 1 {
-		t.Fatalf("the gateway fall-back announced the degradation envelope %d times over two unchanged checks, want exactly 1:\n%s", got, rec.Body.String())
+	if got := strings.Count(rec.Body.String(), sourceGatewayBuffer); got != 2 {
+		t.Fatalf("the gateway fall-back carried the degradation envelope %d times over two poll ticks, want one per tick:\n%s", got, rec.Body.String())
 	}
 
 	// Redis recovers: switching back to Redis announces recovery.

@@ -140,10 +140,10 @@ func writeStreamUnavailable(w http.ResponseWriter) {
 }
 
 // degradationComment renders the §25.5 :degradation SSE comment line for deg
-// and reports whether there is one to write. Rendering is separate from writing
-// so a connection can compare the line it is about to write against the one it
-// last wrote and announce the envelope on entry to a degraded stint and on a
-// change of its contents, rather than repeating it. spec: §25.5 line 2779.
+// and reports whether there is one to write. A healthy classification renders
+// no line, which is how the caller distinguishes a degraded stint that repeats
+// the envelope on its poll cadence from a healthy source that carries none.
+// spec: §25.5 line 2691 (periodic :degradation comment line).
 func degradationComment(deg *conventions.Degradation) (string, bool) {
 	if deg == nil {
 		return "", false

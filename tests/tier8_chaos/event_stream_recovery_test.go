@@ -264,6 +264,22 @@ func TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage(t *testing.T)
 	}
 }
 
+// waitDegradationCount waits for the SSE stream to carry at least want
+// :degradation comment lines, which is how a periodic re-emission is
+// distinguished from a one-shot announcement on an idle degraded connection.
+func waitDegradationCount(t *testing.T, rec *syncBuffer, want int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if strings.Count(rec.String(), ":degradation") >= want {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("an idle connection received %d :degradation comments over several fall-back poll intervals, want at least %d; §25.5 embeds the envelope in a periodic comment line:\n%s",
+		strings.Count(rec.String(), ":degradation"), want, rec.String())
+}
+
 func waitContains(t *testing.T, rec *syncBuffer, want string, timeout time.Duration, what string) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -664,21 +680,21 @@ func TestOpsEventStreamPollingAdvancesAcrossAnOutOfOrderRecoveryFlush(t *testing
 	}
 }
 
-// spec: 25.5 (Degradation — a degraded SSE response carries the canonical
-// degradation envelope in a :degradation comment line, and the switch back to
-// the healthy source is announced with :degradation {"level":"healthy"}) — both
-// comments are transition announcements. A connection that sits in a degraded
-// stint while nothing is published and nothing about its classification changes
-// receives the envelope once, and the recovery announcement is likewise a single
-// edge event.
+// spec: 25.5 (Redis-unavailable fallback — events continue to flow to the SSE
+// client with the canonical degradation envelope embedded in a periodic
+// :degradation comment line, and the switch back to the healthy source emits
+// :degradation {"level":"healthy"}) — the degraded envelope repeats on the
+// fall-back poll cadence for the life of the outage, so a connection that sits
+// in a degraded stint while nothing is published keeps being told its view is
+// degraded. The recovery announcement is a single edge event.
 //
-// diagnosis: a failure means the degradation envelope is written on a repeating
-// timer rather than on the transition, so an SSE consumer counting :degradation
-// lines, or an intermediary framing them, sees a line count that grows with the
-// outage duration rather than with the number of source transitions; or the
-// recovery comment is emitted more than once per recovery edge, which reads as
-// repeated recoveries.
-func TestOpsEventStreamAnnouncesTheDegradationEnvelopeOncePerTransition(t *testing.T) {
+// diagnosis: a failure means the degradation envelope is announced once per
+// transition rather than on the cadence, so a consumer that attaches mid-outage,
+// or whose intermediary buffered or dropped the single announcement, never
+// learns it is on the gateway-buffer fall-back and reads a truncated event flow
+// as a healthy one; or the recovery comment is emitted more than once per
+// recovery edge, which reads as repeated recoveries.
+func TestOpsEventStreamRepeatsTheDegradationEnvelopeOnTheFallBackCadence(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -721,22 +737,25 @@ func TestOpsEventStreamAnnouncesTheDegradationEnvelopeOncePerTransition(t *testi
 
 	// The outage starts and nothing is published for its duration.
 	health.redis.Store(false)
-	waitContains(t, rec, sourceGatewayBuffer, 20*time.Second, "the degraded stint's :degradation announcement")
-	// Idle well past the fall-back poll cadence a heartbeat would have followed.
-	time.Sleep(3 * gatewayFallbackPollInterval)
-	if got := strings.Count(rec.String(), ":degradation"); got != 1 {
-		t.Fatalf("an idle connection received %d :degradation comments over a single unchanged degraded stint; want exactly 1 (the transition announcement):\n%s", got, rec.String())
-	}
+	waitContains(t, rec, sourceGatewayBuffer, 20*time.Second, "the degraded stint's first :degradation line")
+	// Idle across several fall-back poll intervals: the envelope repeats on that
+	// cadence even though nothing is published and the classification holds.
+	waitDegradationCount(t, rec, 3, 20*time.Second)
 	if got := strings.Count(rec.String(), "\"level\":\"healthy\""); got != 0 {
 		t.Fatalf("the stream announced recovery %d times during the outage:\n%s", got, rec.String())
 	}
 
-	// Recovery: the healthy announcement is a single edge event.
+	// Recovery: the healthy announcement is a single edge event, and the
+	// degraded envelope stops.
+	degradedLines := strings.Count(rec.String(), sourceGatewayBuffer)
 	health.redis.Store(true)
 	waitContains(t, rec, "\"level\":\"healthy\"", 10*time.Second, "the recovery announcement on switch back to Redis")
 	time.Sleep(2 * gatewayFallbackPollInterval)
 	if got := strings.Count(rec.String(), "\"level\":\"healthy\""); got != 1 {
 		t.Errorf("recovery announced %d times for one recovery edge; want exactly 1:\n%s", got, rec.String())
+	}
+	if got := strings.Count(rec.String(), sourceGatewayBuffer); got != degradedLines {
+		t.Errorf("the connection carried %d degraded :degradation lines after recovery (%d before); a healthy source carries none:\n%s", got-degradedLines, degradedLines, rec.String())
 	}
 
 	cancel()

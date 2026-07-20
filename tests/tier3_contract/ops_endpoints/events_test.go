@@ -817,24 +817,23 @@ func (t *tailableRedisStream) TailClient() (opsstream.RedisTailClient, error) {
 	return &parkedTail{closed: make(chan struct{})}, nil
 }
 
-// TestEventStreamDegradationCommentIsAnnouncedPerTransitionContract pins the
-// exact :degradation line sequence an SSE consumer observes across
-// enter-degraded, idle, and recover. §25.5 states the comment as what a
-// degraded SSE response carries and as the announcement of a return to health,
-// so the connection emits one line on entering the degraded stint, nothing
-// while that classification holds however long the connection idles, and one
-// {"level":"healthy"} line on recovery.
+// TestEventStreamDegradationCommentRepeatsOnTheFallBackCadenceContract pins the
+// :degradation line sequence an SSE consumer observes across enter-degraded,
+// idle, and recover. §25.5 states that events continue to flow to the SSE client
+// with the canonical degradation envelope embedded in a periodic :degradation
+// comment line, so an idle degraded connection keeps receiving the envelope on
+// the fall-back poll cadence, and the return to health is announced with a
+// single {"level":"healthy"} line.
 //
-// spec: 25.5 (Degradation — a degraded SSE response carries the canonical
-// degradation envelope in a :degradation comment line, and the switch back to
-// the healthy source is announced with :degradation {"level":"healthy"})
-// diagnosis: A failure means the degradation envelope is written on a repeating
-// timer rather than on the transition. The comment becomes a heartbeat on the
-// SSE wire, so a consumer counting :degradation lines, or an intermediary
-// framing them, sees a different stream than the one §25.5 describes, and the
-// line count grows with connection duration rather than with the number of
-// source transitions.
-func TestEventStreamDegradationCommentIsAnnouncedPerTransitionContract(t *testing.T) {
+// spec: 25.5 (Redis-unavailable fallback — the canonical degradation envelope is
+// embedded in a periodic :degradation comment line, and the switch back to the
+// healthy source emits :degradation {"level":"healthy"})
+// diagnosis: A failure means the degradation envelope is announced once per
+// transition instead of on a cadence. A consumer that attaches mid-outage, or
+// whose intermediary buffered or dropped the single announcement, never learns
+// it is on the gateway-buffer fall-back and reads a truncated event flow as a
+// healthy one.
+func TestEventStreamDegradationCommentRepeatsOnTheFallBackCadenceContract(t *testing.T) {
 	health := &flippableHealth{}
 	// Both sources unreachable: the connection serves this replica's own ring
 	// under the dual-outage envelope.
@@ -885,33 +884,54 @@ func TestEventStreamDegradationCommentIsAnnouncedPerTransitionContract(t *testin
 		return append([]string(nil), lines...)
 	}
 
-	// Wait for the degraded stint's announcement, then idle well past the
-	// 2-second fall-back poll cadence a heartbeat would have followed.
-	waitFor(t, func() bool { return len(snapshot()) >= 1 }, "the degraded stint's :degradation announcement")
-	time.Sleep(5 * time.Second)
-	if got := snapshot(); len(got) != 1 {
-		t.Fatalf("an idle degraded connection emitted %d :degradation lines over 5s, want exactly 1 (the transition announcement): %v", len(got), got)
+	// Wait for the degraded stint's entry announcement, then idle across
+	// several fall-back poll intervals. The envelope repeats on that cadence,
+	// so a connection that publishes nothing still accumulates lines.
+	waitFor(t, func() bool { return len(snapshot()) >= 1 }, "the degraded stint's first :degradation line")
+	waitFor(t, func() bool { return len(snapshot()) >= 3 }, "the periodic re-emission of the :degradation envelope")
+	degraded := snapshot()
+	for i, line := range degraded {
+		if !strings.Contains(line, "lenny-ops-local-buffer") {
+			t.Errorf("degraded :degradation line %d = %q, want the dual-outage envelope naming the local buffer", i, line)
+		}
 	}
 
-	// Redis recovers: the connection switches back and announces it once.
+	// Redis recovers: the connection switches back, announces recovery exactly
+	// once, and stops carrying the degraded envelope.
+	before := len(degraded)
 	health.redis.Store(true)
 	health.gateway.Store(true)
-	waitFor(t, func() bool { return len(snapshot()) >= 2 }, "the recovery announcement")
-	time.Sleep(2 * time.Second)
+	waitFor(t, func() bool {
+		for _, line := range snapshot()[before:] {
+			if strings.Contains(line, `"level":"healthy"`) {
+				return true
+			}
+		}
+		return false
+	}, "the recovery announcement")
+	// Idle past the fall-back cadence: a healthy connection carries no envelope,
+	// and the recovery line is not repeated.
+	time.Sleep(3 * gatewayFallBackPollInterval)
 	cancel()
 	<-readDone
 
-	got := snapshot()
-	if len(got) != 2 {
-		t.Fatalf(":degradation lines = %d, want exactly 2 (one per transition): %v", len(got), got)
+	healthy := 0
+	for _, line := range snapshot()[before:] {
+		if strings.Contains(line, `"level":"healthy"`) {
+			healthy++
+			continue
+		}
+		t.Errorf("after recovery the connection emitted a degraded :degradation line %q, want only the healthy announcement", line)
 	}
-	if !strings.Contains(got[0], "lenny-ops-local-buffer") {
-		t.Errorf("first :degradation line = %q, want the dual-outage envelope naming the local buffer", got[0])
-	}
-	if !strings.Contains(got[1], `"level":"healthy"`) {
-		t.Errorf("second :degradation line = %q, want the recovery announcement", got[1])
+	if healthy != 1 {
+		t.Fatalf("healthy :degradation lines after recovery = %d, want exactly 1: %v", healthy, snapshot()[before:])
 	}
 }
+
+// gatewayFallBackPollInterval mirrors the §25.5 SSE fall-back poll cadence the
+// handler re-emits the degradation envelope on, so the contract test idles
+// across whole intervals rather than a bare sleep constant.
+const gatewayFallBackPollInterval = 2 * time.Second
 
 // waitFor polls cond until it holds or the deadline passes.
 func waitFor(t *testing.T, cond func() bool, what string) {
