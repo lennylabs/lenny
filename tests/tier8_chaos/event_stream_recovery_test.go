@@ -47,9 +47,10 @@ func (h *toggleHealth) GatewayAvailable() bool { return h.gateway.Load() }
 // XADD fails); on recovery those events must reach the shared
 // ops:events:stream so a consumer that connects only after Redis is back still
 // observes them, deduplicated by eventKey so an event that did reach Redis
-// before the outage is not duplicated. The pre-fix code had no recovery flush,
-// so the outage-window events were abandoned; this asserts they reach the
-// recovered stream exactly once.
+// before the outage is not duplicated. The events here are emitted inside the
+// detection lag, before anything observes the outage, so the flush reaches them
+// only when its window opens at the first failed XADD rather than at the
+// source-health probe's later observation.
 //
 // diagnosis: a failure means the §25.5 recovery flush is broken — either the
 // locally buffered outage-window events never reach the recovered Redis stream
@@ -85,18 +86,26 @@ func TestOpsEventStreamRecoveryFlushReEmitsBufferedEventsAfterRedisRecovers(t *t
 		t.Fatalf("buffer pre-outage event: %v", err)
 	}
 
-	// Redis goes away: the edge opens the flush's outage window. Everything
-	// lenny-ops emits from here lands in the local ring only, because the
-	// fan-out XADD is failing.
-	svc.MarkRedisOutage()
+	// Redis goes away. Nothing observes it yet: the source-health probe
+	// refreshes on an interval, so the events lenny-ops emits in that detection
+	// lag land in the local ring while their XADD fails, with no outage marker
+	// recorded first. The fan-out emitter opens the window at the first event
+	// whose XADD failed, which is what has to bring those events into the
+	// flush.
+	var firstFailedID uint64
 	for _, e := range []gwevents.OperationalEvent{
 		{ID: "ops-1:out:1", Type: "dev.lenny.escalation_created", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1001, 0).UTC()},
 		{ID: "ops-1:out:2", Type: "dev.lenny.escalation_created", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1002, 0).UTC()},
 	} {
-		if _, err := svc.Publish(ctx, e); err != nil {
+		id, err := svc.Publish(ctx, e)
+		if err != nil {
 			t.Fatalf("buffer local event %s: %v", e.ID, err)
 		}
+		if firstFailedID == 0 {
+			firstFailedID = id
+		}
 	}
+	svc.MarkRedisWriteFailure(firstFailedID)
 
 	// Redis recovers: the replica-level edge detector fires the flush.
 	flushed, err := svc.FlushBufferedToRedis(ctx)

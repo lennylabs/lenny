@@ -106,15 +106,28 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 }
 
 // Emit publishes to the local opsstream.Service first so SSE subscribers
-// and the polling cursor see the event immediately, then XADDs to the
-// §25.5 Redis stream. A Redis write failure is surfaced as the
-// returned error; the local publish has already succeeded so the §25.5
-// "fall back to gateway buffer" path is preserved.
+// and the polling cursor see the event immediately, then XADDs the stored
+// event (carrying the eventKey the local publish minted, so the ring copy and
+// the stream copy share one key and dedup collapses them) to the §25.5 Redis
+// stream. A Redis write failure is surfaced as the returned error; the local
+// publish has already succeeded so the §25.5 "fall back to gateway buffer"
+// path is preserved.
+//
+// A failed XADD is also the moment the Redis outage starts, ahead of the
+// source-health probe's next refresh. It opens the recovery-flush outage
+// window at this event's ring position, so every event emitted in the
+// detection lag is re-emitted when Redis recovers instead of being abandoned.
+// spec: §25.5 (best-effort recovery flush).
 func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalEvent) error {
-	if _, err := e.local.Publish(ctx, event); err != nil {
+	buffered, err := e.local.PublishBuffered(ctx, event)
+	if err != nil {
 		return err
 	}
-	return e.stream.Emit(ctx, event)
+	if err := e.stream.Emit(ctx, buffered.Event); err != nil {
+		e.local.MarkRedisWriteFailure(buffered.ID)
+		return err
+	}
+	return nil
 }
 
 // ReEmit XADDs event to the §25.5 Redis ops:events:stream without

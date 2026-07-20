@@ -18,8 +18,10 @@ import (
 // must reach the shared stream, or a consumer that connects only after Redis
 // is back never observes them.
 //
-// The flush is bounded by the outage window: MarkRedisOutage records the local
-// ring position at the down edge, and only the events buffered after it are
+// The flush is bounded by the outage window: the window opens at the first
+// event whose XADD failed (MarkRedisWriteFailure) or, when the probe observes
+// the outage before this replica emits anything into it, at the ring head
+// (MarkRedisOutage), and only the events buffered after that position are
 // re-emitted. The window is the boundary that keeps the flush from re-emitting
 // events that already reached Redis long before the outage: the shared stream
 // is trimmed at its MAXLEN by every producer's traffic while the local ring
@@ -79,22 +81,47 @@ func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 	return flushed, lastErr
 }
 
-// MarkRedisOutage opens the §25.5 recovery-flush outage window by recording the
-// local ring position at the moment the replica-level source-health probe
-// observes Redis going down. Every event this replica buffers from here until
-// the flush is one whose XADD to the shared stream failed, so the window is
-// exactly the set the flush must re-emit. A second call while an outage is
-// already open keeps the original position, so a flapping probe does not narrow
-// the window past events it has yet to flush. spec: §25.5 (best-effort recovery
-// flush scoped to the outage window).
+// MarkRedisWriteFailure opens the §25.5 recovery-flush outage window at the
+// event whose XADD to the shared stream failed. bufferID is that event's local
+// ring position, so the window starts immediately before it and the flush
+// re-emits it along with everything buffered after it.
+//
+// The observed write failure is the true start of the outage. The replica-level
+// source-health probe refreshes on an interval, so it observes Redis going away
+// up to one interval late; anchoring the window at that observation would
+// exclude every event emitted in between, which is exactly the set whose XADD
+// failed and which therefore reaches the shared stream only through the flush.
+// spec: §25.5 (best-effort recovery flush).
+func (s *Service) MarkRedisWriteFailure(bufferID uint64) {
+	since := uint64(0)
+	if bufferID > 0 {
+		since = bufferID - 1
+	}
+	s.openOutageWindow(since)
+}
+
+// MarkRedisOutage opens the §25.5 recovery-flush outage window at the current
+// local ring head, for the case where the replica-level source-health probe
+// observes Redis unreachable before this replica has emitted anything into the
+// outage. An emit that fails its XADD first opens the window earlier, at the
+// failed event, and this call then leaves that wider window alone. spec: §25.5
+// (best-effort recovery flush scoped to the outage window).
 func (s *Service) MarkRedisOutage() {
+	_, headID, _, _, _ := s.buffer.Bounds()
+	s.openOutageWindow(headID)
+}
+
+// openOutageWindow records since as the position the recovery flush queries
+// after, unless a window is already open. Keeping the first position is what
+// makes the window the whole outage: a later signal (a flapping probe, or a
+// second failed XADD) must not narrow it past events it has yet to flush.
+func (s *Service) openOutageWindow(since uint64) {
 	s.outageMu.Lock()
 	defer s.outageMu.Unlock()
 	if s.inOutage {
 		return
 	}
-	_, headID, _, _, _ := s.buffer.Bounds()
-	s.outageFrom = headID
+	s.outageFrom = since
 	s.inOutage = true
 }
 

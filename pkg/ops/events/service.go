@@ -276,8 +276,22 @@ func (s *Service) observeGap() {
 // subsystem that takes an EventEmitter; in v1 the in-memory write
 // never errors, so the error is always nil unless ctx is cancelled.
 func (s *Service) Publish(ctx context.Context, e gwevents.OperationalEvent) (uint64, error) {
+	buffered, err := s.PublishBuffered(ctx, e)
+	return buffered.ID, err
+}
+
+// PublishBuffered publishes e and returns the stored BufferedEvent: the
+// assigned ring position together with the stamped event carrying the
+// canonical eventKey this replica minted for it. The fan-out emitter writes
+// that exact event on to the Redis ops:events:stream, so one event carries one
+// eventKey on both sides and the §25.5 cross-source dedup (the recovery
+// flush's retained-key check and every consumer's own dedup) collapses the two
+// copies. It also gives the emitter the ring position to anchor the
+// recovery-flush outage window at when the XADD fails. spec: §25.5 (canonical
+// eventKey across sources, best-effort recovery flush).
+func (s *Service) PublishBuffered(ctx context.Context, e gwevents.OperationalEvent) (gwevents.BufferedEvent, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return gwevents.BufferedEvent{}, err
 	}
 	if e.SpecVersion == "" {
 		e.SpecVersion = gwevents.CloudEventsSpecVersion
@@ -289,11 +303,12 @@ func (s *Service) Publish(ctx context.Context, e gwevents.OperationalEvent) (uin
 		e.ID = s.eventKey(e.Time)
 	}
 	id := s.buffer.Append(e)
-	s.fanOutToSubscribers(gwevents.BufferedEvent{ID: id, Event: e})
+	buffered := gwevents.BufferedEvent{ID: id, Event: e}
+	s.fanOutToSubscribers(buffered)
 	if s.webhook != nil {
 		s.webhook(ctx, e)
 	}
-	return id, nil
+	return buffered, nil
 }
 
 // eventKey composes the §25.5 canonical cross-source identifier
