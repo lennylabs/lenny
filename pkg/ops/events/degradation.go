@@ -139,20 +139,6 @@ func writeStreamUnavailable(w http.ResponseWriter) {
 		"both the Redis ops:events:stream and the gateway event buffer are unreachable")
 }
 
-// writeSSEDegradation writes the §25.5 :degradation SSE comment line so a
-// connected stream consumer learns it is receiving a degraded view (the
-// gateway-buffer fall-back, or the lenny-ops-local-buffer during a dual
-// outage) before the events arrive. The payload mirrors the canonical
-// degradation envelope's actualSource / unavailableFields fields. spec:
-// §25.5 line 2779 (":degradation {...}" comment).
-func writeSSEDegradation(w http.ResponseWriter, deg *conventions.Degradation) {
-	line, ok := degradationComment(deg)
-	if !ok {
-		return
-	}
-	fmt.Fprint(w, line)
-}
-
 // degradationComment renders the §25.5 :degradation SSE comment line for deg
 // and reports whether there is one to write. Rendering is separate from writing
 // so a connection can compare the line it is about to write against the one it

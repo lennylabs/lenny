@@ -13,20 +13,45 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
-// A reverted tunable leaves its helper behind: the flag, the option, and the
-// test go, and the parsing helper the flag was introduced with keeps compiling
-// with no caller. The lenny-ops command package is where the §25.5 event-stream
-// read source is wired, so an unreferenced helper there reads as a live
-// operator control that no longer exists. The tier-0 golangci-lint pass is
-// advisory while its pre-existing findings are burned down, so this check pins
-// the property for this package directly.
+// A refactor that replaces a surface leaves the old one behind: the caller
+// moves, the last reference goes with it, and the function it called keeps
+// compiling with nothing reaching it. A reader then takes a dead §25.5 write
+// path or a reverted operator control for a live one. The tier-0 golangci-lint
+// pass is advisory while its pre-existing findings are burned down, so this
+// check pins the property directly for the packages that host the operational
+// event-stream read side and its wiring.
 
-// TestOpsCommandHasNoUnreferencedFunctions asserts every unexported plain
-// function declared in cmd/lenny-ops is referenced somewhere in the package,
-// counting its tests. A failure names a function whose last caller was removed;
-// delete it together with whatever else the removal orphaned.
-func TestOpsCommandHasNoUnreferencedFunctions(t *testing.T) {
-	dir := filepath.Join(schematest.RepoRoot(t), "cmd", "lenny-ops")
+// opsDeadCodePackages are the directories the check covers, relative to the
+// repository root.
+var opsDeadCodePackages = [][]string{
+	{"cmd", "lenny-ops"},
+	{"pkg", "ops", "events"},
+	{"pkg", "ops", "eventsubscription"},
+	{"pkg", "ops", "opsservice"},
+}
+
+// TestOpsPackagesHaveNoUnreferencedFunctions asserts every unexported plain
+// function declared in the operational event-stream packages is referenced
+// somewhere in its own package, counting its tests. A failure names a function
+// whose last caller was removed; delete it together with whatever else the
+// removal orphaned.
+func TestOpsPackagesHaveNoUnreferencedFunctions(t *testing.T) {
+	for _, parts := range opsDeadCodePackages {
+		dir := filepath.Join(append([]string{schematest.RepoRoot(t)}, parts...)...)
+		name := strings.Join(parts, "/")
+		t.Run(name, func(t *testing.T) {
+			for fn, pos := range unreferencedFuncs(t, dir) {
+				t.Errorf("%s: func %s has no reference in %s; a removed surface left it compiling but dead", pos, fn, name)
+			}
+		})
+	}
+}
+
+// unreferencedFuncs returns the unexported plain functions declared in the
+// non-test files of dir that no identifier in the directory (its own files and
+// its tests) refers to.
+func unreferencedFuncs(t *testing.T, dir string) map[string]token.Position {
+	t.Helper()
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, dir, nil, 0)
 	if err != nil {
@@ -66,12 +91,14 @@ func TestOpsCommandHasNoUnreferencedFunctions(t *testing.T) {
 		}
 	}
 
+	out := map[string]token.Position{}
 	for name, pos := range declared {
 		// The declaration itself contributes one identifier occurrence.
 		if used[name] <= 1 {
-			t.Errorf("%s: func %s has no reference in cmd/lenny-ops; a removed surface left it compiling but dead", pos, name)
+			out[name] = pos
 		}
 	}
+	return out
 }
 
 // unexportedFuncName reports whether name is an unexported Go identifier.
