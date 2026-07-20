@@ -221,13 +221,9 @@ func (t *redisTailConn) Close() error {
 type redisSource struct {
 	client RedisStreamClient
 	stream string
-	// maxWindow caps a single XRANGE scan at the stream's retained length, so
-	// a poll, a backlog replay, or a cursor translation reads the whole
-	// retained window and never materialises an unbounded slice. It is the
-	// MAXLEN the writer side trims the stream to, so a scan that finds no
-	// entry at or after a cursor establishes that the cursor was evicted
-	// rather than that the scan stopped short of it. spec: §25.5
-	// (cross-source cursor translation; gapDetected on an evicted cursor).
+	// maxWindow caps a single XRANGE scan so a poll, a backlog replay, or a
+	// cursor translation never materialises an unbounded slice. It is the
+	// MAXLEN the writer side trims the stream to. spec: §25.5.
 	maxWindow int64
 }
 
@@ -365,6 +361,36 @@ func (rs *redisSource) retains(ctx context.Context, streamID string) (bool, erro
 	return len(msgs) > 0, nil
 }
 
+// retainedWindow reads the newest maxWindow entries the stream retains and
+// returns them oldest-first, which is the window every eventKey-order scan over
+// the stream resolves against.
+//
+// It scans backwards from the head rather than forwards from the tail. The
+// writer trims the stream with an approximate MAXLEN (XADD trims on whole-node
+// boundaries), so Redis routinely retains more than the configured maxWindow
+// the scan is bounded by. A forward scan from "-" therefore returns the OLDEST
+// maxWindow entries and leaves the newest ones outside the window whenever the
+// stream is over-long. A cursor pointing at one of those newer entries then
+// resolves against a window that stops short of it, and the caller is told its
+// cursor was evicted while the stream still fully retains it: a false
+// gapDetected with suggestedAction resync, plus a spurious
+// lenny_ops_events_stream_gaps_total bump. Scanning backwards keeps the newest
+// entries always covered, so a scan that finds no entry at or after a cursor
+// establishes that the cursor was evicted rather than that the scan stopped
+// short of it. spec: §25.5 (cross-source cursor translation; gapDetected only
+// on an evicted cursor).
+func (rs *redisSource) retainedWindow(ctx context.Context) ([]redis.XMessage, error) {
+	msgs, err := rs.client.XRevRangeN(ctx, rs.stream, "+", "-", rs.maxWindow).Result()
+	if err != nil {
+		return nil, fmt.Errorf("xrevrange scan %s: %w", rs.stream, err)
+	}
+	// XREVRANGE yields newest-first; every caller reasons in stream order.
+	for i, j := 0, len(msgs)-1; i < j; i, j = i+1, j-1 {
+		msgs[i], msgs[j] = msgs[j], msgs[i]
+	}
+	return msgs, nil
+}
+
 // resumeByEventKey translates a cursor minted by another source into the
 // exclusive Redis stream position to resume after, and reports whether the
 // cursor referenced a position the stream no longer retains.
@@ -407,9 +433,9 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 	if eventKey == "" {
 		return "", false, nil
 	}
-	msgs, err := rs.client.XRangeN(ctx, rs.stream, "-", "+", rs.maxWindow).Result()
+	msgs, err := rs.retainedWindow(ctx)
 	if err != nil {
-		return "", false, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
+		return "", false, err
 	}
 	var (
 		// resume is the exclusive read position: the stream ID the following

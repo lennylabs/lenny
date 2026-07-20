@@ -3,17 +3,20 @@
 // SPDX-License-Identifier: MIT
 
 // Tier-2 component tests for the §25.5 read side against a real Redis
-// ops:events:stream retained above the default stream length. The read side
+// ops:events:stream longer than the read side's scan bound. The read side
 // resolves a cursor and reads back the retained eventKeys by scanning the
-// stream, and both scans are bounded. When that bound is smaller than the
-// window the writer actually retains, the scan sees only the oldest entries:
-// a cursor naming a recent event resolves as evicted, and a key already on
-// the stream reads as absent. These cases pin both scans to the configured
-// stream length.
+// stream, and both scans are bounded. The stream outruns that bound two ways:
+// an operator raises events-stream-max-len above the default, and the writer's
+// approximate MAXLEN leaves the stream longer than the configured length. In
+// either case a scan anchored at the tail sees only the oldest entries, so a
+// cursor naming a recent event resolves as evicted and a key already on the
+// stream reads as absent. These cases pin the bound to the configured length
+// and the scan to the head of the stream.
 package eventstream_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -180,4 +183,76 @@ func TestOpsEventStreamRecoveryFlushSeesRetainedKeyBeyondDefaultStreamLength(t *
 	if flushed != 0 {
 		t.Fatalf("second recovery flush re-emitted %d event(s) (key %s), want 0; the retained-key scan missed a key past the default stream length and duplicated it onto the stream", flushed, buffered.Event.ID)
 	}
+}
+
+// approxTrimMaxLen is the events-stream-max-len these cases configure the read
+// side with. The writer XADDs with an approximate MAXLEN, which Redis honours
+// on whole-node boundaries, so the stream routinely retains more than this.
+const approxTrimMaxLen = int64(2000)
+
+// approxTrimFill is the number of entries the stream is left holding: more
+// than approxTrimMaxLen, standing in for what an approximate trim leaves
+// behind. A scan bounded by approxTrimMaxLen therefore cannot cover the whole
+// stream, and which end it covers is what these cases pin.
+const approxTrimFill = 3000
+
+// spec: 25.5 (Cursor Model — cross-source cursor translation; gapDetected only
+// when the cursor aged out of the retained window) — the cursor-translation
+// scan is bounded, and the bound has to cover the newest entries. The writer
+// trims with an approximate MAXLEN, so the stream holds more than the
+// configured length and a scan that starts at the tail stops short of the head.
+//
+// diagnosis: the §25.5 read side scans the OLDEST configured-MAXLEN entries
+// when translating a cursor, so on an over-long stream a cursor newer than the
+// scan bound resolves as evicted. The caller is told gapDetected with
+// suggestedAction resync for a cursor the stream still fully retains,
+// lenny_ops_events_stream_gaps_total fires spuriously, and the continuation
+// page is broken for every consumer on a busy stream.
+func TestOpsEventStreamPollResolvesRecentCursorOnAnOverLongStream(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	const key = "ops:events:stream:approxtrim"
+	fillStream(t, rd.Client, key, approxTrimFill)
+
+	gaps := 0
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:       opsstream.NewRedisStreamClient(rd.Client),
+		RedisStreamKey:    key,
+		RedisStreamMaxLen: approxTrimMaxLen,
+		SourceHealth:      opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+		OnGap:             func() { gaps++ },
+	})
+
+	// A cursor naming a recent-but-not-head event: inside the newest
+	// approxTrimMaxLen entries the bound covers, and well outside the oldest
+	// approxTrimMaxLen a tail-anchored scan would have seen.
+	const recentOffset = 200
+	recentKey := fmt.Sprintf("gw-1:%d:1", 1_000_000+approxTrimFill-1-recentOffset)
+	page := pollRedisLimited(t, svc, mixedCursorFor(recentKey), 50)
+
+	if page.Pagination.GapDetected {
+		t.Fatalf("resuming from %s reported a gap (%q); the stream retains it, so the translation scan covered the oldest entries rather than the newest", recentKey, page.Pagination.GapReason)
+	}
+	if page.Pagination.OldestAvailableCursor != "" {
+		t.Errorf("resume carried oldestAvailableCursor %q; nothing was evicted", page.Pagination.OldestAvailableCursor)
+	}
+	if gaps != 0 {
+		t.Errorf("lenny_ops_events_stream_gaps_total fired %d time(s) for a cursor the stream retains", gaps)
+	}
+
+	// The continuation is contiguous: the page starts at the event immediately
+	// after the cursor rather than replaying from a stale position.
+	if len(page.Items) == 0 {
+		t.Fatal("resuming from a retained cursor served no events; the stream holds entries after it")
+	}
+	wantFirst := fmt.Sprintf("gw-1:%d:1", 1_000_000+approxTrimFill-recentOffset)
+	if got := page.Items[0].Event.ID; got != wantFirst {
+		t.Fatalf("continuation started at %s, want the event immediately after the cursor (%s)", got, wantFirst)
+	}
+}
+
+// mixedCursorFor builds the opaque §25.5 cursor a caller minted at another
+// source sends back, which the Redis source translates by eventKey.
+func mixedCursorFor(eventKey string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(opsstream.SourceKindMixed + ":" + eventKey))
 }

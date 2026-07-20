@@ -925,7 +925,8 @@ type rangeCall struct {
 	count int64
 }
 
-// recordingStream is a fakeStream that records every XRANGE issued against it.
+// recordingStream is a fakeStream that records every range read issued against
+// it, in either direction.
 type recordingStream struct {
 	fakeStream
 	mu    sync.Mutex
@@ -939,16 +940,27 @@ func (r *recordingStream) XRangeN(ctx context.Context, stream, start, stop strin
 	return r.fakeStream.XRangeN(ctx, stream, start, stop, count)
 }
 
-// windowScans reports how many recorded XRANGEs scanned the whole retained
-// window ("-" to "+" for more than one entry), which is what an eventKey
-// translation costs. The one-entry bound probes that back headCursor and
-// oldestAvailableCursor are excluded: they are positioned reads.
+func (r *recordingStream) XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	r.mu.Lock()
+	r.calls = append(r.calls, rangeCall{start: start, stop: stop, count: count})
+	r.mu.Unlock()
+	return r.fakeStream.XRevRangeN(ctx, stream, start, stop, count)
+}
+
+// windowScans reports how many recorded reads scanned the whole retained
+// window, which is what an eventKey translation costs. The translation scan is
+// head-anchored (XREVRANGE from "+" back to "-") so it always covers the newest
+// entries; the one-entry bound probes behind headCursor and
+// oldestAvailableCursor are excluded, being positioned reads.
 func (r *recordingStream) windowScans() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	n := 0
 	for _, c := range r.calls {
-		if c.start == "-" && c.stop == "+" && c.count > 1 {
+		if c.count <= 1 {
+			continue
+		}
+		if (c.start == "-" && c.stop == "+") || (c.start == "+" && c.stop == "-") {
 			n++
 		}
 	}

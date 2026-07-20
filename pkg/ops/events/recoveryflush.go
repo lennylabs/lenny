@@ -183,12 +183,18 @@ func (s *Service) takeOutageWindow() (since uint64, open bool) {
 // the Redis ops:events:stream, bounded by the retained window. The §25.5
 // recovery flush consults it to skip re-emitting an event already on the
 // stream, so consumer-side eventKey deduplication is not the sole guard
-// against a duplicate stream entry. spec: §25.5 (best-effort recovery flush,
-// eventKey dedup).
+// against a duplicate stream entry.
+//
+// It reads the same head-anchored window every other eventKey scan resolves
+// against (see retainedWindow). Scanning forwards from the tail instead would
+// silently shrink the set whenever the writer's approximate trim leaves the
+// stream over-long, and the dedup guard would then miss an event that is on the
+// stream and re-emit it as a duplicate entry. spec: §25.5 (best-effort recovery
+// flush, eventKey dedup).
 func (rs *redisSource) retainedEventKeys(ctx context.Context) (map[string]struct{}, error) {
-	msgs, err := rs.client.XRangeN(ctx, rs.stream, "-", "+", rs.maxWindow).Result()
+	msgs, err := rs.retainedWindow(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
+		return nil, err
 	}
 	keys := make(map[string]struct{}, len(msgs))
 	for _, m := range msgs {

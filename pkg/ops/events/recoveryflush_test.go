@@ -159,21 +159,23 @@ func TestFlushBufferedToRedis_NoOutageWindowReEmitsNothing_spec_25_5(t *testing.
 	}
 }
 
-// scanFailingStream is a fakeStream whose retained-key XRANGE scan fails while
+// scanFailingStream is a fakeStream whose retained-key window scan fails while
 // every other read succeeds, standing in for a connection reset or a cluster
-// failover landing between the recovery probe's PING and the flush's scan.
+// failover landing between the recovery probe's PING and the flush's scan. The
+// scan is head-anchored (XREVRANGE from "+" back to "-"), so that is the read
+// this double fails.
 type scanFailingStream struct {
 	*fakeStream
 	failScan bool
 }
 
-func (f *scanFailingStream) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
-	if f.failScan && start == "-" && stop == "+" && count == eventbuffer.DefaultStreamMaxLen {
+func (f *scanFailingStream) XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	if f.failScan && start == "+" && stop == "-" && count == eventbuffer.DefaultStreamMaxLen {
 		cmd := redis.NewXMessageSliceCmd(ctx)
 		cmd.SetErr(errors.New("connection reset by peer"))
 		return cmd
 	}
-	return f.fakeStream.XRangeN(ctx, stream, start, stop, count)
+	return f.fakeStream.XRevRangeN(ctx, stream, start, stop, count)
 }
 
 // spec: 25.5 (best-effort recovery flush) — the recovery flush must not lose
