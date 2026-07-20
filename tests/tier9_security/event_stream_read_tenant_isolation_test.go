@@ -22,7 +22,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -140,5 +142,93 @@ func TestOpsEventPollTenantAdminScopedToOwnTenant_spec_25_5(t *testing.T) {
 	}
 	if len(labels) != 1 || labels[0] != "globex" {
 		t.Fatalf("tenant-admin globex poll served %v, want exactly the globex-labeled event", labels)
+	}
+}
+
+// eventStreamFrames drives GET /v1/admin/events/stream with the given bearer
+// over a context cancelled shortly after the backlog replay, and returns the
+// response status together with the lennytenantid label of each emitted frame.
+// The SSE handler blocks until its request context is done, so the cancellation
+// is what ends the read.
+func eventStreamFrames(t *testing.T, srv *opsserver.Server, bearer string) (int, []string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil).WithContext(ctx)
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	rec := httptest.NewRecorder()
+	timer := time.AfterFunc(500*time.Millisecond, cancel)
+	defer timer.Stop()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		return rec.Code, nil
+	}
+	var labels []string
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		data, ok := strings.CutPrefix(line, "data: ")
+		if !ok {
+			continue
+		}
+		var ev gwevents.OperationalEvent
+		if err := json.Unmarshal([]byte(data), &ev); err != nil {
+			t.Fatalf("decode SSE frame %q: %v", data, err)
+		}
+		labels = append(labels, ev.Extensions["lennytenantid"])
+	}
+	return rec.Code, labels
+}
+
+// spec: §25.5 (Tenant Isolation) — "SSE and polling endpoints apply the same
+// filter: tenant-scoped callers only see events matching their tenant or
+// carrying no tenant label if the caller has permission for platform-scoped
+// events (typically platform-admin only)." The SSE endpoint enforces that
+// predicate at three points the poll endpoint does not share (the backlog
+// replay, the live tail, and the gateway-buffer fall-back frames), and all
+// three are reachable only when the route boundary resolves the caller's scope
+// onto the request context. Driving the endpoint through the real auth stack
+// is what covers that resolution: a regression at the route boundary would fail
+// open on the stream while the poll test stayed green.
+//
+// diagnosis: a tenant-admin subscribing to the live §25.5 operational event
+// stream (through the genuine JWT auth stack, not an injected scope) received
+// another tenant's operational event or a platform-scoped (no-label) event, or
+// was rejected with a 403 instead of a silently narrowed stream. Either the SSE
+// route no longer resolves the caller's tenant scope onto the request context —
+// a cross-tenant operational-event leak on the deployed lenny-ops stream
+// endpoint — or it enforces isolation with the create-only
+// SUBSCRIPTION_TENANT_FORBIDDEN error rather than a silent drop.
+func TestOpsEventStreamTenantAdminSSEScopedToOwnTenant_spec_25_5(t *testing.T) {
+	srv, signer := authedEventStreamServer()
+
+	// A platform-admin observes every event on the stream, including the
+	// platform-scoped one.
+	adminTok := mintOpsRBACToken(t, signer, "root@platform", "acme", "", auth.RolePlatformAdmin)
+	code, labels := eventStreamFrames(t, srv, adminTok)
+	if code != http.StatusOK {
+		t.Fatalf("platform-admin stream: status %d, want 200", code)
+	}
+	if len(labels) != 3 {
+		t.Fatalf("platform-admin stream emitted %v, want all 3 events (acme, globex, platform-scoped)", labels)
+	}
+
+	// A tenant-admin for acme receives only the acme-labeled frame: never
+	// globex's, never the platform-scoped one, and with a 200 rather than a 403.
+	acmeTok := mintOpsRBACToken(t, signer, "alice@acme.com", "acme", "", auth.RoleTenantAdmin)
+	code, labels = eventStreamFrames(t, srv, acmeTok)
+	if code != http.StatusOK {
+		t.Fatalf("tenant-admin acme stream: status %d, want 200 (the read filter is a silent drop, not a 403)", code)
+	}
+	if len(labels) != 1 || labels[0] != "acme" {
+		t.Fatalf("tenant-admin acme stream emitted %v, want exactly the acme-labeled frame; a cross-tenant or platform-scoped event leaked", labels)
+	}
+
+	// A tenant-admin for globex symmetrically receives only its own frame.
+	globexTok := mintOpsRBACToken(t, signer, "carol@globex.com", "globex", "", auth.RoleTenantAdmin)
+	code, labels = eventStreamFrames(t, srv, globexTok)
+	if code != http.StatusOK {
+		t.Fatalf("tenant-admin globex stream: status %d, want 200", code)
+	}
+	if len(labels) != 1 || labels[0] != "globex" {
+		t.Fatalf("tenant-admin globex stream emitted %v, want exactly the globex-labeled frame", labels)
 	}
 }
