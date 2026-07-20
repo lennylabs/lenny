@@ -369,12 +369,14 @@
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
         "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity",
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
       ],
       "packages": [
         "pkg/admission/ownership",
         "pkg/controller/poolscaling",
-        "pkg/controller/ssaretry"
+        "pkg/controller/ssaretry",
+        "pkg/controller/warmpool"
       ],
       "depends_on_sections": [
         "4.6"
@@ -2498,7 +2500,8 @@
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity"
       ],
       "packages": [
         "pkg/observability/metrics",

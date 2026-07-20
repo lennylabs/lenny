@@ -5,6 +5,7 @@ package warmpool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -218,14 +219,20 @@ func TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity(t *testing.T) {
 	if len(stuck) != 1 {
 		t.Fatalf("crd_ssa_conflict_stuck log events = %d, want exactly 1: %v", len(stuck), stuck)
 	}
+	// Assert the rendered key/value pair rather than the bare value. The
+	// alert and the runbook key off these exact field names, so a helper
+	// that logged the CRD under some other key, or dropped the namespace
+	// while its value happened to appear elsewhere in the record, must fail
+	// here.
 	for field, want := range map[string]string{
 		"controller": wantController,
 		"resource":   wantCRD,
 		"name":       pool.Name,
 		"namespace":  pool.Namespace,
 	} {
-		if !strings.Contains(stuck[0], want) {
-			t.Fatalf("crd_ssa_conflict_stuck log %q missing %s=%q", stuck[0], field, want)
+		pair := fmt.Sprintf("%q=%q", field, want)
+		if !strings.Contains(stuck[0], pair) {
+			t.Fatalf("crd_ssa_conflict_stuck log %q missing %s", stuck[0], pair)
 		}
 	}
 }
