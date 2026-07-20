@@ -375,36 +375,80 @@ func TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey(t *testing.T) {
 	t.Logf("Redis recovery: read surface returned to the Redis source (degradation cleared)")
 }
 
-// deployedOpsPrincipalHoldsPlatformAdmin reports whether a landed path maps the
-// identity lenny-ops presents to the gateway admin API onto the §10.2
-// platform-admin role that gate requires. It is false: which identity path
-// closes that is a §10.2 / §25.4 authentication-surface decision recorded as an
-// open finding (T-25.5.24 in TEST-GAPS.md). The constant flips with the grant.
-const deployedOpsPrincipalHoldsPlatformAdmin = false
-
 // TestEventStreamPollDuringRedisOutageServesGatewayOriginatedEvents pins the
-// §25.5 case-1 fall-back end to end over the rendered chart: with Redis down on
-// a two-replica install, a poll of GET /v1/admin/events must return an event a
-// gateway replica originated, fetched cross-process from that replica's §25.3
-// buffer, rather than an empty page carrying the degradation envelope.
+// §25.5 case-1 fall-back end to end over the rendered chart: with Redis down,
+// a poll of GET /v1/admin/events must return an event a gateway replica
+// originated, fetched cross-process from that replica's §25.3 buffer, rather
+// than an empty page carrying the degradation envelope.
 //
 // This is the end-to-end confirmation the in-process tier-4 fall-back test
 // cannot give: it is the only place the credential lenny-ops actually presents
-// meets the gateway's real admin gate.
+// meets the gateway's real admin gate. §25.4 has lenny-ops call that API under
+// a dedicated service account holding platform-admin; the rendered chart grants
+// the account and the gateway resolves its projected token through a
+// Kubernetes TokenReview, so a page that comes back empty here means the grant
+// is not reaching the gate however correct the in-process wiring is.
 //
 // spec: 25.5 (Redis-down gateway-buffer fall-back over the lenny-gateway-pods
 // headless Service), 25.4 (lenny-ops calls the gateway admin API as a service
 // account holding platform-admin)
 // diagnosis: a failure means the §25.5 case-1 data path does not work in a real
-// install however correct the in-process wiring is. A Redis outage leaves
-// gateway-originated events unreachable to every read caller, which is the
-// condition the cross-process fan-out was built to remove.
+// install. Either the deployed lenny-ops credential is refused on
+// GET /v1/admin/events/buffer, or the fan-out does not reach the replica that
+// holds the event; either way a Redis outage leaves gateway-originated events
+// unreachable to every read caller, which is the condition the cross-process
+// fan-out was built to remove.
 func TestEventStreamPollDuringRedisOutageServesGatewayOriginatedEvents(t *testing.T) {
-	if !deployedOpsPrincipalHoldsPlatformAdmin {
-		t.Skip("precondition not met: no landed path maps the ServiceAccount identity lenny-ops presents " +
-			"to the gateway admin API onto platform-admin, so the buffer fan-out 403s on a real install " +
-			"(TEST-GAPS.md T-25.5.24). This test goes live with that grant.")
+	c := kind.InstallLenny(t)
+
+	ensureGatewayReplicas(t, c, 2)
+	pods := readyGatewayPods(t, c)
+	if len(pods) == 0 {
+		t.Skip("precondition not met: no Ready gateway replica to originate an event in its §25.3 buffer")
 	}
-	t.Fatal("unimplemented pending the T-25.5.24 identity decision: drive a Redis-down poll against the " +
-		"two-replica install and assert the page carries a gateway-originated eventKey")
+	if !t5DeploymentReady(t, c, "lenny-ops") {
+		t.Skip("precondition not met: lenny-ops is not Ready; it serves the §25.5 read surface")
+	}
+
+	baseURL, stop := c.PortForward(t, "svc/lenny-ops", t5SystemNS, opsHTTPPort)
+	defer stop()
+
+	// Seed a known gateway-originated event into one replica's own ring. It
+	// exists in no other source, so a poll page carrying it can only have come
+	// from that replica's buffer over the cross-process fan-out.
+	breaker := "t5-case1-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+	if !efOpenBreakerOn(t, c, pods[0], breaker) {
+		t.Skip("precondition not met: the gateway replica did not serve the circuit-breaker open used " +
+			"to seed a known event into its per-replica buffer")
+	}
+
+	original := dccReplicaCount(t, c, efRedisDeployment)
+	efScaleRedis(t, c, 0)
+	t.Cleanup(func() { efScaleRedis(t, c, original) })
+
+	if !efWaitActualSource(t, baseURL, "gateway-buffer", 90*time.Second) {
+		t.Fatalf("§25.5 read surface did not switch to the gateway-buffer fan-out during a real Redis " +
+			"outage; the deployed lenny-ops never served actualSource \"gateway-buffer\"")
+	}
+
+	// The page, rather than the label: the seeded gateway-originated event must
+	// be in it. An empty page under a gateway-buffer label is the refusal case,
+	// where every replica answered 403 and the surface reported a completeness
+	// the response does not have.
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		page := efPollPage(t, baseURL)
+		if efCountBreakerEvents(page, []string{breaker})[breaker] == 1 {
+			t.Logf("Redis outage: the poll page carries the gateway-originated event %s from the "+
+				"cross-process buffer fan-out", breaker)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("during a real Redis outage the §25.5 poll page never carried the gateway-originated "+
+				"event %s (page: %d items). The case-1 fall-back is serving no gateway-originated events: "+
+				"the credential lenny-ops presents is refused on GET /v1/admin/events/buffer, or the "+
+				"fan-out did not reach the replica holding it", breaker, len(page.Items))
+		}
+		time.Sleep(2 * time.Second)
+	}
 }

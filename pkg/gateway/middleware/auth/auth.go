@@ -230,6 +230,18 @@ type Options struct {
 	// spec: §10.2 line 294. F-10.2.3.
 	PlatformRoles PlatformRoleResolver
 
+	// ServiceIdentity, when set, resolves a platform service account's
+	// bearer token into a Principal. §25.4 states that `lenny-ops` calls
+	// the gateway admin API as a regular authenticated HTTPS client using a
+	// dedicated service account holding the platform-admin role, through
+	// the gateway's standard RBAC. The credential that service account
+	// presents is a projected Kubernetes ServiceAccount token, which is not
+	// a Lenny-minted JWT and carries no roles claim, so the bearer chain
+	// consults this resolver when JWT verification rejects the token. Nil
+	// leaves the admin API reachable by Lenny-minted bearers only.
+	// spec: §25.4 ("Calling the Gateway").
+	ServiceIdentity ServiceIdentityResolver
+
 	// GroupIntrospector, when set, performs the §10.6 line 661 real-time
 	// group check. The middleware consults it for every verified Bearer.
 	// When the principal's tenant has identityProvider.introspectionEnabled
@@ -253,6 +265,36 @@ type GroupIntrospector interface {
 	// is the authoritative group set, and a non-nil err is a config or
 	// transport failure the middleware fails closed on.
 	IntrospectGroups(ctx context.Context, tenantID, token string) (enabled, active bool, groups []string, err error)
+}
+
+// ServiceIdentity is the principal a platform service account is admitted
+// as. It carries the roles the deployment grants that account rather than
+// any claim the presented token makes about itself, so a pod cannot widen
+// its own authority by minting a token.
+// spec: §25.4 ("Calling the Gateway").
+type ServiceIdentity struct {
+	// Subject is the authenticated service-account username
+	// (`system:serviceaccount:<namespace>:<name>`).
+	Subject string
+	// TenantID is the tenant the service principal acts in.
+	TenantID string
+	// Roles are the §10.2 roles the deployment grants the account.
+	Roles []auth.Role
+}
+
+// ServiceIdentityResolver maps a service account's bearer token onto the
+// principal the deployment grants it. It is consulted only after the JWT
+// verifier has rejected the token, so an ordinary bearer never reaches it.
+//
+// Implementations fail closed: ok is true only when the token is
+// cryptographically authentic for this deployment and names an account the
+// deployment grants a role to. A non-nil error is a transport or
+// configuration failure, on which the middleware denies the request rather
+// than admitting it.
+// spec: §25.4 ("Calling the Gateway": all calls go through the gateway's
+// standard RBAC, with no backdoor and no loopback shortcut).
+type ServiceIdentityResolver interface {
+	ResolveService(ctx context.Context, token string) (identity ServiceIdentity, ok bool, err error)
 }
 
 // PlatformRoleResolver is the §10.2 line 294 platform-managed
@@ -389,6 +431,14 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	}
 	claims, err := m.opts.Verifier.Verify(token)
 	if err != nil {
+		// §25.4: `lenny-ops` presents a projected ServiceAccount token rather
+		// than a Lenny-minted JWT, so a token the JWT verifier rejects may
+		// still be an authentic platform service-account credential. The
+		// resolver is consulted only here, after JWT verification has already
+		// failed, so it never widens the authority of an ordinary bearer.
+		if m.serveServiceIdentity(w, r, token) {
+			return
+		}
 		var ve *jwt.VerifyError
 		if errors.As(err, &ve) && ve.Reason == "expired" {
 			writeError(w, http.StatusUnauthorized, "TOKEN_EXPIRED", err.Error(), nil)
@@ -541,6 +591,54 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 	}
 	m.inner.ServeHTTP(w, r)
 }
+
+// serveServiceIdentity admits a §25.4 platform service-account bearer and
+// serves the request under the principal the deployment grants that account.
+// It reports whether it handled the request; false leaves the caller to write
+// the JWT rejection it already has.
+//
+// It fails closed. With no resolver wired, a token the resolver does not
+// recognise, or a resolver error (an unreachable apiserver, a TokenReview the
+// gateway is not permitted to submit), the request is not admitted and the
+// caller's JWT rejection stands. The roles come from the deployment's grant
+// rather than from any claim in the presented token, so the principal cannot
+// be widened by whoever holds the token.
+//
+// spec: §25.4 ("`lenny-ops` calls the gateway's admin API as a regular
+// authenticated HTTPS client. It uses a dedicated service account
+// (`lenny-ops-sa`) with `platform-admin` role... All calls go through the
+// gateway's standard RBAC, validation, and audit").
+func (m *middleware) serveServiceIdentity(w http.ResponseWriter, r *http.Request, token string) bool {
+	if m.opts.ServiceIdentity == nil {
+		return false
+	}
+	id, ok, err := m.opts.ServiceIdentity.ResolveService(r.Context(), token)
+	if err != nil || !ok {
+		return false
+	}
+	p := Principal{
+		Subject:  id.Subject,
+		TenantID: id.TenantID,
+		// §25.4: the service account's token is distinguished in the audit
+		// trail by caller_type "service".
+		CallerType: serviceCallerType,
+		Roles:      append([]auth.Role(nil), id.Roles...),
+	}
+	ctx := WithPrincipal(r.Context(), p)
+	r = r.WithContext(ctx)
+	r.Header.Set("X-Lenny-Tenant-ID", p.TenantID)
+	if !m.runPreAuth(w, r, p) {
+		return true
+	}
+	m.inner.ServeHTTP(w, r)
+	return true
+}
+
+// serviceCallerType is the §25.4 `caller_type` a platform service account's
+// principal carries, so an audit reader can tell a service call from a human
+// one. spec: §25.4 ("The service account's JWT token includes
+// `caller_type: "service"` for audit trail distinction").
+const serviceCallerType = "service"
 
 func (m *middleware) serveDevHeaders(w http.ResponseWriter, r *http.Request) {
 	tenantHeader := r.Header.Get("X-Lenny-Tenant-ID")

@@ -27,18 +27,27 @@
 package tier9_security_test
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	authnv1 "k8s.io/api/authentication/v1"
+	k8sruntime "k8s.io/apimachinery/pkg/runtime"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
+
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
@@ -152,49 +161,108 @@ func TestOpsGatewayBufferFanOutRequiresPlatformAdmin_spec_25_4_25_5(t *testing.T
 	}
 }
 
-// deployedOpsPrincipalHoldsPlatformAdmin reports whether a landed path maps the
-// identity lenny-ops actually presents to the gateway admin API onto the §10.2
-// platform-admin role that gate requires.
+// opsBufferReplicaBehindRealAuth serves the genuine gateway admin Router
+// behind the genuine auth middleware, wired with the §25.4 service-identity
+// resolver the gateway binary wires. No principal is injected: the only way in
+// is the credential the caller presents, resolved through a Kubernetes
+// TokenReview exactly as a deployed cluster resolves it.
 //
-// It is false. The lenny-ops Deployment mounts a projected Kubernetes
-// ServiceAccount token (audience lenny-gateway) and presents it as the admin
-// API bearer, while the gateway's admin auth middleware verifies a Lenny-minted
-// JWT and derives roles from its claims; the gateway's only ServiceAccount
-// TokenReview path is bound to the GatewayControl listener rather than the
-// admin API. Which identity path closes that is a §10.2 / §25.4
-// authentication-surface decision recorded as an open finding (T-25.5.24 in
-// TEST-GAPS.md), so it is not invented here. The constant flips to true with the
-// grant, and the assertion below becomes live in the same change.
-const deployedOpsPrincipalHoldsPlatformAdmin = false
+// grantedTo is the ServiceAccount username the deployment grants
+// platform-admin to; authenticatedAs is the username the apiserver reports for
+// the presented token. The two differ when the test presents a token for an
+// account the deployment did not grant.
+func opsBufferReplicaBehindRealAuth(t *testing.T, buffered []gwevents.OperationalEvent, grantedTo, authenticatedAs string) *httptest.Server {
+	t.Helper()
+	buf := eventbuffer.NewEventBuffer(64)
+	for _, ev := range buffered {
+		buf.Append(ev)
+	}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithEventBuffer(buf)
+
+	// The apiserver stand-in: it authenticates any token minted for the
+	// deployment audience as authenticatedAs, which is what a TokenReview
+	// against a real cluster returns for the projected token lenny-ops mounts.
+	cs := k8sfake.NewSimpleClientset()
+	cs.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, k8sruntime.Object, error) {
+		tr := action.(k8stesting.CreateAction).GetObject().(*authnv1.TokenReview)
+		tr.Status = authnv1.TokenReviewStatus{
+			Authenticated: true,
+			Audiences:     tr.Spec.Audiences,
+			User:          authnv1.UserInfo{Username: authenticatedAs},
+		}
+		return true, tr, nil
+	})
+
+	handler := authmw.Wrap(router.Handler(), authmw.Options{
+		// The gateway's own JWT verifier, which a projected ServiceAccount
+		// token never satisfies: it is signed by the cluster's service-account
+		// issuer rather than by the platform token service.
+		Verifier: jwt.NewHMACSigner("gateway", []byte("not-the-cluster-issuer-key")),
+		ServiceIdentity: serviceidentity.New(serviceidentity.Config{
+			Verifier: leasecontrol.TokenReviewVerifier{Reviews: cs.AuthenticationV1().TokenReviews()},
+			Audience: opsTokenAudience,
+			Roles:    map[string][]pkgauth.Role{grantedTo: {pkgauth.RolePlatformAdmin}},
+			TenantID: "platform",
+		}),
+	})
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// opsTokenAudience is the audience the chart mints the lenny-ops projected
+// ServiceAccount token for, and the audience the gateway binds its admin-API
+// TokenReview to. spec: §25.4 ("Calling the Gateway").
+const opsTokenAudience = "lenny-gateway"
+
+// opsSAUsername is the fully-qualified ServiceAccount username lenny-ops runs
+// under. spec: §25.4 ("It uses a dedicated service account (`lenny-ops-sa`)").
+const opsSAUsername = "system:serviceaccount:lenny-system:lenny-ops-sa"
+
+// deployedOpsGatewayBearer returns the credential lenny-ops actually presents
+// to the gateway admin API: the projected ServiceAccount token the chart
+// mounts, minted for the lenny-gateway audience. It is JWT-shaped and signed
+// by the cluster issuer, which is why the gateway's own JWT verifier rejects
+// it and the service-identity path is what must admit it.
+func deployedOpsGatewayBearer(t *testing.T) string {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"aud": []string{opsTokenAudience},
+		"sub": opsSAUsername,
+		"iss": "https://kubernetes.default.svc.cluster.local",
+	})
+	if err != nil {
+		t.Fatalf("marshal projected token payload: %v", err)
+	}
+	return "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(payload) + ".cluster-issuer-signature"
+}
 
 // spec: 25.4 (lenny-ops calls the gateway admin API as a dedicated service
 // account holding platform-admin, through the gateway's standard RBAC), 25.5
 // (Redis-down gateway-buffer fall-back)
 // diagnosis: a failure means the §25.5 case-1 fall-back is unreachable in a
 // deployed cluster. The credential lenny-ops presents is refused by the admin
-// gate on GET /v1/admin/events/buffer, so a Redis outage yields an empty
-// degraded page or the dual-outage classification and gateway-originated events
-// have no data path at all, whatever the in-process wiring does with an
-// injected principal.
+// gate on GET /v1/admin/events/buffer, so a Redis outage yields the dual-outage
+// classification and gateway-originated events have no data path at all,
+// whatever the in-process wiring does with an injected principal.
 func TestOpsDeployedServiceAccountIsAdmittedToTheGatewayEventBuffer_spec_25_4_25_5(t *testing.T) {
-	if !deployedOpsPrincipalHoldsPlatformAdmin {
-		t.Skip("precondition not met: no landed path maps the ServiceAccount identity lenny-ops presents " +
-			"to the gateway admin API onto platform-admin, so the §25.5 case-1 fall-back 403s in a deployed " +
-			"cluster (TEST-GAPS.md T-25.5.24). The sibling test pins only the consequence of a refusal; this " +
-			"one pins that the deployed credential is admitted, and goes live with the grant.")
-	}
-
 	const gwKey = "gw-1:2000:1"
-	replica := opsBufferReplica(t, []gwevents.OperationalEvent{{
+	buffered := []gwevents.OperationalEvent{{
 		ID:          gwKey,
 		Type:        "dev.lenny.alert_fired",
 		SpecVersion: gwevents.CloudEventsSpecVersion,
 		Severity:    "warning",
 		Time:        time.Unix(2000, 0).UTC(),
-	}})
+	}}
 
-	// The bearer is the credential the deployment actually presents, rather
-	// than a fixture principal the test grants the role to.
+	// The deployment grants lenny-ops-sa platform-admin, and the credential
+	// lenny-ops presents authenticates as that account. The whole chain runs:
+	// the JWT verifier rejects the projected token, the service-identity
+	// resolver validates it through a TokenReview bound to the deployment
+	// audience, and the admin role gate admits the resulting principal.
+	replica := opsBufferReplicaBehindRealAuth(t, buffered, opsSAUsername, opsSAUsername)
 	status, keys := opsFallbackPoll(t, replica.URL, deployedOpsGatewayBearer(t))
 	if status != http.StatusOK {
 		t.Fatalf("the credential lenny-ops presents was refused the buffer query: poll status %d; "+
@@ -203,16 +271,15 @@ func TestOpsDeployedServiceAccountIsAdmittedToTheGatewayEventBuffer_spec_25_4_25
 	if len(keys) != 1 || keys[0] != gwKey {
 		t.Fatalf("the fall-back served %v, want the gateway-originated %s", keys, gwKey)
 	}
-}
 
-// deployedOpsGatewayBearer returns the bearer token lenny-ops presents to the
-// gateway admin API: the projected ServiceAccount token mounted at the path the
-// chart configures, minted for the lenny-gateway audience. It is resolved from
-// the deployment rather than synthesised, so the test exercises the credential
-// the gate actually sees.
-func deployedOpsGatewayBearer(t *testing.T) string {
-	t.Helper()
-	t.Fatal("deployedOpsGatewayBearer is unimplemented pending the T-25.5.24 identity decision; " +
-		"it must read the projected ServiceAccount token lenny-ops presents rather than mint a fixture")
-	return ""
+	// The grant is per account rather than per authentic token: a different
+	// service account presenting an equally authentic token for the same
+	// audience is refused, and the refusal reaches the read caller as the
+	// §25.5 unavailable classification rather than a healthy degraded page.
+	other := opsBufferReplicaBehindRealAuth(t, buffered, opsSAUsername, "system:serviceaccount:lenny-system:agent-sa")
+	status, keys = opsFallbackPoll(t, other.URL, deployedOpsGatewayBearer(t))
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("an ungranted service account produced poll status %d serving %v, want 503: only the "+
+			"account §25.4 grants platform-admin may read the gateway event buffer", status, keys)
+	}
 }

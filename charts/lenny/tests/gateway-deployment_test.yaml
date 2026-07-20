@@ -3330,6 +3330,24 @@ tests:
           content:
             name: LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS
             value: "45"
+  # spec: §25.4 ("Calling the Gateway") — lenny-ops reaches the admin API as a
+  # dedicated service account holding platform-admin, through the standard
+  # RBAC. The gateway must be told which audience that account's projected
+  # token carries and which account holds the grant, or every admin call it
+  # makes is refused and the §25.5 Redis-down gateway-buffer fan-out has no
+  # data source.
+  - it: grants the lenny-ops service account platform-admin on the admin API
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --admin-sa-token-audience=lenny-gateway
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --platform-admin-service-accounts=system:serviceaccount:NAMESPACE:lenny-ops-sa
+
 
 # §10.3 (NET-064) F-10.3.4: global.spiffeTrustDomain is a required chart
 # value with no default; a placeholder lets the gateway-deployment
