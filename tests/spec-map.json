@@ -2507,7 +2507,8 @@
         "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity",
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts",
         "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing",
-        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent"
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent",
+        "tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go::TestMetricsReferenceCarriesCRDSSAConflictCounter"
       ],
       "packages": [
         "pkg/observability/metrics",
