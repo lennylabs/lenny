@@ -429,3 +429,102 @@ func countKeys(msgs []redis.XMessage) map[string]int {
 	}
 	return counts
 }
+
+// scanFaultingClient wraps a live Redis client and fails the recovery flush's
+// retained-key XRANGE scan the configured number of times, so the flush's
+// behaviour on a read error can be exercised against a real stream. Every
+// other read passes through untouched.
+type scanFaultingClient struct {
+	*redis.Client
+	scanFailures atomic.Int64
+}
+
+func (c *scanFaultingClient) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	if start == "-" && stop == "+" && count == eventbuffer.DefaultStreamMaxLen && c.scanFailures.Add(-1) >= 0 {
+		cmd := redis.NewXMessageSliceCmd(ctx)
+		cmd.SetErr(fmt.Errorf("connection reset by peer"))
+		return cmd
+	}
+	return c.Client.XRangeN(ctx, stream, start, stop, count)
+}
+
+// spec: 25.5 (best-effort recovery flush) — the down-to-up edge fires once per
+// transition, so the flush must not consume the outage window before the read
+// that can fail. A retained-key scan that fails on the recovery edge (a
+// connection reset in the instant after the probe's PING succeeded, or a
+// cluster failover) drops the deduplication optimization, not the window: the
+// events this replica buffered during the outage still reach the recovered
+// ops:events:stream, exactly once. The pre-fix flush took the window first and
+// returned on the scan error, abandoning every buffered event permanently;
+// this fails against that code.
+//
+// diagnosis: a failure means a transient Redis read error on the recovery edge
+// permanently loses every lenny-ops-originated event buffered during the
+// outage — the failure the recovery flush exists to prevent — or the flush
+// duplicates an event on the stream when its scan does succeed.
+func TestOpsEventStreamRecoveryFlushSurvivesRetainedKeyScanFailure(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	faulting := &scanFaultingClient{Client: rd.Client}
+	faulting.scanFailures.Store(1)
+
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	svc := opsstream.New(opsstream.Options{RedisClient: faulting, SourceHealth: health, ReplicaID: "ops-1"})
+
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
+		Client:    rd.Client,
+		Buffer:    eventbuffer.NewEventBuffer(0),
+		ReplicaID: "ops-1",
+	})
+	svc.SetRedisReEmitter(emitter.Emit)
+
+	// Redis goes away and this replica buffers two of its own events whose
+	// XADD failed.
+	var firstFailedID uint64
+	for _, e := range []gwevents.OperationalEvent{
+		{ID: "ops-1:scanfail:1", Type: "dev.lenny.escalation_created", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1001, 0).UTC()},
+		{ID: "ops-1:scanfail:2", Type: "dev.lenny.escalation_created", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1002, 0).UTC()},
+	} {
+		id, err := svc.Publish(ctx, e)
+		if err != nil {
+			t.Fatalf("buffer local event %s: %v", e.ID, err)
+		}
+		if firstFailedID == 0 {
+			firstFailedID = id
+		}
+	}
+	svc.MarkRedisWriteFailure(firstFailedID)
+
+	// The recovery edge fires once, and its retained-key scan fails.
+	flushed, err := svc.FlushBufferedToRedis(ctx)
+	if err == nil {
+		t.Error("the failed retained-key scan must be reported to the caller")
+	}
+	if flushed != 2 {
+		t.Fatalf("flush re-emitted %d events after a failed retained-key scan; want 2 (the outage window must not be abandoned)", flushed)
+	}
+
+	// A second edge with the scan working must not replay the window.
+	if n, err := svc.FlushBufferedToRedis(ctx); n != 0 || err != nil {
+		t.Fatalf("repeat flush = (%d, %v); want nothing, the window was already flushed", n, err)
+	}
+
+	msgs, err := rd.Client.XRange(ctx, eventbuffer.DefaultStreamKey, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange: %v", err)
+	}
+	counts := map[string]int{}
+	for _, m := range msgs {
+		var ev gwevents.OperationalEvent
+		if raw, ok := m.Values["event"].(string); ok {
+			_ = json.Unmarshal([]byte(raw), &ev)
+		}
+		counts[ev.ID]++
+	}
+	if counts["ops-1:scanfail:1"] != 1 || counts["ops-1:scanfail:2"] != 1 {
+		t.Fatalf("outage-window events did not reach the recovered stream exactly once: %v", counts)
+	}
+}

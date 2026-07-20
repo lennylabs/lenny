@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 )
 
@@ -153,5 +155,57 @@ func TestFlushBufferedToRedis_NoOutageWindowReEmitsNothing_spec_25_5(t *testing.
 	}
 	if len(reEmitted) != 1 || reEmitted[0] != "ops:1002:1" {
 		t.Fatalf("re-emitted %v across the flapping edges; want exactly [ops:1002:1]", reEmitted)
+	}
+}
+
+// scanFailingStream is a fakeStream whose retained-key XRANGE scan fails while
+// every other read succeeds, standing in for a connection reset or a cluster
+// failover landing between the recovery probe's PING and the flush's scan.
+type scanFailingStream struct {
+	*fakeStream
+	failScan bool
+}
+
+func (f *scanFailingStream) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	if f.failScan && start == "-" && stop == "+" && count == maxWindow {
+		cmd := redis.NewXMessageSliceCmd(ctx)
+		cmd.SetErr(errors.New("connection reset by peer"))
+		return cmd
+	}
+	return f.fakeStream.XRangeN(ctx, stream, start, stop, count)
+}
+
+// spec: 25.5 (best-effort recovery flush) — the recovery flush must not lose
+// the outage window to a failed retained-key scan. The down-to-up edge fires
+// once per transition, so a window consumed before a failing scan is never
+// re-emitted and every event this replica buffered during the outage is
+// abandoned. The pre-fix flush took the window first and returned on the scan
+// error, re-emitting nothing; this fails against that code by asserting the
+// buffered event still reaches the re-emit path.
+func TestFlushBufferedToRedis_ScanFailureDoesNotAbandonTheWindow_spec_25_5(t *testing.T) {
+	f := &scanFailingStream{fakeStream: &fakeStream{}, failScan: true}
+	s := New(Options{RedisClient: f, SourceHealth: newMutableHealth(true, true), Now: ts})
+	s.MarkRedisOutage()
+	s.buffer.Append(evt("ops:1001:1", "dev.lenny.escalation_created"))
+
+	var reEmitted []string
+	s.SetRedisReEmitter(func(_ context.Context, e gwevents.OperationalEvent) error {
+		reEmitted = append(reEmitted, e.ID)
+		return nil
+	})
+
+	n, err := s.FlushBufferedToRedis(context.Background())
+	if n != 1 || len(reEmitted) != 1 || reEmitted[0] != "ops:1001:1" {
+		t.Fatalf("flush re-emitted %v (n=%d) when the retained-key scan failed; want the outage-window event ops:1001:1", reEmitted, n)
+	}
+	if err == nil {
+		t.Error("a failed retained-key scan must still be reported to the caller")
+	}
+
+	// The window was consumed by the flush that did re-emit it, so a later
+	// edge does not replay it.
+	f.failScan = false
+	if n, err := s.FlushBufferedToRedis(context.Background()); n != 0 || err != nil {
+		t.Fatalf("repeat flush = (%d, %v); want nothing (the window was already flushed)", n, err)
 	}
 }

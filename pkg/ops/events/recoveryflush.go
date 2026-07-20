@@ -34,30 +34,44 @@ import (
 //
 // A per-event re-emit failure is logged by the caller and does not stop the
 // flush; the returned count is the number re-emitted and the returned error is
-// the last re-emit failure (nil when every re-emit succeeded). A nil re-emit
+// the last failure the flush encountered (a failed retained-key scan or a
+// failed re-emit), nil when the whole flush succeeded. A nil re-emit
 // path, a nil Redis source, or a recovery with no observed outage makes the
 // flush a no-op. spec: §25.5 (best-effort recovery flush, eventKey dedup).
 func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 	if s.redisReEmit == nil || s.redis == nil {
 		return 0, nil
 	}
-	since, outage := s.takeOutageWindow()
-	if !outage {
+	if !s.outageOpen() {
 		// No down edge was observed, so this replica buffered nothing that
 		// failed to reach Redis and has nothing to re-emit.
 		return 0, nil
 	}
 
-	present, err := s.redis.retainedEventKeys(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("read retained eventKeys: %w", err)
+	// The retained-key scan runs before the window is consumed, and a scan
+	// failure drops the optimization rather than the window. The down-to-up
+	// edge fires once per transition, so a window consumed by a failed scan
+	// would never be re-emitted and every event this replica buffered during
+	// the outage would be abandoned, which is the loss the flush exists to
+	// prevent. Without the scan the flush re-emits the whole window and
+	// consumer-side eventKey deduplication collapses anything already on the
+	// stream. spec: §25.5 (best-effort recovery flush, eventKey dedup).
+	present, scanErr := s.redis.retainedEventKeys(ctx)
+	if scanErr != nil {
+		present = nil
+		scanErr = fmt.Errorf("read retained eventKeys: %w", scanErr)
+	}
+
+	since, outage := s.takeOutageWindow()
+	if !outage {
+		return 0, nil
 	}
 
 	buffered := s.buffer.Query(since, gwevents.EventFilter{}, DefaultBufferCapacity).Events
 
 	flushed := 0
 	seen := make(map[string]struct{}, len(buffered))
-	var lastErr error
+	lastErr := scanErr
 	for _, ev := range buffered {
 		key := ev.Event.ID
 		if key == "" {
@@ -123,6 +137,15 @@ func (s *Service) openOutageWindow(since uint64) {
 	}
 	s.outageFrom = since
 	s.inOutage = true
+}
+
+// outageOpen reports whether a recovery-flush outage window is currently open,
+// without consuming it. The flush checks it before doing any Redis work so a
+// recovery with nothing buffered costs no round trip.
+func (s *Service) outageOpen() bool {
+	s.outageMu.Lock()
+	defer s.outageMu.Unlock()
+	return s.inOutage
 }
 
 // takeOutageWindow returns the ring position the open outage window starts
