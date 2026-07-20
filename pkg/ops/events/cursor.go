@@ -17,11 +17,12 @@ const (
 	// SourceKindBuffer marks a cursor produced by the in-memory ring
 	// buffer (the v1 lenny-ops event source).
 	SourceKindBuffer = "buffer"
-	// SourceKindRedis marks a cursor produced by the Redis stream. Its
-	// encoded position is a Redis stream ID, so a redis cursor sent back to
-	// the Redis source resumes directly by stream ID; a redis cursor served
-	// from another source is translated by scanning for the matching
-	// eventKey (reported as mixed).
+	// SourceKindRedis marks a cursor produced by the Redis stream. Like
+	// every other source's cursor its encoded position is the canonical
+	// eventKey, so it round-trips: the Redis source resolves it by scanning
+	// the stream for the continuation point, and the gateway-buffer and
+	// local-ring sources resolve the same key against their own windows
+	// (reported as mixed).
 	SourceKindRedis = "redis"
 	// SourceKindMixed marks a cursor served across a source transition —
 	// the incoming cursor came from one source and the response was

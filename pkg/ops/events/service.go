@@ -707,8 +707,8 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 // the request. The SSE-standard Last-Event-ID header carries a CloudEvents
 // id (an eventKey with no source kind), so it resolves by eventKey scan and
 // reports an empty kind. The ?cursor= fallback carries the source kind the
-// poll minted, so a redis cursor resumes directly by its stream-ID position
-// while a buffer or mixed cursor translates by eventKey scan. spec: §25.5
+// poll minted; its position is the same canonical eventKey either way, which
+// each source translates to a local position by scan. spec: §25.5
 // lines 2679-2680 (Last-Event-ID / cursor resume, cross-source translation).
 func resumeCursor(r *http.Request) (kind, key string) {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {

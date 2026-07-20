@@ -35,6 +35,18 @@ func (f *fakeStream) addRaw(id string, values map[string]any) {
 	f.entries = append(f.entries, redis.XMessage{ID: id, Values: values})
 }
 
+// streamIDLess orders two Redis "ms-seq" stream IDs, which the in-memory
+// fakeStream needs to honour XRANGE bounds. The read path itself orders by
+// eventKey, so this lives with the fake rather than in the source.
+func streamIDLess(a, b string) bool {
+	ams, aseq := parseStreamID(a)
+	bms, bseq := parseStreamID(b)
+	if ams != bms {
+		return ams < bms
+	}
+	return aseq < bseq
+}
+
 func inRange(id, start, stop string) bool {
 	if start != "-" {
 		if start[0] == '(' {
@@ -177,7 +189,7 @@ func TestRedisPollPage_TranslatesBufferCursorByEventKey_spec_25_5(t *testing.T) 
 }
 
 // spec: 25.5 (evicted-cursor gap: gapDetected + oldestAvailableCursor) — a
-// redis cursor whose stream ID predates the oldest retained entry reports a
+// redis cursor whose eventKey orders before the oldest retained entry reports a
 // gap and fires the gap counter, and a buffer cursor whose eventKey orders
 // before the oldest retained event does the same.
 func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
@@ -192,8 +204,8 @@ func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 		Now:          ts,
 	})
 
-	// A redis cursor at stream ID 5-0 predates the oldest retained 10-0.
-	page := pollActiveSource(s, context.Background(), SourceKindRedis, "5-0", gwevents.EventFilter{}, 10, false)
+	// A redis cursor whose eventKey predates the oldest retained ops:10:1.
+	page := pollActiveSource(s, context.Background(), SourceKindRedis, "ops:5:1", gwevents.EventFilter{}, 10, false)
 	if !page.Pagination.GapDetected {
 		t.Fatal("an evicted redis cursor must report gapDetected")
 	}
@@ -201,8 +213,8 @@ func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 		t.Error("a gap must carry oldestAvailableCursor")
 	}
 	k, pos, _ := decodeCursor(page.Pagination.OldestAvailableCursor)
-	if k != SourceKindRedis || pos != "10-0" {
-		t.Errorf("oldestAvailableCursor = (%q,%q), want (redis,10-0)", k, pos)
+	if k != SourceKindRedis || pos != "ops:10:1" {
+		t.Errorf("oldestAvailableCursor = (%q,%q), want (redis,ops:10:1)", k, pos)
 	}
 
 	// A buffer cursor whose eventKey orders before the oldest retained event
@@ -332,7 +344,8 @@ func TestRedisPollPage_DescAndEmptyResumeEcho_spec_25_5(t *testing.T) {
 
 	// Resume from the head: no new entries, so the page is empty and echoes
 	// the caller's cursor without a gap.
-	empty := pollActiveSource(s, context.Background(), SourceKindRedis, "2-0", gwevents.EventFilter{}, 10, false)
+	const headKey = "ops:2:1"
+	empty := pollActiveSource(s, context.Background(), SourceKindRedis, headKey, gwevents.EventFilter{}, 10, false)
 	if len(empty.Items) != 0 {
 		t.Fatalf("resume from head returned %d items, want 0", len(empty.Items))
 	}
@@ -340,28 +353,8 @@ func TestRedisPollPage_DescAndEmptyResumeEcho_spec_25_5(t *testing.T) {
 		t.Error("resume from the live head must not report a gap")
 	}
 	k, pos, _ := decodeCursor(empty.Pagination.Cursor)
-	if k != SourceKindRedis || pos != "2-0" {
-		t.Errorf("empty poll cursor = (%q,%q), want the echoed (redis,2-0)", k, pos)
-	}
-}
-
-// spec: 25.5 (stream-ID ordering underpinning eviction detection).
-func TestStreamIDLess(t *testing.T) {
-	cases := []struct {
-		a, b string
-		want bool
-	}{
-		{"5-0", "10-0", true},
-		{"10-0", "5-0", false},
-		{"10-0", "10-0", false},
-		{"10-0", "10-1", true},
-		{"10-2", "10-1", false},
-		{"", "1-0", true},
-	}
-	for _, c := range cases {
-		if got := streamIDLess(c.a, c.b); got != c.want {
-			t.Errorf("streamIDLess(%q,%q) = %v, want %v", c.a, c.b, got, c.want)
-		}
+	if k != SourceKindRedis || pos != headKey {
+		t.Errorf("empty poll cursor = (%q,%q), want the echoed (redis,%s)", k, pos, headKey)
 	}
 }
 
@@ -485,21 +478,22 @@ func itemsJSON(t *testing.T, page EventPage) []byte {
 	return m["items"]
 }
 
-// spec: 25.5 (SSE resume honors the cursor source_kind) — a redis-kind
-// ?cursor= (the kind a Redis poll mints, whose position is a Redis stream
-// ID) resumes the SSE backlog directly by stream ID: only events after the
-// cursor are replayed and no spurious :gap comment is emitted. A
+// spec: 25.5 (the opaque cursor carries the canonical eventKey; cross-source
+// cursor translation) — a redis-kind ?cursor= as a Redis poll mints it
+// resumes the SSE backlog at the continuation point: only events after the
+// carried eventKey are replayed and no spurious :gap comment is emitted. A
 // pre-cancelled request context writes the backlog replay then returns
 // before the live tail.
-func TestHandleStreamRedis_RedisCursorResumesByStreamID_spec_25_5(t *testing.T) {
+func TestHandleStreamRedis_RedisCursorResumes_spec_25_5(t *testing.T) {
 	f := &fakeStream{}
 	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
 	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
 	f.add("3-0", evt("ops:3:1", "dev.lenny.alert_fired"))
 	s := redisService(t, f)
 
-	// A redis-kind cursor at stream ID 2-0, as a Redis poll would mint it.
-	cursor := encodeCursor(SourceKindRedis, "2-0")
+	// A redis-kind cursor carrying the eventKey of the second entry, as a
+	// Redis poll mints it.
+	cursor := encodeCursor(SourceKindRedis, "ops:2:1")
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // backlog-only: replay the resume window, then return.
 	rec := httptest.NewRecorder()
@@ -689,5 +683,78 @@ func TestTailBlockIsOperatorTunable_spec_25_5(t *testing.T) {
 	}
 	if got := newRedisSource(&fakeStream{}, "", 0).block; got != DefaultTailBlock {
 		t.Errorf("unset tail block = %s, want the %s default", got, DefaultTailBlock)
+	}
+}
+
+// spec: 25.5 (the opaque cursor carries the canonical eventKey so it
+// round-trips across sources; cross-source cursor translation) — a cursor
+// minted while the Redis stream served the poll must resolve at the two other
+// sources, which locate a position by scanning for the first event ordering at
+// or after the carried eventKey. Encoding the Redis stream ID instead leaves
+// both of them comparing a "ms-seq" string against eventKeys of the form
+// {replicaID}:{emittedAt}:{nonce}: parseEventKey rejects it, the comparison
+// degrades to a byte order in which the stream ID sorts before the whole
+// retained window, and every poll across a Redis-down transition reports a
+// spurious gap and re-serves the window. The pre-fix Redis source minted the
+// stream ID; this fails against that code on both legs.
+func TestRedisMintedCursorTranslatesAtOtherSources_spec_25_5(t *testing.T) {
+	base := ts()
+	local := func(id string) gwevents.OperationalEvent {
+		e := evt(id, "dev.lenny.alert_fired")
+		e.Time = base.Add(1000 * time.Second)
+		return e
+	}
+
+	f := &fakeStream{}
+	f.add("1-0", local("ops:1000:1"))
+	f.add("2-0", local("ops:1000:2"))
+	s := New(Options{RedisClient: f, SourceHealth: newMutableHealth(true, true), Now: ts})
+	// The same events are in this replica's ring: the fan-out emitter writes
+	// each event to both the local ring and the shared stream.
+	for _, id := range []string{"ops:1000:1", "ops:1000:2", "ops:1000:3"} {
+		if _, err := s.Publish(context.Background(), local(id)); err != nil {
+			t.Fatalf("publish %s: %v", id, err)
+		}
+	}
+
+	page := pollActiveSource(s, context.Background(), "", "", gwevents.EventFilter{}, 10, false)
+	kind, position, err := decodeCursor(page.Pagination.Cursor)
+	if err != nil {
+		t.Fatalf("decode the Redis-minted cursor: %v", err)
+	}
+	if kind != SourceKindRedis {
+		t.Fatalf("cursorKind = %q, want %q", kind, SourceKindRedis)
+	}
+	if position != "ops:1000:2" {
+		t.Errorf("Redis-minted cursor position = %q, want the canonical eventKey ops:1000:2", position)
+	}
+
+	// The local ring is the dual-outage source: it resolves the same cursor.
+	buffered := s.bufferPollPage(kind, position, gwevents.EventFilter{}, 10, false)
+	if buffered.Pagination.GapDetected {
+		t.Errorf("the local ring reported a gap for a Redis-minted cursor: %+v", buffered.Pagination)
+	}
+	if got := eventKeys(buffered.Items); len(got) != 1 || got[0] != "ops:1000:3" {
+		t.Errorf("local-ring continuation = %v, want only ops:1000:3", got)
+	}
+
+	// The gateway-buffer fan-out is the Redis-down source: it resolves the
+	// same cursor against a window that brackets it.
+	gwEvt := func(id string, sec int64) gwevents.BufferedEvent {
+		e := evt(id, "dev.lenny.alert_fired")
+		e.Time = base.Add(time.Duration(sec) * time.Second)
+		return gwevents.BufferedEvent{ID: 1, Event: e}
+	}
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		gwEvt("gw:0500:1", 500),
+		gwEvt("gw:2000:1", 2000),
+	}}})
+	fanned := s.gatewayPollPage(context.Background(), kind, position, gwevents.EventFilter{}, 10, false)
+	if fanned.Pagination.GapDetected {
+		t.Errorf("the gateway-buffer fan-out reported a gap for a Redis-minted cursor: %+v", fanned.Pagination)
+	}
+	got := eventKeys(fanned.Items)
+	if len(got) != 2 || got[0] != "ops:1000:3" || got[1] != "gw:2000:1" {
+		t.Errorf("fan-out continuation = %v, want [ops:1000:3 gw:2000:1] with no replay of the window", got)
 	}
 }

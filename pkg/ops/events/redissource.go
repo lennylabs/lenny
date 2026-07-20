@@ -68,9 +68,11 @@ func newRedisSource(client RedisStreamClient, stream string, block time.Duration
 }
 
 // redisEntry is one decoded stream entry paired with its Redis stream ID.
-// The stream ID is the source-specific cursor position, carried in the
-// opaque pagination cursor; the event is the transport-neutral BufferedEvent
-// the poll and SSE surfaces serve. The BufferedEvent's top-level wrapper ID is
+// The stream ID is the internal read position this source pages and tails
+// from; it never leaves the source, because the opaque pagination cursor
+// carries the canonical eventKey so it round-trips at the other sources. The
+// event is the transport-neutral BufferedEvent the poll and SSE surfaces
+// serve. The BufferedEvent's top-level wrapper ID is
 // a synthetic per-source position derived from the Redis stream ID (see
 // syntheticBufferID): the buffer-served path stamps a per-replica in-memory
 // sequence there, and the Redis-served path stamps a monotonic position from
@@ -314,18 +316,17 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 }
 
 // redisPollPage serves the §25.5 polling page from the Redis
-// ops:events:stream. It resolves the incoming cursor's source: a redis
-// cursor reads directly by stream ID (O(1) resume); a buffer or mixed
-// cursor is translated by scanning for the matching eventKey. A cursor
-// whose position was evicted (a redis stream ID older than the oldest
-// retained entry, or an eventKey no longer present) reports gapDetected
-// with oldestAvailableCursor set to the oldest retained entry, matching the
+// ops:events:stream. Every incoming cursor carries the canonical eventKey
+// whichever source minted it, so one translation resolves them all: the scan
+// stops at the first retained entry ordering at or after that key. A cursor
+// ordering before the oldest retained entry reports gapDetected with
+// oldestAvailableCursor set to that entry's eventKey, matching the
 // buffer-served gap semantics. spec: §25.5 (XRANGE polling, cross-source
 // cursor translation, evicted-cursor gap).
 func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	ctx, cancel := boundRedisRead(ctx)
 	defer cancel()
-	start, gap, err := s.redisResumePoint(ctx, cursorKind, position)
+	start, gap, err := s.redisResumePoint(ctx, position)
 	if err != nil {
 		// A Redis read error mid-poll: report no new events with the caller's
 		// cursor echoed so a retry resumes from the same point rather than
@@ -363,19 +364,19 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 			CursorKind: redisServedKind(cursorKind),
 		},
 	}
-	if headStreamID, _, found, herr := s.redis.head(ctx); herr == nil && found {
-		page.Pagination.HeadCursor = encodeCursor(SourceKindRedis, headStreamID)
+	if _, headKey, found, herr := s.redis.head(ctx); herr == nil && found {
+		page.Pagination.HeadCursor = encodeCursor(SourceKindRedis, headKey)
 	}
 	if n := len(entries); n > 0 {
-		page.Pagination.Cursor = encodeCursor(SourceKindRedis, entries[n-1].streamID)
+		page.Pagination.Cursor = encodeCursor(SourceKindRedis, entries[n-1].event.Event.ID)
 	} else if position != "" && !gap {
 		page.Pagination.Cursor = encodeCursor(cursorKind, position)
 	}
 	if gap {
 		page.Pagination.GapDetected = true
 		page.Pagination.GapReason = "cursor could not be resolved against the current Redis stream: evicted, or minted at a different actualSource"
-		if oldestStreamID, _, found, oerr := s.redis.oldest(ctx); oerr == nil && found {
-			page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindRedis, oldestStreamID)
+		if _, oldestKey, found, oerr := s.redis.oldest(ctx); oerr == nil && found {
+			page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindRedis, oldestKey)
 		}
 		page.Pagination.SuggestedAction = "resync"
 		s.observeGap()
@@ -383,31 +384,23 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 	return page
 }
 
-// redisResumePoint resolves the incoming cursor to a Redis stream position
-// to resume after. It returns the exclusive start stream ID ("" reads from
-// the oldest retained entry) and whether the cursor referenced an evicted
-// position (a gap). A redis cursor reads by stream ID; any other source's
-// cursor is translated to the first entry ordering at or after its eventKey
-// (see resumeByEventKey). spec: §25.5 (cross-source cursor translation).
-func (s *Service) redisResumePoint(ctx context.Context, cursorKind, position string) (start string, gap bool, err error) {
+// redisResumePoint resolves the incoming cursor to a Redis stream position to
+// resume after. It returns the exclusive start stream ID ("" reads from the
+// oldest retained entry) and whether the cursor referenced an evicted position
+// (a gap).
+//
+// Every cursor, whichever source minted it, carries the canonical eventKey, so
+// one translation serves them all: scan for the first retained entry ordering
+// at or after that key (see resumeByEventKey). A Redis-minted cursor is not a
+// special case — encoding the Redis stream ID instead would make the cursor
+// untranslatable at the gateway-buffer and local-ring sources, which compare
+// positions as eventKeys and would read a stream ID as ordering before their
+// whole retained window. spec: §25.5 (opaque cursor carries the canonical
+// eventKey; cross-source cursor translation).
+func (s *Service) redisResumePoint(ctx context.Context, position string) (start string, gap bool, err error) {
 	if position == "" {
 		return "", false, nil
 	}
-	if cursorKind == SourceKindRedis {
-		oldestStreamID, _, found, oerr := s.redis.oldest(ctx)
-		if oerr != nil {
-			return "", false, oerr
-		}
-		if found && streamIDLess(position, oldestStreamID) {
-			// The cursor's stream ID predates the oldest retained entry: the
-			// events after it were evicted before this poll read them.
-			return "", true, nil
-		}
-		return position, false, nil
-	}
-	// A cursor minted by another source (the in-memory buffer or a gateway
-	// replica's ring) carries an eventKey; translate it to a stream position by
-	// scanning for the continuation point.
 	return s.redis.resumeByEventKey(ctx, position)
 }
 
@@ -467,20 +460,6 @@ func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 func syntheticBufferID(streamID string) uint64 {
 	ms, seq := parseStreamID(streamID)
 	return ms<<12 | (seq & 0xFFF)
-}
-
-// streamIDLess reports whether stream ID a orders strictly before b. A Redis
-// stream ID is "millisecondsTime-sequenceNumber"; the comparison is on the
-// (ms, seq) pair. A malformed ID sorts as zero so an unparseable cursor is
-// treated as older than any real entry (fail toward reporting a gap rather
-// than silently skipping events). spec: §25.5 (evicted-cursor gap).
-func streamIDLess(a, b string) bool {
-	ams, aseq := parseStreamID(a)
-	bms, bseq := parseStreamID(b)
-	if ams != bms {
-		return ams < bms
-	}
-	return aseq < bseq
 }
 
 // parseStreamID splits a Redis "ms-seq" stream ID into its numeric parts. A

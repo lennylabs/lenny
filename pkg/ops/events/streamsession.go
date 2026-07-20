@@ -133,10 +133,10 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 	defer cancel()
 
 	// Resolve the resume point through the same cross-source translation the
-	// poll path uses: a redis cursor reads by stream ID, any other cursor (or
-	// a Last-Event-ID CloudEvents id) translates by eventKey scan. A read
-	// error resolving the point falls back to replaying the whole retained
-	// window with the gap flag set.
+	// poll path uses: every cursor, and a Last-Event-ID CloudEvents id,
+	// carries an eventKey, which the scan translates to a stream position. A
+	// read error resolving the point falls back to replaying the whole
+	// retained window with the gap flag set.
 	// The resume, head, and backlog reads run under the per-request Redis
 	// deadline so a connection opened inside the window between a Redis
 	// outage starting and the source-health probe observing it fails fast
@@ -144,7 +144,7 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 	// tail below runs on the unbounded connection context: it blocks by
 	// design.
 	setupCtx, setupCancel := boundRedisRead(ctx)
-	start, gap, rerr := s.redisResumePoint(setupCtx, st.lastKind, st.lastKey)
+	start, gap, rerr := s.redisResumePoint(setupCtx, st.lastKey)
 	if rerr != nil {
 		start = ""
 		gap = true
@@ -407,13 +407,13 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 // consumed. Taking such a key as the new resume position would rewind the
 // session, and the next source switch would then re-deliver everything after
 // it, breaking the exactly-once invariant the resume position exists to hold.
-// A redis-kind carried position is a stream ID rather than an eventKey, so the
-// first delivery replaces it outright.
+// Every carried position is a canonical eventKey whichever source minted its
+// cursor, so the ordering check applies uniformly.
 func (st *streamSession) markDelivered(eventKey string) {
 	if eventKey == "" {
 		return
 	}
-	if st.lastKey != "" && st.lastKind != SourceKindRedis && !eventKeyLess(st.lastKey, eventKey) {
+	if st.lastKey != "" && !eventKeyLess(st.lastKey, eventKey) {
 		return
 	}
 	st.lastKey = eventKey

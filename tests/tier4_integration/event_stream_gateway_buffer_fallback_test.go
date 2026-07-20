@@ -30,8 +30,10 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
 // redisDownGatewayUp is the §25.5 Redis-down / gateway-up source-health signal.
@@ -441,4 +443,116 @@ func decodeCursorKey(t *testing.T, cursor string) string {
 		t.Fatalf("cursor %q carries no source position", string(raw))
 	}
 	return key
+}
+
+// flippableHealth is a SourceHealth whose Redis reachability is toggled by the
+// test so one poll is served from the Redis stream and the next from the
+// gateway-buffer fall-back.
+type flippableHealth struct{ redis atomic.Bool }
+
+func (h *flippableHealth) RedisAvailable() bool   { return h.redis.Load() }
+func (h *flippableHealth) GatewayAvailable() bool { return true }
+
+// spec: 25.5 (the opaque cursor carries the canonical eventKey and round-trips
+// across sources; cross-source cursor translation) — a caller that round-trips
+// the cursor it was just handed must continue where it left off across the
+// Redis-down transition the fall-back exists for. The gateway-buffer source
+// resolves a position by scanning for the first event ordering at or after the
+// carried eventKey, so a cursor encoding the Redis stream ID instead is
+// untranslatable there: the "ms-seq" string fails to parse as an eventKey, the
+// comparison degrades to a byte order in which it sorts before the whole
+// retained window, and the poll reports a spurious gap, fires the gap counter,
+// and re-serves every event it already delivered. The pre-fix Redis source
+// minted the stream ID; this fails against that code.
+//
+// diagnosis: a failure means every poll spanning a Redis-to-gateway-buffer
+// transition reports gapDetected and duplicates the whole retained window to
+// the caller, instead of continuing at the next event.
+func TestOpsEventStreamRedisMintedCursorContinuesInGatewayBufferFallback(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	// The gateway replica's window brackets the Redis-served window: the
+	// StreamEmitter writes every gateway-originated event to both the shared
+	// stream and the per-replica ring.
+	replica := bufferReplica(t, []gwevents.BufferedEvent{
+		bufEventAt("gw-a:0500:1", "dev.lenny.alert_fired", 500),
+		bufEventAt("gw-a:3000:1", "dev.lenny.alert_fired", 3000),
+	})
+	client, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("test-token"),
+		Discovery:         gateway.StaticDiscovery{replica.URL},
+		PerRequestTimeout: 5 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+
+	health := &flippableHealth{}
+	health.redis.Store(true)
+	var gaps atomic.Int64
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:  rd.Client,
+		SourceHealth: health,
+		ReplicaID:    "ops-1",
+		OnGap:        func() { gaps.Add(1) },
+	})
+	svc.SetGatewayBufferSource(client)
+
+	// Seed the shared stream through the production emitter.
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
+		Client:    rd.Client,
+		Buffer:    eventbuffer.NewEventBuffer(0),
+		ReplicaID: "ops-1",
+	})
+	for _, e := range []gwevents.OperationalEvent{
+		{ID: "gw-a:0500:1", Type: "dev.lenny.alert_fired", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(500, 0).UTC()},
+		{ID: "ops-1:1000:1", Type: "dev.lenny.escalation_created", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(1000, 0).UTC()},
+	} {
+		if err := emitter.Emit(ctx, e); err != nil {
+			t.Fatalf("seed stream with %s: %v", e.ID, err)
+		}
+	}
+
+	// Poll with Redis up and keep the cursor the response hands back.
+	first := pollFallback(t, svc, "")
+	if first.Degradation != nil {
+		t.Fatalf("the first poll must be served from the Redis stream, got %+v", first.Degradation)
+	}
+	delivered := map[string]int{}
+	for _, item := range first.Items {
+		delivered[item.Event.ID]++
+	}
+	if delivered["gw-a:0500:1"] != 1 || delivered["ops-1:1000:1"] != 1 {
+		t.Fatalf("first poll served %v, want both seeded events once", delivered)
+	}
+	if first.Pagination.Cursor == "" {
+		t.Fatal("the Redis-served poll returned no continuation cursor")
+	}
+
+	// Redis drops out. The same cursor, round-tripped verbatim, must continue
+	// in the gateway-buffer fall-back.
+	health.redis.Store(false)
+	second := pollFallback(t, svc, first.Pagination.Cursor)
+
+	if second.Degradation == nil || second.Degradation.ActualSource != "gateway-buffer" {
+		t.Fatalf("the second poll must be served from the gateway-buffer fall-back, got %+v", second.Degradation)
+	}
+	if second.Pagination.GapDetected {
+		t.Fatalf("round-tripping the Redis-minted cursor into the fall-back reported a gap: %+v", second.Pagination)
+	}
+	if n := gaps.Load(); n != 0 {
+		t.Errorf("lenny_ops_events_stream_gaps_total fired %d times on a clean cross-source continuation", n)
+	}
+	for _, item := range second.Items {
+		if delivered[item.Event.ID] > 0 {
+			t.Errorf("event %s was delivered twice across the source transition", item.Event.ID)
+		}
+		delivered[item.Event.ID]++
+	}
+	if delivered["gw-a:3000:1"] != 1 {
+		t.Fatalf("the fall-back did not serve the continuation event gw-a:3000:1: %v", delivered)
+	}
 }
