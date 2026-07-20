@@ -172,13 +172,11 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 }
 
 // TestOpsEventStreamPollItemShape pins that a Redis-served poll item keeps the
-// buffer-served item shape on the wire: {"id":N,"event":{...}} with a
-// non-zero top-level wrapper id. The buffer-served path stamps a per-replica
-// in-memory sequence there; the Redis path stamps a synthetic per-source
-// position derived from the stream ID, so the /v1/admin/events envelope keeps
-// the same frozen item shape whichever source is active. Ordering and resume
-// run off the pagination cursor and the CloudEvents id rather than the
-// per-source wrapper id.
+// buffer-served item shape on the wire: {"id":N,"event":{...}}. The wrapper id
+// is the local ring's per-replica sequence, so a Redis-served item leaves it
+// zero rather than stamping a stream-derived value that would put a second
+// value domain behind the same field. Ordering and resume run off the
+// pagination cursor and the CloudEvents id rather than the wrapper id.
 //
 // spec: 25.5 (Polling Delivery — the poll envelope and SSE frame served from
 // the Redis ops:events:stream carry the same item shape and CloudEvents record
@@ -186,8 +184,8 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 // and the CloudEvents id, not the wrapper id).
 // diagnosis: a failure means the Redis-served poll item dropped its top-level
 // wrapper id (diverging from the frozen buffer envelope) or stamped a
-// source-dependent zero, so the same lenny-ops endpoint no longer presents a
-// stable item shape across the local ring buffer and the Redis source.
+// stream-derived position there, so the same lenny-ops endpoint emits two
+// items[].id value domains across the local ring buffer and the Redis source.
 func TestOpsEventStreamPollItemShape(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
@@ -238,8 +236,8 @@ func TestOpsEventStreamPollItemShape(t *testing.T) {
 			var wrapperID uint64
 			if err := json.Unmarshal(rawID, &wrapperID); err != nil {
 				t.Errorf("item %d wrapper id did not decode as a number: %v", i, err)
-			} else if wrapperID == 0 {
-				t.Errorf("item %d carries a zero wrapper id; a Redis-served item must stamp a synthetic per-source position from its stream ID", i)
+			} else if wrapperID != 0 {
+				t.Errorf("item %d wrapper id = %d, want 0; a Redis-served item must not open a second items[].id value domain", i, wrapperID)
 			}
 		}
 		raw, ok := item["event"]

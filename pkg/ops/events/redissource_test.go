@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -41,12 +42,23 @@ func (f *fakeStream) addRaw(id string, values map[string]any) {
 // fakeStream needs to honour XRANGE bounds. The read path itself orders by
 // eventKey, so this lives with the fake rather than in the source.
 func streamIDLess(a, b string) bool {
-	ams, aseq := parseStreamID(a)
-	bms, bseq := parseStreamID(b)
+	ams, aseq := splitStreamID(a)
+	bms, bseq := splitStreamID(b)
 	if ams != bms {
 		return ams < bms
 	}
 	return aseq < bseq
+}
+
+// splitStreamID splits a Redis "ms-seq" stream ID into its numeric parts for
+// streamIDLess. An unparseable component yields zero.
+func splitStreamID(id string) (ms, seq uint64) {
+	msPart, seqPart, found := strings.Cut(id, "-")
+	ms, _ = strconv.ParseUint(msPart, 10, 64)
+	if found {
+		seq, _ = strconv.ParseUint(seqPart, 10, 64)
+	}
+	return ms, seq
 }
 
 func inRange(id, start, stop string) bool {
@@ -452,14 +464,14 @@ func TestRedisPollPage_DescAndEmptyResumeEcho_spec_25_5(t *testing.T) {
 // spec: 25.5 (the poll envelope served from the Redis ops:events:stream keeps
 // the buffer-served item shape) — the /v1/admin/events item is
 // {"id":N,"event":{...}} whichever source is active. The buffer path stamps
-// its monotonic ring sequence in the wrapper id; the Redis path stamps a
-// synthetic per-source position derived from the stream ID. The CloudEvents
-// record under "event" is byte-identical across sources, and every item on
-// both paths carries a top-level wrapper id. A regression that dropped the
-// wrapper id from the buffer path (making the two byte-identical by removing
-// the frozen envelope field) would fail the top-level-id assertions below; a
-// regression that left the Redis wrapper id zero would fail the non-zero
-// synthetic-position assertion.
+// its monotonic ring sequence in the wrapper id; the Redis path leaves it zero,
+// because the shared stream holds no per-replica ring position and one endpoint
+// must emit one value domain in items[].id. The CloudEvents record under
+// "event" is byte-identical across sources, and every item on both paths
+// carries a top-level wrapper id. A regression that dropped the wrapper id from
+// the buffer path would fail the top-level-id assertions below; a regression
+// that stamped a stream-derived value on the Redis path would fail the
+// single-value-domain assertion.
 func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 	events := []gwevents.OperationalEvent{
 		evt("ops:1:1", "dev.lenny.alert_fired"),
@@ -505,39 +517,15 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 		if string(redisItems[i]["event"]) != string(bufferItems[i]["event"]) {
 			t.Errorf("item %d CloudEvents record diverges by source:\n redis  = %s\n buffer = %s", i, redisItems[i]["event"], bufferItems[i]["event"])
 		}
-		// The Redis-served wrapper id is a non-zero synthetic per-source
-		// position, so the item shape stays stable without a source-dependent
-		// zero.
+		// The Redis-served wrapper id is zero: items[].id is the local ring's
+		// per-replica sequence, and stamping a stream-derived value there would
+		// put a second value domain behind the same field.
 		var redisID uint64
 		if err := json.Unmarshal(redisItems[i]["id"], &redisID); err != nil {
 			t.Errorf("redis item %d wrapper id did not decode as a number: %v", i, err)
-		} else if redisID == 0 {
-			t.Errorf("redis item %d wrapper id is zero; the Redis path must stamp a synthetic per-source position from the stream ID", i)
+		} else if redisID != 0 {
+			t.Errorf("redis item %d wrapper id = %d, want 0; a Redis-served item must not carry a second items[].id value domain", i, redisID)
 		}
-	}
-}
-
-// spec: 25.5 (Redis-served poll item keeps the buffer item shape with a
-// synthetic per-source wrapper position) — syntheticBufferID packs a Redis
-// "ms-seq" stream ID into a non-zero uint64 that increases in stream order, so
-// the wrapper id stamped on a Redis-served item is a meaningful per-source
-// position rather than a source-dependent zero.
-func TestSyntheticBufferID_MonotonicNonZero_spec_25_5(t *testing.T) {
-	ids := []string{"1-0", "2-0", "2-5", "3-0", "100-4095"}
-	var prev uint64
-	for i, id := range ids {
-		got := syntheticBufferID(id)
-		if got == 0 {
-			t.Errorf("syntheticBufferID(%q) = 0, want a non-zero per-source position", id)
-		}
-		if i > 0 && got <= prev {
-			t.Errorf("syntheticBufferID(%q) = %d not greater than prior %d; the position must increase in stream order", id, got, prev)
-		}
-		prev = got
-	}
-	// A malformed stream ID yields zero rather than a spurious position.
-	if got := syntheticBufferID("not-an-id"); got != 0 {
-		t.Errorf("syntheticBufferID(malformed) = %d, want 0", got)
 	}
 }
 

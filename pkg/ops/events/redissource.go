@@ -7,8 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -229,14 +227,11 @@ func newRedisSource(client RedisStreamClient, stream string, maxWindow int64) *r
 // from; it never leaves the source, because the opaque pagination cursor
 // carries the canonical eventKey so it round-trips at the other sources. The
 // event is the transport-neutral BufferedEvent the poll and SSE surfaces
-// serve. The BufferedEvent's top-level wrapper ID is
-// a synthetic per-source position derived from the Redis stream ID (see
-// syntheticBufferID): the buffer-served path stamps a per-replica in-memory
-// sequence there, and the Redis-served path stamps a monotonic position from
-// the stream ID so the /v1/admin/events item shape ({"id":N,"event":{...}})
-// stays stable across sources. The wrapper id value is per-source; callers
-// resume on the CloudEvents id (Event.ID, the canonical eventKey) and the
-// pagination cursor, both identical across sources.
+// serve. Its top-level wrapper ID is left zero, because that field is the local
+// ring's per-replica sequence and the Redis stream carries no such position:
+// one endpoint emits one value domain in items[].id. Callers resume on the
+// CloudEvents id (Event.ID, the canonical eventKey) and the opaque pagination
+// cursor, both identical across sources.
 type redisEntry struct {
 	streamID string
 	event    gwevents.BufferedEvent
@@ -613,12 +608,14 @@ func redisServedKind(cursorKind string) string {
 // so the CloudEvents payload every poll item and SSE frame carries decodes
 // byte-identically to the buffer-served path. The top-level wrapper
 // BufferedEvent.ID is a synthetic per-source position derived from the Redis
-// stream ID (see syntheticBufferID), so a Redis-served poll item keeps the
-// same {"id":N,"event":{...}} shape the buffer path emits without inventing a
-// value that clashes with the buffer's monotonic sequence. Ordering and the
-// resume key rest on the Redis stream position (carried in the opaque
-// pagination cursor) and the CloudEvents id (Event.ID, the canonical
-// eventKey), both identical across sources. spec: §25.5.
+// BufferedEvent.ID is left zero: it is the local ring's per-replica sequence,
+// and the Redis stream holds no such position. Stamping a value derived from
+// the stream ID there would put a second value domain behind the same
+// items[].id field, so the same client paging across a source switch would see
+// the field jump between a small ring sequence and a millisecond-derived
+// integer. Ordering and the resume key rest on the opaque pagination cursor and
+// the CloudEvents id (Event.ID, the canonical eventKey), both identical across
+// sources. spec: §25.5.
 func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	raw, ok := m.Values["event"]
 	if !ok {
@@ -637,30 +634,5 @@ func decodeRedisEntry(m redis.XMessage) (gwevents.BufferedEvent, bool) {
 	if err := json.Unmarshal(body, &ev); err != nil {
 		return gwevents.BufferedEvent{}, false
 	}
-	return gwevents.BufferedEvent{ID: syntheticBufferID(m.ID), Event: ev}, true
-}
-
-// syntheticBufferID packs a Redis "ms-seq" stream ID into a monotonic uint64
-// so a Redis-served poll item carries a non-zero top-level wrapper position of
-// the same shape the local ring buffer stamps. The high bits carry the
-// millisecond timestamp and the low 12 bits the intra-millisecond sequence, so
-// the value increases in stream order (Redis assigns seq densely from zero
-// within a millisecond and up to 4096 entries per millisecond fit the low
-// bits). The wrapper id is informational: cross-source resume keys on the
-// CloudEvents id and the opaque pagination cursor rather than this value. A
-// malformed ID yields zero. spec: §25.5.
-func syntheticBufferID(streamID string) uint64 {
-	ms, seq := parseStreamID(streamID)
-	return ms<<12 | (seq & 0xFFF)
-}
-
-// parseStreamID splits a Redis "ms-seq" stream ID into its numeric parts. A
-// missing sequence defaults to zero; an unparseable component yields zero.
-func parseStreamID(id string) (ms, seq uint64) {
-	msPart, seqPart, found := strings.Cut(id, "-")
-	ms, _ = strconv.ParseUint(msPart, 10, 64)
-	if found {
-		seq, _ = strconv.ParseUint(seqPart, 10, 64)
-	}
-	return ms, seq
+	return gwevents.BufferedEvent{Event: ev}, true
 }

@@ -24,12 +24,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
 	"testing"
+
+	"github.com/redis/go-redis/v9"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
@@ -614,5 +617,116 @@ func TestEventStreamNoRedisWiredEmitsNoDegradationEnvelopeContract(t *testing.T)
 	raw := serveSSERaw(t, srv, "/v1/admin/events/stream")
 	if strings.Contains(raw, ":degradation") {
 		t.Errorf("SSE connection emitted a :degradation comment from a replica with no Redis client wired: %q", raw)
+	}
+}
+
+// fakeRedisStream is a minimal §25.5 RedisStreamClient backed by an in-memory
+// slice of stream entries, so a contract test can drive GET /v1/admin/events
+// from the Redis source without a Redis process. Only the range reads the poll
+// path issues are implemented.
+type fakeRedisStream struct{ entries []redis.XMessage }
+
+func (f *fakeRedisStream) add(id string, ev gwevents.OperationalEvent) {
+	body, _ := json.Marshal(ev)
+	f.entries = append(f.entries, redis.XMessage{ID: id, Values: map[string]any{"event": string(body)}})
+}
+
+func (f *fakeRedisStream) XRangeN(ctx context.Context, _, _, _ string, count int64) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+	out := f.entries
+	if count > 0 && int64(len(out)) > count {
+		out = out[:count]
+	}
+	cmd.SetVal(out)
+	return cmd
+}
+
+func (f *fakeRedisStream) XRevRangeN(ctx context.Context, _, _, _ string, _ int64) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+	if n := len(f.entries); n > 0 {
+		cmd.SetVal([]redis.XMessage{f.entries[n-1]})
+	}
+	return cmd
+}
+
+func (f *fakeRedisStream) TailClient() (opsstream.RedisTailClient, error) {
+	return nil, errors.New("contract fake serves the poll path only")
+}
+
+// pollItemIDs drives GET /v1/admin/events and returns the top-level wrapper id
+// of every item on the page.
+func pollItemIDs(t *testing.T, srv *opsserver.Server) []uint64 {
+	t.Helper()
+	body, _ := pollBody(t, srv, "/v1/admin/events")
+	raw, ok := body["items"].([]any)
+	if !ok {
+		t.Fatalf("poll response has no items array: %v", body)
+	}
+	ids := make([]uint64, 0, len(raw))
+	for i, it := range raw {
+		item, ok := it.(map[string]any)
+		if !ok {
+			t.Fatalf("item %d is not an object: %v", i, it)
+		}
+		n, ok := item["id"].(float64)
+		if !ok {
+			t.Fatalf("item %d has no numeric top-level wrapper id: %v", i, item)
+		}
+		ids = append(ids, uint64(n))
+	}
+	return ids
+}
+
+// TestEventStreamPollItemIDSingleValueDomainContract pins that
+// GET /v1/admin/events emits one value domain in items[].id whichever source
+// served the page. The field is the lenny-ops ring buffer's per-replica
+// sequence; a page served from the Redis ops:events:stream carries no such
+// position and leaves it zero. A client paging across a source switch, which
+// §25.5 permits within one paging session, therefore never sees the field jump
+// between value domains.
+//
+// spec: 25.5 (Polling Delivery — the poll envelope's items are CloudEvents
+// records and a caller resumes on the CloudEvents id and the opaque cursor)
+// diagnosis: A failure means the Redis-served poll path stamps a wrapper id
+// from a different value domain than the buffer-served path. The same endpoint
+// hands one client items[].id values that jump by many orders of magnitude
+// across a source switch, with nothing on the wire distinguishing them, so a
+// consumer that treats the field as a position reads the switch as a huge jump
+// forward or backward in the stream.
+func TestEventStreamPollItemIDSingleValueDomainContract(t *testing.T) {
+	seed := []gwevents.OperationalEvent{
+		{ID: "ops:1:1", Type: "dev.lenny.alert_fired", SpecVersion: "1.0"},
+		{ID: "ops:2:1", Type: "dev.lenny.pool_state_changed", SpecVersion: "1.0"},
+	}
+
+	// The buffer-served page establishes the domain: the ring's monotonic
+	// per-replica sequence, bounded by the ring capacity.
+	const capacity = 16
+	bufferSrv := eventStreamServer(t, capacity, seed...)
+	bufferIDs := pollItemIDs(t, bufferSrv)
+	if len(bufferIDs) != len(seed) {
+		t.Fatalf("buffer-served page items = %d, want %d", len(bufferIDs), len(seed))
+	}
+
+	// The Redis-served page must stay inside that domain rather than opening a
+	// second one.
+	f := &fakeRedisStream{}
+	f.add("1700000000000-0", seed[0])
+	f.add("1700000000001-0", seed[1])
+	redisStream := opsstream.New(opsstream.Options{
+		Capacity:     capacity,
+		RedisClient:  f,
+		SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+	})
+	redisSrv := opsserver.New(opsserver.Options{EventStream: redisStream})
+	redisIDs := pollItemIDs(t, redisSrv)
+	if len(redisIDs) != len(seed) {
+		t.Fatalf("Redis-served page items = %d, want %d", len(redisIDs), len(seed))
+	}
+
+	for _, id := range append(append([]uint64{}, bufferIDs...), redisIDs...) {
+		if id > capacity {
+			t.Errorf("items[].id = %d exceeds the ring-sequence domain (capacity %d); the endpoint emits a second items[].id value domain", id, capacity)
+		}
 	}
 }
