@@ -170,32 +170,55 @@ func releaseDeployed(c *Cluster) bool {
 
 // controlPlaneReady reports whether every pod carrying the
 // app.kubernetes.io/name=lenny label in lenny-system is in the Running
-// phase. The chart labels the controller, gateway, token-service, ops,
-// and every admission-webhook pod with that selector, so a true result
-// means the full control plane is up.
+// phase with its Ready condition true. The chart labels the controller,
+// gateway, token-service, ops, and every admission-webhook pod with that
+// selector, so a true result means the full control plane is serving.
 //
-// The check reads pod phases via jsonpath. An empty pod list (the
-// chart never installed) or any non-Running phase yields false.
+// The check reads each pod's phase and Ready condition via jsonpath. Any
+// error (kubectl missing, namespace absent) yields false so the caller
+// skips.
 func controlPlaneReady(c *Cluster) bool {
 	out, err := c.Kubectl(
 		"-n", lennySystemNamespace,
 		"get", "pods",
 		"-l", "app.kubernetes.io/name=lenny",
-		"-o", "jsonpath={range .items[*]}{.status.phase}{\"\\n\"}{end}",
+		"-o", "jsonpath={range .items[*]}{.status.phase}{\"\\t\"}"+
+			"{.status.conditions[?(@.type==\"Ready\")].status}{\"\\n\"}{end}",
 	).Output()
 	if err != nil {
 		return false
 	}
-	phases := strings.Fields(string(out))
-	if len(phases) == 0 {
-		return false
-	}
-	for _, phase := range phases {
-		if phase != "Running" {
+	return allPodsRunningAndReady(string(out))
+}
+
+// allPodsRunningAndReady parses the phase/Ready-condition lines
+// controlPlaneReady collects and reports whether every pod is Running with
+// Ready=True. It is separated from the kubectl call so the parse can be
+// exercised in-process.
+//
+// A pod whose phase is Running but whose Ready condition is not True is
+// serving nothing: its container is restarting, still pulling, or failing
+// its readiness probe. Admitting it lets a tier-5 test port-forward to a
+// pod that never answers and report a confusing assertion failure instead
+// of a clean skip, so the gate fails closed on anything that is not
+// exactly Running with Ready=True. An empty list (the chart was never
+// installed) is also not ready.
+func allPodsRunningAndReady(jsonpathOut string) bool {
+	pods := 0
+	for _, line := range strings.Split(jsonpathOut, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		phase, ready, ok := strings.Cut(line, "\t")
+		if !ok {
 			return false
 		}
+		if strings.TrimSpace(phase) != "Running" || strings.TrimSpace(ready) != "True" {
+			return false
+		}
+		pods++
 	}
-	return true
+	return pods > 0
 }
 
 // ApplyStdin pipes manifest to `kubectl apply -f -` against the
