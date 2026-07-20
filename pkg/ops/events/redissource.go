@@ -4,6 +4,7 @@ package events
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -84,25 +85,17 @@ func (a redisClientAdapter) TailClient() (RedisTailClient, error) {
 	switch c := a.UniversalClient.(type) {
 	case *redis.Client:
 		opts := *c.Options()
-		dial, err := trackedDialer(opts.Dialer, tail)
-		if err != nil {
-			return nil, err
-		}
 		opts.PoolSize = 1
 		opts.MinIdleConns = 0
 		opts.MaxRetries = -1
-		opts.Dialer = dial
+		opts.Dialer = trackedDialer(opts.Dialer, opts.DialTimeout, opts.TLSConfig, tail)
 		tail.client = redis.NewClient(&opts)
 	case *redis.ClusterClient:
 		opts := *c.Options()
-		dial, err := trackedDialer(opts.Dialer, tail)
-		if err != nil {
-			return nil, err
-		}
 		opts.PoolSize = 1
 		opts.MinIdleConns = 0
 		opts.MaxRetries = -1
-		opts.Dialer = dial
+		opts.Dialer = trackedDialer(opts.Dialer, opts.DialTimeout, opts.TLSConfig, tail)
 		tail.client = redis.NewClusterClient(&opts)
 	default:
 		return nil, fmt.Errorf("redis tail client: no per-tail client can be dialled from %T", a.UniversalClient)
@@ -111,12 +104,20 @@ func (a redisClientAdapter) TailClient() (RedisTailClient, error) {
 }
 
 // trackedDialer wraps dial so every socket it opens is recorded on tail, which
-// is what lets Close shut the blocked read's socket down directly. A client
-// exposing no dialer cannot back a tail, since the tail would then have no
-// handle on the connection its read parks on.
-func trackedDialer(dial func(context.Context, string, string) (net.Conn, error), tail *redisTailConn) (func(context.Context, string, string) (net.Conn, error), error) {
+// is what lets Close shut the blocked read's socket down directly.
+//
+// A nil dial is the ordinary case on a Redis Cluster client: go-redis fills a
+// default dialer in Options.init(), but ClusterOptions.init() does not, so a
+// §17.9.3 Cluster deployment exposes none. Refusing the tail there would leave
+// every SSE connection on that topology with the XRANGE backlog and no live
+// XREAD BLOCK 0 tail. The fallback installs the dialer go-redis would have
+// installed itself, honouring the same dial timeout and TLS settings, so every
+// §17.9.3 topology reaches the §25.5 live tail through the same read source.
+// spec: §25.5 (XREAD BLOCK 0 per-connection live tail); §17.9.3 (Redis
+// topologies).
+func trackedDialer(dial func(context.Context, string, string) (net.Conn, error), dialTimeout time.Duration, tlsCfg *tls.Config, tail *redisTailConn) func(context.Context, string, string) (net.Conn, error) {
 	if dial == nil {
-		return nil, fmt.Errorf("redis tail client: shared client exposes no dialer")
+		dial = defaultTailDial(dialTimeout, tlsCfg)
 	}
 	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		conn, err := dial(ctx, network, addr)
@@ -125,7 +126,27 @@ func trackedDialer(dial func(context.Context, string, string) (net.Conn, error),
 		}
 		tail.track(conn)
 		return conn, nil
-	}, nil
+	}
+}
+
+// defaultTailDialTimeout is the dial timeout the tail falls back to when the
+// shared client's options carry none, matching the go-redis default.
+const defaultTailDialTimeout = 5 * time.Second
+
+// defaultTailDial builds the dialer go-redis installs in Options.init() when a
+// client's options carry none: a plain TCP dial, wrapped in TLS when the client
+// is configured for it. Doing the TLS handshake here rather than leaving it to
+// the client matches go-redis, which performs it inside the dialer and does not
+// wrap the configured one.
+func defaultTailDial(dialTimeout time.Duration, tlsCfg *tls.Config) func(context.Context, string, string) (net.Conn, error) {
+	if dialTimeout <= 0 {
+		dialTimeout = defaultTailDialTimeout
+	}
+	netDialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: 5 * time.Minute}
+	if tlsCfg == nil {
+		return netDialer.DialContext
+	}
+	return (&tls.Dialer{NetDialer: netDialer, Config: tlsCfg}).DialContext
 }
 
 // redisTailConn is one live tail's dedicated client. It keeps a handle on
