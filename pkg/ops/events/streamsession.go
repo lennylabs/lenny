@@ -354,11 +354,7 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 	var since uint64
 	gap := false
 	if st.lastKey != "" {
-		if id, found := st.s.buffer.Lookup(st.lastKey); found {
-			since = id
-		} else {
-			gap = true
-		}
+		since, gap = st.s.localResumePoint(st.lastKey)
 	}
 	if gap {
 		writeSSEGap(st.w, st.lastKey)
@@ -396,6 +392,43 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 			st.flusher.Flush()
 		}
 	}
+}
+
+// localResumePoint resolves the local ring position an SSE connection carrying
+// eventKey resumes after, and reports whether the ring can honour that
+// position.
+//
+// The resolution is by eventKey order rather than by exact presence, matching
+// the Redis and gateway-buffer translations. An exact match is the fast path.
+// A key the ring never held is the ordinary case on a switch into the local
+// ring: the last event delivered from the Redis stream or a gateway replica was
+// routinely gateway- or peer-replica-originated and this replica's ring never
+// appended it. Resolving that by exact match alone would restart the replay at
+// the oldest retained event and re-deliver everything the connection already
+// received, so the position is the ring entry immediately before the first
+// event ordering at or after the key.
+//
+// A gap is reported at both ends of the ring, as on the other sources: below
+// it the events in between were evicted, and above it no retained event has a
+// greater-or-equal eventKey. An empty ring reports no gap. spec: §25.5
+// (cross-source cursor translation; cursor transition safety; exactly-once
+// across the source switch).
+func (s *Service) localResumePoint(eventKey string) (since uint64, gap bool) {
+	if id, found := s.buffer.Lookup(eventKey); found {
+		return id, false
+	}
+	_, _, oldestKey, _, found := s.buffer.Bounds()
+	if !found {
+		return 0, false
+	}
+	prev := uint64(0)
+	for _, ev := range s.buffer.Query(0, gwevents.EventFilter{}, DefaultBufferCapacity).Events {
+		if eventKeyLess(eventKey, ev.Event.ID) {
+			return prev, eventKeyLess(eventKey, oldestKey)
+		}
+		prev = ev.ID
+	}
+	return prev, true
 }
 
 // markDelivered advances the last delivered eventKey so a source switch

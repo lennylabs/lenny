@@ -77,8 +77,9 @@ type sseReader struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	mu   sync.Mutex
-	keys []string
+	mu       sync.Mutex
+	keys     []string
+	comments []string
 }
 
 func openSSEReader(svc *opsstream.Service) *sseReader {
@@ -96,7 +97,14 @@ func openSSEReader(svc *opsstream.Service) *sseReader {
 		sc := bufio.NewScanner(pr)
 		sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
 		for sc.Scan() {
-			key, ok := strings.CutPrefix(sc.Text(), "id: ")
+			line := sc.Text()
+			if strings.HasPrefix(line, ":") {
+				r.mu.Lock()
+				r.comments = append(r.comments, line)
+				r.mu.Unlock()
+				continue
+			}
+			key, ok := strings.CutPrefix(line, "id: ")
 			if !ok {
 				continue
 			}
@@ -112,6 +120,20 @@ func (r *sseReader) delivered() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return append([]string{}, r.keys...)
+}
+
+// sawComment reports whether this connection has received an SSE comment
+// containing sub, which is how a test observes a source transition the handler
+// announced rather than guessing at its timing.
+func (r *sseReader) sawComment(sub string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, c := range r.comments {
+		if strings.Contains(c, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *sseReader) close() {
@@ -134,16 +156,22 @@ func (p *pipeSink) Flush()                      {}
 // TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad opens
 // many concurrent SSE connections against a real Redis ops:events:stream and a
 // real gateway fan-out, moves every connection from the Redis tail into the
-// gateway-buffer fall-back and back, and asserts each connection observed every
-// published event exactly once and in emission order across both transitions.
+// gateway-buffer fall-back, on into this replica's local ring when the gateway
+// goes too, and back to Redis on recovery, and asserts each connection observed
+// every published event exactly once and in emission order across every
+// transition.
 //
 // The two source windows overlap by construction, as they do in production: the
 // gateway StreamEmitter writes each gateway-originated event to both the shared
 // Redis stream and the per-replica buffer. A connection that seeds its resume
 // position by an exact eventKey match, rather than by the continuation point,
 // replays that overlap on every switch; one that seeds nothing drops the events
-// published across the boundary. Both failures show up here as a per-connection
-// sequence that is not the emission order exactly once.
+// published across the boundary. The local-ring leg is the same property on the
+// dual-outage switch: the position a connection carries into the ring is
+// routinely one the ring never held, so a resume that requires the key verbatim
+// replays every retained lenny-ops event the connection already received. All
+// three failures show up here as a per-connection sequence that is not the
+// emission order exactly once.
 //
 // spec: 25.5 (independent per-connection read cursor, cross-switch no-drop
 // ordering, transparent Redis to gateway-buffer switch and back).
@@ -238,6 +266,18 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 		order = append(order, ev.ID)
 	}
 
+	// publishLocal models a lenny-ops-originated event: it lands in this
+	// replica's local ring only, since no gateway replica buffers it and, during
+	// a Redis outage, its XADD fails.
+	publishLocal := func(subject string) {
+		t.Helper()
+		buffered, err := svc.PublishBuffered(ctx, newEvent(subject))
+		if err != nil {
+			t.Fatalf("publish %s: %v", subject, err)
+		}
+		order = append(order, buffered.Event.ID)
+	}
+
 	// Two events on the Redis stream before any connection opens.
 	emitToBoth("pool/redis-1")
 	emitToBoth("pool/redis-2")
@@ -267,7 +307,31 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 	addGatewayOnly("pool/gateway-only", 900)
 	awaitAll(t, readers, len(order), "the gateway-buffer fall-back event")
 
+	// A lenny-ops-originated event during the same outage: no gateway replica
+	// buffers it and its XADD is failing, so this replica's local ring is the
+	// only place it exists. It lands in the ring every connection is about to
+	// be switched onto.
+	publishLocal("pool/ops-local-1")
+	awaitAll(t, readers, len(order), "the lenny-ops-originated event during the Redis outage")
+
+	// One more gateway-only event, so the position each connection carries into
+	// the local ring is one the ring itself never held. That is the ordinary
+	// state on this transition, and it is what an exact-match resume cannot
+	// resolve.
+	addGatewayOnly("pool/gateway-only-2", 901)
+	awaitAll(t, readers, len(order), "the second gateway-buffer fall-back event")
+
+	// The dual outage: the gateway goes too, so every connection falls to this
+	// replica's local ring and keeps serving lenny-ops-originated events. The
+	// publish waits for every connection to announce the transition, so each one
+	// carries a position the ring never held into the switch.
+	health.gateway.Store(false)
+	awaitAllComment(t, readers, sourceOpsLocalBuffer, "the dual-outage degradation comment")
+	publishLocal("pool/ops-local-2")
+	awaitAll(t, readers, len(order), "the lenny-ops-originated event during the dual outage")
+
 	// Recovery: every connection returns to the Redis tail and keeps going.
+	health.gateway.Store(true)
 	health.redis.Store(true)
 	emitToBoth("pool/redis-3")
 	awaitAll(t, readers, len(order), "the post-recovery Redis tail event")
@@ -282,6 +346,35 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 				t.Fatalf("connection %d delivered %v; want emission order %v (a duplicate, a drop, or a reorder at the source switch)", i, got, order)
 			}
 		}
+	}
+}
+
+// sourceOpsLocalBuffer is the §25.5 actualSource the degradation envelope
+// carries while a connection serves from this replica's local ring during a
+// dual Redis and gateway outage.
+const sourceOpsLocalBuffer = "lenny-ops-local-buffer"
+
+// awaitAllComment waits until every connection has received an SSE comment
+// containing sub, so the test advances on an announced source transition rather
+// than on a timer.
+func awaitAllComment(t *testing.T, readers []*sseReader, sub, what string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		pending := -1
+		for i, r := range readers {
+			if !r.sawComment(sub) {
+				pending = i
+				break
+			}
+		}
+		if pending < 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("connection %d never announced %s", pending, what)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
 

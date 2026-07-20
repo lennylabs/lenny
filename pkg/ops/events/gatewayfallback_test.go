@@ -726,3 +726,79 @@ func TestServeGateway_ResumeAheadOfWindowEmitsGap_spec_25_5(t *testing.T) {
 		t.Fatalf("the window is behind the resume position and must not be delivered:\n%s", body)
 	}
 }
+
+// spec: 25.5 (cross-source cursor translation; exactly-once across the source
+// switch) — a switch into this replica's local ring resolves the carried
+// position by eventKey order, so a position the ring never held (the ordinary
+// case: the last event delivered came from the Redis stream or a gateway
+// replica) resumes at the continuation point. The pre-fix serveLocal looked the
+// key up verbatim and, on the miss, replayed the whole retained ring from its
+// oldest event; this fails against that code by asserting the already-delivered
+// events are not re-sent.
+func TestServeLocal_ResumesByEventKeyOrder_spec_25_5(t *testing.T) {
+	gaps := 0
+	s := New(Options{SourceHealth: newMutableHealth(false, false), Now: ts, OnGap: func() { gaps++ }})
+	for _, key := range []string{"ops:1000:1", "ops:2000:1", "ops:3000:1"} {
+		if _, err := s.Publish(context.Background(), evt(key, "dev.lenny.alert_fired")); err != nil {
+			t.Fatalf("publish %s: %v", key, err)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	// gw:2500:1 is a gateway-originated event this replica's ring never held,
+	// ordering between the second and third local events.
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw:2500:1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	sess.serveLocal(ctx, dsLocalBuffer)
+
+	body := rec.Body.String()
+	if strings.Contains(body, "ops:1000:1") || strings.Contains(body, "ops:2000:1") {
+		t.Fatalf("events at or before the resume point were replayed:\n%s", body)
+	}
+	if !strings.Contains(body, "ops:3000:1") {
+		t.Fatalf("the event after the resume point was not delivered:\n%s", body)
+	}
+	if strings.Contains(body, ":gap") || gaps != 0 {
+		t.Fatalf("a resume position inside the retained ring must not report a gap:\n%s", body)
+	}
+}
+
+// spec: 25.5 (cursor transition safety: a :gap when no event in the new source
+// has a greater-or-equal eventKey; gapDetected on an evicted cursor) — the
+// local ring reports a gap at both ends of its retained window, and replays
+// only for the evicted position, where the caller has genuinely lost events.
+func TestServeLocal_GapAtBothEndsOfTheRing_spec_25_5(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		lastKey    string
+		wantReplay bool
+	}{
+		{name: "before the ring", lastKey: "ops:500:1", wantReplay: true},
+		{name: "after the ring", lastKey: "ops:9000:1", wantReplay: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gaps := 0
+			s := New(Options{SourceHealth: newMutableHealth(false, false), Now: ts, OnGap: func() { gaps++ }})
+			for _, key := range []string{"ops:1000:1", "ops:2000:1"} {
+				if _, err := s.Publish(context.Background(), evt(key, "dev.lenny.alert_fired")); err != nil {
+					t.Fatalf("publish %s: %v", key, err)
+				}
+			}
+			rec := httptest.NewRecorder()
+			sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: tc.lastKey}
+			ctx, cancel := context.WithCancel(context.Background())
+			cancel()
+			sess.serveLocal(ctx, dsLocalBuffer)
+
+			body := rec.Body.String()
+			if !strings.Contains(body, ":gap") || gaps != 1 {
+				t.Fatalf("a position the ring cannot honour must emit one :gap (counter=%d):\n%s", gaps, body)
+			}
+			replayed := strings.Contains(body, "ops:1000:1")
+			if replayed != tc.wantReplay {
+				t.Fatalf("ring replayed = %v, want %v:\n%s", replayed, tc.wantReplay, body)
+			}
+		})
+	}
+}
