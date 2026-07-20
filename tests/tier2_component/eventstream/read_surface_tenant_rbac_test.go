@@ -48,7 +48,7 @@ func pollScopedRedis(t *testing.T, s *opsstream.Service, tenant string, platform
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events", nil)
-	ctx := opsstream.WithReaderScope(req.Context(), tenant, platformAdmin)
+	ctx := opsstream.WithReaderScope(req.Context(), "", tenant, platformAdmin)
 	s.HandlePoll(rec, req.WithContext(ctx))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scoped poll (tenant=%q admin=%v): status %d, want 200 (silent tenant filter, not a 403); body=%s",
@@ -153,7 +153,7 @@ func tenantLabels(items []gwevents.BufferedEvent) []string {
 // until the stream goes idle, then cancels and returns the decoded events.
 func streamScopedRedisBacklog(t *testing.T, s *opsstream.Service, tenant string, platformAdmin bool) []gwevents.OperationalEvent {
 	t.Helper()
-	ctx, cancel := context.WithCancel(opsstream.WithReaderScope(context.Background(), tenant, platformAdmin))
+	ctx, cancel := context.WithCancel(opsstream.WithReaderScope(context.Background(), "", tenant, platformAdmin))
 	pr, pw := io.Pipe()
 	rw := &pipeResponseWriter{hdr: http.Header{}, w: pw}
 	req := httptest.NewRequest("GET", "/v1/admin/events/stream", nil).WithContext(ctx)

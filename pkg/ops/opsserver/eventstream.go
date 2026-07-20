@@ -49,5 +49,5 @@ func (s *Server) handleEventPoll(w http.ResponseWriter, r *http.Request) {
 // tenant filter, platform-scoped events reach only platform-admin callers).
 func readerScopeContext(r *http.Request) context.Context {
 	c := subscriptionCaller(r)
-	return opsevents.WithReaderScope(r.Context(), c.TenantID, c.PlatformAdmin)
+	return opsevents.WithReaderScope(r.Context(), c.Subject, c.TenantID, c.PlatformAdmin)
 }

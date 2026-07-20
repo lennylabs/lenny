@@ -24,6 +24,7 @@ const tenantLabelExtension = "lennytenantid"
 // see events matching their tenant or carrying no tenant label if the caller
 // has permission for platform-scoped events, typically platform-admin only").
 type readerScope struct {
+	subject       string
 	tenantID      string
 	platformAdmin bool
 }
@@ -34,12 +35,14 @@ type readerScope struct {
 type readerScopeKey struct{}
 
 // WithReaderScope returns a context carrying the resolved §25.5 read-caller
-// tenant scope. The opsserver route boundary sets it from the authenticated
-// caller (subject, tenant, platform-admin) so HandlePoll and HandleStream can
-// intersect the served events with the caller's tenant without a signature
-// change. spec: 25.5 (read-endpoint tenant filter).
-func WithReaderScope(ctx context.Context, tenantID string, platformAdmin bool) context.Context {
-	return context.WithValue(ctx, readerScopeKey{}, readerScope{tenantID: tenantID, platformAdmin: platformAdmin})
+// tenant scope of (subject, tenant, platform-admin). The opsserver route
+// boundary sets it from the authenticated caller so HandlePoll and HandleStream
+// can intersect the served events with the caller's tenant without a signature
+// change. The subject identifies the principal for logging and audit; the
+// tenant and platform-admin flag drive the tenant-isolation predicate. spec:
+// 25.5 (read-endpoint tenant filter).
+func WithReaderScope(ctx context.Context, subject, tenantID string, platformAdmin bool) context.Context {
+	return context.WithValue(ctx, readerScopeKey{}, readerScope{subject: subject, tenantID: tenantID, platformAdmin: platformAdmin})
 }
 
 // readerScopeFrom extracts the read-caller tenant scope from ctx and reports

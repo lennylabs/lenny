@@ -30,7 +30,7 @@ func pollScoped(t *testing.T, s *Service, target, tenant string, platformAdmin b
 	t.Helper()
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, target, nil)
-	ctx := WithReaderScope(req.Context(), tenant, platformAdmin)
+	ctx := WithReaderScope(req.Context(), "", tenant, platformAdmin)
 	s.HandlePoll(rec, req.WithContext(ctx))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll %s: status %d (%s)", target, rec.Code, rec.Body.String())
@@ -47,7 +47,7 @@ func pollScoped(t *testing.T, s *Service, target, tenant string, platformAdmin b
 func runStreamScoped(s *Service, target, tenant string, platformAdmin bool) []sseFrame {
 	r := flushRec{httptest.NewRecorder()}
 	req := httptest.NewRequest(http.MethodGet, target, nil)
-	ctx, cancel := context.WithCancel(WithReaderScope(req.Context(), tenant, platformAdmin))
+	ctx, cancel := context.WithCancel(WithReaderScope(req.Context(), "", tenant, platformAdmin))
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
 	s.HandleStream(r, req.WithContext(ctx))
 	return parseFrames(r.Body.String())
@@ -103,10 +103,10 @@ func TestReaderScopeFromUnset(t *testing.T) {
 	if _, ok := readerScopeFrom(context.Background()); ok {
 		t.Fatal("readerScopeFrom(background) reported a scope; want none")
 	}
-	ctx := WithReaderScope(context.Background(), "acme", false)
+	ctx := WithReaderScope(context.Background(), "alice@acme.com", "acme", false)
 	sc, ok := readerScopeFrom(ctx)
-	if !ok || sc.tenantID != "acme" || sc.platformAdmin {
-		t.Fatalf("readerScopeFrom = %+v, %v; want {acme false}, true", sc, ok)
+	if !ok || sc.subject != "alice@acme.com" || sc.tenantID != "acme" || sc.platformAdmin {
+		t.Fatalf("readerScopeFrom = %+v, %v; want {alice@acme.com acme false}, true", sc, ok)
 	}
 }
 
