@@ -49,27 +49,26 @@ type streamSession struct {
 	// spec: §25.5 (eventKey dedup across sources).
 	delivered deliveredKeys
 
-	// scope / scoped carry the §25.5 read-caller tenant scope resolved at the
-	// opsserver boundary. When scoped is true, admits gates every frame so a
-	// tenant-admin observes only its own tenant's events and never a
-	// platform-scoped one; when false (an in-process caller with no scope), no
-	// tenant filter is applied. spec: 25.5 (read-endpoint tenant filter).
-	scope  readerScope
-	scoped bool
+	// scope carries the §25.5 read-caller tenant scope resolved at the
+	// opsserver boundary. It gates every frame so a tenant-admin observes only
+	// its own tenant's events and never a platform-scoped one. A connection
+	// whose context carried no resolved scope holds the zero value, which
+	// admits nothing. spec: 25.5 (read-endpoint tenant filter).
+	scope readerScope
 }
 
 // admits reports whether the SSE caller may observe ev under the §25.5
-// tenant-isolation rule. An unscoped session (no caller resolved) admits every
-// event; a scoped session defers to the resolved readerScope, so a tenant-admin
-// sees only its own tenant's events and a platform-scoped event is dropped for
-// it. The drop is silent: the frame is skipped and its eventKey is not marked
-// delivered, matching how the event-type/severity filter treats a non-match, so
-// the resume position never advances past an event the caller never received.
-// spec: 25.5 (read-endpoint tenant filter, silent drop).
+// tenant-isolation rule. A platform-admin observes every event; a tenant-admin
+// sees only its own tenant's events, and a platform-scoped event is dropped for
+// it. A session built from a context with no resolved scope admits nothing, so
+// a caller that reaches HandleStream without passing the opsserver
+// authorization boundary receives no events rather than all of them. The drop
+// is silent: the frame is skipped and its eventKey is not marked delivered,
+// matching how the event-type/severity filter treats a non-match, so the resume
+// position never advances past an event the caller never received. spec: 25.5
+// (read-endpoint tenant filter, silent drop); §13 (fail closed on an isolation
+// boundary).
 func (st *streamSession) admits(ev gwevents.OperationalEvent) bool {
-	if !st.scoped || st.scope.platformAdmin {
-		return true
-	}
 	return st.scope.admits(ev)
 }
 

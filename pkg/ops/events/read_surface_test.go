@@ -145,7 +145,7 @@ func TestPoll_InvalidFilter_spec_25_5_2795(t *testing.T) {
 		"/v1/admin/events?since=not-a-timestamp",
 	} {
 		rec := httptest.NewRecorder()
-		s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, target, nil)))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", target, rec.Code)
 		}
@@ -296,7 +296,7 @@ func TestStream_InvalidFilter_spec_25_5_2795(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
 	w := flushRec{httptest.NewRecorder()}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream?severity=mauve", nil)
-	s.HandleStream(w, req)
+	s.HandleStream(w, platformAdminReq(req))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status %d, want 400", w.Code)
 	}
@@ -307,7 +307,7 @@ func TestStream_InvalidFilter_spec_25_5_2795(t *testing.T) {
 func poll(t *testing.T, s *Service, target string) EventPage {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, target, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll %s: status %d (%s)", target, rec.Code, rec.Body.String())
 	}
@@ -337,7 +337,7 @@ func runStreamBody(s *Service, target string, hdr http.Header) string {
 	}
 	ctx, cancel := context.WithCancel(req.Context())
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	s.HandleStream(r, req.WithContext(ctx))
+	s.HandleStream(r, platformAdminReq(req.WithContext(ctx)))
 	return r.Body.String()
 }
 

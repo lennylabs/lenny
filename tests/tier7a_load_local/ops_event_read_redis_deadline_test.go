@@ -157,7 +157,7 @@ func TestRedisReadDeadlineKeepsPollAnsweringWhenRedisIsUnreachable(t *testing.T)
 			start := time.Now()
 			req := httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)
 			rec := httptest.NewRecorder()
-			svc.HandlePoll(rec, req)
+			svc.HandlePoll(rec, platformAdminReq(req))
 			done <- time.Since(start)
 			if rec.Code != http.StatusOK {
 				t.Errorf("poll during an unobserved Redis outage returned HTTP %d, want 200: the "+

@@ -89,7 +89,7 @@ func TestOpsEventStreamActiveConnectionsCountsRedisServedConnections(t *testing.
 		c := &conn{cancel: ccancel, done: make(chan struct{}), sink: newTailSink()}
 		go func() {
 			defer close(c.done)
-			svc.HandleStream(c.sink, req)
+			svc.HandleStream(c.sink, platformAdminReq(req))
 		}()
 		return c
 	}

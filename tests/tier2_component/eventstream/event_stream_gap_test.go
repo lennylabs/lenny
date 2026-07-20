@@ -67,7 +67,7 @@ func pollRedis(t *testing.T, s *opsstream.Service, cursor string) opsstream.Even
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", url, nil)
-	s.HandlePoll(rec, req)
+	s.HandlePoll(rec, platformAdminReq(req))
 	var page opsstream.EventPage
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatalf("decode poll body (status %d): %v", rec.Code, err)
@@ -211,7 +211,7 @@ func TestOpsEventStreamPollItemShape(t *testing.T) {
 	// position), the {"id":N,"event":{...}} shape the buffer path also emits.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events", nil)
-	svc.HandlePoll(rec, req)
+	svc.HandlePoll(rec, platformAdminReq(req))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll status = %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -271,7 +271,7 @@ func pollRedisLimited(t *testing.T, s *opsstream.Service, cursor string, limit i
 	}
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", url, nil)
-	s.HandlePoll(rec, req)
+	s.HandlePoll(rec, platformAdminReq(req))
 	var page opsstream.EventPage
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatalf("decode poll body (status %d): %v", rec.Code, err)
@@ -298,7 +298,7 @@ func collectSSEResumeWithHeader(t *testing.T, s *opsstream.Service, base *http.R
 	rw := &pipeResponseWriter{hdr: http.Header{}, w: pw}
 	req := base.WithContext(ctx)
 	go func() {
-		s.HandleStream(rw, req)
+		s.HandleStream(rw, platformAdminReq(req))
 		_ = pw.Close()
 	}()
 
@@ -484,7 +484,7 @@ func openStream(t *testing.T, svc *opsstream.Service) *sseConn {
 	rw := &pipeResponseWriter{hdr: http.Header{}, w: pw}
 	req := httptest.NewRequest("GET", "/v1/admin/events/stream", nil).WithContext(ctx)
 	go func() {
-		svc.HandleStream(rw, req)
+		svc.HandleStream(rw, platformAdminReq(req))
 		_ = pw.Close()
 	}()
 	ch := make(chan sseFrame, 16)

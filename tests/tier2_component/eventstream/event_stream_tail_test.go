@@ -119,7 +119,7 @@ func TestOpsEventStreamLiveTailIssuesBlockZeroOnItsOwnConnection(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.HandleStream(sink, req)
+		svc.HandleStream(sink, platformAdminReq(req))
 	}()
 
 	// Wait for the backlog frame so the connection is known to have reached

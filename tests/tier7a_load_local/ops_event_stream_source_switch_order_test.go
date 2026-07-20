@@ -89,7 +89,7 @@ func openSSEReader(svc *opsstream.Service) *sseReader {
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil).WithContext(ctx)
 	r := &sseReader{cancel: cancel, done: make(chan struct{})}
 	go func() {
-		svc.HandleStream(rw, req)
+		svc.HandleStream(rw, platformAdminReq(req))
 		_ = pw.Close()
 	}()
 	go func() {

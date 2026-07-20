@@ -100,7 +100,7 @@ func TestServeGateway_ResumesFromLastKeyNoRedelivery_spec_25_5(t *testing.T) {
 	s.SetGatewayBufferSource(src)
 
 	rec := httptest.NewRecorder()
-	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw-a:1000:2"}
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw-a:1000:2", scope: readerScope{platformAdmin: true}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-src.called; cancel() }()
@@ -137,7 +137,7 @@ func TestServeGateway_MissingResumeEmitsGap_spec_25_5(t *testing.T) {
 	s.SetGatewayBufferSource(src)
 
 	rec := httptest.NewRecorder()
-	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw-a:1000:1"}
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw-a:1000:1", scope: readerScope{platformAdmin: true}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-src.called; cancel() }()
@@ -210,7 +210,7 @@ func TestHandlePoll_RedisDownServesGatewayBuffer_spec_25_5(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events", nil)
-	s.HandlePoll(rec, req)
+	s.HandlePoll(rec, platformAdminReq(req))
 
 	var page EventPage
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
@@ -252,7 +252,7 @@ func TestSelectSource_GatewayLabelFallsToLocalWhenUnwired_spec_25_5(t *testing.T
 	}
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Errorf("poll status = %d; want 503 EVENT_STREAM_UNAVAILABLE", rec.Code)
 	}
@@ -277,7 +277,7 @@ func TestStreamTransition_AnnouncesDegradeAndRecovery_spec_25_5(t *testing.T) {
 	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: health, Now: ts})
 	s.SetGatewayBufferSource(&fakeGatewaySource{})
 	rec := httptest.NewRecorder()
-	sess := &streamSession{s: s, w: rec, flusher: rec}
+	sess := &streamSession{s: s, w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 
 	// Serving the gateway fall-back announces the degradation on every tick, so
 	// a connection with nothing to deliver still learns its view is degraded.
@@ -531,7 +531,7 @@ func TestServeGateway_DeliversLiveLocalOriginEvents_spec_25_5(t *testing.T) {
 	s.SetGatewayBufferSource(src)
 
 	rec := &syncRecorder{hdr: http.Header{}}
-	sess := &streamSession{s: s, w: rec, flusher: rec}
+	sess := &streamSession{s: s, w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
@@ -708,7 +708,7 @@ func TestServeGateway_ResumeAheadOfWindowEmitsGap_spec_25_5(t *testing.T) {
 	s.SetGatewayBufferSource(src)
 
 	rec := httptest.NewRecorder()
-	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "ops:9000:1"}
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "ops:9000:1", scope: readerScope{platformAdmin: true}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-src.called; cancel() }()
@@ -746,7 +746,7 @@ func TestServeLocal_ResumesByEventKeyOrder_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
 	// gw:2500:1 is a gateway-originated event this replica's ring never held,
 	// ordering between the second and third local events.
-	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw:2500:1"}
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "gw:2500:1", scope: readerScope{platformAdmin: true}}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	sess.serveLocal(ctx, dsLocalBuffer)
@@ -785,7 +785,7 @@ func TestServeLocal_GapAtBothEndsOfTheRing_spec_25_5(t *testing.T) {
 				}
 			}
 			rec := httptest.NewRecorder()
-			sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: tc.lastKey}
+			sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: tc.lastKey, scope: readerScope{platformAdmin: true}}
 			ctx, cancel := context.WithCancel(context.Background())
 			cancel()
 			sess.serveLocal(ctx, dsLocalBuffer)
@@ -841,7 +841,7 @@ func TestHandlePoll_AllReplicasRefused_IsUnavailableNotDegradedOK_spec_25_5(t *t
 	}
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503: no replica served the buffer query, so the response carries no gateway events\n%s", rec.Code, rec.Body.String())
 	}
@@ -865,7 +865,7 @@ func TestServeGateway_AllReplicasRefused_AnnouncesLocalBufferDegradation_spec_25
 	}
 
 	rec := httptest.NewRecorder()
-	sess := &streamSession{s: s, w: rec, flusher: rec}
+	sess := &streamSession{s: s, w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-src.called; cancel() }()
 	sess.serveGateway(ctx, dsGateway)

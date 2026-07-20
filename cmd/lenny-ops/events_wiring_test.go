@@ -57,7 +57,7 @@ func eventStreamWiringFlags(gatewayURL string) *opsFlags {
 func pollActualSource(t *testing.T, w *opsWiring) (int, string, []string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	w.eventStream.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	w.eventStream.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 	if rec.Code != http.StatusOK {
 		return rec.Code, "", nil
 	}

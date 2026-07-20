@@ -45,15 +45,18 @@ func WithReaderScope(ctx context.Context, subject, tenantID string, platformAdmi
 	return context.WithValue(ctx, readerScopeKey{}, readerScope{subject: subject, tenantID: tenantID, platformAdmin: platformAdmin})
 }
 
-// readerScopeFrom extracts the read-caller tenant scope from ctx and reports
-// whether one was set. When no scope is present the caller did not pass through
-// the opsserver authorization boundary (an in-process or test caller), so the
-// read path applies no tenant filter. The scope is always set for a real HTTP
-// request, so the filter is enforced on every externally reachable read. spec:
-// 25.5.
-func readerScopeFrom(ctx context.Context) (readerScope, bool) {
-	sc, ok := ctx.Value(readerScopeKey{}).(readerScope)
-	return sc, ok
+// readerScopeFrom extracts the read-caller tenant scope from ctx. A context
+// carrying no scope yields the zero scope: no platform-admin grant and an empty
+// tenant, which admits nothing. The read surface is a tenant-isolation boundary,
+// so the absence of an authorization decision is treated as no visibility rather
+// than as full visibility: a caller that reaches HandlePoll or HandleStream
+// without passing through the opsserver boundary that resolves the principal
+// sees an empty page instead of every tenant's events and the platform-scoped
+// ones. spec: 25.5 (platform-scoped events reach only platform-admin read
+// callers); §13 (fail closed on an isolation boundary).
+func readerScopeFrom(ctx context.Context) readerScope {
+	sc, _ := ctx.Value(readerScopeKey{}).(readerScope)
+	return sc
 }
 
 // admits reports whether the read caller may observe ev under the §25.5
@@ -78,12 +81,13 @@ func (sc readerScope) admits(ev gwevents.OperationalEvent) bool {
 // may observe. It is the poll-page choke point: the tenant predicate narrows
 // the items shown while the pagination cursor still advances over the raw
 // source position, mirroring how the event-type/severity EventFilter narrows a
-// page. When no scope is set, or the caller is a platform-admin, the input is
-// returned unchanged so no allocation is spent on the common path. spec: 25.5
-// (read-endpoint tenant filter, post-query drop).
+// page. A platform-admin caller gets the input back unchanged so no allocation
+// is spent on that path; every other caller, including one whose context
+// carries no resolved scope, is filtered. spec: 25.5 (read-endpoint tenant
+// filter, post-query drop).
 func (s *Service) filterForReader(ctx context.Context, in []gwevents.BufferedEvent) []gwevents.BufferedEvent {
-	sc, ok := readerScopeFrom(ctx)
-	if !ok || sc.platformAdmin {
+	sc := readerScopeFrom(ctx)
+	if sc.platformAdmin {
 		return in
 	}
 	out := make([]gwevents.BufferedEvent, 0, len(in))

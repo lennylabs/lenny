@@ -134,7 +134,7 @@ func TestGatewayBufferFanOutDedupIsConcurrentSafeAndDeterministic(t *testing.T) 
 	poll := func() ([]string, map[string]int, error) {
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)
-		svc.HandlePoll(rec, req)
+		svc.HandlePoll(rec, platformAdminReq(req))
 		if rec.Code != http.StatusOK {
 			return nil, nil, fmt.Errorf("poll status = %d, want 200", rec.Code)
 		}

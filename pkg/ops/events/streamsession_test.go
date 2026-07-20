@@ -29,7 +29,7 @@ func keyedFrame(eventKey string) gwevents.BufferedEvent {
 // Redis stint that writes a frame for every entry it reads delivers them again.
 func TestDeliverOnce_SkipsKeysAlreadyDeliveredOnThisConnection_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
-	st := &streamSession{w: rec, flusher: rec}
+	st := &streamSession{w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 
 	// The connection delivers two lenny-ops events from the local ring while
 	// Redis is down.
@@ -66,7 +66,7 @@ func TestDeliverOnce_SkipsKeysAlreadyDeliveredOnThisConnection_spec_25_5(t *test
 // dedup keyed on ordering rather than on what was actually delivered drops them.
 func TestDeliverOnce_DeliversAnOlderKeyTheConnectionHasNotSeen_spec_25_5(t *testing.T) {
 	rec := httptest.NewRecorder()
-	st := &streamSession{w: rec, flusher: rec}
+	st := &streamSession{w: rec, flusher: rec, scope: readerScope{platformAdmin: true}}
 
 	if !st.deliverOnce(keyedFrame("gw:30:1")) {
 		t.Fatal("the post-recovery event was not delivered")

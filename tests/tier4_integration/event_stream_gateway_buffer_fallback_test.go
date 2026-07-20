@@ -115,7 +115,7 @@ func TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown(t *test
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)
-	svc.HandlePoll(rec, req)
+	svc.HandlePoll(rec, platformAdminReq(req))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll status = %d, want 200", rec.Code)
@@ -265,7 +265,7 @@ func TestOpsEventStreamServesLocalOriginEventsDuringRedisOnlyOutage(t *testing.T
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.HandleStream(rec, req)
+		svc.HandleStream(rec, platformAdminReq(req))
 	}()
 	waitFor(t, rec, "gw-a:3000:1", 5*time.Second, "the gateway-originated event from the fan-out")
 
@@ -314,7 +314,7 @@ func pollFallback(t *testing.T, svc *opsstream.Service, cursor string) opsstream
 		target += "?cursor=" + cursor
 	}
 	rec := httptest.NewRecorder()
-	svc.HandlePoll(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	svc.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, target, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}

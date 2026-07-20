@@ -44,7 +44,7 @@ func TestHandlePoll_SourceLabelAndDataPathAgree_spec_25_5(t *testing.T) {
 	}}})
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest("GET", "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest("GET", "/v1/admin/events", nil)))
 
 	var page EventPage
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {

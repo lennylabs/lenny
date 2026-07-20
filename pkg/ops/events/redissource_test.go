@@ -134,10 +134,12 @@ func (c *parkedTailClient) Close() error {
 
 // pollActiveSource serves one poll page from the source the live
 // SourceHealth signal selects, the way HandlePoll resolves it, so a poll-path
-// test exercises source selection as well as the page it produces.
+// test exercises source selection as well as the page it produces. The context
+// carries a platform-admin read scope, the grant a caller needs to observe the
+// whole window through the §25.5 read-endpoint tenant filter.
 func pollActiveSource(s *Service, ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	src, _, _ := s.selectSource()
-	page, _ := s.pollPage(ctx, src, cursorKind, position, filter, limit, desc)
+	page, _ := s.pollPage(WithReaderScope(ctx, "alice@acme.com", "", true), src, cursorKind, position, filter, limit, desc)
 	return page
 }
 
@@ -388,7 +390,7 @@ func TestRedisPrimary_SelectedOnlyWhenRedisAvailable_spec_25_5(t *testing.T) {
 	// With Redis down, a poll serves from the empty local buffer, not Redis.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events", nil)
-	s.HandlePoll(rec, req)
+	s.HandlePoll(rec, platformAdminReq(req))
 	var page EventPage
 	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
 		t.Fatalf("decode poll body: %v", err)
@@ -587,7 +589,7 @@ func TestHandleStreamRedis_RedisCursorResumes_spec_25_5(t *testing.T) {
 	cancel() // backlog-only: replay the resume window, then return.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events/stream?cursor="+cursor, nil).WithContext(ctx)
-	s.HandleStream(rec, req)
+	s.HandleStream(rec, platformAdminReq(req))
 
 	out := rec.Body.String()
 	if strings.Contains(out, ":gap") {
@@ -706,7 +708,7 @@ func TestHandleStreamRedis_EmptyStreamTailsFromConcreteOrigin_spec_25_5(t *testi
 	req := httptest.NewRequest("GET", "/v1/admin/events/stream", nil).WithContext(ctx)
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req)
+		s.HandleStream(rec, platformAdminReq(req))
 		close(done)
 	}()
 

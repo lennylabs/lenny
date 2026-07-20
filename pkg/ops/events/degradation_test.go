@@ -45,7 +45,7 @@ func TestHandlePoll_RedisDown_AttachesDegradation_spec_25_5(t *testing.T) {
 	publishOne(s, "dev.lenny.alert_fired")
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200", rec.Code)
@@ -81,7 +81,7 @@ func TestHandlePoll_DualOutage_503_spec_25_5(t *testing.T) {
 	publishOne(s, "dev.lenny.escalation_created")
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d, want 503", rec.Code)
@@ -102,7 +102,7 @@ func TestHandlePoll_RedisUp_NoDegradation_spec_25_5(t *testing.T) {
 		})
 		publishOne(s, "dev.lenny.alert_fired")
 		rec := httptest.NewRecorder()
-		s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+		s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("gateway=%v: status=%d, want 200", gw, rec.Code)
 		}
@@ -122,7 +122,7 @@ func TestHandlePoll_NilHealth_NoDegradation(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 	publishOne(s, "dev.lenny.alert_fired")
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200", rec.Code)
 	}
@@ -152,7 +152,7 @@ func TestHandleStream_DualOutage_DegradationComment_spec_25_5(t *testing.T) {
 	ctx, cancel := context.WithCancel(req.Context())
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req.WithContext(ctx))
+		s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 		close(done)
 	}()
 	// The backlog (degradation comment + the ops event) is written
@@ -192,7 +192,7 @@ func TestHandleStream_RedisDown_DegradationComment_spec_25_5(t *testing.T) {
 	ctx, cancel := context.WithCancel(req.Context())
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req.WithContext(ctx))
+		s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 		close(done)
 	}()
 	cancel()
@@ -217,7 +217,7 @@ func TestHandleStream_Healthy_NoComment_spec_25_5(t *testing.T) {
 	ctx, cancel := context.WithCancel(req.Context())
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req.WithContext(ctx))
+		s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 		close(done)
 	}()
 	cancel()

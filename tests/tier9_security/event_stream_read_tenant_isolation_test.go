@@ -232,3 +232,67 @@ func TestOpsEventStreamTenantAdminSSEScopedToOwnTenant_spec_25_5(t *testing.T) {
 		t.Fatalf("tenant-admin globex stream emitted %v, want exactly the globex-labeled frame", labels)
 	}
 }
+
+// unscopedEventStream returns an in-memory §25.5 event stream seeded with an
+// acme-labeled, a globex-labeled, and a platform-scoped event, so a read driven
+// against it with no resolved caller scope has something to leak.
+func unscopedEventStream() *opsstream.Service {
+	stream := opsstream.New(opsstream.Options{})
+	for _, tenant := range []string{"acme", "globex", ""} {
+		e := gwevents.OperationalEvent{Type: gwevents.EventType("alert_fired").CloudEventsType(), Subject: "pool/" + tenant}
+		if tenant != "" {
+			e.Extensions = map[string]string{"lennytenantid": tenant}
+		}
+		stream.Publish(context.Background(), e)
+	}
+	return stream
+}
+
+// spec: §25.5 (Tenant Isolation) — "SSE and polling endpoints apply the same
+// filter: tenant-scoped callers only see events matching their tenant or
+// carrying no tenant label if the caller has permission for platform-scoped
+// events (typically platform-admin only)."
+//
+// The exported HandlePoll and HandleStream are the tenant-isolation boundary
+// itself, so their behavior with no resolved caller scope on the request
+// context is what decides whether the boundary holds for a caller that reaches
+// them without passing the opsserver route wrapper. This case drives both
+// handlers directly with a plain request and requires that neither serves an
+// event: the isolation decision is the predicate's, rather than every present
+// and future registration site remembering to wrap the request.
+//
+// diagnosis: the §25.5 read surface treats an absent authorization decision as
+// full platform-admin visibility. A caller that reaches HandlePoll or
+// HandleStream without the opsserver boundary's resolved scope is served every
+// tenant's operational events and the platform-scoped ones, so the tenant
+// filter fails open rather than closed.
+func TestOpsEventReadWithNoResolvedScopeServesNothing_spec_25_5(t *testing.T) {
+	stream := unscopedEventStream()
+
+	rec := httptest.NewRecorder()
+	stream.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unscoped poll: status %d, want 200 (the filter is a silent drop, not a 403)", rec.Code)
+	}
+	var page struct {
+		Items []struct {
+			Event gwevents.OperationalEvent `json:"event"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode unscoped poll page %s: %v", rec.Body.String(), err)
+	}
+	if len(page.Items) != 0 {
+		t.Fatalf("unscoped poll served %d event(s), want none; the read filter fails open on a caller with no resolved scope", len(page.Items))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := httptest.NewRecorder()
+	timer := time.AfterFunc(300*time.Millisecond, cancel)
+	defer timer.Stop()
+	stream.HandleStream(sink, httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil).WithContext(ctx))
+	if strings.Contains(sink.Body.String(), "data: ") {
+		t.Fatalf("unscoped stream emitted event frames, want none:\n%s", sink.Body.String())
+	}
+}

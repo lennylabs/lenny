@@ -225,7 +225,7 @@ func TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage(t *testing.T)
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.HandleStream(rec, req)
+		svc.HandleStream(rec, platformAdminReq(req))
 	}()
 
 	// Redis-mode delivery of the seeded event.
@@ -537,7 +537,7 @@ func pollOnce(t *testing.T, svc *opsstream.Service, cursor string) opsstream.Eve
 		url += "?cursor=" + cursor
 	}
 	rec := httptest.NewRecorder()
-	svc.HandlePoll(rec, httptest.NewRequest(http.MethodGet, url, nil))
+	svc.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, url, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll %s = %d: %s", url, rec.Code, rec.Body.String())
 	}
@@ -720,7 +720,7 @@ func TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown(t *testing.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.HandleStream(rec, req)
+		svc.HandleStream(rec, platformAdminReq(req))
 	}()
 
 	// The outage starts and nothing is published for its duration.
@@ -806,7 +806,7 @@ func TestOpsEventStreamOpenConnectionSeesFlushedEventsOnceAcrossRecovery(t *test
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		svc.HandleStream(rec, req)
+		svc.HandleStream(rec, platformAdminReq(req))
 	}()
 	waitContains(t, rec, "id: gw-1:1000:1\n", 10*time.Second, "the Redis-served backlog event")
 

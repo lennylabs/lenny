@@ -92,7 +92,7 @@ func opsFallbackPoll(t *testing.T, replicaURL, bearer string) (int, []string) {
 	svc.SetGatewayBufferSource(client)
 
 	rec := httptest.NewRecorder()
-	svc.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	svc.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 	if rec.Code != http.StatusOK {
 		return rec.Code, nil
 	}

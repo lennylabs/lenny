@@ -94,19 +94,29 @@ func TestReaderScopeAdmits_spec_25_5(t *testing.T) {
 	}
 }
 
-// TestReaderScopeFromUnset confirms an unscoped context (an in-process caller
-// that did not pass the opsserver authorization boundary) reports no scope, so
-// the read path applies no tenant filter.
+// TestReaderScopeFromUnsetAdmitsNothing confirms a context that carries no
+// resolved read scope (a caller that did not pass the opsserver authorization
+// boundary) yields the zero scope, which admits neither a tenant-labeled nor a
+// platform-scoped event. The read surface is a tenant-isolation boundary, so an
+// absent authorization decision is no visibility.
 //
-// spec: 25.5 (read-endpoint tenant filter is resolved at the boundary).
-func TestReaderScopeFromUnset(t *testing.T) {
-	if _, ok := readerScopeFrom(context.Background()); ok {
-		t.Fatal("readerScopeFrom(background) reported a scope; want none")
+// spec: 25.5 (read-endpoint tenant filter is resolved at the boundary;
+// platform-scoped events reach only platform-admin read callers).
+func TestReaderScopeFromUnsetAdmitsNothing_spec_25_5(t *testing.T) {
+	unset := readerScopeFrom(context.Background())
+	if unset.platformAdmin || unset.tenantID != "" || unset.subject != "" {
+		t.Fatalf("readerScopeFrom(background) = %+v; want the zero scope", unset)
+	}
+	if unset.admits(tenantEvent("alert_fired", "acme")) {
+		t.Error("unscoped caller admits a tenant-labeled event; want denied")
+	}
+	if unset.admits(tenantEvent("alert_fired", "")) {
+		t.Error("unscoped caller admits a platform-scoped event; want denied")
 	}
 	ctx := WithReaderScope(context.Background(), "alice@acme.com", "acme", false)
-	sc, ok := readerScopeFrom(ctx)
-	if !ok || sc.subject != "alice@acme.com" || sc.tenantID != "acme" || sc.platformAdmin {
-		t.Fatalf("readerScopeFrom = %+v, %v; want {alice@acme.com acme false}, true", sc, ok)
+	sc := readerScopeFrom(ctx)
+	if sc.subject != "alice@acme.com" || sc.tenantID != "acme" || sc.platformAdmin {
+		t.Fatalf("readerScopeFrom = %+v; want {alice@acme.com acme false}", sc)
 	}
 }
 
