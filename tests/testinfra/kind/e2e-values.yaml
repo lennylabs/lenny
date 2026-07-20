@@ -158,23 +158,21 @@ ops:
     repository: lenny-ops
     tag: e2e
     pullPolicy: Never
-  # §17.1 row 21 / §25.4 NET-070: with ops.tls.internalEnabled true (the
-  # chart default this overlay keeps) and cert-manager present, render the
-  # lenny-ops-tls serving leaf as a cert-manager Certificate so the live
-  # e2e cluster materializes the admin-API TLS secret exactly as a non-dev
-  # profile does. The §10.3 internal-mtls issuers are absent here
-  # (mtls.enabled=false, see above), so anchor the ops leaf to the
-  # always-present self-signed webhook Issuer; the lenny-ops pod does not
-  # mount the serving Secret, so enabling this adds only the Certificate
-  # and its Secret and does not perturb the running control plane. This is
-  # the e2e harness overlay only; production points issuerRef at its own
-  # cluster CA.
+  # §25.4 NET-070: the gateway deployed on this cluster serves its admin
+  # API on the plaintext internal port; it runs no TLS admin listener, and
+  # the internal-TLS port the chart would point lenny-ops at (8443) is the
+  # LLM-proxy listener, which answers a TLS client with a plaintext HTTP
+  # response. Keeping the TLS default here left every lenny-ops -> gateway
+  # admin-API call failing at the transport layer, which took the §25.5
+  # read surface into the dual-outage branch during a Redis outage instead
+  # of the gateway-buffer fall-back. The overlay therefore takes the
+  # acknowledged-plaintext path, which global.devMode (set above) implies
+  # for the ops-tls-guard. The mismatch between the chart's internal-TLS
+  # port and what the gateway serves is tracked as an open finding.
   tls:
+    internalEnabled: false
     certManager:
-      enabled: true
-      issuerRef:
-        name: lenny-webhook-selfsign
-        kind: Issuer
+      enabled: false
 
 # The §6.1 SDK-warm runtime image and the schema-migration Job image are
 # loaded onto the Kind nodes by `kind load docker-image`; like every other

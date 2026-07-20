@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"time"
 
@@ -40,8 +41,8 @@ func (p *sourceHealthProbe) RedisAvailable() bool { return p.redisUp.Load() }
 func (p *sourceHealthProbe) GatewayAvailable() bool { return p.gatewayUp.Load() }
 
 // run refreshes the cached health every interval until ctx is done. The
-// Redis probe is a PING; the gateway probe is a cheap authenticated GET
-// against the §25.4 version endpoint, treated only as a liveness signal.
+// Redis probe is a PING; the gateway probe is a cheap GET against the
+// gateway liveness endpoint, treated only as a reachability signal.
 // The gateway reachability is consulted only when Redis is down (the
 // §25.5 case-1 vs case-4 branch), so a flaky gateway probe affects the
 // response only during an actual Redis outage. A nil gwClient leaves the
@@ -96,16 +97,39 @@ func probeRedis(ctx context.Context, redisCli redis.UniversalClient) bool {
 	return redisCli.Ping(cctx).Err() == nil
 }
 
-// probeGateway reports whether the gateway responds to a cheap version
-// GET within a short timeout. A nil client (no gateway wired, e.g. dev)
-// reports reachable so the read surface does not spuriously escalate to
-// the dual-outage 503.
+// gatewayLivenessPath is the unauthenticated gateway liveness endpoint the
+// §25.5 source-health probe measures reachability with. The probe answers
+// whether the gateway process is up, so it must not ride on an admin
+// endpoint whose authorization outcome is independent of reachability: the
+// lenny-ops service-account principal does not hold the platform-admin role
+// the admin API requires, so an admin GET reports a reachable gateway as
+// down and pins the read surface in the §25.5 dual-outage case. The §25.4
+// gateway-auth self-health check probes the same path for the same reason.
+// spec: §25.5 (case 1 vs case 4 branch).
+const gatewayLivenessPath = "/healthz"
+
+// gatewayProbeTimeout bounds one source-health gateway probe.
+const gatewayProbeTimeout = 3 * time.Second
+
+// probeGateway reports whether the gateway answered a liveness GET within a
+// short timeout. Any HTTP status counts as reachable, including a 4xx or the
+// 503 the gateway serves while degraded: the response proves the process is
+// serving, which is what the §25.5 case-1 gateway-buffer fall-back depends
+// on. Only a transport failure (dial, TLS, or timeout) reports the gateway
+// down and escalates the read surface to the dual-outage case. A nil client
+// (no gateway wired, e.g. dev) reports reachable so the read surface does
+// not spuriously escalate to the dual-outage 503.
 func probeGateway(ctx context.Context, gwClient *gateway.Client) bool {
 	if gwClient == nil {
 		return true
 	}
-	cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	cctx, cancel := context.WithTimeout(ctx, gatewayProbeTimeout)
 	defer cancel()
-	var discard map[string]any
-	return gwClient.Get(cctx, "/v1/admin/platform/version", &discard) == nil
+	// A nil out skips body decoding: the probe consumes only the outcome.
+	err := gwClient.Get(cctx, gatewayLivenessPath, nil)
+	if err == nil {
+		return true
+	}
+	var httpErr *gateway.HTTPError
+	return errors.As(err, &httpErr)
 }

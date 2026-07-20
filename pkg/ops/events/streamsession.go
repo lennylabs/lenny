@@ -133,7 +133,14 @@ func (st *streamSession) serveRedis(parent context.Context) {
 	// a Last-Event-ID CloudEvents id) translates by eventKey scan. A read
 	// error resolving the point falls back to replaying the whole retained
 	// window with the gap flag set.
-	start, gap, rerr := s.redisResumePoint(ctx, st.lastKind, st.lastKey)
+	// The resume, head, and backlog reads run under the per-request Redis
+	// deadline so a connection opened inside the window between a Redis
+	// outage starting and the source-health probe observing it fails fast
+	// into the fall-back instead of parking on connection retries. The live
+	// tail below runs on the unbounded connection context: it blocks by
+	// design.
+	setupCtx, setupCancel := boundRedisRead(ctx)
+	start, gap, rerr := s.redisResumePoint(setupCtx, st.lastKind, st.lastKey)
 	if rerr != nil {
 		start = ""
 		gap = true
@@ -146,10 +153,10 @@ func (st *streamSession) serveRedis(parent context.Context) {
 	// Capture a concrete live-tail resume position BEFORE scanning the
 	// backlog so the tail is contiguous with the scan and drops no event in
 	// the seam between the backlog read and the blocking XREAD.
-	headStreamID, _, haveHead, headErr := s.redis.head(ctx)
+	headStreamID, _, haveHead, headErr := s.redis.head(setupCtx)
 
 	lastStreamID := start
-	if entries, err := s.redis.ReadRange(ctx, start, 0); err == nil {
+	if entries, err := s.redis.ReadRange(setupCtx, start, 0); err == nil {
 		for _, e := range entries {
 			if st.filter.Matches(e.event.Event) && st.admits(e.event.Event) {
 				writeSSEFrame(st.w, e.event)
@@ -164,6 +171,7 @@ func (st *streamSession) serveRedis(parent context.Context) {
 			lastStreamID = headStreamID
 		}
 	}
+	setupCancel()
 	st.flusher.Flush()
 
 	// Live tail: each connection runs its own bounded XREAD BLOCK goroutine

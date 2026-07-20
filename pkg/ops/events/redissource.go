@@ -93,6 +93,24 @@ const maxWindow = eventbuffer.DefaultStreamMaxLen
 // interval. spec: §25.5 (XREAD BLOCK live tail on a per-connection cursor).
 const tailBlock = time.Second
 
+// redisReadTimeout bounds every non-tailing Redis read a single poll or SSE
+// setup issues (the cursor resolve, the head/oldest bounds, and the backlog
+// XRANGE). The source-health probe refreshes on an interval, so a request
+// arriving inside the window between a Redis outage starting and the probe
+// observing it still selects the Redis source; without a deadline that
+// request blocks on the client's connection retries for tens of seconds and
+// the caller times out instead of receiving a page. The deadline caps that
+// window: the read fails fast, the request serves what it has, and the next
+// probe refresh moves the source to the gateway-buffer fall-back. spec:
+// §25.5 (the read surface degrades rather than blocking).
+const redisReadTimeout = 2 * time.Second
+
+// boundRedisRead derives the per-request Redis read deadline from ctx. The
+// live SSE tail is deliberately excluded: it blocks by design.
+func boundRedisRead(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, redisReadTimeout)
+}
+
 // streamOrigin is the XREAD starting position that reads from the very
 // beginning of the stream. The live SSE tail resumes from a concrete stream
 // ID rather than the "$" sentinel, which XREAD resolves server-side at read
@@ -265,6 +283,8 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 // buffer-served gap semantics. spec: §25.5 (XRANGE polling, cross-source
 // cursor translation, evicted-cursor gap).
 func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+	ctx, cancel := boundRedisRead(ctx)
+	defer cancel()
 	start, gap, err := s.redisResumePoint(ctx, cursorKind, position)
 	if err != nil {
 		// A Redis read error mid-poll: report no new events with the caller's

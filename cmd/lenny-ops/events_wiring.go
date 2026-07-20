@@ -187,7 +187,11 @@ func (w *opsWiring) buildGatewayLink() {
 	// /v1/admin/events/buffer across every gateway replica over the
 	// lenny-gateway-pods headless Service and merges the pages deduped by
 	// eventKey. spec: §25.5 (Redis-down gateway-buffer fallback).
-	if w.eventStream != nil {
+	// A nil client (single-process dev with no gateway configured) is left
+	// uninjected: passing it would store a non-nil interface holding a nil
+	// client, which the read surface would then select as a live fall-back
+	// source and dereference.
+	if w.eventStream != nil && w.gwClient != nil {
 		w.eventStream.SetGatewayBufferSource(w.gwClient)
 	}
 
