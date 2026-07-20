@@ -104,6 +104,7 @@ func (st *streamSession) run(ctx context.Context) {
 	prev := dataSource(-1)
 	for {
 		src, _, _ := st.s.selectSource()
+		st.noteMatrixSource(src)
 		if src == dsRedis && st.tailFailures >= maxRedisTailAttempts {
 			// SourceHealth classifies Redis reachable, but this connection
 			// cannot establish a live tail against it. Re-entering the Redis
@@ -147,9 +148,10 @@ func (st *streamSession) run(ctx context.Context) {
 // Redis source after failing to start its live tail before it gives up on that
 // source and serves from the fall-back. A tail that cannot be checked out is
 // usually a client-level condition (an unsupported client type, an exhausted
-// pool) that another attempt will not clear, so the bound is small; the
-// connection still returns to Redis whenever a later SourceHealth transition
-// moves it off and back. spec: §25.5 (transparent source switch).
+// pool) that another attempt will not clear, so the bound is small. The budget
+// is per-stint rather than per-connection: a SourceHealth transition that moves
+// the connection off Redis clears it in run, so the connection returns to Redis
+// on the next transition back. spec: §25.5 (transparent source switch).
 const maxRedisTailAttempts = 3
 
 // redisTailBackoffBase is the first pause after a failed tail start. Each
@@ -339,7 +341,7 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) (tai
 		case <-parent.Done():
 			return false
 		case <-ticker.C:
-			if s.sourceChanged(src) {
+			if st.sourceChanged(src) {
 				// The deferred cancel stops the Tail goroutine's bounded block.
 				return false
 			}
@@ -403,7 +405,7 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 		if ctx.Err() != nil {
 			return
 		}
-		if st.s.sourceChanged(src) {
+		if st.sourceChanged(src) {
 			return
 		}
 		merged, err := st.s.fetchGatewayBuffer(ctx)
@@ -581,7 +583,7 @@ func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 		case <-degTicker.C:
 			st.announceDegradation(false)
 		case <-ticker.C:
-			if st.s.sourceChanged(src) {
+			if st.sourceChanged(src) {
 				return
 			}
 		case ev, open := <-sub.ch:
@@ -658,11 +660,44 @@ func (st *streamSession) markDelivered(eventKey string) {
 }
 
 // sourceChanged reports whether the live SourceHealth signal has moved the
-// active read source off want, so an open SSE connection knows to switch.
-// spec: §25.5 (transparent source switch).
-func (s *Service) sourceChanged(want dataSource) bool {
-	cur, _, _ := s.selectSource()
+// active read source off the one this stint is serving, so an open SSE
+// connection knows to switch. Every stint polls it on sourceCheckInterval, so
+// it is also where the connection observes the health matrix and re-arms its
+// tail-failure budget.
+//
+// A stint the session was forced onto because Redis could not be tailed is
+// compared against the matrix rather than against want. The matrix still
+// reports Redis reachable in that state, so comparing against want would end
+// the stint on its first check and re-enter the reclassification once per
+// interval. The forced stint instead ends when the matrix itself moves off
+// Redis, which is the transition that re-arms the budget and lets the next
+// Redis stint be attempted. spec: §25.5 (transparent source switch, recovery).
+func (st *streamSession) sourceChanged(want dataSource) bool {
+	cur, _, _ := st.s.selectSource()
+	st.noteMatrixSource(cur)
+	if st.forcedDeg != nil {
+		return cur != dsRedis
+	}
 	return cur != want
+}
+
+// noteMatrixSource re-arms the per-connection Redis tail-failure budget when
+// the health matrix itself selects a source other than Redis.
+//
+// The budget bounds how many times one connection re-enters a Redis source
+// whose live tail cannot be started. Left to be cleared only by a Redis stint
+// that runs, it would be unreachable once exhausted: the guard in run rewrites
+// the selected source on every later iteration, serveRedis is never entered
+// again, and the connection stays pinned to the degraded fall-back for its
+// whole life with no :degradation {"level":"healthy"} ever written, even after
+// Redis genuinely goes away and comes back. A matrix transition off Redis is a
+// different Redis than the one the tail failed against, so the budget starts
+// over. spec: §25.5 (the handler switches back to XREAD transparently when
+// Redis recovers).
+func (st *streamSession) noteMatrixSource(cur dataSource) {
+	if cur != dsRedis {
+		st.tailFailures = 0
+	}
 }
 
 // writeSSEHealthy writes the §25.5 :degradation {"level":"healthy"} comment
