@@ -374,3 +374,37 @@ func TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey(t *testing.T) {
 	}
 	t.Logf("Redis recovery: read surface returned to the Redis source (degradation cleared)")
 }
+
+// deployedOpsPrincipalHoldsPlatformAdmin reports whether a landed path maps the
+// identity lenny-ops presents to the gateway admin API onto the §10.2
+// platform-admin role that gate requires. It is false: which identity path
+// closes that is a §10.2 / §25.4 authentication-surface decision recorded as an
+// open finding (T-25.5.24 in TEST-GAPS.md). The constant flips with the grant.
+const deployedOpsPrincipalHoldsPlatformAdmin = false
+
+// TestEventStreamPollDuringRedisOutageServesGatewayOriginatedEvents pins the
+// §25.5 case-1 fall-back end to end over the rendered chart: with Redis down on
+// a two-replica install, a poll of GET /v1/admin/events must return an event a
+// gateway replica originated, fetched cross-process from that replica's §25.3
+// buffer, rather than an empty page carrying the degradation envelope.
+//
+// This is the end-to-end confirmation the in-process tier-4 fall-back test
+// cannot give: it is the only place the credential lenny-ops actually presents
+// meets the gateway's real admin gate.
+//
+// spec: 25.5 (Redis-down gateway-buffer fall-back over the lenny-gateway-pods
+// headless Service), 25.4 (lenny-ops calls the gateway admin API as a service
+// account holding platform-admin)
+// diagnosis: a failure means the §25.5 case-1 data path does not work in a real
+// install however correct the in-process wiring is. A Redis outage leaves
+// gateway-originated events unreachable to every read caller, which is the
+// condition the cross-process fan-out was built to remove.
+func TestEventStreamPollDuringRedisOutageServesGatewayOriginatedEvents(t *testing.T) {
+	if !deployedOpsPrincipalHoldsPlatformAdmin {
+		t.Skip("precondition not met: no landed path maps the ServiceAccount identity lenny-ops presents " +
+			"to the gateway admin API onto platform-admin, so the buffer fan-out 403s on a real install " +
+			"(TEST-GAPS.md T-25.5.24). This test goes live with that grant.")
+	}
+	t.Fatal("unimplemented pending the T-25.5.24 identity decision: drive a Redis-down poll against the " +
+		"two-replica install and assert the page carries a gateway-originated eventKey")
+}

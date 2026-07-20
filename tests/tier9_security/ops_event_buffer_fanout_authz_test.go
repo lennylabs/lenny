@@ -151,3 +151,68 @@ func TestOpsGatewayBufferFanOutRequiresPlatformAdmin_spec_25_4_25_5(t *testing.T
 			"must not surface as a healthy gateway-buffer page", status, keys)
 	}
 }
+
+// deployedOpsPrincipalHoldsPlatformAdmin reports whether a landed path maps the
+// identity lenny-ops actually presents to the gateway admin API onto the §10.2
+// platform-admin role that gate requires.
+//
+// It is false. The lenny-ops Deployment mounts a projected Kubernetes
+// ServiceAccount token (audience lenny-gateway) and presents it as the admin
+// API bearer, while the gateway's admin auth middleware verifies a Lenny-minted
+// JWT and derives roles from its claims; the gateway's only ServiceAccount
+// TokenReview path is bound to the GatewayControl listener rather than the
+// admin API. Which identity path closes that is a §10.2 / §25.4
+// authentication-surface decision recorded as an open finding (T-25.5.24 in
+// TEST-GAPS.md), so it is not invented here. The constant flips to true with the
+// grant, and the assertion below becomes live in the same change.
+const deployedOpsPrincipalHoldsPlatformAdmin = false
+
+// spec: 25.4 (lenny-ops calls the gateway admin API as a dedicated service
+// account holding platform-admin, through the gateway's standard RBAC), 25.5
+// (Redis-down gateway-buffer fall-back)
+// diagnosis: a failure means the §25.5 case-1 fall-back is unreachable in a
+// deployed cluster. The credential lenny-ops presents is refused by the admin
+// gate on GET /v1/admin/events/buffer, so a Redis outage yields an empty
+// degraded page or the dual-outage classification and gateway-originated events
+// have no data path at all, whatever the in-process wiring does with an
+// injected principal.
+func TestOpsDeployedServiceAccountIsAdmittedToTheGatewayEventBuffer_spec_25_4_25_5(t *testing.T) {
+	if !deployedOpsPrincipalHoldsPlatformAdmin {
+		t.Skip("precondition not met: no landed path maps the ServiceAccount identity lenny-ops presents " +
+			"to the gateway admin API onto platform-admin, so the §25.5 case-1 fall-back 403s in a deployed " +
+			"cluster (TEST-GAPS.md T-25.5.24). The sibling test pins only the consequence of a refusal; this " +
+			"one pins that the deployed credential is admitted, and goes live with the grant.")
+	}
+
+	const gwKey = "gw-1:2000:1"
+	replica := opsBufferReplica(t, []gwevents.OperationalEvent{{
+		ID:          gwKey,
+		Type:        "dev.lenny.alert_fired",
+		SpecVersion: gwevents.CloudEventsSpecVersion,
+		Severity:    "warning",
+		Time:        time.Unix(2000, 0).UTC(),
+	}})
+
+	// The bearer is the credential the deployment actually presents, rather
+	// than a fixture principal the test grants the role to.
+	status, keys := opsFallbackPoll(t, replica.URL, deployedOpsGatewayBearer(t))
+	if status != http.StatusOK {
+		t.Fatalf("the credential lenny-ops presents was refused the buffer query: poll status %d; "+
+			"the §25.5 Redis-down fall-back cannot serve gateway-originated events in a deployed cluster", status)
+	}
+	if len(keys) != 1 || keys[0] != gwKey {
+		t.Fatalf("the fall-back served %v, want the gateway-originated %s", keys, gwKey)
+	}
+}
+
+// deployedOpsGatewayBearer returns the bearer token lenny-ops presents to the
+// gateway admin API: the projected ServiceAccount token mounted at the path the
+// chart configures, minted for the lenny-gateway audience. It is resolved from
+// the deployment rather than synthesised, so the test exercises the credential
+// the gate actually sees.
+func deployedOpsGatewayBearer(t *testing.T) string {
+	t.Helper()
+	t.Fatal("deployedOpsGatewayBearer is unimplemented pending the T-25.5.24 identity decision; " +
+		"it must read the projected ServiceAccount token lenny-ops presents rather than mint a fixture")
+	return ""
+}
