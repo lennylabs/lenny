@@ -13,15 +13,17 @@ import (
 )
 
 // EventStreamService is the canonical §25.5 event-stream service
-// contract — the eight-method surface the spec at lines 2574–2585
-// names as the unifying interface for the operational-event delivery
-// surface. v1 splits the implementation across two packages: this
-// package's Service covers StreamEvents/ListEvents; the
-// eventsubscription.Service covers the four CRUD methods. The two
-// not-yet-implemented methods (UpdateSubscription, ListDeliveries)
-// land with §25.5 F-25.5.7 — until then this interface declaration
-// fixes the contract so test doubles and alternative event sources
-// can substitute against the spec's signature without divergence.
+// contract — the surface the spec at lines 2574–2585 names as the
+// unifying interface for the operational-event delivery surface. Every
+// method is implemented, split across two packages: this package's
+// Service covers StreamEvents and ListEvents against the Redis
+// ops:events:stream, the gateway-buffer fan-out, and the local ring;
+// eventsubscription.Service covers the subscription CRUD methods and
+// the keyset-paginated ListDeliveries. What this declaration does not
+// yet have is a single production type that satisfies it in one piece;
+// the HTTP routes are the contract today, and the aggregator question is
+// tracked as T-25.5.6. The declaration fixes the signature so test
+// doubles and alternative event sources substitute without divergence.
 // spec: §25.5 lines 2574-2585.
 type EventStreamService interface {
 	StreamEvents(ctx context.Context, w http.ResponseWriter, filter EventFilter) error

@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -830,5 +832,138 @@ func TestSpecMapRegistersEveryEventStreamAnnotatedTest(t *testing.T) {
 	if len(missing) > 0 {
 		t.Errorf("event-stream tests annotated with a spec section but absent from that section's spec-map entry:\n  %s",
 			strings.Join(missing, "\n  "))
+	}
+}
+
+// readResolvedTestGapFindings returns the set of TEST-GAPS.md finding ids the
+// ledger records as RESOLVED, keyed by the bare id ("T-25.5.7").
+func readResolvedTestGapFindings(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, "TEST-GAPS.md"))
+	if err != nil {
+		t.Fatalf("read TEST-GAPS.md: %v", err)
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "### - [x] ") {
+			continue
+		}
+		rest := strings.TrimPrefix(line, "### - [x] ")
+		id := strings.Fields(rest)
+		if len(id) == 0 {
+			continue
+		}
+		out[strings.TrimSpace(id[0])] = true
+	}
+	return out
+}
+
+// outstandingWorkMarkers are the phrasings a §25 doc comment uses when it
+// declares a behavior still unbuilt. A comment that carries one of them
+// alongside a finding id is asserting that the finding's work has not landed.
+var outstandingWorkMarkers = []string{
+	"not-yet-implemented",
+	"not yet implemented",
+	"unimplemented",
+	"still-outstanding",
+	"still outstanding",
+	"outstanding work",
+	"until then",
+	"unbuilt",
+}
+
+// findingIDPattern matches an F- or T- §25 finding id inside a comment.
+var findingIDPattern = regexp.MustCompile(`\b[FT]-(25\.[0-9]+\.[0-9]+)\b`)
+
+// opsDocComments walks the non-test Go sources under pkg/ops and returns each
+// contiguous `//` comment block, keyed by "<repo-relative file>:<line>".
+func opsDocComments(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	base := filepath.Join(root, "pkg", "ops")
+	err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		var block []string
+		start := 0
+		flush := func() {
+			if len(block) > 0 {
+				out[rel+":"+strconv.Itoa(start)] = strings.Join(block, " ")
+			}
+			block = nil
+		}
+		for i, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				if len(block) == 0 {
+					start = i + 1
+				}
+				block = append(block, strings.TrimSpace(strings.TrimPrefix(trimmed, "//")))
+				continue
+			}
+			flush()
+		}
+		flush()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk pkg/ops: %v", err)
+	}
+	return out
+}
+
+// spec: 25.5 (the EventStreamService surface and the read side it declares),
+// 25.2 (agent-operability packages under pkg/ops)
+//
+// diagnosis: a doc comment under pkg/ops declares work outstanding and names
+//
+//	the finding that tracks it, while TEST-GAPS.md records that finding as
+//	RESOLVED. The comment is the surface a reader trusts about what the
+//	package implements, and the ledger quotes those comments back as its
+//	evidence, so a stale one makes the code and the ledger contradict each
+//	other: a reader is told a method is unimplemented while the method is
+//	shipped and exercised. Rewrite the comment to state the behavior the
+//	package now has, and drop the finding reference.
+func TestOpsDocCommentsDoNotClaimResolvedFindingsAreOutstanding(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	resolved := readResolvedTestGapFindings(t, root)
+
+	var stale []string
+	for where, comment := range opsDocComments(t, root) {
+		lower := strings.ToLower(comment)
+		outstanding := false
+		for _, marker := range outstandingWorkMarkers {
+			if strings.Contains(lower, marker) {
+				outstanding = true
+				break
+			}
+		}
+		if !outstanding {
+			continue
+		}
+		for _, m := range findingIDPattern.FindAllStringSubmatch(comment, -1) {
+			if resolved["T-"+m[1]] {
+				stale = append(stale, where+" → "+m[0]+" (TEST-GAPS.md records T-"+m[1]+" RESOLVED)")
+			}
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Errorf("pkg/ops doc comments declare work outstanding against a finding TEST-GAPS.md already records as RESOLVED:\n  %s",
+			strings.Join(stale, "\n  "))
 	}
 }
