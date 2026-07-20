@@ -18,17 +18,17 @@
 // than this replica's local ring buffer, and returns to the Redis source
 // once Redis recovers.
 //
-// This test proves that surface on a real cluster: it discovers the
-// headless Service resolves to every gateway replica IP (the discovery
-// input the fan-out consumes), then scales the e2e Redis Deployment to zero
-// and polls the deployed lenny-ops read surface until it reports the
-// gateway-buffer degradation, then restores Redis and asserts the surface
-// returns to the healthy Redis source. The cross-replica merge and eventKey
-// dedup themselves are pinned in-process at tier-4
-// (TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown) and
-// under concurrency at tier-7a; this test proves the deployed lenny-ops
-// actually discovers the gateway replicas over the headless Service and
-// switches to the fan-out fall-back during a genuine Redis outage.
+// This test proves that surface on a real cluster. It discovers the headless
+// Service resolves to every gateway replica IP (the discovery input the fan-out
+// consumes), emits one distinct operational event into each replica's own
+// buffer, scales the e2e Redis Deployment to zero, and polls the deployed
+// lenny-ops read surface until it reports the gateway-buffer degradation. It
+// then asserts the merged page itself: both replicas' events are present, each
+// exactly once, across repeated polls of the same overlapping fan-out windows.
+// The label alone proves nothing about the data, since actualSource is computed
+// from the source-health signal and is attached whether or not a single gateway
+// event was retrieved. Finally it restores Redis and asserts the surface
+// returns to the healthy Redis source.
 package tier5_e2e_kind_test
 
 import (
@@ -53,11 +53,21 @@ const (
 	efHeadlessService = "lenny-gateway-pods"
 	efRedisDeployment = "lenny-redis"
 	efEventsPath      = "/v1/admin/events"
+	// efGatewayHTTPPort is the gateway's internal HTTP listener, which the
+	// per-replica admin call this test emits its buffer events through binds.
+	efGatewayHTTPPort = 8080
 )
 
-// efDegradation is the §25.5 EVENT_STREAM_DEGRADED envelope this test reads
-// off the poll response, narrowed to the actualSource field.
-type efDegradation struct {
+// efPollBody is the §25.5 poll response this test reads: the served items and
+// the EVENT_STREAM_DEGRADED envelope, narrowed to the actualSource field.
+type efPollBody struct {
+	Items []struct {
+		Event struct {
+			ID   string          `json:"id"`
+			Type string          `json:"type"`
+			Data json.RawMessage `json:"data"`
+		} `json:"event"`
+	} `json:"items"`
 	Degradation *struct {
 		Level        string `json:"level"`
 		ActualSource string `json:"actualSource"`
@@ -118,14 +128,110 @@ func efPollActualSource(t *testing.T, baseURL string) (int, string) {
 	if resp.StatusCode != http.StatusOK {
 		return resp.StatusCode, ""
 	}
-	var body efDegradation
-	if err := json.Unmarshal(raw, &body); err != nil {
-		t.Fatalf("decode %s response: %v; body=%s", efEventsPath, err, raw)
-	}
+	body := efDecodePoll(t, raw)
 	if body.Degradation == nil {
 		return resp.StatusCode, ""
 	}
 	return resp.StatusCode, body.Degradation.ActualSource
+}
+
+// efDecodePoll parses a §25.5 poll response body.
+func efDecodePoll(t *testing.T, raw []byte) efPollBody {
+	t.Helper()
+	var body efPollBody
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode %s response: %v; body=%s", efEventsPath, err, raw)
+	}
+	return body
+}
+
+// efPollPage issues one authenticated GET /v1/admin/events with a large limit
+// and returns the parsed page, so a caller can assert what the fan-out merged
+// rather than only the label the envelope carries.
+func efPollPage(t *testing.T, baseURL string) efPollBody {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+efEventsPath+"?limit=1000", nil)
+	if err != nil {
+		t.Fatalf("build request for %s: %v", efEventsPath, err)
+	}
+	req.Header.Set("X-Lenny-Tenant-ID", "platform")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	req.Header.Set("X-Lenny-User-ID", "alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", efEventsPath, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read %s response: %v", efEventsPath, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s during the outage returned %d, want 200 with the gateway-buffer page: %s",
+			efEventsPath, resp.StatusCode, raw)
+	}
+	return efDecodePoll(t, raw)
+}
+
+// efOpenBreakerOn opens a circuit breaker on one gateway replica, which emits a
+// §25.3 circuit_breaker_opened operational event into that replica's own
+// in-memory buffer. It is how this test puts a known, replica-local event into
+// each buffer the fan-out has to merge. It reports false when the deployment
+// does not serve the endpoint, so the caller can treat that as an unmet
+// precondition rather than a contract failure.
+func efOpenBreakerOn(t *testing.T, c *kind.Cluster, pod, name string) bool {
+	t.Helper()
+	baseURL, stop := c.PortForward(t, "pod/"+pod, t5SystemNS, efGatewayHTTPPort)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	body := strings.NewReader(`{"reason":"tier-5 cross-replica fan-out probe","limitTier":"soft"}`)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		baseURL+"/v1/admin/circuit-breakers/"+name+"/open", body)
+	if err != nil {
+		t.Fatalf("build breaker-open request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "platform")
+	req.Header.Set("X-Lenny-Roles", "platform-admin")
+	req.Header.Set("X-Lenny-User-ID", "alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Logf("POST breaker open on %s: %v", pod, err)
+		return false
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Logf("POST breaker open on %s returned %d: %s", pod, resp.StatusCode, raw)
+		return false
+	}
+	return true
+}
+
+// efCountBreakerEvents counts, per breaker name, how many items on the page are
+// circuit_breaker_opened events for that name. Each name is opened on exactly
+// one replica, so a count other than one means the merge dropped a replica's
+// event or delivered one twice.
+func efCountBreakerEvents(page efPollBody, names []string) map[string]int {
+	counts := map[string]int{}
+	for _, name := range names {
+		counts[name] = 0
+	}
+	for _, it := range page.Items {
+		if !strings.HasSuffix(it.Event.Type, "circuit_breaker_opened") {
+			continue
+		}
+		for _, name := range names {
+			if strings.Contains(string(it.Event.Data), `"name":"`+name+`"`) {
+				counts[name]++
+			}
+		}
+	}
+	return counts
 }
 
 // efWaitActualSource polls GET /v1/admin/events until the degradation
@@ -206,6 +312,19 @@ func TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey(t *testing.T) {
 			"(the Redis source); the surface is degraded before any outage was injected", status, src)
 	}
 
+	// Put one distinct operational event into each replica's own buffer: a
+	// circuit-breaker open served by replica A and another served by replica B.
+	// Each event exists in exactly one replica's ring, so a merged page that
+	// carries both proves the fan-out reached both replicas over the headless
+	// Service, and a page that carries either twice proves the eventKey dedup
+	// did not collapse the overlapping fan-out windows.
+	breakerA := "t5-fanout-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "-a"
+	breakerB := "t5-fanout-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "-b"
+	if !efOpenBreakerOn(t, c, pods[0], breakerA) || !efOpenBreakerOn(t, c, pods[1], breakerB) {
+		t.Skip("precondition not met: the gateway replicas did not serve the circuit-breaker open " +
+			"used to seed a known event into each per-replica buffer")
+	}
+
 	// Inject the Redis outage: scale the base Redis Deployment to zero.
 	// Cleanup restores it and waits for the surface to recover.
 	original := dccReplicaCount(t, c, efRedisDeployment)
@@ -223,6 +342,25 @@ func TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey(t *testing.T) {
 			"\"gateway-buffer\", so the fan-out fall-back is not reached end to end")
 	}
 	t.Logf("Redis outage: read surface switched to the gateway-buffer fan-out (actualSource gateway-buffer)")
+
+	// The merged page, rather than the label: both replicas' events must be
+	// present and each must appear exactly once. The two polls read the same
+	// overlapping fan-out windows a second apart, so an event that survives one
+	// poll and duplicates on the next fails here too.
+	names := []string{breakerA, breakerB}
+	for attempt := 0; attempt < 2; attempt++ {
+		page := efPollPage(t, baseURL)
+		counts := efCountBreakerEvents(page, names)
+		if counts[breakerA] != 1 || counts[breakerB] != 1 {
+			t.Fatalf("the gateway-buffer page served %d event(s) from replica %s and %d from replica %s, "+
+				"want exactly one each: 0 means the fan-out never merged that replica's buffer (the "+
+				"degradation label is attached to a page the cross-process fetch did not fill), and more "+
+				"than one means the eventKey dedup did not collapse the overlapping windows (page: %d items)",
+				counts[breakerA], pods[0], counts[breakerB], pods[1], len(page.Items))
+		}
+		time.Sleep(time.Second)
+	}
+	t.Logf("gateway-buffer page carries both replicas' events exactly once")
 
 	// Restore Redis: the surface must return to the healthy Redis source.
 	efScaleRedis(t, c, original)
