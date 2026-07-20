@@ -326,3 +326,66 @@ func awaitCount(t *testing.T, c *atomic.Int64, want int64, what string) {
 		time.Sleep(5 * time.Millisecond)
 	}
 }
+
+// spec: 25.5 (best-effort recovery flush) — a re-emit that fails is the same
+// Redis write failure a failed Emit is, and it must arm the same write-path
+// edge. The flush reopens its outage window when a re-emit fails, but a window
+// alone schedules no retry: only an edge does. The write path's edge is the
+// one that covers an interruption shorter than a source-health refresh
+// interval, which is exactly the flap that makes a flush fail in the first
+// place.
+//
+// This drives a flush whose re-emits fail against a Redis that is back up by
+// the next emission, and asserts the following successful write reports a
+// recovery edge. Against the pre-fix ReEmit, which wrote straight through and
+// never recorded the failure, the edge detector stayed disarmed: the CAS on
+// the next successful Emit found no failure to clear, no edge fired, and the
+// reopened window waited on a probe-observed down-to-up cycle that a short
+// interruption never produces.
+func TestReEmitFailureArmsTheWritePathRecoveryEdge(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = client.Close() })
+
+	local := opsstream.New(opsstream.Options{ReplicaID: "ops-1", RedisClient: opsstream.NewRedisStreamClient(client)})
+	em := newRedisFanOutEmitter(client, local, "ops-1", eventbuffer.DefaultStreamMaxLen)
+	local.SetRedisReEmitter(em.ReEmit)
+
+	var edges atomic.Int64
+	em.onWriteRecovered = func() { edges.Add(1) }
+	ctx := context.Background()
+
+	// An outage buffers one lenny-ops-originated event whose XADD failed.
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	if err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.escalation_created"}); err == nil {
+		t.Fatal("Emit during the outage must surface the failed XADD")
+	}
+
+	// Redis answers again, so the write path reports its recovery edge.
+	mr.SetError("")
+	if err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.drift_detected"}); err != nil {
+		t.Fatalf("Emit after the outage: %v", err)
+	}
+	if got := edges.Load(); got != 1 {
+		t.Fatalf("write-path recovery edges = %d after the first recovery, want 1", got)
+	}
+
+	// The flush that edge scheduled runs while Redis is flapping, so every
+	// re-emit fails.
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	if _, err := local.FlushBufferedToRedis(ctx); err == nil {
+		t.Fatal("a flush whose re-emits all failed reported success")
+	}
+
+	// Redis settles. The next successful write is the up edge that retries the
+	// reopened window; without the failed re-emit arming the detector, no edge
+	// fires and the window is never flushed.
+	mr.SetError("")
+	if err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.lock_changed"}); err != nil {
+		t.Fatalf("Emit after the flap settled: %v", err)
+	}
+	if got := edges.Load(); got != 2 {
+		t.Fatalf("write-path recovery edges = %d, want 2: a failed re-emit must arm the edge detector "+
+			"so the next successful write retries the reopened outage window", got)
+	}
+}

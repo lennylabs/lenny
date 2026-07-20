@@ -167,10 +167,22 @@ func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalE
 // those events are already in the local ring, so re-emitting them through the
 // full fan-out Emit would double the local delivery. The StreamEmitter
 // preserves the event's existing eventKey, so consumer-side deduplication
-// still collapses a re-emitted event a consumer already saw. spec: §25.5
-// (best-effort recovery flush, eventKey dedup).
+// still collapses a re-emitted event a consumer already saw.
+//
+// A failed re-emit arms the same write-path edge a failed Emit does. The flush
+// reopens its outage window on a failed re-emit, but the window alone does not
+// schedule a retry: only an edge does. Without arming this one, a flush that
+// failed because Redis went back down would leave the reopened window waiting
+// on the source-health probe to observe a full down-to-up cycle, which it
+// cannot see for an interruption shorter than one refresh interval. Arming it
+// here makes the next successful write this replica performs the up edge that
+// retries the flush. spec: §25.5 (best-effort recovery flush).
 func (e *redisFanOutEmitter) ReEmit(ctx context.Context, event events.OperationalEvent) error {
-	return e.stream.Emit(ctx, event)
+	if err := e.stream.Emit(ctx, event); err != nil {
+		e.writeFailed.Store(true)
+		return err
+	}
+	return nil
 }
 
 // Compile-time guard that *redisFanOutEmitter satisfies the §4.0

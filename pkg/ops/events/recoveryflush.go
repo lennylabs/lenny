@@ -37,7 +37,18 @@ import (
 // the last failure the flush encountered (a failed retained-key scan or a
 // failed re-emit), nil when the whole flush succeeded. A nil re-emit
 // path, a nil Redis source, or a recovery with no observed outage makes the
-// flush a no-op. spec: §25.5 (best-effort recovery flush, eventKey dedup).
+// flush a no-op.
+//
+// A flush that failed to re-emit reopens the outage window at the first event
+// it could not place, so a later edge retries from there. The window is the
+// only record of which events still need re-emitting, and both edges that fire
+// this flush report a transition rather than a level: consuming the window
+// ahead of the re-emits meant that a flush racing Redis back down (a flapping
+// endpoint, a cluster slot migration, an XADD timeout) abandoned that outage's
+// events for good, since the next outage opens a fresh window at the current
+// ring head. Reopening keeps the window closed only when the events it names
+// actually reached the stream. spec: §25.5 (best-effort recovery flush,
+// eventKey dedup).
 func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 	if s.redisReEmit == nil || s.redis == nil {
 		return 0, nil
@@ -79,6 +90,11 @@ func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 	flushed := 0
 	seen := make(map[string]struct{}, len(buffered))
 	lastErr := scanErr
+	// firstFailed is the local ring position of the earliest event this flush
+	// could not place on the stream. It anchors the window the flush reopens,
+	// so a retry resumes at the first event still owed to the stream rather
+	// than replaying the ones already re-emitted.
+	var firstFailed uint64
 	for _, ev := range buffered {
 		key := ev.Event.ID
 		if key == "" {
@@ -95,9 +111,19 @@ func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 			// Best-effort: record the failure and keep flushing the rest so
 			// one unreachable write does not abandon the remaining events.
 			lastErr = fmt.Errorf("re-emit %s: %w", key, err)
+			if firstFailed == 0 {
+				firstFailed = ev.ID
+			}
 			continue
 		}
 		flushed++
+	}
+	if firstFailed > 0 {
+		// The window this flush consumed still holds events that never reached
+		// the stream, so it is reopened at the first of them. A failed
+		// retained-key scan alone does not reopen it: every event it named was
+		// re-emitted, so the window has done its job.
+		s.openOutageWindow(firstFailed - 1)
 	}
 	return flushed, lastErr
 }

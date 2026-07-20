@@ -447,21 +447,22 @@ func countKeys(msgs []redis.XMessage) map[string]int {
 }
 
 // scanFaultingClient wraps a live Redis client and fails the recovery flush's
-// retained-key XRANGE scan the configured number of times, so the flush's
+// retained-key window scan the configured number of times, so the flush's
 // behaviour on a read error can be exercised against a real stream. Every
-// other read passes through untouched.
+// other read passes through untouched. The scan is head-anchored (XREVRANGE
+// from "+" back to "-"), so that is the read this double faults.
 type scanFaultingClient struct {
 	opsstream.RedisStreamClient
 	scanFailures atomic.Int64
 }
 
-func (c *scanFaultingClient) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
-	if start == "-" && stop == "+" && count == eventbuffer.DefaultStreamMaxLen && c.scanFailures.Add(-1) >= 0 {
+func (c *scanFaultingClient) XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	if start == "+" && stop == "-" && count == eventbuffer.DefaultStreamMaxLen && c.scanFailures.Add(-1) >= 0 {
 		cmd := redis.NewXMessageSliceCmd(ctx)
 		cmd.SetErr(fmt.Errorf("connection reset by peer"))
 		return cmd
 	}
-	return c.RedisStreamClient.XRangeN(ctx, stream, start, stop, count)
+	return c.RedisStreamClient.XRevRangeN(ctx, stream, start, stop, count)
 }
 
 // spec: 25.5 (best-effort recovery flush) — the down-to-up edge fires once per
@@ -967,4 +968,128 @@ func TestOpsEventStreamPollWithAFailedRedisReadIsNotReportedHealthy(t *testing.T
 	if !strings.Contains(rec.Body.String(), "EVENT_STREAM_UNAVAILABLE") {
 		t.Errorf("503 body = %s, want the EVENT_STREAM_UNAVAILABLE code", rec.Body.String())
 	}
+}
+
+// spec: 25.5 (best-effort recovery flush) — the outage window is the only
+// record of which locally buffered events still owe the shared stream a
+// re-emit, so a flush whose re-emits fail must leave it open. Redis flapping
+// back down inside the recovery edge is the ordinary way that happens: the
+// probe reports up, the flush starts, and the XADDs fail.
+//
+// The flush's two triggers both report a transition rather than a level, so a
+// window consumed ahead of a failed flush is never revisited: the next outage
+// opens a fresh window at the current ring head, permanently excluding the
+// earlier outage's events. The pre-fix flush took the window at the top and
+// returned the re-emit error, so this fails against that code — the second
+// flush re-emits nothing and the outage events never reach the stream.
+//
+// diagnosis: a failure means the §25.5 recovery flush discards the events it
+// exists to protect. A flush that could not place them on the recovered stream
+// dropped the record of which events were still owed, so a consumer that
+// connects after the outage never observes them and no later edge can recover
+// them.
+func TestOpsEventStreamRecoveryFlushKeepsTheWindowOpenWhenReEmitsFail(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:  opsstream.NewRedisStreamClient(rd.Client),
+		SourceHealth: health,
+		ReplicaID:    "ops-1",
+	})
+
+	const key = "ops:events:stream:flushretry"
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
+		Client:    rd.Client,
+		Buffer:    eventbuffer.NewEventBuffer(0),
+		StreamKey: key,
+		ReplicaID: "ops-1",
+	})
+
+	// The re-emit path fails for as long as Redis is still flapping, then
+	// starts placing events once it settles.
+	var reEmitDown atomic.Bool
+	reEmitDown.Store(true)
+	var attempts atomic.Int64
+	svc.SetRedisReEmitter(func(ctx context.Context, ev gwevents.OperationalEvent) error {
+		attempts.Add(1)
+		if reEmitDown.Load() {
+			return fmt.Errorf("XADD %s: connection refused", key)
+		}
+		return emitter.Emit(ctx, ev)
+	})
+
+	// Redis goes away and lenny-ops keeps emitting into the local ring.
+	outage := []gwevents.OperationalEvent{
+		{ID: "ops-1:flap:1", Type: "dev.lenny.escalation_created", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2001, 0).UTC()},
+		{ID: "ops-1:flap:2", Type: "dev.lenny.lock_changed", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2002, 0).UTC()},
+	}
+	var firstFailedID uint64
+	for _, e := range outage {
+		id, err := svc.Publish(ctx, e)
+		if err != nil {
+			t.Fatalf("buffer outage event %s: %v", e.ID, err)
+		}
+		if firstFailedID == 0 {
+			firstFailedID = id
+		}
+	}
+	svc.MarkRedisWriteFailure(firstFailedID)
+
+	// The recovery edge fires while Redis is still flapping: every re-emit
+	// fails.
+	flushed, err := svc.FlushBufferedToRedis(ctx)
+	if err == nil {
+		t.Fatal("a flush whose every re-emit failed reported success")
+	}
+	if flushed != 0 {
+		t.Fatalf("failed flush reported %d event(s) re-emitted, want 0", flushed)
+	}
+	if got := attempts.Load(); got != int64(len(outage)) {
+		t.Fatalf("failed flush attempted %d re-emit(s), want %d (one per outage-window event)", got, len(outage))
+	}
+
+	// Redis settles. The next edge must find the window still open and place
+	// the outage events on the stream.
+	reEmitDown.Store(false)
+	flushed, err = svc.FlushBufferedToRedis(ctx)
+	if err != nil {
+		t.Fatalf("retry flush after Redis settled: %v", err)
+	}
+	if flushed != len(outage) {
+		t.Fatalf("retry flush re-emitted %d event(s), want %d; the failed flush consumed the outage window, so the events it named were abandoned", flushed, len(outage))
+	}
+
+	// Exactly once on the stream, and a further edge replays nothing.
+	if n, err := svc.FlushBufferedToRedis(ctx); n != 0 || err != nil {
+		t.Fatalf("third flush = (%d, %v); want nothing (the window was flushed successfully)", n, err)
+	}
+	counts := streamEventCounts(t, rd.Client, key)
+	for _, e := range outage {
+		if counts[e.ID] != 1 {
+			t.Errorf("outage event %s is on the stream %d time(s), want exactly 1: %v", e.ID, counts[e.ID], counts)
+		}
+	}
+}
+
+// streamEventCounts decodes every entry on key and counts the eventKeys it
+// carries, so a test can assert a flushed event landed exactly once.
+func streamEventCounts(t *testing.T, client redis.UniversalClient, key string) map[string]int {
+	t.Helper()
+	msgs, err := client.XRange(context.Background(), key, "-", "+").Result()
+	if err != nil {
+		t.Fatalf("XRange %s: %v", key, err)
+	}
+	counts := map[string]int{}
+	for _, m := range msgs {
+		var ev gwevents.OperationalEvent
+		if raw, ok := m.Values["event"].(string); ok {
+			_ = json.Unmarshal([]byte(raw), &ev)
+		}
+		counts[ev.ID]++
+	}
+	return counts
 }

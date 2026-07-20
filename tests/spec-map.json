@@ -3471,6 +3471,7 @@
         "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamRecoveryFlushSeesRetainedKeyBeyondDefaultStreamLength",
         "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamPollResolvesRecentCursorOnAnOverLongStream",
         "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamReportsDualOutageWhenFanOutDiscoversNoGatewayReplica",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushKeepsTheWindowOpenWhenReEmitsFail",
         "tests/tier2_component/eventstream/event_stream_tail_test.go::TestOpsEventStreamLiveTailIssuesBlockZeroOnItsOwnConnection",
         "tests/tier7a_load_local/event_buffer_fanout_dedup_test.go::TestGatewayBufferFanOutDedupIsConcurrentSafeAndDeterministic",
         "tests/tier7a_load_local/ops_event_stream_replay_dedup_test.go::TestOpsEventStreamFullWindowReplayDeliversEachEventOnce_spec_25_5",
