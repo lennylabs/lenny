@@ -189,6 +189,12 @@ func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
 		if s.redis != nil {
 			return dsRedis, deg, dualDown
 		}
+		// No Redis read source is wired, so the cross-replica stream this
+		// classification names cannot serve the request and this replica's own
+		// ring does instead. Reporting that as healthy would present a
+		// single-replica view as the merged one. spec: §25.5.
+		_, deg, dualDown = localOnlyState()
+		return dsLocalBuffer, deg, dualDown
 	case sourceGatewayBuffer:
 		if s.gateway != nil {
 			return dsGateway, deg, dualDown

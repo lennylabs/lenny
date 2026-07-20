@@ -10,10 +10,43 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
+
+// emptyRedisStream is a wired but empty §25.5 Redis read source. Wiring it is
+// what makes a healthy source-health signal resolve to the Redis stream: with
+// no client wired the read surface has no cross-replica source at all and
+// reports the local-buffer degradation instead.
+type emptyRedisStream struct{}
+
+func (emptyRedisStream) XRangeN(ctx context.Context, _, _, _ string, _ int64) *redis.XMessageSliceCmd {
+	return redis.NewXMessageSliceCmd(ctx)
+}
+
+func (emptyRedisStream) XRevRangeN(ctx context.Context, _, _, _ string, _ int64) *redis.XMessageSliceCmd {
+	return redis.NewXMessageSliceCmd(ctx)
+}
+
+func (emptyRedisStream) TailClient() (opsstream.RedisTailClient, error) {
+	return idleTail{}, nil
+}
+
+// idleTail parks its blocking read until the connection's context is done, the
+// way an XREAD BLOCK 0 on an idle stream does.
+type idleTail struct{}
+
+func (idleTail) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSliceCmd {
+	<-ctx.Done()
+	cmd := redis.NewXStreamSliceCmd(ctx)
+	cmd.SetErr(ctx.Err())
+	return cmd
+}
+
+func (idleTail) Close() error { return nil }
 
 // stubGatewaySource is a wired §25.5 gateway-buffer fall-back source that
 // reports no gateway-originated events. Wiring it is what makes a Redis outage
@@ -99,6 +132,7 @@ func TestHandlePoll_RedisUp_NoDegradation_spec_25_5(t *testing.T) {
 			Capacity:     16,
 			Now:          fixedNow,
 			SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: gw},
+			RedisClient:  emptyRedisStream{},
 		})
 		publishOne(s, "dev.lenny.alert_fired")
 		rec := httptest.NewRecorder()
@@ -119,7 +153,7 @@ func TestHandlePoll_RedisUp_NoDegradation_spec_25_5(t *testing.T) {
 // A nil SourceHealth preserves the pre-degradation behavior: no envelope,
 // no 503.
 func TestHandlePoll_NilHealth_NoDegradation(t *testing.T) {
-	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow, RedisClient: emptyRedisStream{}})
 	publishOne(s, "dev.lenny.alert_fired")
 	rec := httptest.NewRecorder()
 	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
@@ -211,6 +245,7 @@ func TestHandleStream_Healthy_NoComment_spec_25_5(t *testing.T) {
 		Capacity:     16,
 		Now:          fixedNow,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+		RedisClient:  emptyRedisStream{},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
 	rec := newStreamingRecorder()
@@ -237,5 +272,48 @@ func TestStaticSourceHealth(t *testing.T) {
 	var zero opsstream.StaticSourceHealth
 	if zero.RedisAvailable() || zero.GatewayAvailable() {
 		t.Errorf("zero StaticSourceHealth should report both sources down")
+	}
+}
+
+// spec: §25.5 lines 2768-2780 (the degradation envelope's actualSource names
+// the source the response was served from) — a replica with no Redis read
+// source wired serves polling and SSE from its own ring buffer, which holds
+// only the events this replica originated. The response says so rather than
+// presenting a single-replica view as the merged cross-replica one.
+func TestReadSurface_NoRedisWired_ReportsLocalBufferDegradation_spec_25_5(t *testing.T) {
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	publishOne(s, "dev.lenny.alert_fired")
+
+	rec := httptest.NewRecorder()
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: the surface still serves this replica's own events", rec.Code)
+	}
+	var page opsstream.EventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if page.Degradation == nil {
+		t.Fatal("a poll served from this replica's ring with no Redis source wired carried no degradation envelope, so the caller cannot tell it is missing every other replica's events")
+	}
+	if page.Degradation.ActualSource != "lenny-ops-local-buffer" {
+		t.Errorf("actualSource = %q, want lenny-ops-local-buffer", page.Degradation.ActualSource)
+	}
+	if len(page.Items) != 1 {
+		t.Errorf("page served %d item(s), want the one locally published event", len(page.Items))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
+	sink := newStreamingRecorder()
+	ctx, cancel := context.WithCancel(req.Context())
+	done := make(chan struct{})
+	go func() {
+		s.HandleStream(sink, platformAdminReq(req.WithContext(ctx)))
+		close(done)
+	}()
+	cancel()
+	<-done
+	if !strings.Contains(sink.Body.String(), "lenny-ops-local-buffer") {
+		t.Errorf("the stream announced no local-buffer degradation with no Redis source wired: %q", sink.Body.String())
 	}
 }

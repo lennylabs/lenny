@@ -618,6 +618,35 @@ tests:
                 name: lenny-datastore-conn
                 key: redis-url
 
+  # spec: §12.4 lines 260-264 / §25.5 — the Cluster topology is one of the
+  # §17.3 permitted self-managed backends, so lenny-ops must reach the §25.5
+  # ops:events:stream on it too. Without the cluster env lenny-ops wires no
+  # Redis at all and serves polling and SSE from this replica's in-memory
+  # buffer, losing the cross-replica view with no degradation envelope saying
+  # so. The seed addresses are not secret and render as plain env, matching
+  # the gateway Deployment.
+  - it: wires the Redis Cluster seed nodes when redis.provider=cluster
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "r0:6379,r1:6379,r2:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CLUSTER_ADDRS
+            value: "r0:6379,r1:6379,r2:6379"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+
   # spec: §17.9.3 lines 1402-1409 / §12.4 — the Sentinel topology wires the
   # discovery env (addresses and master are plain env) plus the data AUTH
   # password from the datastore Secret, and requests TLS so §12.4 AUTH+TLS

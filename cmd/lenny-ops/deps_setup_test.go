@@ -47,6 +47,7 @@ func TestBuildDependenciesProbesGatewayHealthSummaryEndpoint(t *testing.T) {
 	f := &opsFlags{
 		postgresDSN:         strPtr(""),
 		redisURL:            strPtr(""),
+		redisClusterAddrs:   strPtr(""),
 		redisSentinelAddrs:  strPtr(""),
 		gatewayURL:          strPtr(srv.URL),
 		backupMinIOEndpoint: strPtr(""),

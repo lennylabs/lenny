@@ -59,44 +59,75 @@ type RedisTailClient interface {
 // non-tailing reads run on c's shared connection pool; each live SSE tail
 // dials a client of its own from c's options (see RedisTailClient) with a
 // single-connection pool, since a tail uses exactly one connection.
-func NewRedisStreamClient(c *redis.Client) RedisStreamClient {
-	return redisClientAdapter{Client: c}
+//
+// It takes the universal client surface so every §17.9.3 Redis topology
+// lenny-ops is deployed with reaches the §25.5 stream through the same read
+// source: a direct or Sentinel-resolved client, and a Redis Cluster client.
+func NewRedisStreamClient(c redis.UniversalClient) RedisStreamClient {
+	return redisClientAdapter{UniversalClient: c}
 }
 
 // redisClientAdapter is the NewRedisStreamClient adapter. It forwards the
 // range reads to the shared client and dials a fresh client per tail.
 type redisClientAdapter struct {
-	*redis.Client
+	redis.UniversalClient
 }
 
 // TailClient dials a client dedicated to one live tail from the shared
 // client's connection options, so it reaches the same Redis (including a
-// Sentinel-resolved master, whose dialer the options carry) and honours the
-// same auth and TLS settings. It wraps the dialer to keep a handle on the
-// socket the tail blocks on, which is what redisTailConn.Close needs. Retries
-// are disabled on the tail client: the tail runs its own retry loop, and a
-// client-level retry would re-dial and block again after the close that is
-// trying to end the connection.
+// Sentinel-resolved master or a cluster's seed nodes, whose dialer the options
+// carry) and honours the same auth and TLS settings. It wraps the dialer to
+// keep a handle on the socket the tail blocks on, which is what
+// redisTailConn.Close needs. Retries are disabled on the tail client: the tail
+// runs its own retry loop, and a client-level retry would re-dial and block
+// again after the close that is trying to end the connection.
 func (a redisClientAdapter) TailClient() (RedisTailClient, error) {
-	opts := *a.Client.Options()
-	opts.PoolSize = 1
-	opts.MinIdleConns = 0
-	opts.MaxRetries = -1
 	tail := &redisTailConn{}
-	dial := opts.Dialer
+	switch c := a.UniversalClient.(type) {
+	case *redis.Client:
+		opts := *c.Options()
+		dial, err := trackedDialer(opts.Dialer, tail)
+		if err != nil {
+			return nil, err
+		}
+		opts.PoolSize = 1
+		opts.MinIdleConns = 0
+		opts.MaxRetries = -1
+		opts.Dialer = dial
+		tail.client = redis.NewClient(&opts)
+	case *redis.ClusterClient:
+		opts := *c.Options()
+		dial, err := trackedDialer(opts.Dialer, tail)
+		if err != nil {
+			return nil, err
+		}
+		opts.PoolSize = 1
+		opts.MinIdleConns = 0
+		opts.MaxRetries = -1
+		opts.Dialer = dial
+		tail.client = redis.NewClusterClient(&opts)
+	default:
+		return nil, fmt.Errorf("redis tail client: no per-tail client can be dialled from %T", a.UniversalClient)
+	}
+	return tail, nil
+}
+
+// trackedDialer wraps dial so every socket it opens is recorded on tail, which
+// is what lets Close shut the blocked read's socket down directly. A client
+// exposing no dialer cannot back a tail, since the tail would then have no
+// handle on the connection its read parks on.
+func trackedDialer(dial func(context.Context, string, string) (net.Conn, error), tail *redisTailConn) (func(context.Context, string, string) (net.Conn, error), error) {
 	if dial == nil {
 		return nil, fmt.Errorf("redis tail client: shared client exposes no dialer")
 	}
-	opts.Dialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
+	return func(ctx context.Context, network, addr string) (net.Conn, error) {
 		conn, err := dial(ctx, network, addr)
 		if err != nil {
 			return nil, err
 		}
 		tail.track(conn)
 		return conn, nil
-	}
-	tail.client = redis.NewClient(&opts)
-	return tail, nil
+	}, nil
 }
 
 // redisTailConn is one live tail's dedicated client. It keeps a handle on
@@ -109,7 +140,7 @@ func (a redisClientAdapter) TailClient() (RedisTailClient, error) {
 // holding. Closing the socket makes the read fail immediately, after which the
 // client shuts down without waiting. spec: §25.5 (XREAD BLOCK 0 live tail).
 type redisTailConn struct {
-	client *redis.Client
+	client redis.UniversalClient
 
 	mu     sync.Mutex
 	conns  []net.Conn

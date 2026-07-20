@@ -48,16 +48,20 @@ state degrade gracefully when Postgres is absent (§25.4).
 {{- end -}}
 {{- end -}}
 {{- /* §25.5 read-side Redis topology. lenny-ops consumes the same
-   redis.provider / redis.url values the gateway and controller do, but
-   only the external (url) and Sentinel topologies: the lenny-ops binary
-   reads --redis-url and --redis-sentinel-addrs (cmd/lenny-ops/flags.go)
-   and has no Redis Cluster consumer, so a cluster-provider install leaves
-   lenny-ops on its in-memory buffer. The connection URL and the Sentinel
-   AUTH credentials come from the lenny-datastore-conn Secret so no secret
-   material lands in the pod spec. */ -}}
+   redis.provider / redis.url values the gateway and controller do, across
+   every §17.9.3 topology: external (url), Sentinel, and Cluster. The
+   lenny-ops binary reads --redis-url, --redis-sentinel-addrs, and
+   --redis-cluster-addrs (cmd/lenny-ops/flags.go), so the §25.5
+   ops:events:stream is the read source on each of them and no topology
+   silently drops lenny-ops onto its in-memory buffer. The connection URL
+   and the Sentinel AUTH credentials come from the lenny-datastore-conn
+   Secret so no secret material lands in the pod spec; the cluster seed
+   addresses are not secret and render as plain env. */ -}}
 {{- $redis := .Values.redis -}}
 {{- $redisProvider := include "lenny.redisProvider" . -}}
+{{- $redisCluster := (and $redis (hasKey $redis "cluster")) | ternary $redis.cluster dict -}}
 {{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
+{{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
 {{- $useSentinel := eq $redisProvider "sentinel" -}}
 {{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
 {{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
@@ -337,6 +341,14 @@ spec:
                 secretKeyRef:
                   name: lenny-datastore-conn
                   key: redis-url
+            {{- end }}
+            {{- /* §12.4 lines 260-264 — Redis Cluster seed nodes (plain
+                   env; addresses are not secret). lenny-ops reaches the
+                   §25.5 ops:events:stream through the cluster client on
+                   this topology. */}}
+            {{- if $hasRedisCluster }}
+            - name: LENNY_REDIS_CLUSTER_ADDRS
+              value: {{ $redisCluster.addrs | quote }}
             {{- end }}
             {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
                    addresses and master name are not secret (plain env);

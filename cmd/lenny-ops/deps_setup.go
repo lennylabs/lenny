@@ -91,27 +91,13 @@ func (w *opsWiring) buildDependencies() {
 	}
 
 	// Redis: optional. The §25.5 event stream falls back to the gateway
-	// buffer when Redis is absent. Direct mode (--redis-url) and
-	// Sentinel mode (--redis-sentinel-addrs) are mutually exclusive.
-	if *w.f.redisURL != "" && *w.f.redisSentinelAddrs != "" {
-		log.Fatalf("lenny-ops: --redis-url and --redis-sentinel-addrs are mutually exclusive")
-	}
-	if *w.f.redisURL != "" || *w.f.redisSentinelAddrs != "" {
-		var rcfg redisconn.Config
-		switch {
-		case *w.f.redisURL != "":
-			rcfg = redisconn.Config{URL: *w.f.redisURL, Password: *w.f.redisPassword, AllowInsecure: *w.f.redisAllowInsecure}
-		default:
-			rcfg = redisconn.Config{
-				SentinelAddrs:    splitAndTrim(*w.f.redisSentinelAddrs),
-				MasterName:       *w.f.redisSentinelMaster,
-				Password:         *w.f.redisPassword,
-				SentinelPassword: *w.f.redisSentinelPassword,
-				TLS:              *w.f.redisTLS,
-				AllowInsecure:    *w.f.redisAllowInsecure,
-			}
-		}
-		client, err := redisconn.NewClient(rcfg)
+	// buffer when Redis is absent. The §17.9.3 topologies are mutually
+	// exclusive: direct URL (--redis-url), Sentinel
+	// (--redis-sentinel-addrs), and Cluster (--redis-cluster-addrs). All
+	// three reach the §25.5 ops:events:stream, so the read side is wired on
+	// whichever one the install configures. spec: §17.9.3, §12.4, §25.5.
+	if rcfg, ok := w.redisConfig(); ok {
+		client, err := redisconn.NewUniversalClient(rcfg)
 		if err != nil {
 			log.Fatalf("lenny-ops: redis client: %v", err)
 		}
@@ -222,4 +208,44 @@ func (w *opsWiring) buildDependencies() {
 		elector = le
 	}
 	w.elector = elector
+}
+
+// redisConfig resolves the §17.9.3 Redis topology lenny-ops is configured
+// with, and reports whether any is. The three topologies are mutually
+// exclusive: configuring more than one is a startup failure rather than a
+// silent precedence rule, since the losing topology's operator would otherwise
+// see lenny-ops reading a Redis it did not name. spec: §17.9.3 (Redis
+// topology), §12.4 (Redis Cluster).
+func (w *opsWiring) redisConfig() (redisconn.Config, bool) {
+	url, sentinels, cluster := *w.f.redisURL, *w.f.redisSentinelAddrs, *w.f.redisClusterAddrs
+	set := 0
+	for _, v := range []string{url, sentinels, cluster} {
+		if v != "" {
+			set++
+		}
+	}
+	if set > 1 {
+		log.Fatalf("lenny-ops: --redis-url, --redis-sentinel-addrs, and --redis-cluster-addrs are mutually exclusive")
+	}
+	switch {
+	case url != "":
+		return redisconn.Config{URL: url, Password: *w.f.redisPassword, AllowInsecure: *w.f.redisAllowInsecure}, true
+	case cluster != "":
+		return redisconn.Config{
+			ClusterAddrs:  splitAndTrim(cluster),
+			Password:      *w.f.redisPassword,
+			TLS:           *w.f.redisTLS,
+			AllowInsecure: *w.f.redisAllowInsecure,
+		}, true
+	case sentinels != "":
+		return redisconn.Config{
+			SentinelAddrs:    splitAndTrim(sentinels),
+			MasterName:       *w.f.redisSentinelMaster,
+			Password:         *w.f.redisPassword,
+			SentinelPassword: *w.f.redisSentinelPassword,
+			TLS:              *w.f.redisTLS,
+			AllowInsecure:    *w.f.redisAllowInsecure,
+		}, true
+	}
+	return redisconn.Config{}, false
 }
