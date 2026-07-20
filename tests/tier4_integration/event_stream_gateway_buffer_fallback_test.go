@@ -359,3 +359,86 @@ func waitFor(t *testing.T, sink *fallbackSink, want string, timeout time.Duratio
 	}
 	t.Fatalf("timed out waiting for %s (%q) on the SSE stream:\n%s", what, want, sink.String())
 }
+
+// spec: 25.5 (gapDetected and oldestAvailableCursor when the cursor aged out
+// of every replica's ring) — the eviction boundary on the gateway-buffer
+// fall-back is the oldest event the gateway replicas still retain, taken
+// before this replica's local ring is unioned into the served window. The
+// local ring holds only lenny-ops-originated events and, on a low-emission
+// replica, outlives the gateway rings, so a boundary measured against the
+// union sits before every genuinely aged-out cursor and the gap is never
+// reported. The pre-fix fan-out poll path measured against the union and
+// served an aged-out cursor with gapDetected false, silently skipping the
+// evicted gateway events; this fails against that code.
+//
+// diagnosis: a failure means an aged-out cursor is served as though continuity
+// held whenever this replica's local ring retains an event older than the
+// gateway window — the caller silently misses the gateway events evicted from
+// every replica's ring, or resyncs from the wrong oldestAvailableCursor.
+func TestOpsEventStreamGatewayBufferGapMeasuredAgainstFanOutNotLocalRing(t *testing.T) {
+	replica := bufferReplica(t, []gwevents.BufferedEvent{
+		bufEventAt("gw-a:5000:1", "dev.lenny.alert_fired", 5000),
+		bufEventAt("gw-a:6000:1", "dev.lenny.alert_fired", 6000),
+	})
+	client, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("test-token"),
+		Discovery:         gateway.StaticDiscovery{replica.URL},
+		PerRequestTimeout: 5 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+
+	var gaps atomic.Int64
+	svc := opsstream.New(opsstream.Options{
+		SourceHealth: redisDownGatewayUp{},
+		ReplicaID:    "ops-1",
+		OnGap:        func() { gaps.Add(1) },
+	})
+	svc.SetGatewayBufferSource(client)
+
+	// A lenny-ops-originated event older than the whole gateway window, still
+	// retained in this replica's ring.
+	if _, err := svc.Publish(context.Background(), gwevents.OperationalEvent{
+		ID:          "ops-1:1000:1",
+		Type:        "dev.lenny.escalation_created",
+		SpecVersion: gwevents.CloudEventsSpecVersion,
+		Time:        time.Unix(1000, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("publish local-origin event: %v", err)
+	}
+
+	// A cursor newer than the local event but older than everything the
+	// gateway replicas still hold.
+	page := pollFallback(t, svc, mixedCursor("gw-a:2000:1"))
+	if !page.Pagination.GapDetected {
+		t.Fatalf("an aged-out cursor must report gapDetected even when the local ring retains an older event: %+v", page.Pagination)
+	}
+	if n := gaps.Load(); n != 1 {
+		t.Errorf("lenny_ops_events_stream_gaps_total fired %d times, want 1", n)
+	}
+	if page.Pagination.SuggestedAction != "resync" {
+		t.Errorf("gap suggestedAction = %q, want resync", page.Pagination.SuggestedAction)
+	}
+	oldest := decodeCursorKey(t, page.Pagination.OldestAvailableCursor)
+	if oldest != "gw-a:5000:1" {
+		t.Errorf("oldestAvailableCursor = %q, want the oldest retained gateway event gw-a:5000:1", oldest)
+	}
+}
+
+// decodeCursorKey unwraps the opaque §25.5 cursor to its source position so a
+// test can assert which retained event a gap response points the caller at.
+func decodeCursorKey(t *testing.T, cursor string) string {
+	t.Helper()
+	raw, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		t.Fatalf("decode cursor %q: %v", cursor, err)
+	}
+	_, key, found := strings.Cut(string(raw), ":")
+	if !found {
+		t.Fatalf("cursor %q carries no source position", string(raw))
+	}
+	return key
+}

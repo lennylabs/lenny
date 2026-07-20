@@ -191,6 +191,19 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 		}
 	}
 
+	// The eviction boundary is the oldest event the gateway replicas still
+	// retain, so it is taken from the fan-out result before the local ring is
+	// unioned in. The local ring holds only lenny-ops-originated events and,
+	// on a low-emission replica, retains events far older than anything the
+	// gateway replicas still hold; measuring against the union would put the
+	// boundary before every genuinely aged-out cursor and the gap would never
+	// be reported. spec: §25.5 (gapDetected and oldestAvailableCursor when the
+	// cursor aged out of every replica's ring).
+	oldestRetained := ""
+	if len(merged) > 0 {
+		oldestRetained = merged[0].Event.ID
+	}
+
 	merged = s.unionLocalOrigin(merged, filter)
 
 	matched := make([]gwevents.BufferedEvent, 0, len(merged))
@@ -207,12 +220,12 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 	// gap. A cursor ordering before the oldest entry the replicas still retain
 	// has aged out of the window, which the response reports with gapDetected
 	// and oldestAvailableCursor so the caller resyncs rather than silently
-	// re-consuming the window. The eviction test runs over the raw merged
-	// window rather than the filtered one, so narrowing ?eventType= or
-	// ?severity= is never misread as an eviction. spec: §25.5 (cross-source
+	// re-consuming the window. The eviction test runs over the unfiltered
+	// fan-out window, so neither narrowing ?eventType= / ?severity= nor the
+	// unioned local ring is misread as an eviction. spec: §25.5 (cross-source
 	// cursor translation with gapDetected and oldestAvailableCursor on a miss).
 	start := gatewayResumeIndex(matched, position)
-	gap := position != "" && len(merged) > 0 && eventKeyLess(position, merged[0].Event.ID)
+	gap, oldestCursorKey := gatewayEvictionGap(position, oldestRetained, merged)
 	if gap {
 		// Serve the whole retained window alongside the gap flag, matching the
 		// buffer- and Redis-served gap paths.
@@ -245,11 +258,39 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 	if gap {
 		page.Pagination.GapDetected = true
 		page.Pagination.GapReason = "cursor could not be resolved against the current gateway-buffer window: the referenced event aged out of every replica's ring"
-		page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindMixed, merged[0].Event.ID)
+		page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindMixed, oldestCursorKey)
 		page.Pagination.SuggestedAction = "resync"
 		s.observeGap()
 	}
 	return page
+}
+
+// gatewayEvictionGap reports whether the carried cursor position references an
+// event the gateway replicas no longer retain, and the eventKey to publish as
+// oldestAvailableCursor when it does.
+//
+// oldestRetained is the oldest event in the gateway fan-out window, taken
+// before this replica's local ring is unioned in: the ring holds only
+// lenny-ops-originated events and outlives the gateway rings on a
+// low-emission replica, so measuring the boundary against the union would sit
+// it before every aged-out cursor and never report the gap. served is the
+// union actually being paged, which supplies the recovery cursor when the
+// fan-out came back empty — no gateway history is retained at all then, so
+// every carried position references evicted gateway events. An empty served
+// window carries no events to be missing, so it is never a gap. spec: §25.5
+// (gapDetected and oldestAvailableCursor when the cursor aged out of every
+// replica's ring).
+func gatewayEvictionGap(position, oldestRetained string, served []gwevents.BufferedEvent) (gap bool, oldestKey string) {
+	if position == "" || len(served) == 0 {
+		return false, ""
+	}
+	if oldestRetained == "" {
+		return true, served[0].Event.ID
+	}
+	if eventKeyLess(position, oldestRetained) {
+		return true, oldestRetained
+	}
+	return false, ""
 }
 
 // gatewayResumeIndex returns the index in window of the first event ordering

@@ -582,3 +582,80 @@ func (r *syncRecorder) String() string {
 	defer r.mu.Unlock()
 	return r.buf.String()
 }
+
+// timedEvt builds an event carrying an explicit emission time so a test can
+// order the local ring against the gateway fan-out window deterministically.
+func timedEvt(id, typ string, at time.Time) gwevents.OperationalEvent {
+	e := evt(id, typ)
+	e.Time = at
+	return e
+}
+
+// spec: 25.5 (gapDetected and oldestAvailableCursor when the cursor aged out
+// of every replica's ring) — during the Redis-down gateway-buffer fall-back,
+// the eviction boundary is the oldest event the gateway replicas still
+// retain. This replica's local ring holds only lenny-ops-originated events
+// and outlives the gateway rings, so measuring the boundary against the
+// union of the two puts it before every genuinely aged-out cursor. The
+// pre-fix gatewayPollPage compared the cursor against the post-union window
+// and reported no gap here, silently skipping the evicted gateway events;
+// this test fails against that code.
+func TestGatewayPollPage_EvictionGapMeasuredAgainstFanOutWindow_spec_25_5(t *testing.T) {
+	base := ts()
+	gaps := 0
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	// An old lenny-ops-originated event, retained locally long after the
+	// gateway rings rolled past it.
+	if _, err := s.Publish(context.Background(), timedEvt("ops:1000:1", "dev.lenny.alert_fired", base)); err != nil {
+		t.Fatalf("publish local event: %v", err)
+	}
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		{ID: 1, Event: timedEvt("gw-a:5000:1", "dev.lenny.alert_fired", base.Add(5*time.Second))},
+		{ID: 2, Event: timedEvt("gw-a:6000:1", "dev.lenny.alert_fired", base.Add(6*time.Second))},
+	}}})
+
+	// A cursor newer than the local event but older than everything the
+	// gateway replicas still hold: the gateway events in between were evicted.
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:2000:1", gwevents.EventFilter{}, 10, false)
+
+	if !page.Pagination.GapDetected {
+		t.Fatalf("gapDetected = false for a cursor older than the whole gateway window; items = %v", eventKeys(page.Items))
+	}
+	if gaps != 1 {
+		t.Errorf("OnGap fired %d times, want 1", gaps)
+	}
+	if page.Pagination.SuggestedAction != "resync" {
+		t.Errorf("suggestedAction = %q, want resync", page.Pagination.SuggestedAction)
+	}
+	_, oldest, err := decodeCursor(page.Pagination.OldestAvailableCursor)
+	if err != nil {
+		t.Fatalf("decode oldestAvailableCursor: %v", err)
+	}
+	if oldest != "gw-a:5000:1" {
+		t.Errorf("oldestAvailableCursor = %q, want the oldest retained gateway event gw-a:5000:1", oldest)
+	}
+}
+
+// spec: 25.5 (cross-source cursor translation; continuation at the first
+// greater-or-equal eventKey) — a cursor inside the retained gateway window is
+// not an eviction, so the fall-back continues after it with no gap even
+// though this replica's local ring holds older events.
+func TestGatewayPollPage_CursorInsideFanOutWindowIsNotAGap_spec_25_5(t *testing.T) {
+	base := ts()
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts})
+	if _, err := s.Publish(context.Background(), timedEvt("ops:1000:1", "dev.lenny.alert_fired", base)); err != nil {
+		t.Fatalf("publish local event: %v", err)
+	}
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		{ID: 1, Event: timedEvt("gw-a:5000:1", "dev.lenny.alert_fired", base.Add(5*time.Second))},
+		{ID: 2, Event: timedEvt("gw-a:6000:1", "dev.lenny.alert_fired", base.Add(6*time.Second))},
+	}}})
+
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:5000:1", gwevents.EventFilter{}, 10, false)
+	if page.Pagination.GapDetected {
+		t.Fatalf("gapDetected = true for a cursor inside the retained gateway window")
+	}
+	if got := eventKeys(page.Items); len(got) != 1 || got[0] != "gw-a:6000:1" {
+		t.Errorf("items = %v, want the single continuation event gw-a:6000:1", got)
+	}
+}
