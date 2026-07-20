@@ -308,10 +308,19 @@ func (rs *redisSource) bound(ctx context.Context, rev bool) (streamID, eventKey 
 // the retained window resumes immediately before the first greater entry, so
 // the events after the cursor are delivered without replaying the window. That
 // case is the ordinary one on a source switch, where the last delivered event
-// originated somewhere that never XADDed it. Only a key ordering before the
-// oldest retained entry is a gap: the events between it and the window were
-// evicted before this caller read them. spec: §25.5 (cross-source cursor
-// translation, gapDetected on an evicted cursor).
+// originated somewhere that never XADDed it.
+//
+// The gap covers both ends of the retained window. A key ordering before the
+// oldest retained entry lost the events in between, which were evicted before
+// this caller read them. A key ordering after every retained entry is the
+// condition §25.5 names directly: no event in the new source has a
+// greater-or-equal eventKey, so the source cannot honour the position and the
+// caller is told to re-read platform state. Neither gap replays: the resume
+// position is still the continuation point, so the flag is a signal rather than
+// a redelivery. A stream retaining nothing is not a gap, since an empty source
+// carries no evidence either way. spec: §25.5 (cross-source cursor translation;
+// gapDetected on an evicted cursor; cursor transition safety when no event has
+// a greater-or-equal eventKey).
 func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (start string, gap bool, err error) {
 	if eventKey == "" {
 		return "", false, nil
@@ -342,9 +351,11 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 		}
 		prev = m.ID
 	}
-	// Every retained entry orders at or before the cursor: the caller is
-	// current with this window, so the next read starts after its newest entry.
-	return prev, false, nil
+	// Every retained entry orders before the cursor, so no entry has a
+	// greater-or-equal eventKey and the stream cannot honour the position. The
+	// next read still starts after the newest entry, so nothing is replayed.
+	// An empty stream (nothing decoded) reports no gap.
+	return prev, oldestKey != "", nil
 }
 
 // Tail streams live events to out via XREAD BLOCK 0 from lastStreamID,

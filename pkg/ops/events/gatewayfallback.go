@@ -225,10 +225,12 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 	// unioned local ring is misread as an eviction. spec: §25.5 (cross-source
 	// cursor translation with gapDetected and oldestAvailableCursor on a miss).
 	start := gatewayResumeIndex(matched, position)
-	gap, oldestCursorKey := gatewayEvictionGap(position, oldestRetained, merged)
-	if gap {
-		// Serve the whole retained window alongside the gap flag, matching the
-		// buffer- and Redis-served gap paths.
+	gap, replay, oldestCursorKey := gatewayCursorGap(position, oldestRetained, merged)
+	if replay {
+		// An evicted cursor is served the whole retained window alongside the
+		// gap flag, matching the buffer- and Redis-served gap paths. A cursor
+		// ahead of the window is not replayed: the caller already holds
+		// everything the window carries.
 		start = 0
 	}
 	window := matched[start:]
@@ -265,9 +267,17 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 	return page
 }
 
-// gatewayEvictionGap reports whether the carried cursor position references an
-// event the gateway replicas no longer retain, and the eventKey to publish as
-// oldestAvailableCursor when it does.
+// gatewayCursorGap reports whether the merged fan-out window can honour the
+// carried cursor position, whether the response replays that window, and the
+// eventKey to publish as oldestAvailableCursor.
+//
+// The window fails to honour a position at either end. Below it, the position
+// references events that aged out of every replica's ring, and the response
+// replays the window so the caller recovers what it can. Above it, no event in
+// the window has a greater-or-equal eventKey, which is the §25.5 cursor
+// transition-safety condition: the source cannot locate a continuation point,
+// so the gap is reported, but the window is not replayed because the caller
+// already holds everything in it.
 //
 // oldestRetained is the oldest event in the gateway fan-out window, taken
 // before this replica's local ring is unioned in: the ring holds only
@@ -279,18 +289,21 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 // every carried position references evicted gateway events. An empty served
 // window carries no events to be missing, so it is never a gap. spec: §25.5
 // (gapDetected and oldestAvailableCursor when the cursor aged out of every
-// replica's ring).
-func gatewayEvictionGap(position, oldestRetained string, served []gwevents.BufferedEvent) (gap bool, oldestKey string) {
+// replica's ring; a gap when no event has a greater-or-equal eventKey).
+func gatewayCursorGap(position, oldestRetained string, served []gwevents.BufferedEvent) (gap, replay bool, oldestKey string) {
 	if position == "" || len(served) == 0 {
-		return false, ""
+		return false, false, ""
 	}
 	if oldestRetained == "" {
-		return true, served[0].Event.ID
+		return true, true, served[0].Event.ID
 	}
 	if eventKeyLess(position, oldestRetained) {
-		return true, oldestRetained
+		return true, true, oldestRetained
 	}
-	return false, ""
+	if !windowHasAtOrAfter(served, position) {
+		return true, false, oldestRetained
+	}
+	return false, false, ""
 }
 
 // gatewayResumeIndex returns the index in window of the first event ordering

@@ -659,3 +659,70 @@ func TestGatewayPollPage_CursorInsideFanOutWindowIsNotAGap_spec_25_5(t *testing.
 		t.Errorf("items = %v, want the single continuation event gw-a:6000:1", got)
 	}
 }
+
+// spec: 25.5 (cursor transition safety: a gap is reported when no event in the
+// new source has a greater-or-equal eventKey) — a poll whose cursor orders
+// after every event the fan-out window retains cannot be located in that
+// window, so the page reports the gap with oldestAvailableCursor and serves
+// nothing. The window is not replayed: the caller already holds it. The pre-fix
+// predicate reported a gap only below the window, so this position resumed
+// silently; this fails against that code.
+func TestGatewayPollPage_GapWhenNoEventOrdersAtOrAfterCursor_spec_25_5(t *testing.T) {
+	gaps := 0
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		bufEvt("gw-a:1000:1", "dev.lenny.alert_fired"),
+		bufEvt("gw-a:1000:2", "dev.lenny.alert_fired"),
+	}}})
+
+	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:9000:1", gwevents.EventFilter{}, 10, false)
+	if !page.Pagination.GapDetected {
+		t.Fatal("a cursor ordering after the whole fan-out window must report gapDetected")
+	}
+	if gaps != 1 {
+		t.Errorf("gap counter = %d, want 1", gaps)
+	}
+	if page.Pagination.OldestAvailableCursor == "" {
+		t.Error("a reported gap must carry oldestAvailableCursor")
+	}
+	if got := eventKeys(page.Items); len(got) != 0 {
+		t.Errorf("items = %v, want none: a caller ahead of the window is not re-served it", got)
+	}
+}
+
+// spec: 25.5 (cursor transition safety) — a mid-connection switch into the
+// gateway-buffer fall-back whose carried resume position orders after every
+// event the replicas retain emits a :gap comment, since the new source has no
+// greater-or-equal eventKey to continue from. Nothing is re-sent: the whole
+// window is already behind the resume position. The pre-fix seed treated that
+// position as honoured and emitted no gap; this fails against that code.
+func TestServeGateway_ResumeAheadOfWindowEmitsGap_spec_25_5(t *testing.T) {
+	gaps := 0
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	src := &oneShotGatewaySource{
+		pages: [][]gwevents.BufferedEvent{{
+			bufEvt("gw-a:1000:1", "dev.lenny.alert_fired"),
+			bufEvt("gw-a:1000:2", "dev.lenny.alert_fired"),
+		}},
+		called: make(chan struct{}),
+	}
+	s.SetGatewayBufferSource(src)
+
+	rec := httptest.NewRecorder()
+	sess := &streamSession{s: s, w: rec, flusher: rec, lastKey: "ops:9000:1"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-src.called; cancel() }()
+	sess.serveGateway(ctx, dsGateway)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, ":gap") {
+		t.Fatalf("a resume position ahead of the whole window must emit a :gap comment:\n%s", body)
+	}
+	if gaps != 1 {
+		t.Fatalf("gap counter observed %d times, want 1", gaps)
+	}
+	if strings.Contains(body, "gw-a:1000:1") || strings.Contains(body, "gw-a:1000:2") {
+		t.Fatalf("the window is behind the resume position and must not be delivered:\n%s", body)
+	}
+}

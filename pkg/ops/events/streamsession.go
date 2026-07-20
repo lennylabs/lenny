@@ -313,28 +313,30 @@ func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent, delivered map[st
 // makes the ordinary switch exactly-once: the last event delivered from Redis
 // is frequently a lenny-ops-originated one that no gateway replica ever
 // buffered, so requiring the key itself to be present would replay the whole
-// window on every switch. A :gap comment is emitted only when the whole window
-// orders after lastKey, which means the events between were evicted from every
-// replica's ring. spec: §25.5 (cross-switch no-drop, exactly-once across the
-// source switch).
+// window on every switch.
+//
+// A :gap comment is emitted when the window cannot honour the resume position
+// at either end. Every event newer than lastKey means the events between were
+// evicted from every replica's ring, and the whole window is delivered (nothing
+// pre-marked). No event at or after lastKey is the §25.5 transition condition:
+// the new source has no greater-or-equal eventKey, so the gap is reported while
+// the window stays marked delivered and nothing is re-sent. spec: §25.5
+// (cross-switch no-drop, exactly-once across the source switch; a :gap when no
+// event has a greater-or-equal eventKey).
 func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, delivered map[string]struct{}) {
 	if st.lastKey == "" {
 		return
 	}
 	seeded := false
 	for _, ev := range window {
-		if ev.Event.ID == st.lastKey || eventKeyLess(ev.Event.ID, st.lastKey) {
+		if eventKeyAtOrAfter(st.lastKey, ev.Event.ID) {
 			delivered[ev.Event.ID] = struct{}{}
 			seeded = true
 		}
 	}
-	if seeded {
+	if seeded && windowHasAtOrAfter(window, st.lastKey) {
 		return
 	}
-	// Every retained event is newer than the resume position: the events
-	// between were evicted. Emit a :gap and deliver the whole window (nothing
-	// pre-marked) so the consumer re-reads platform state before assuming
-	// continuity.
 	writeSSEGap(st.w, st.lastKey)
 	st.s.observeGap()
 }

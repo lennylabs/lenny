@@ -294,10 +294,14 @@ func TestRedisPollPage_ContinuesFromAbsentKeyInsideWindow_spec_25_5(t *testing.T
 	}
 }
 
-// spec: 25.5 (cross-source cursor translation) — a cursor ordering after every
-// retained entry means the caller is current with this source, so the page is
-// empty rather than a gap or a replay.
-func TestRedisPollPage_CurrentCallerServedEmpty_spec_25_5(t *testing.T) {
+// spec: 25.5 (cursor transition safety: a gap is reported when no event in the
+// new source has a greater-or-equal eventKey) — a cursor ordering after every
+// retained entry cannot be located in this source, so the page reports the gap
+// and serves nothing. The pre-fix translation reported a gap only for a cursor
+// ordering before the oldest retained entry, so a caller ahead of the whole
+// window resumed silently and neither the :gap signal nor the gap counter
+// fired; this fails against that code.
+func TestRedisPollPage_GapWhenNoEntryOrdersAtOrAfterCursor_spec_25_5(t *testing.T) {
 	f := &fakeStream{}
 	f.add("10-0", evt("gw:10:1", "dev.lenny.alert_fired"))
 	gaps := 0
@@ -309,11 +313,63 @@ func TestRedisPollPage_CurrentCallerServedEmpty_spec_25_5(t *testing.T) {
 	})
 
 	page := pollActiveSource(s, context.Background(), SourceKindBuffer, "ops:99:1", gwevents.EventFilter{}, 10, false)
-	if page.Pagination.GapDetected || gaps != 0 {
-		t.Error("a cursor newer than the whole retained window must not report a gap")
+	if !page.Pagination.GapDetected {
+		t.Error("a cursor ordering after every retained entry must report gapDetected")
+	}
+	if gaps != 1 {
+		t.Errorf("gap counter = %d, want 1", gaps)
 	}
 	if len(page.Items) != 0 {
-		t.Fatalf("served %v, want an empty page", eventKeys(page.Items))
+		t.Fatalf("served %v, want an empty page: the caller already holds the whole window", eventKeys(page.Items))
+	}
+}
+
+// spec: 25.5 (cross-source cursor translation; cursor transition safety) — the
+// translation resolves a carried eventKey to a resume position and reports a
+// gap at both ends of the retained window: below it the events in between were
+// evicted, above it no retained entry has a greater-or-equal eventKey. A cursor
+// inside the window, present or absent, is an ordinary continuation. The pre-fix
+// predicate reported a gap on the below-window case alone, so the
+// after-the-window row fails against it.
+func TestResumeByEventKey_GapAtBothEndsOfTheRetainedWindow_spec_25_5(t *testing.T) {
+	newStream := func() *fakeStream {
+		f := &fakeStream{}
+		f.add("10-0", evt("gw:10:1", "dev.lenny.alert_fired"))
+		f.add("12-0", evt("gw:12:1", "dev.lenny.alert_fired"))
+		return f
+	}
+	for _, tc := range []struct {
+		name      string
+		empty     bool
+		cursor    string
+		wantStart string
+		wantGap   bool
+	}{
+		{name: "before the window", cursor: "gw:5:1", wantStart: "", wantGap: true},
+		{name: "absent inside the window", cursor: "ops:11:1", wantStart: "10-0", wantGap: false},
+		{name: "exactly on a retained entry", cursor: "gw:10:1", wantStart: "10-0", wantGap: false},
+		{name: "on the newest retained entry", cursor: "gw:12:1", wantStart: "12-0", wantGap: false},
+		{name: "after the window", cursor: "ops:99:1", wantStart: "12-0", wantGap: true},
+		{name: "empty cursor", cursor: "", wantStart: "", wantGap: false},
+		{name: "empty stream", empty: true, cursor: "ops:99:1", wantStart: "", wantGap: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStream()
+			if tc.empty {
+				f = &fakeStream{}
+			}
+			rs := newRedisSource(f, "ops:events:stream")
+			start, gap, err := rs.resumeByEventKey(context.Background(), tc.cursor)
+			if err != nil {
+				t.Fatalf("resume: %v", err)
+			}
+			if start != tc.wantStart {
+				t.Errorf("resume start = %q, want %q", start, tc.wantStart)
+			}
+			if gap != tc.wantGap {
+				t.Errorf("gap = %v, want %v", gap, tc.wantGap)
+			}
+		})
 	}
 }
 

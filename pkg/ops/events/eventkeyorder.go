@@ -5,6 +5,8 @@ package events
 import (
 	"strconv"
 	"strings"
+
+	gwevents "github.com/lennylabs/lenny/pkg/events"
 )
 
 // eventKeyLess reports whether eventKey a orders strictly before eventKey b.
@@ -41,6 +43,29 @@ func eventKeyLess(a, b string) bool {
 	// Same instant and same nonce on two replicas: order by the full key so
 	// the comparison stays a total order.
 	return a < b
+}
+
+// eventKeyAtOrAfter reports whether eventKey key orders at or after cursor,
+// which is the §25.5 continuation-point predicate: the new source can honour a
+// carried position when it still retains an event at or after it. spec: §25.5
+// (cursor transition safety — a gap is reported when no event in the new source
+// has a greater-or-equal eventKey).
+func eventKeyAtOrAfter(key, cursor string) bool {
+	return key == cursor || eventKeyLess(cursor, key)
+}
+
+// windowHasAtOrAfter reports whether any event in window orders at or after
+// cursor. An empty window is not an answer: with no retained event at all the
+// new source says nothing about whether the carried position is honourable, so
+// the callers treat it as "no gap" rather than reporting one. spec: §25.5
+// (cursor transition safety).
+func windowHasAtOrAfter(window []gwevents.BufferedEvent, cursor string) bool {
+	for _, ev := range window {
+		if eventKeyAtOrAfter(ev.Event.ID, cursor) {
+			return true
+		}
+	}
+	return false
 }
 
 // parseEventKey splits the canonical {replicaID}:{emittedAt}:{nonce} eventKey
