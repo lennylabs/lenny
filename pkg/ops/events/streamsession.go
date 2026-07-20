@@ -385,6 +385,14 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 	// fetch.
 	st.announceDegradation(false)
 
+	// The resume position is captured once, at stint entry, rather than read
+	// live off st.lastKey when the seed finally runs. Between entry and the
+	// first successful fan-out the stint keeps delivering this replica's live
+	// local publishes, and each one advances st.lastKey; seeding against the
+	// advanced position would mark every gateway-originated event ordering
+	// before that local publish as already delivered and drop it silently.
+	// spec: §25.5 (cross-switch no-drop, exactly-once across the source switch).
+	entryKey := st.lastKey
 	resumed := false
 	for {
 		if ctx.Err() != nil {
@@ -409,8 +417,12 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 		// classification holds writes nothing further.
 		st.announceDegradation(err != nil)
 		window := st.s.unionLocalOrigin(merged, st.filter)
-		if !resumed && err == nil && len(window) > 0 {
-			st.seedGatewayResume(window)
+		// The seed runs on the first tick the fan-out answers, whether or not
+		// that window carried events: an empty window has nothing to pre-mark,
+		// and deferring the seed past it would leave a later window seeded
+		// against a position the local publishes have since advanced.
+		if !resumed && err == nil {
+			st.seedGatewayResume(window, entryKey)
 			resumed = true
 		}
 		for _, ev := range window {
@@ -474,11 +486,16 @@ func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent) bool {
 	return true
 }
 
-// seedGatewayResume seeds the delivered set from the carried resume position so
-// a switch into the gateway-buffer fall-back does not re-deliver events already
-// sent from the Redis stream or an earlier gateway stint. Every merged event
-// ordering at or before lastKey is marked delivered, so the poll loop emits
-// only the continuation. Marking by order rather than by an exact match is what
+// seedGatewayResume seeds the delivered set from resumeKey, the position the
+// connection held when it entered the gateway-buffer stint, so a switch into
+// the fall-back does not re-deliver events already sent from the Redis stream
+// or an earlier gateway stint. Every merged event ordering at or before
+// resumeKey is marked delivered, so the poll loop emits only the continuation.
+// resumeKey is the entry position rather than the session's live last delivered
+// key: local publishes delivered while the first fan-out ticks are still
+// failing advance the live key past gateway-originated events the window has
+// yet to carry, and seeding against it would drop them. Marking by order
+// rather than by an exact match is what
 // makes the ordinary switch exactly-once: the last event delivered from Redis
 // is frequently a lenny-ops-originated one that no gateway replica ever
 // buffered, so requiring the key itself to be present would replay the whole
@@ -492,21 +509,24 @@ func (st *streamSession) deliverOnce(ev gwevents.BufferedEvent) bool {
 // the window stays marked delivered and nothing is re-sent. spec: §25.5
 // (cross-switch no-drop, exactly-once across the source switch; a :gap when no
 // event has a greater-or-equal eventKey).
-func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent) {
-	if st.lastKey == "" {
+func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, resumeKey string) {
+	if resumeKey == "" || len(window) == 0 {
+		// An empty window carries nothing to pre-mark and nothing that could be
+		// missing, so it is never a gap; the same rule the polling path applies
+		// to an empty fan-out result. spec: §25.5.
 		return
 	}
 	seeded := false
 	for _, ev := range window {
-		if eventKeyAtOrAfter(st.lastKey, ev.Event.ID) {
+		if eventKeyAtOrAfter(resumeKey, ev.Event.ID) {
 			st.delivered.add(ev.Event.ID)
 			seeded = true
 		}
 	}
-	if seeded && windowHasAtOrAfter(window, st.lastKey) {
+	if seeded && windowHasAtOrAfter(window, resumeKey) {
 		return
 	}
-	writeSSEGap(st.w, st.lastKey)
+	writeSSEGap(st.w, resumeKey)
 	st.s.observeGap()
 }
 

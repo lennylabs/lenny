@@ -83,10 +83,20 @@ type sseReader struct {
 }
 
 func openSSEReader(svc *opsstream.Service) *sseReader {
+	return openSSEReaderWith(svc, nil)
+}
+
+// openSSEReaderWith opens one connection, applying decorate to the request
+// before it reaches the handler so a test can carry an SSE Last-Event-ID resume
+// position or other request state.
+func openSSEReaderWith(svc *opsstream.Service, decorate func(*http.Request)) *sseReader {
 	ctx, cancel := context.WithCancel(context.Background())
 	pr, pw := io.Pipe()
 	rw := &pipeSink{hdr: http.Header{}, w: pw}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil).WithContext(ctx)
+	if decorate != nil {
+		decorate(req)
+	}
 	r := &sseReader{cancel: cancel, done: make(chan struct{})}
 	go func() {
 		svc.HandleStream(rw, platformAdminReq(req))
