@@ -809,3 +809,78 @@ func TestRedisMintedCursorTranslatesAtOtherSources_spec_25_5(t *testing.T) {
 		t.Errorf("fan-out continuation = %v, want [ops:1000:3 gw:2000:1] with no replay of the window", got)
 	}
 }
+
+// spec: 25.5 (cross-source cursor translation, exactly-once across the source
+// switch) — the recovery flush re-emits the events a replica buffered during a
+// Redis outage with their original eventKeys, so they land at the stream tail
+// carrying keys older than entries already at earlier positions while the
+// gateway keeps XADDing fresh keys the instant Redis is reachable. The retained
+// window is then [pre-outage, post-recovery, flushed], and stream order no
+// longer agrees with eventKey order. Cursor translation must stay forward-only
+// over such a window: a caller resuming from a position it already read must
+// not be sent back before the out-of-order tail. The pre-fix scan stopped at
+// the first entry ordering after the cursor, so it resolved every cursor at or
+// after the flushed keys to the last pre-outage position and replayed the whole
+// window on the next read.
+func TestResumeByEventKey_DoesNotRewindOverAnOutOfOrderRecoveryTail_spec_25_5(t *testing.T) {
+	// Stream order: two pre-outage entries, two post-recovery gateway entries
+	// with fresh keys, then the flush re-emitting two outage-window lenny-ops
+	// events whose keys order before the gateway ones.
+	f := &fakeStream{}
+	f.add("10-0", evt("gw:10:1", "dev.lenny.alert_fired"))
+	f.add("11-0", evt("gw:11:1", "dev.lenny.alert_fired"))
+	f.add("30-0", evt("gw:30:1", "dev.lenny.alert_fired"))
+	f.add("31-0", evt("gw:31:1", "dev.lenny.alert_fired"))
+	f.add("40-0", evt("ops:20:1", "dev.lenny.escalation_created"))
+	f.add("41-0", evt("ops:21:1", "dev.lenny.escalation_created"))
+	rs := newRedisSource(f, "ops:events:stream")
+
+	for _, tc := range []struct {
+		name      string
+		cursor    string
+		wantStart string
+	}{
+		// The cursor a poller mints from the last raw entry of a page that ran
+		// to the end of the flushed tail. Resuming must stay at that position.
+		{name: "on the flushed tail entry", cursor: "ops:21:1", wantStart: "41-0"},
+		{name: "on the first flushed entry", cursor: "ops:20:1", wantStart: "40-0"},
+		// A cursor on a post-recovery gateway entry: the flushed entries order
+		// before it, so the position stays at the gateway entry rather than
+		// rewinding to the last pre-outage one.
+		{name: "on a post-recovery entry", cursor: "gw:31:1", wantStart: "31-0"},
+		// A foreign cursor with no exact match, between the flushed keys:
+		// resume after the last entry ordering at or before it.
+		{name: "absent between the flushed keys", cursor: "ops:20:5", wantStart: "40-0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			start, gap, err := rs.resumeByEventKey(context.Background(), tc.cursor)
+			if err != nil {
+				t.Fatalf("resume: %v", err)
+			}
+			if start != tc.wantStart {
+				t.Errorf("resume start = %q, want %q (the position rewound behind the out-of-order recovery tail)", start, tc.wantStart)
+			}
+			if gap {
+				t.Errorf("resume reported a gap for a cursor inside the retained window")
+			}
+		})
+	}
+}
+
+// spec: 25.5 (evicted-cursor gap) — the below-window gap is decided by eventKey
+// order rather than by stream position, so an out-of-order recovery tail does
+// not make an in-window cursor look evicted. The lowest retained key here sits
+// at the stream tail, which a position-ordered bound would miss.
+func TestResumeByEventKey_GapBoundIsTheLowestRetainedKey_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	f.add("30-0", evt("gw:30:1", "dev.lenny.alert_fired"))
+	f.add("40-0", evt("ops:20:1", "dev.lenny.escalation_created"))
+	rs := newRedisSource(f, "ops:events:stream")
+
+	if _, gap, err := rs.resumeByEventKey(context.Background(), "ops:25:1"); err != nil || gap {
+		t.Errorf("resume gap = %v (err %v) for a cursor above the lowest retained key; want no gap", gap, err)
+	}
+	if _, gap, err := rs.resumeByEventKey(context.Background(), "ops:5:1"); err != nil || !gap {
+		t.Errorf("resume gap = %v (err %v) for a cursor below every retained key; want a gap", gap, err)
+	}
+}

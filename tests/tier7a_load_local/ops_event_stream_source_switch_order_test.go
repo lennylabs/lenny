@@ -173,6 +173,13 @@ func (p *pipeSink) Flush()                      {}
 // three failures show up here as a per-connection sequence that is not the
 // emission order exactly once.
 //
+// The final leg adds the recovery flush, which re-emits the outage-window
+// events with their original eventKeys and so puts the stream tail out of
+// eventKey order. A connection that writes a frame for every entry the Redis
+// tail hands it re-delivers those events, and a translation that resolves the
+// resume position to the first entry ordering after the carried key rewinds
+// behind them; both show up as the same sequence mismatch.
+//
 // spec: 25.5 (independent per-connection read cursor, cross-switch no-drop
 // ordering, transparent Redis to gateway-buffer switch and back).
 // diagnosis: a failure means the §25.5 source switch is not exactly-once or not
@@ -268,14 +275,17 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 
 	// publishLocal models a lenny-ops-originated event: it lands in this
 	// replica's local ring only, since no gateway replica buffers it and, during
-	// a Redis outage, its XADD fails.
+	// a Redis outage, its XADD fails. The buffered events are kept so the
+	// recovery flush can re-emit exactly them, with their original eventKeys.
+	var buffered []gwevents.OperationalEvent
 	publishLocal := func(subject string) {
 		t.Helper()
-		buffered, err := svc.PublishBuffered(ctx, newEvent(subject))
+		ev, err := svc.PublishBuffered(ctx, newEvent(subject))
 		if err != nil {
 			t.Fatalf("publish %s: %v", subject, err)
 		}
-		order = append(order, buffered.Event.ID)
+		order = append(order, ev.Event.ID)
+		buffered = append(buffered, ev.Event)
 	}
 
 	// Two events on the Redis stream before any connection opens.
@@ -335,6 +345,21 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 	health.redis.Store(true)
 	emitToBoth("pool/redis-3")
 	awaitAll(t, readers, len(order), "the post-recovery Redis tail event")
+
+	// The best-effort recovery flush re-emits the events this replica buffered
+	// during the outage with their original eventKeys, so they arrive at the
+	// stream tail behind entries carrying newer keys. Every connection already
+	// delivered them from the local ring, so none may be written a second time:
+	// the flush contributes nothing to the expected order. The event emitted
+	// after it must still reach every connection, which is what distinguishes a
+	// correctly skipped re-emission from a stalled tail.
+	for _, ev := range buffered {
+		if err := emitter.Emit(ctx, ev); err != nil {
+			t.Fatalf("recovery flush re-emit %s: %v", ev.ID, err)
+		}
+	}
+	emitToBoth("pool/redis-4")
+	awaitAll(t, readers, len(order), "the Redis tail event after the recovery flush")
 
 	for i, r := range readers {
 		got := r.delivered()

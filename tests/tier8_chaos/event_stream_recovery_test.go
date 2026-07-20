@@ -528,3 +528,138 @@ func TestOpsEventStreamRecoveryFlushSurvivesRetainedKeyScanFailure(t *testing.T)
 		t.Fatalf("outage-window events did not reach the recovered stream exactly once: %v", counts)
 	}
 }
+
+// pollOnce runs one §25.5 poll against svc and returns the decoded page.
+func pollOnce(t *testing.T, svc *opsstream.Service, cursor string) opsstream.EventPage {
+	t.Helper()
+	url := "/v1/admin/events"
+	if cursor != "" {
+		url += "?cursor=" + cursor
+	}
+	rec := httptest.NewRecorder()
+	svc.HandlePoll(rec, httptest.NewRequest(http.MethodGet, url, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poll %s = %d: %s", url, rec.Code, rec.Body.String())
+	}
+	var page opsstream.EventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode poll page: %v (%s)", err, rec.Body.String())
+	}
+	return page
+}
+
+// spec: 25.5 (cross-source cursor translation, best-effort recovery flush,
+// exactly-once across the transition) — the recovery flush re-emits the events
+// a replica buffered during a Redis outage with their original eventKeys, so
+// they land at the tail of ops:events:stream carrying keys older than the
+// gateway entries XADDed in the window between Redis becoming reachable and the
+// flush running. Stream order and eventKey order disagree over that window, and
+// a polling consumer must still advance: every event exactly once, with a cursor
+// that never moves backwards. The pre-fix translation stopped its scan at the
+// first entry ordering after the carried cursor, so a cursor minted from the
+// flushed tail resolved back to the last pre-outage position and every
+// subsequent poll replayed the whole retained window instead of advancing.
+//
+// diagnosis: a failure means a §25.5 polling consumer does not make forward
+// progress across a Redis recovery — its cursor rewinds behind the flushed tail
+// and it is re-delivered operational events it already consumed on every poll
+// until the flushed entries are trimmed off the stream, or it never receives the
+// flushed outage-window events at all.
+func TestOpsEventStreamPollingAdvancesAcrossAnOutOfOrderRecoveryFlush(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx := context.Background()
+
+	const streamKey = "ops:events:stream:flushorder"
+
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
+		RedisStreamKey: streamKey,
+		SourceHealth:   health,
+		ReplicaID:      "ops-1",
+	})
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
+		Client:    rd.Client,
+		Buffer:    eventbuffer.NewEventBuffer(0),
+		StreamKey: streamKey,
+		MaxLen:    1000,
+		ReplicaID: "gw-1",
+	})
+	xadd := func(key string, at int64) {
+		t.Helper()
+		if err := emitter.Emit(ctx, gwevents.OperationalEvent{
+			ID:          key,
+			Type:        "dev.lenny.alert_fired",
+			SpecVersion: gwevents.CloudEventsSpecVersion,
+			Time:        time.Unix(at, 0).UTC(),
+		}); err != nil {
+			t.Fatalf("emit %s: %v", key, err)
+		}
+	}
+	svc.SetRedisReEmitter(emitter.Emit)
+
+	// Before the outage the stream holds two gateway events and the consumer
+	// has polled to the head.
+	xadd("gw-1:1000:1", 1000)
+	xadd("gw-1:1001:1", 1001)
+	first := pollOnce(t, svc, "")
+	if len(first.Items) != 2 {
+		t.Fatalf("pre-outage poll returned %d items; want the 2 seeded events", len(first.Items))
+	}
+	cursor := first.Pagination.Cursor
+
+	// The outage: this replica keeps emitting its own events into the local
+	// ring while their XADD fails.
+	health.redis.Store(false)
+	svc.MarkRedisOutage()
+	for _, key := range []string{"ops-1:2000:1", "ops-1:2001:1"} {
+		if _, err := svc.Publish(ctx, gwevents.OperationalEvent{
+			ID:          key,
+			Type:        "dev.lenny.escalation_created",
+			SpecVersion: gwevents.CloudEventsSpecVersion,
+			Time:        time.Unix(2000, 0).UTC(),
+		}); err != nil {
+			t.Fatalf("buffer outage event %s: %v", key, err)
+		}
+	}
+
+	// Redis comes back. The gateway resumes XADDing immediately, while the
+	// replica's flush waits on its next source-health probe, so these fresh
+	// keys land ahead of the older flushed ones.
+	health.redis.Store(true)
+	xadd("gw-1:3000:1", 3000)
+	xadd("gw-1:3001:1", 3001)
+
+	// The flush now appends the outage-window events with their original keys,
+	// so the retained window is no longer in eventKey order.
+	if n, err := svc.FlushBufferedToRedis(ctx); err != nil || n != 2 {
+		t.Fatalf("recovery flush = (%d, %v); want the 2 outage-window events", n, err)
+	}
+
+	// The consumer resumes from where it left off and must see each event once.
+	seen := map[string]int{}
+	for poll := 0; poll < 4; poll++ {
+		page := pollOnce(t, svc, cursor)
+		for _, item := range page.Items {
+			seen[item.Event.ID]++
+		}
+		if page.Pagination.GapDetected {
+			t.Fatalf("poll %d reported a spurious gap for a cursor inside the retained window: %s", poll, page.Pagination.GapReason)
+		}
+		if page.Pagination.Cursor != "" {
+			cursor = page.Pagination.Cursor
+		}
+	}
+	for _, key := range []string{"gw-1:3000:1", "gw-1:3001:1", "ops-1:2000:1", "ops-1:2001:1"} {
+		if seen[key] != 1 {
+			t.Errorf("post-recovery poller received %s %d time(s); want exactly 1 (%v)", key, seen[key], seen)
+		}
+	}
+	for _, key := range []string{"gw-1:1000:1", "gw-1:1001:1"} {
+		if seen[key] != 0 {
+			t.Errorf("the poller was re-delivered the pre-outage event %s %d time(s); its cursor rewound behind the flushed tail", key, seen[key])
+		}
+	}
+}

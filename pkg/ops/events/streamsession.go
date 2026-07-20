@@ -162,10 +162,7 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 	lastStreamID := start
 	if entries, err := s.redis.ReadRange(setupCtx, start, 0); err == nil {
 		for _, e := range entries {
-			if st.filter.Matches(e.event.Event) && st.admits(e.event.Event) {
-				writeSSEFrame(st.w, e.event)
-				st.markDelivered(e.event.Event.ID)
-			}
+			st.deliverForward(e.event)
 			lastStreamID = e.streamID
 		}
 	}
@@ -199,14 +196,47 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 			if !open {
 				return
 			}
-			if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
-				continue
+			if st.deliverForward(ev) {
+				st.flusher.Flush()
 			}
-			writeSSEFrame(st.w, ev)
-			st.markDelivered(ev.Event.ID)
-			st.flusher.Flush()
 		}
 	}
+}
+
+// deliverForward writes ev as an SSE frame when the caller's filter and tenant
+// scope admit it and its eventKey orders strictly after the last position this
+// connection delivered, and reports whether a frame was written.
+//
+// The forward-only check is what makes the Redis-served path exactly-once
+// across a recovery. The best-effort recovery flush re-emits the events this
+// replica buffered during a Redis outage with their original eventKeys, so they
+// arrive at the stream tail carrying keys the connection already consumed
+// during the outage from the gateway-buffer fall-back or the local ring.
+// Writing them again would re-deliver events the connection has, which is the
+// same rewind markDelivered refuses on the resume position. spec: §25.5
+// (eventKey dedup across sources, exactly-once across the source switch).
+func (st *streamSession) deliverForward(ev gwevents.BufferedEvent) bool {
+	if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
+		return false
+	}
+	if !st.aheadOfDelivered(ev.Event.ID) {
+		return false
+	}
+	writeSSEFrame(st.w, ev)
+	st.markDelivered(ev.Event.ID)
+	return true
+}
+
+// aheadOfDelivered reports whether eventKey orders strictly after the last
+// position this connection delivered. A connection that has delivered nothing
+// admits everything, and an event carrying no eventKey is admitted because it
+// cannot be ordered against the resume position. spec: §25.5 (cross-switch
+// no-drop ordering).
+func (st *streamSession) aheadOfDelivered(eventKey string) bool {
+	if st.lastKey == "" || eventKey == "" {
+		return true
+	}
+	return eventKeyLess(st.lastKey, eventKey)
 }
 
 // serveGateway serves the SSE stream from the gateway-buffer fan-out during a

@@ -302,13 +302,23 @@ func (rs *redisSource) bound(ctx context.Context, rev bool) (streamID, eventKey 
 // cursor referenced a position the stream no longer retains.
 //
 // §25.5 locates the continuation point in the new source rather than requiring
-// the carried eventKey to be present verbatim: the scan stops at the first
-// retained entry whose eventKey orders at or after the cursor. An exact match
-// resumes immediately after that entry. A key that is absent but falls inside
-// the retained window resumes immediately before the first greater entry, so
-// the events after the cursor are delivered without replaying the window. That
-// case is the ordinary one on a source switch, where the last delivered event
-// originated somewhere that never XADDed it.
+// the carried eventKey to be present verbatim. An exact match resumes
+// immediately after that entry. A key that is absent but falls inside the
+// retained window resumes after the last retained entry whose eventKey orders
+// at or before the cursor, so the events after the cursor are delivered without
+// replaying the window. That case is the ordinary one on a source switch, where
+// the last delivered event originated somewhere that never XADDed it.
+//
+// The scan covers the whole retained window rather than stopping at the first
+// entry ordering after the cursor, because stream order and eventKey order do
+// not always agree. The best-effort recovery flush re-emits events buffered
+// during a Redis outage with their original eventKeys, so those entries land at
+// the stream tail carrying keys older than entries already sitting at earlier
+// positions. Stopping at the first greater key would resolve the position to
+// somewhere before that out-of-order tail, rewinding a caller that had already
+// read past it and re-delivering the whole retained window on every subsequent
+// read. Taking the last entry at or before the cursor keeps the position
+// forward-only across the flush.
 //
 // The gap covers both ends of the retained window. A key ordering before the
 // oldest retained entry lost the events in between, which were evicted before
@@ -329,33 +339,51 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 	if err != nil {
 		return "", false, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
 	}
-	prev := ""
-	oldestKey := ""
+	var (
+		// prev is the stream ID of the last entry whose eventKey orders at or
+		// before the cursor: the position to resume after.
+		prev string
+		// lowestKey is the smallest retained eventKey, which bounds the window
+		// below. It is tracked by order rather than by stream position, since
+		// the recovery flush can place an older key at the tail.
+		lowestKey string
+		// atOrAfter records that some retained entry orders after the cursor,
+		// so the stream can honour the position.
+		atOrAfter bool
+		decoded   bool
+	)
 	for _, m := range msgs {
 		ev, ok := decodeRedisEntry(m)
 		if !ok {
 			continue
 		}
 		key := ev.Event.ID
-		if oldestKey == "" {
-			oldestKey = key
+		decoded = true
+		if lowestKey == "" || eventKeyLess(key, lowestKey) {
+			lowestKey = key
 		}
 		if key == eventKey {
 			return m.ID, false, nil
 		}
 		if eventKeyLess(eventKey, key) {
-			// The first entry ordering after the cursor: resume immediately
-			// before it so it is the next event delivered. A cursor ordering
-			// before the oldest retained entry lost the events in between.
-			return prev, eventKeyLess(eventKey, oldestKey), nil
+			atOrAfter = true
+			continue
 		}
 		prev = m.ID
+	}
+	if !decoded {
+		// An empty stream carries no evidence either way, so it is not a gap.
+		return "", false, nil
+	}
+	if atOrAfter {
+		// A cursor ordering before every retained entry lost the events in
+		// between, which were evicted before this caller read them.
+		return prev, eventKeyLess(eventKey, lowestKey), nil
 	}
 	// Every retained entry orders before the cursor, so no entry has a
 	// greater-or-equal eventKey and the stream cannot honour the position. The
 	// next read still starts after the newest entry, so nothing is replayed.
-	// An empty stream (nothing decoded) reports no gap.
-	return prev, oldestKey != "", nil
+	return prev, true, nil
 }
 
 // Tail streams live events to out via XREAD BLOCK 0 from lastStreamID,
