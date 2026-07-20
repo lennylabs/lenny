@@ -496,7 +496,15 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	// 503 the agent retries. The SSE surface still serves
 	// lenny-ops-originated events from the local buffer. spec: §25.5 lines
 	// 2768-2780.
-	_, deg, dualDown := s.selectSource()
+	// The source is resolved exactly once per request. SourceHealth is a
+	// live signal refreshed by a background probe, so re-resolving it for the
+	// data path would let a refresh landing mid-request attach a
+	// gateway-buffer degradation envelope to a page served from the Redis
+	// stream (or no envelope at all to a page served from the fan-out). The
+	// resolved source is threaded into pollPage so the label and the data
+	// path come from one classification. spec: §25.5 (actualSource names the
+	// source the response was served from).
+	src, deg, dualDown := s.selectSource()
 	if dualDown {
 		writeStreamUnavailable(w)
 		return
@@ -518,7 +526,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parseLimit(q)
 
-	page := s.pollPage(r.Context(), kind, eventKey, filter, limit, desc)
+	page := s.pollPage(r.Context(), src, kind, eventKey, filter, limit, desc)
 	// §25.5 Redis-down gateway-buffer fall-back: serving from the gateway buffer
 	// during a Redis outage is reported as response metadata
 	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
@@ -528,14 +536,17 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(page)
 }
 
-// pollPage resolves the incoming opaque cursor to a buffer position by
-// eventKey, runs the buffer query, and wraps the result in the §25.2
-// canonical envelope with opaque source-kind cursors. When the cursor's
-// eventKey is no longer retained (evicted), the page reports gapDetected
-// and serves from the oldest retained event. spec: §25.5 lines
-// 2666-2699.
-func (s *Service) pollPage(ctx context.Context, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
-	src, _, _ := s.selectSource()
+// pollPage serves one poll page from src, the source its caller resolved for
+// this request. It resolves the incoming opaque cursor to a position in that
+// source, runs the query, and wraps the result in the §25.2 canonical envelope
+// with opaque source-kind cursors. When the cursor's position is no longer
+// retained (evicted), the page reports gapDetected and serves from the oldest
+// retained event.
+//
+// src is a parameter rather than a second selectSource call so the page and
+// the degradation envelope its caller attached describe the same source. spec:
+// §25.5 lines 2666-2699.
+func (s *Service) pollPage(ctx context.Context, src dataSource, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	var page EventPage
 	switch src {
 	case dsRedis:

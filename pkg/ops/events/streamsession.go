@@ -78,13 +78,17 @@ func (st *streamSession) run(ctx context.Context) {
 	for {
 		src, deg, _ := st.s.selectSource()
 		st.writeTransition(prev, src, deg)
+		// The source resolved here is carried into the serve loop so the
+		// stint's stay-put check tests the same classification that chose the
+		// data path, rather than re-deriving it from the live signal. spec:
+		// §25.5 (transparent source switch).
 		switch src {
 		case dsRedis:
-			st.serveRedis(ctx)
+			st.serveRedis(ctx, src)
 		case dsGateway:
-			st.serveGateway(ctx)
+			st.serveGateway(ctx, src)
 		default:
-			st.serveLocal(ctx)
+			st.serveLocal(ctx, src)
 		}
 		if ctx.Err() != nil {
 			return
@@ -123,7 +127,7 @@ func (st *streamSession) writeTransition(prev, src dataSource, deg *conventions.
 // source off Redis, at which point run re-selects. The last delivered eventKey
 // is tracked so a subsequent switch resumes with no drop. spec: §25.5 (XREAD
 // BLOCK live tail, XRANGE resume, cross-source cursor translation).
-func (st *streamSession) serveRedis(parent context.Context) {
+func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 	s := st.s
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -187,7 +191,7 @@ func (st *streamSession) serveRedis(parent context.Context) {
 		case <-parent.Done():
 			return
 		case <-ticker.C:
-			if s.sourceChanged(dsRedis) {
+			if s.sourceChanged(src) {
 				// The deferred cancel stops the Tail goroutine's bounded block.
 				return
 			}
@@ -221,7 +225,7 @@ func (st *streamSession) serveRedis(parent context.Context) {
 // the Redis-served window and the gateway-buffer window overlap; seeding from
 // lastKey is what keeps the switch exactly-once with no drop. spec: §25.5 (SSE
 // fall-back polls the fan-out every 2 seconds; cross-switch no-drop).
-func (st *streamSession) serveGateway(ctx context.Context) {
+func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 	// The gateway rings hold gateway-originated events only, so the local ring
 	// stays the source of this replica's own events for the duration of the
 	// outage: it is merged into every fan-out window and its live publishes are
@@ -238,7 +242,7 @@ func (st *streamSession) serveGateway(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if st.s.sourceChanged(dsGateway) {
+		if st.s.sourceChanged(src) {
 			return
 		}
 		if merged, err := st.s.fetchGatewayBuffer(ctx, st.filter); err == nil {
@@ -341,7 +345,7 @@ func (st *streamSession) seedGatewayResume(window []gwevents.BufferedEvent, deli
 // the carried resume position, then delivers live publishes until the request
 // is cancelled or SourceHealth moves the active source off the local buffer.
 // spec: §25.5 (line 2768-2780, dual-outage local-buffer serving).
-func (st *streamSession) serveLocal(ctx context.Context) {
+func (st *streamSession) serveLocal(ctx context.Context, src dataSource) {
 	sub := st.s.subscribe(st.filter, 64)
 	defer st.s.unsubscribe(sub)
 
@@ -375,7 +379,7 @@ func (st *streamSession) serveLocal(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if st.s.sourceChanged(dsLocalBuffer) {
+			if st.s.sourceChanged(src) {
 				return
 			}
 		case ev, open := <-sub.ch:

@@ -104,7 +104,7 @@ func TestServeGateway_ResumesFromLastKeyNoRedelivery_spec_25_5(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-src.called; cancel() }()
-	sess.serveGateway(ctx)
+	sess.serveGateway(ctx, dsGateway)
 
 	body := rec.Body.String()
 	if strings.Contains(body, "gw-a:1000:1") || strings.Contains(body, "gw-a:1000:2") {
@@ -141,7 +141,7 @@ func TestServeGateway_MissingResumeEmitsGap_spec_25_5(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { <-src.called; cancel() }()
-	sess.serveGateway(ctx)
+	sess.serveGateway(ctx, dsGateway)
 
 	body := rec.Body.String()
 	if !strings.Contains(body, ":gap") {
@@ -538,7 +538,7 @@ func TestServeGateway_DeliversLiveLocalOriginEvents_spec_25_5(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		sess.serveGateway(ctx)
+		sess.serveGateway(ctx, dsGateway)
 	}()
 
 	// After the first fan-out fill, publish a lenny-ops-originated event; it

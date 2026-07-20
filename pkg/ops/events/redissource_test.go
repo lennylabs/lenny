@@ -88,6 +88,14 @@ func (f *fakeStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStre
 	return cmd
 }
 
+// pollActiveSource serves one poll page from the source the live
+// SourceHealth signal selects, the way HandlePoll resolves it, so a poll-path
+// test exercises source selection as well as the page it produces.
+func pollActiveSource(s *Service, ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+	src, _, _ := s.selectSource()
+	return s.pollPage(ctx, src, cursorKind, position, filter, limit, desc)
+}
+
 func redisService(t *testing.T, f *fakeStream) *Service {
 	t.Helper()
 	return New(Options{
@@ -112,7 +120,7 @@ func TestRedisPollPage_FirstPageAndResume_spec_25_5(t *testing.T) {
 	f.add("3-0", evt("ops:3:1", "dev.lenny.alert_fired"))
 	s := redisService(t, f)
 
-	page := s.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 2, false)
+	page := pollActiveSource(s, context.Background(), "", "", gwevents.EventFilter{}, 2, false)
 	if page.Pagination.CursorKind != SourceKindRedis {
 		t.Fatalf("cursorKind = %q, want %q", page.Pagination.CursorKind, SourceKindRedis)
 	}
@@ -132,7 +140,7 @@ func TestRedisPollPage_FirstPageAndResume_spec_25_5(t *testing.T) {
 	if err != nil || kind != SourceKindRedis {
 		t.Fatalf("continuation cursor decode = (%q,%q,%v), want redis", kind, pos, err)
 	}
-	page2 := s.pollPage(context.Background(), kind, pos, gwevents.EventFilter{}, 2, false)
+	page2 := pollActiveSource(s, context.Background(), kind, pos, gwevents.EventFilter{}, 2, false)
 	if len(page2.Items) != 1 {
 		t.Fatalf("second page items = %d, want 1", len(page2.Items))
 	}
@@ -156,7 +164,7 @@ func TestRedisPollPage_TranslatesBufferCursorByEventKey_spec_25_5(t *testing.T) 
 	s := redisService(t, f)
 
 	// The caller resumes with a buffer-minted cursor pointing at ops:2:1.
-	page := s.pollPage(context.Background(), SourceKindBuffer, "ops:2:1", gwevents.EventFilter{}, 10, false)
+	page := pollActiveSource(s, context.Background(), SourceKindBuffer, "ops:2:1", gwevents.EventFilter{}, 10, false)
 	if page.Pagination.CursorKind != SourceKindMixed {
 		t.Errorf("cross-source page cursorKind = %q, want %q", page.Pagination.CursorKind, SourceKindMixed)
 	}
@@ -185,7 +193,7 @@ func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 	})
 
 	// A redis cursor at stream ID 5-0 predates the oldest retained 10-0.
-	page := s.pollPage(context.Background(), SourceKindRedis, "5-0", gwevents.EventFilter{}, 10, false)
+	page := pollActiveSource(s, context.Background(), SourceKindRedis, "5-0", gwevents.EventFilter{}, 10, false)
 	if !page.Pagination.GapDetected {
 		t.Fatal("an evicted redis cursor must report gapDetected")
 	}
@@ -199,7 +207,7 @@ func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 
 	// A buffer cursor whose eventKey orders before the oldest retained event
 	// also gaps: the events between it and the window were evicted.
-	page2 := s.pollPage(context.Background(), SourceKindBuffer, "ops:5:1", gwevents.EventFilter{}, 10, false)
+	page2 := pollActiveSource(s, context.Background(), SourceKindBuffer, "ops:5:1", gwevents.EventFilter{}, 10, false)
 	if !page2.Pagination.GapDetected {
 		t.Error("a buffer eventKey older than the retained window must report gapDetected")
 	}
@@ -230,7 +238,7 @@ func TestRedisPollPage_ContinuesFromAbsentKeyInsideWindow_spec_25_5(t *testing.T
 
 	// ops:11:1 is a lenny-ops event emitted while Redis was down, so it never
 	// reached the stream, but it orders between the two retained entries.
-	page := s.pollPage(context.Background(), SourceKindBuffer, "ops:11:1", gwevents.EventFilter{}, 10, false)
+	page := pollActiveSource(s, context.Background(), SourceKindBuffer, "ops:11:1", gwevents.EventFilter{}, 10, false)
 	if page.Pagination.GapDetected {
 		t.Error("a cursor ordering inside the retained window must not report a gap")
 	}
@@ -256,7 +264,7 @@ func TestRedisPollPage_CurrentCallerServedEmpty_spec_25_5(t *testing.T) {
 		Now:          ts,
 	})
 
-	page := s.pollPage(context.Background(), SourceKindBuffer, "ops:99:1", gwevents.EventFilter{}, 10, false)
+	page := pollActiveSource(s, context.Background(), SourceKindBuffer, "ops:99:1", gwevents.EventFilter{}, 10, false)
 	if page.Pagination.GapDetected || gaps != 0 {
 		t.Error("a cursor newer than the whole retained window must not report a gap")
 	}
@@ -301,7 +309,7 @@ func TestDecodeRedisEntry_SkipsMalformedEntries_spec_25_5(t *testing.T) {
 	f.add("4-0", evt("ops:4:1", "dev.lenny.alert_fired")) // valid
 	s := redisService(t, f)
 
-	page := s.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)
+	page := pollActiveSource(s, context.Background(), "", "", gwevents.EventFilter{}, 10, false)
 	if len(page.Items) != 1 || page.Items[0].Event.ID != "ops:4:1" {
 		t.Fatalf("malformed entries not skipped; served %v", eventKeys(page.Items))
 	}
@@ -317,14 +325,14 @@ func TestRedisPollPage_DescAndEmptyResumeEcho_spec_25_5(t *testing.T) {
 	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
 	s := redisService(t, f)
 
-	desc := s.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, true)
+	desc := pollActiveSource(s, context.Background(), "", "", gwevents.EventFilter{}, 10, true)
 	if len(desc.Items) != 2 || desc.Items[0].Event.ID != "ops:2:1" {
 		t.Fatalf("desc order = %v, want newest-first", eventKeys(desc.Items))
 	}
 
 	// Resume from the head: no new entries, so the page is empty and echoes
 	// the caller's cursor without a gap.
-	empty := s.pollPage(context.Background(), SourceKindRedis, "2-0", gwevents.EventFilter{}, 10, false)
+	empty := pollActiveSource(s, context.Background(), SourceKindRedis, "2-0", gwevents.EventFilter{}, 10, false)
 	if len(empty.Items) != 0 {
 		t.Fatalf("resume from head returned %d items, want 0", len(empty.Items))
 	}
@@ -380,7 +388,7 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 	f.add("1-0", events[0])
 	f.add("2-0", events[1])
 	f.add("2-5", events[2])
-	redisItems := decodeItems(t, itemsJSON(t, redisService(t, f).pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)))
+	redisItems := decodeItems(t, itemsJSON(t, pollActiveSource(redisService(t, f), context.Background(), "", "", gwevents.EventFilter{}, 10, false)))
 
 	// Buffer-served page: the same events through the local ring buffer, whose
 	// wrapper ids are the monotonic 1,2,3.
@@ -390,7 +398,7 @@ func TestPollEnvelope_ItemShapeStableAcrossSources_spec_25_5(t *testing.T) {
 			t.Fatalf("publish %s: %v", e.ID, err)
 		}
 	}
-	bufferItems := decodeItems(t, itemsJSON(t, buf.pollPage(context.Background(), "", "", gwevents.EventFilter{}, 10, false)))
+	bufferItems := decodeItems(t, itemsJSON(t, pollActiveSource(buf, context.Background(), "", "", gwevents.EventFilter{}, 10, false)))
 
 	if len(redisItems) != 3 || len(bufferItems) != 3 {
 		t.Fatalf("items: redis=%d buffer=%d, want 3 each", len(redisItems), len(bufferItems))
