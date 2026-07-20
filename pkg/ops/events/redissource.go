@@ -440,11 +440,19 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 	return prev, true, nil
 }
 
-// Tail streams live events to out via XREAD BLOCK 0 from lastStreamID,
-// closing out when ctx is cancelled or the tail's client cannot be dialled.
-// Each SSE connection runs its own Tail on its own client from its own
-// starting position, so the per-connection cursor is independent and no
-// consumer group is created.
+// Tail streams live events to out via XREAD BLOCK 0 from lastStreamID, closing
+// out when it returns. Each SSE connection runs its own Tail on its own client
+// from its own starting position, so the per-connection cursor is independent
+// and no consumer group is created.
+//
+// It returns nil when the tail ran and ended because ctx was cancelled, and a
+// non-nil error when the tail could never be established. The caller must be
+// able to tell the two apart: a closed channel alone would make an ordinary
+// disconnect and a client that cannot be checked out look identical, and the
+// SSE source loop would re-enter the same unstartable source immediately,
+// re-running the full retained-window scans on every iteration. spec: §25.5
+// (the SSE source loop switches on a SourceHealth transition or a closed
+// connection).
 //
 // The tail's client is closed when ctx is cancelled, which is what ends the
 // blocked read: go-redis does not interrupt a deadline-free XREAD on context
@@ -453,12 +461,12 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 // error is retried after a short pause rather than closing the channel,
 // matching the §25.5 live-tail resilience the SSE surface depends on. spec:
 // §25.5 (XREAD BLOCK 0 per-connection live tail).
-func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<- gwevents.BufferedEvent) {
+func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<- gwevents.BufferedEvent) error {
 	defer close(out)
 
 	client, err := rs.client.TailClient()
 	if err != nil {
-		return
+		return fmt.Errorf("check out tail client for %s: %w", rs.stream, err)
 	}
 	defer func() { _ = client.Close() }()
 
@@ -482,7 +490,7 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 	}
 	for {
 		if ctx.Err() != nil {
-			return
+			return nil
 		}
 		res, err := client.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{rs.stream, lastID},
@@ -491,13 +499,13 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 		}).Result()
 		if err != nil {
 			if ctx.Err() != nil {
-				return
+				return nil
 			}
 			// A transient Redis error: pause briefly and retry so a blip
 			// does not tear down the live connection.
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(50 * time.Millisecond):
 			}
 			continue
@@ -512,7 +520,7 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 				select {
 				case out <- ev:
 				case <-ctx.Done():
-					return
+					return nil
 				}
 			}
 		}

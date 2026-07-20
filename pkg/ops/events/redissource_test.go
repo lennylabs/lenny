@@ -622,7 +622,7 @@ func TestRedisTail_IssuesBlockZeroAndClosesItsClientOnCancel_spec_25_5(t *testin
 		}
 		close(done)
 	}()
-	go rs.Tail(ctx, "", out)
+	go func() { _ = rs.Tail(ctx, "", out) }()
 
 	select {
 	case got := <-c.blocks:

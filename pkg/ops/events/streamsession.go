@@ -9,6 +9,7 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 
 // gatewayPollInterval is the §25.5 SSE fall-back poll cadence: while serving
@@ -55,6 +56,20 @@ type streamSession struct {
 	// whose context carried no resolved scope holds the zero value, which
 	// admits nothing. spec: 25.5 (read-endpoint tenant filter).
 	scope readerScope
+
+	// tailFailures counts the consecutive Redis stints on this connection whose
+	// live tail could not be started. It bounds the retry and, once it reaches
+	// maxRedisTailAttempts, moves the connection onto the fall-back rather than
+	// re-entering a source it cannot tail. spec: §25.5 (transparent source
+	// switch).
+	tailFailures int
+
+	// forcedDeg is the degradation envelope a connection reclassified off an
+	// untailable Redis source is served under. SourceHealth still reports Redis
+	// reachable in that state, so the envelope cannot be derived from the
+	// matrix alone. It is nil whenever the session is on the source the matrix
+	// selected. spec: §25.5 lines 2768-2780.
+	forcedDeg *conventions.Degradation
 }
 
 // admits reports whether the SSE caller may observe ev under the §25.5
@@ -82,6 +97,17 @@ func (st *streamSession) run(ctx context.Context) {
 	prev := dataSource(-1)
 	for {
 		src, _, _ := st.s.selectSource()
+		if src == dsRedis && st.tailFailures >= maxRedisTailAttempts {
+			// SourceHealth classifies Redis reachable, but this connection
+			// cannot establish a live tail against it. Re-entering the Redis
+			// stint would re-run the full retained-window resume scan, head
+			// read, and backlog read for as long as the client stays
+			// connected, delivering nothing. Serve the fall-back instead, with
+			// the same envelope a poll whose Redis read failed carries.
+			src, st.forcedDeg = st.s.tailFallbackSource()
+		} else if src != dsRedis {
+			st.forcedDeg = nil
+		}
 		st.announceRecovery(prev, src)
 		// The source resolved here is carried into the serve loop so the
 		// stint's stay-put check tests the same classification that chose the
@@ -89,7 +115,15 @@ func (st *streamSession) run(ctx context.Context) {
 		// §25.5 (transparent source switch).
 		switch src {
 		case dsRedis:
-			st.serveRedis(ctx, src)
+			if st.serveRedis(ctx, src) {
+				st.tailFailures++
+				if !sleepCtx(ctx, redisTailBackoff(st.tailFailures)) {
+					return
+				}
+			} else {
+				st.tailFailures = 0
+				st.forcedDeg = nil
+			}
 		case dsGateway:
 			st.serveGateway(ctx, src)
 		default:
@@ -100,6 +134,67 @@ func (st *streamSession) run(ctx context.Context) {
 		}
 		prev = src
 	}
+}
+
+// maxRedisTailAttempts bounds how many times one SSE connection re-enters the
+// Redis source after failing to start its live tail before it gives up on that
+// source and serves from the fall-back. A tail that cannot be checked out is
+// usually a client-level condition (an unsupported client type, an exhausted
+// pool) that another attempt will not clear, so the bound is small; the
+// connection still returns to Redis whenever a later SourceHealth transition
+// moves it off and back. spec: §25.5 (transparent source switch).
+const maxRedisTailAttempts = 3
+
+// redisTailBackoffBase is the first pause after a failed tail start. Each
+// further consecutive failure doubles it, capped at redisTailBackoffMax, so a
+// connection whose tail cannot start neither spins nor stalls.
+const (
+	redisTailBackoffBase = 250 * time.Millisecond
+	redisTailBackoffMax  = 2 * time.Second
+)
+
+// redisTailBackoff returns the pause before the attempt-th consecutive retry of
+// a Redis stint whose live tail could not be started.
+func redisTailBackoff(attempt int) time.Duration {
+	d := redisTailBackoffBase
+	for i := 1; i < attempt && d < redisTailBackoffMax; i++ {
+		d *= 2
+	}
+	if d > redisTailBackoffMax {
+		d = redisTailBackoffMax
+	}
+	return d
+}
+
+// sleepCtx waits out d and reports whether it elapsed rather than the context
+// being cancelled.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// tailFallbackSource resolves the source an SSE connection is moved to when the
+// Redis stream classifies healthy but its live tail cannot be established, and
+// the degradation envelope that connection is being served under.
+//
+// It mirrors pollRedisUnreachable: the gateway-buffer fan-out serves under the
+// case-1 envelope, and with no fan-out source wired this replica's own ring
+// serves under the case-4 envelope, since gateway-originated events then have
+// nowhere to come from. spec: §25.5 lines 2768-2780 (actualSource names the
+// source the response was served from).
+func (s *Service) tailFallbackSource() (dataSource, *conventions.Degradation) {
+	if s.gateway != nil {
+		_, deg, _ := gatewayFallbackState()
+		return dsGateway, deg
+	}
+	_, deg, _ := dualOutageState()
+	return dsLocalBuffer, deg
 }
 
 // announceRecovery writes :degradation {"level":"healthy"} when the session
@@ -134,6 +229,12 @@ func (st *streamSession) announceRecovery(prev, src dataSource) {
 // :degradation comment line).
 func (st *streamSession) writeDegradationTick(fanOutDown bool) {
 	_, deg, _ := st.s.selectSource()
+	if st.forcedDeg != nil {
+		// The session was reclassified off an untailable Redis source, which
+		// the health matrix still reports reachable, so the envelope it is
+		// being served under comes from the reclassification.
+		deg = st.forcedDeg
+	}
 	if fanOutDown {
 		_, deg, _ = dualOutageState()
 	}
@@ -146,9 +247,13 @@ func (st *streamSession) writeDegradationTick(fanOutDown bool) {
 // via a bounded XREAD BLOCK on a per-connection cursor with no consumer group.
 // It returns when the request is cancelled or SourceHealth moves the active
 // source off Redis, at which point run re-selects. The last delivered eventKey
-// is tracked so a subsequent switch resumes with no drop. spec: §25.5 (XREAD
-// BLOCK live tail, XRANGE resume, cross-source cursor translation).
-func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
+// is tracked so a subsequent switch resumes with no drop.
+//
+// It reports whether the stint ended because the live tail could not be
+// started, which the caller treats as a source failure rather than as an
+// ordinary end of stint. spec: §25.5 (XREAD BLOCK live tail, XRANGE resume,
+// cross-source cursor translation).
+func (st *streamSession) serveRedis(parent context.Context, src dataSource) (tailUnavailable bool) {
 	s := st.s
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
@@ -200,22 +305,29 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) {
 	// from its own position, so two subscribers each observe every matching
 	// event with no consumer-group competition.
 	live := make(chan gwevents.BufferedEvent, 64)
-	go s.redis.Tail(ctx, lastStreamID, live)
+	// tailErr carries the tail's outcome so a tail that never started is
+	// distinguishable from one that ended with the connection. Buffered so the
+	// goroutine never blocks on a caller that has already returned.
+	tailErr := make(chan error, 1)
+	go func() { tailErr <- s.redis.Tail(ctx, lastStreamID, live) }()
 
 	ticker := time.NewTicker(sourceCheckInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-parent.Done():
-			return
+			return false
 		case <-ticker.C:
 			if s.sourceChanged(src) {
 				// The deferred cancel stops the Tail goroutine's bounded block.
-				return
+				return false
 			}
 		case ev, open := <-live:
 			if !open {
-				return
+				// The tail closed its channel. Its outcome decides whether the
+				// stint simply ended or the source could not be tailed at all;
+				// Tail always reports one before returning.
+				return <-tailErr != nil
 			}
 			if st.deliverOnce(ev) {
 				st.flusher.Flush()
