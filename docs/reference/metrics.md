@@ -143,6 +143,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_pool_config_reconciliation_lag_seconds` | Gauge | `pool` | Time since last CRD reconciliation from Postgres. | `PoolConfigDrift` alert. |
 | `lenny_pool_draining_sessions_total` | Gauge | `pool` | In-flight sessions during pool drain. | Drain progress monitoring. |
 | `lenny_pool_security_degraded` | Gauge | `pool` | `1` while the pool renders nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or while a nonce-only pod remains after the operator reverted the runtime field; `0` otherwise. Published by the WarmPoolController in the same reconcile step that writes the `SecurityDegradedMode=True` condition on the `SandboxTemplate`. See [Adapter-Agent Boundary](../operator-guide/security.md#adapter-agent-boundary). | `PoolSecurityDegraded` alert. |
+| `lenny_crd_ssa_conflict_total` | Counter | `crd`, `controller` | Increments once per five-consecutive-409 SSA stuck episode on a CRD field a controller does not own; per-resource identity is on the `crd_ssa_conflict_stuck` structured log. | `CRDSSAConflictStuck` alert. |
 
 ### Pod claim metrics
 
