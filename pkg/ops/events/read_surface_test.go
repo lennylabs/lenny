@@ -36,12 +36,12 @@ func TestCursor_RoundTrip_spec_25_5_2666(t *testing.T) {
 		if strings.Contains(enc, ":") {
 			t.Errorf("cursor must be opaque (base64), got %q", enc)
 		}
-		gotKind, gotKey, err := decodeCursor(enc)
+		got, err := decodeCursor(enc)
 		if err != nil {
 			t.Fatalf("decodeCursor(%q): %v", enc, err)
 		}
-		if gotKind != c.kind || gotKey != c.key {
-			t.Errorf("round-trip = (%q,%q), want (%q,%q)", gotKind, gotKey, c.kind, c.key)
+		if got.Kind != c.kind || got.EventKey != c.key {
+			t.Errorf("round-trip = (%q,%q), want (%q,%q)", got.Kind, got.EventKey, c.kind, c.key)
 		}
 	}
 }
@@ -50,15 +50,15 @@ func TestCursor_RoundTrip_spec_25_5_2666(t *testing.T) {
 // a malformed cursor is rejected so HandlePoll returns
 // INVALID_EVENT_FILTER.
 func TestCursor_EmptyAndMalformed_spec_25_5_2795(t *testing.T) {
-	if k, p, err := decodeCursor(""); err != nil || k != "" || p != "" {
-		t.Errorf("empty cursor: (%q,%q,%v)", k, p, err)
+	if c, err := decodeCursor(""); err != nil || c != (eventCursor{}) {
+		t.Errorf("empty cursor: (%+v,%v)", c, err)
 	}
-	if _, _, err := decodeCursor("!!!not-base64!!!"); err == nil {
+	if _, err := decodeCursor("!!!not-base64!!!"); err == nil {
 		t.Error("malformed base64 cursor should error")
 	}
 	// base64 of a string with no source-kind prefix is rejected.
 	noPrefix := base64.RawURLEncoding.EncodeToString([]byte("no-colon-here"))
-	if _, _, err := decodeCursor(noPrefix); err == nil {
+	if _, err := decodeCursor(noPrefix); err == nil {
 		t.Error("cursor without source-kind prefix should error")
 	}
 }

@@ -150,8 +150,14 @@ func (c *parkedTailClient) Close() error {
 // carries a platform-admin read scope, the grant a caller needs to observe the
 // whole window through the §25.5 read-endpoint tenant filter.
 func pollActiveSource(s *Service, ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+	return pollActiveSourceCursor(s, ctx, eventCursor{Kind: cursorKind, EventKey: position}, filter, limit, desc)
+}
+
+// pollActiveSourceCursor is pollActiveSource driven by a fully decoded cursor,
+// so a test can carry the Redis stream ID a redis-kind cursor holds.
+func pollActiveSourceCursor(s *Service, ctx context.Context, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	src, deg, _ := s.selectSource()
-	page, _, _ := s.pollPage(WithReaderScope(ctx, "alice@acme.com", "", true), src, deg, cursorKind, position, filter, limit, desc)
+	page, _, _ := s.pollPage(WithReaderScope(ctx, "alice@acme.com", "", true), src, deg, cur, filter, limit, desc)
 	return page
 }
 
@@ -195,11 +201,11 @@ func TestRedisPollPage_FirstPageAndResume_spec_25_5(t *testing.T) {
 
 	// Round-trip the continuation cursor: it must be a redis cursor and the
 	// next page must return the remaining entry with no overlap.
-	kind, pos, err := decodeCursor(page.Pagination.Cursor)
-	if err != nil || kind != SourceKindRedis {
-		t.Fatalf("continuation cursor decode = (%q,%q,%v), want redis", kind, pos, err)
+	cur, err := decodeCursor(page.Pagination.Cursor)
+	if err != nil || cur.Kind != SourceKindRedis {
+		t.Fatalf("continuation cursor decode = (%+v,%v), want redis", cur, err)
 	}
-	page2 := pollActiveSource(s, context.Background(), kind, pos, gwevents.EventFilter{}, 2, false)
+	page2 := pollActiveSourceCursor(s, context.Background(), cur, gwevents.EventFilter{}, 2, false)
 	if len(page2.Items) != 1 {
 		t.Fatalf("second page items = %d, want 1", len(page2.Items))
 	}
@@ -259,9 +265,9 @@ func TestRedisPollPage_GapOnEvictedCursor_spec_25_5(t *testing.T) {
 	if page.Pagination.OldestAvailableCursor == "" {
 		t.Error("a gap must carry oldestAvailableCursor")
 	}
-	k, pos, _ := decodeCursor(page.Pagination.OldestAvailableCursor)
-	if k != SourceKindRedis || pos != "ops:10:1" {
-		t.Errorf("oldestAvailableCursor = (%q,%q), want (redis,ops:10:1)", k, pos)
+	oldest, _ := decodeCursor(page.Pagination.OldestAvailableCursor)
+	if oldest.Kind != SourceKindRedis || oldest.EventKey != "ops:10:1" {
+		t.Errorf("oldestAvailableCursor = (%q,%q), want (redis,ops:10:1)", oldest.Kind, oldest.EventKey)
 	}
 
 	// A buffer cursor whose eventKey orders before the oldest retained event
@@ -455,9 +461,9 @@ func TestRedisPollPage_DescAndEmptyResumeEcho_spec_25_5(t *testing.T) {
 	if empty.Pagination.GapDetected {
 		t.Error("resume from the live head must not report a gap")
 	}
-	k, pos, _ := decodeCursor(empty.Pagination.Cursor)
-	if k != SourceKindRedis || pos != headKey {
-		t.Errorf("empty poll cursor = (%q,%q), want the echoed (redis,%s)", k, pos, headKey)
+	echoed, _ := decodeCursor(empty.Pagination.Cursor)
+	if echoed.Kind != SourceKindRedis || echoed.EventKey != headKey {
+		t.Errorf("empty poll cursor = (%q,%q), want the echoed (redis,%s)", echoed.Kind, echoed.EventKey, headKey)
 	}
 }
 
@@ -765,10 +771,11 @@ func TestRedisMintedCursorTranslatesAtOtherSources_spec_25_5(t *testing.T) {
 	}
 
 	page := pollActiveSource(s, context.Background(), "", "", gwevents.EventFilter{}, 10, false)
-	kind, position, err := decodeCursor(page.Pagination.Cursor)
+	minted, err := decodeCursor(page.Pagination.Cursor)
 	if err != nil {
 		t.Fatalf("decode the Redis-minted cursor: %v", err)
 	}
+	kind, position := minted.Kind, minted.EventKey
 	if kind != SourceKindRedis {
 		t.Fatalf("cursorKind = %q, want %q", kind, SourceKindRedis)
 	}
@@ -878,5 +885,123 @@ func TestResumeByEventKey_GapBoundIsTheLowestRetainedKey_spec_25_5(t *testing.T)
 	}
 	if _, gap, err := rs.resumeByEventKey(context.Background(), "ops:5:1"); err != nil || !gap {
 		t.Errorf("resume gap = %v (err %v) for a cursor below every retained key; want a gap", gap, err)
+	}
+}
+
+// rangeCall is one XRANGE the read source issued, recorded so a test can tell
+// a positioned read from a scan of the whole retained window.
+type rangeCall struct {
+	start string
+	stop  string
+	count int64
+}
+
+// recordingStream is a fakeStream that records every XRANGE issued against it.
+type recordingStream struct {
+	fakeStream
+	mu    sync.Mutex
+	calls []rangeCall
+}
+
+func (r *recordingStream) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
+	r.mu.Lock()
+	r.calls = append(r.calls, rangeCall{start: start, stop: stop, count: count})
+	r.mu.Unlock()
+	return r.fakeStream.XRangeN(ctx, stream, start, stop, count)
+}
+
+// windowScans reports how many recorded XRANGEs scanned the whole retained
+// window ("-" to "+" for more than one entry), which is what an eventKey
+// translation costs. The one-entry bound probes that back headCursor and
+// oldestAvailableCursor are excluded: they are positioned reads.
+func (r *recordingStream) windowScans() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, c := range r.calls {
+		if c.start == "-" && c.stop == "+" && c.count > 1 {
+			n++
+		}
+	}
+	return n
+}
+
+// reset drops the recorded calls so a test can measure one request in
+// isolation.
+func (r *recordingStream) reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls = nil
+}
+
+// spec: 25.5 (a redis cursor reads Redis by stream ID; a foreign-source cursor
+// is translated by eventKey) — a cursor the Redis source minted resumes by the
+// stream ID it carries, so the steady-state poll loop costs one positioned
+// lookup rather than a scan of the whole retained window.
+//
+// Every cursor used to carry the canonical eventKey alone, so resolving one the
+// Redis source had itself minted an instant earlier read and JSON-decoded the
+// entire retained stream. This test fails against that code: the continuation
+// poll issues an XRANGE from "-" to "+" over the whole window.
+func TestRedisResumePoint_SameSourceCursorResumesByStreamID_spec_25_5(t *testing.T) {
+	f := &recordingStream{}
+	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
+	f.add("2-0", evt("ops:2:1", "dev.lenny.alert_fired"))
+	f.add("3-0", evt("ops:3:1", "dev.lenny.alert_fired"))
+	s := New(Options{RedisClient: f, SourceHealth: StaticSourceHealth{Redis: true, Gateway: true}, Now: ts})
+
+	page := pollActiveSource(s, context.Background(), "", "", gwevents.EventFilter{}, 2, false)
+	cur, err := decodeCursor(page.Pagination.Cursor)
+	if err != nil {
+		t.Fatalf("decode the Redis-minted cursor: %v", err)
+	}
+	if cur.Kind != SourceKindRedis || cur.StreamID != "2-0" || cur.EventKey != "ops:2:1" {
+		t.Fatalf("Redis-minted cursor = %+v, want kind redis at stream ID 2-0 carrying ops:2:1", cur)
+	}
+
+	f.reset()
+	page2 := pollActiveSourceCursor(s, context.Background(), cur, gwevents.EventFilter{}, 2, false)
+	if got := f.windowScans(); got != 0 {
+		t.Errorf("resuming a redis-kind cursor issued %d whole-window scan(s); a same-source resume reads by stream ID", got)
+	}
+	if page2.Pagination.GapDetected {
+		t.Errorf("a retained same-source cursor reported a gap: %+v", page2.Pagination)
+	}
+	if got := eventKeys(page2.Items); len(got) != 1 || got[0] != "ops:3:1" {
+		t.Fatalf("continuation items = %v, want only ops:3:1", got)
+	}
+}
+
+// spec: 25.5 (a redis cursor whose stream ID the stream no longer retains, and
+// a foreign-source cursor, are translated by eventKey) — the positioned resume
+// is a fast path rather than a replacement: a trimmed stream ID and a cursor
+// minted at another source both still resolve through the eventKey scan.
+func TestRedisResumePoint_TrimmedAndForeignCursorsFallBackToTheKeyScan_spec_25_5(t *testing.T) {
+	f := &recordingStream{}
+	f.add("10-0", evt("ops:10:1", "dev.lenny.alert_fired"))
+	f.add("11-0", evt("ops:11:1", "dev.lenny.alert_fired"))
+	s := New(Options{RedisClient: f, SourceHealth: StaticSourceHealth{Redis: true, Gateway: true}, Now: ts})
+
+	// A redis cursor whose stream ID was trimmed away, but whose eventKey is
+	// still retained: the scan resolves it and the read continues after it.
+	f.reset()
+	trimmed := eventCursor{Kind: SourceKindRedis, StreamID: "1-0", EventKey: "ops:10:1"}
+	page := pollActiveSourceCursor(s, context.Background(), trimmed, gwevents.EventFilter{}, 10, false)
+	if f.windowScans() == 0 {
+		t.Error("a trimmed redis cursor must fall back to the eventKey scan")
+	}
+	if got := eventKeys(page.Items); len(got) != 1 || got[0] != "ops:11:1" {
+		t.Fatalf("trimmed-cursor items = %v, want only ops:11:1", got)
+	}
+
+	// A cursor minted at the local ring carries no stream ID at all.
+	f.reset()
+	foreign := eventCursor{Kind: SourceKindBuffer, EventKey: "ops:10:1"}
+	page2 := pollActiveSourceCursor(s, context.Background(), foreign, gwevents.EventFilter{}, 10, false)
+	if f.windowScans() == 0 {
+		t.Error("a foreign-source cursor must be translated by the eventKey scan")
+	}
+	if got := eventKeys(page2.Items); len(got) != 1 || got[0] != "ops:11:1" {
+		t.Fatalf("foreign-cursor items = %v, want only ops:11:1", got)
 	}
 }

@@ -438,11 +438,18 @@ func decodeCursorKey(t *testing.T, cursor string) string {
 	if err != nil {
 		t.Fatalf("decode cursor %q: %v", cursor, err)
 	}
-	_, key, found := strings.Cut(string(raw), ":")
+	kind, position, found := strings.Cut(string(raw), ":")
 	if !found {
 		t.Fatalf("cursor %q carries no source position", string(raw))
 	}
-	return key
+	// A redis-kind cursor carries the Redis stream ID ahead of the canonical
+	// eventKey so a same-source resume is a positioned read.
+	if kind == "redis" {
+		if _, key, ok := strings.Cut(position, "|"); ok {
+			return key
+		}
+	}
+	return position
 }
 
 // flippableHealth is a SourceHealth whose Redis reachability is toggled by the

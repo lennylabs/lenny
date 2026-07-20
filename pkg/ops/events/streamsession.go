@@ -40,8 +40,15 @@ type streamSession struct {
 	// lastKind / lastKey are the resume position carried across a source
 	// switch. lastKey is a CloudEvents id (eventKey); lastKind is its source
 	// kind (empty or non-redis so a switch resolves it by eventKey scan).
-	lastKind string
-	lastKey  string
+	// lastStreamID is the Redis stream position a redis-kind opening cursor
+	// carried, which lets the first Redis stint resume by stream ID instead of
+	// scanning the retained window. It is cleared as soon as a frame is
+	// delivered, because from then on the carried position is the eventKey of
+	// an event that may have originated at any source. spec: §25.5 (a redis
+	// cursor reads Redis by stream ID).
+	lastKind     string
+	lastKey      string
+	lastStreamID string
 
 	// delivered is the bounded set of eventKeys already written on this
 	// connection. It spans every source the session serves from, so an event
@@ -287,7 +294,11 @@ func (st *streamSession) serveRedis(parent context.Context, src dataSource) (tai
 	// tail below runs on the unbounded connection context: it blocks by
 	// design.
 	setupCtx, setupCancel := boundRedisRead(ctx)
-	start, gap, rerr := s.redisResumePoint(setupCtx, st.lastKey)
+	start, gap, rerr := s.redisResumePoint(setupCtx, eventCursor{
+		Kind:     st.lastKind,
+		StreamID: st.lastStreamID,
+		EventKey: st.lastKey,
+	})
 	if rerr != nil {
 		start = ""
 		gap = true
@@ -640,6 +651,7 @@ func (st *streamSession) markDelivered(eventKey string) {
 	}
 	st.lastKey = eventKey
 	st.lastKind = ""
+	st.lastStreamID = ""
 }
 
 // sourceChanged reports whether the live SourceHealth signal has moved the

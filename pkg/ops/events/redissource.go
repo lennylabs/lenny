@@ -351,6 +351,18 @@ func (rs *redisSource) bound(ctx context.Context, rev bool) (streamID, eventKey 
 	return msgs[0].ID, ev.Event.ID, true, nil
 }
 
+// retains reports whether streamID is still an entry of the retained window.
+// It is a single positioned read (XRANGE id id COUNT 1) rather than a window
+// scan, so a same-source resume costs one lookup whatever the stream's length.
+// spec: §25.5 (a redis cursor reads the stream by stream ID).
+func (rs *redisSource) retains(ctx context.Context, streamID string) (bool, error) {
+	msgs, err := rs.client.XRangeN(ctx, rs.stream, streamID, streamID, 1).Result()
+	if err != nil {
+		return false, fmt.Errorf("xrange probe %s at %s: %w", rs.stream, streamID, err)
+	}
+	return len(msgs) > 0, nil
+}
+
 // resumeByEventKey translates a cursor minted by another source into the
 // exclusive Redis stream position to resume after, and reports whether the
 // cursor referenced a position the stream no longer retains.
@@ -542,10 +554,10 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 // degradation envelope is byte-indistinguishable from a healthy idle poll. The
 // caller reclassifies the request onto the source that can serve it. spec:
 // §25.5 (actualSource names the source the response was served from).
-func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
+func (s *Service) redisPollPage(ctx context.Context, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
 	ctx, cancel := boundRedisRead(ctx)
 	defer cancel()
-	start, gap, err := s.redisResumePoint(ctx, position)
+	start, gap, err := s.redisResumePoint(ctx, cur)
 	if err != nil {
 		return EventPage{}, fmt.Errorf("resolve redis cursor: %w", err)
 	}
@@ -577,22 +589,24 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 		Items: items,
 		Pagination: Pagination{
 			HasMore:    hasMore,
-			CursorKind: redisServedKind(cursorKind),
+			CursorKind: redisServedKind(cur.Kind),
 		},
 	}
-	if _, headKey, found, herr := s.redis.head(ctx); herr == nil && found {
-		page.Pagination.HeadCursor = encodeCursor(SourceKindRedis, headKey)
+	if headID, headKey, found, herr := s.redis.head(ctx); herr == nil && found {
+		page.Pagination.HeadCursor = encodeRedisCursor(headID, headKey)
 	}
 	if n := len(entries); n > 0 {
-		page.Pagination.Cursor = encodeCursor(SourceKindRedis, entries[n-1].event.Event.ID)
-	} else if position != "" && !gap {
-		page.Pagination.Cursor = encodeCursor(cursorKind, position)
+		page.Pagination.Cursor = encodeRedisCursor(entries[n-1].streamID, entries[n-1].event.Event.ID)
+	} else if cur.EventKey != "" && !gap {
+		// Nothing new: echo the caller's position verbatim, stream ID included,
+		// so the repeat poll is still a positioned read.
+		page.Pagination.Cursor = cur.encode()
 	}
 	if gap {
 		page.Pagination.GapDetected = true
 		page.Pagination.GapReason = "cursor could not be resolved against the current Redis stream: evicted, or minted at a different actualSource"
-		if _, oldestKey, found, oerr := s.redis.oldest(ctx); oerr == nil && found {
-			page.Pagination.OldestAvailableCursor = encodeCursor(SourceKindRedis, oldestKey)
+		if oldestID, oldestKey, found, oerr := s.redis.oldest(ctx); oerr == nil && found {
+			page.Pagination.OldestAvailableCursor = encodeRedisCursor(oldestID, oldestKey)
 		}
 		page.Pagination.SuggestedAction = "resync"
 		s.observeGap()
@@ -605,19 +619,35 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 // oldest retained entry) and whether the cursor referenced an evicted position
 // (a gap).
 //
-// Every cursor, whichever source minted it, carries the canonical eventKey, so
-// one translation serves them all: scan for the first retained entry ordering
-// at or after that key (see resumeByEventKey). A Redis-minted cursor is not a
-// special case — encoding the Redis stream ID instead would make the cursor
-// untranslatable at the gateway-buffer and local-ring sources, which compare
-// positions as eventKeys and would read a stream ID as ordering before their
-// whole retained window. spec: §25.5 (opaque cursor carries the canonical
-// eventKey; cross-source cursor translation).
-func (s *Service) redisResumePoint(ctx context.Context, position string) (start string, gap bool, err error) {
-	if position == "" {
+// A cursor this source minted resumes by stream ID: it carries the position
+// alongside the canonical eventKey, so one positioned lookup confirms the entry
+// is still retained and the read continues from it. That is the steady-state
+// path, where a poller pages with the cursor the previous page returned.
+//
+// Every other cursor carries the canonical eventKey alone — a cursor minted at
+// the gateway-buffer or local-ring source, an SSE Last-Event-ID header, or a
+// redis cursor whose stream ID the stream has since trimmed — and is translated
+// by scanning the retained window for the continuation point (see
+// resumeByEventKey). The eventKey travels on every cursor precisely because a
+// stream ID is meaningless to the other sources, which compare positions as
+// eventKeys. spec: §25.5 (a redis cursor reads Redis by stream ID; a
+// foreign-source cursor is translated by eventKey).
+func (s *Service) redisResumePoint(ctx context.Context, cur eventCursor) (start string, gap bool, err error) {
+	if cur.EventKey == "" {
 		return "", false, nil
 	}
-	return s.redis.resumeByEventKey(ctx, position)
+	if cur.Kind == SourceKindRedis && cur.StreamID != "" {
+		retained, err := s.redis.retains(ctx, cur.StreamID)
+		if err != nil {
+			return "", false, fmt.Errorf("probe redis cursor position: %w", err)
+		}
+		if retained {
+			return cur.StreamID, false, nil
+		}
+		// The stream trimmed past the carried position, so the eventKey scan
+		// decides whether the events after it survived or the cursor aged out.
+	}
+	return s.redis.resumeByEventKey(ctx, cur.EventKey)
 }
 
 // redisServedKind reports the §25.5 cursorKind for a page served from the

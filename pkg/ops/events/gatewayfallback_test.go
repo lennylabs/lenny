@@ -676,7 +676,8 @@ func TestGatewayPollPage_EvictionGapMeasuredAgainstFanOutWindow_spec_25_5(t *tes
 	if page.Pagination.SuggestedAction != "resync" {
 		t.Errorf("suggestedAction = %q, want resync", page.Pagination.SuggestedAction)
 	}
-	_, oldest, err := decodeCursor(page.Pagination.OldestAvailableCursor)
+	oldestCur, err := decodeCursor(page.Pagination.OldestAvailableCursor)
+	oldest := oldestCur.EventKey
 	if err != nil {
 		t.Fatalf("decode oldestAvailableCursor: %v", err)
 	}

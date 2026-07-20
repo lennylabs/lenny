@@ -553,14 +553,14 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		conventions.WriteError(w, http.StatusBadRequest, codeInvalidEventFilter, conventions.CategoryPermanent, err.Error())
 		return
 	}
-	kind, eventKey, err := decodeCursor(q.Get("cursor"))
+	cur, err := decodeCursor(q.Get("cursor"))
 	if err != nil {
 		conventions.WriteError(w, http.StatusBadRequest, codeInvalidEventFilter, conventions.CategoryPermanent, err.Error())
 		return
 	}
 	limit := parseLimit(q)
 
-	page, deg, perr := s.pollPage(r.Context(), src, deg, kind, eventKey, filter, limit, desc)
+	page, deg, perr := s.pollPage(r.Context(), src, deg, cur, filter, limit, desc)
 	if perr != nil {
 		// The gateway-buffer fall-back served nothing: no replica answered the
 		// §25.3 buffer query, so gateway-originated events have nowhere to come
@@ -591,21 +591,21 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // when the request had to be re-classified onto another source mid-read, so the
 // label always names the source the response was served from. spec: §25.5 lines
 // 2666-2699.
-func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions.Degradation, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
+func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions.Degradation, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
 	var (
 		page EventPage
 		err  error
 	)
 	switch src {
 	case dsRedis:
-		page, err = s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		page, err = s.redisPollPage(ctx, cur, filter, limit, desc)
 		if err != nil {
-			page, deg, err = s.pollRedisUnreachable(ctx, cursorKind, eventKey, filter, limit, desc)
+			page, deg, err = s.pollRedisUnreachable(ctx, cur, filter, limit, desc)
 		}
 	case dsGateway:
-		page, err = s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		page, err = s.gatewayPollPage(ctx, cur.Kind, cur.EventKey, filter, limit, desc)
 	default:
-		page = s.bufferPollPage(cursorKind, eventKey, filter, limit, desc)
+		page = s.bufferPollPage(cur.Kind, cur.EventKey, filter, limit, desc)
 	}
 	if err != nil {
 		return EventPage{}, nil, err
@@ -641,11 +641,11 @@ func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions
 // which is the case-4 outcome: the error returns 503 EVENT_STREAM_UNAVAILABLE.
 // spec: §25.5 lines 2768-2780 (actualSource names the source the response was
 // served from; EVENT_STREAM_UNAVAILABLE when both sources are unreachable).
-func (s *Service) pollRedisUnreachable(ctx context.Context, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
+func (s *Service) pollRedisUnreachable(ctx context.Context, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
 	if s.gateway == nil {
 		return EventPage{}, nil, fmt.Errorf("redis read failed and no gateway-buffer fall-back source is wired")
 	}
-	page, err := s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+	page, err := s.gatewayPollPage(ctx, cur.Kind, cur.EventKey, filter, limit, desc)
 	if err != nil {
 		return EventPage{}, nil, fmt.Errorf("gateway-buffer fall-back after a failed redis read: %w", err)
 	}
@@ -755,7 +755,7 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resumeKind, resumeKey := resumeCursor(r)
+	resume := resumeCursor(r)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -776,13 +776,14 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// (SSE applies the same tenant filter as delivery).
 	scope := readerScopeFrom(r.Context())
 	sess := &streamSession{
-		s:        s,
-		w:        w,
-		flusher:  flusher,
-		filter:   filter,
-		lastKind: resumeKind,
-		lastKey:  resumeKey,
-		scope:    scope,
+		s:            s,
+		w:            w,
+		flusher:      flusher,
+		filter:       filter,
+		lastKind:     resume.Kind,
+		lastKey:      resume.EventKey,
+		lastStreamID: resume.StreamID,
+		scope:        scope,
 		// The dedup set spans every source the session serves from, so it is
 		// sized to the largest window the session can replay. spec: §25.5
 		// (exactly-once across the source switch).
@@ -803,14 +804,14 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 // poll minted; its position is the same canonical eventKey either way, which
 // each source translates to a local position by scan. spec: §25.5
 // lines 2679-2680 (Last-Event-ID / cursor resume, cross-source translation).
-func resumeCursor(r *http.Request) (kind, key string) {
+func resumeCursor(r *http.Request) eventCursor {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
-		return "", v
+		return eventCursor{EventKey: v}
 	}
-	if k, key, err := decodeCursor(r.URL.Query().Get("cursor")); err == nil {
-		return k, key
+	if c, err := decodeCursor(r.URL.Query().Get("cursor")); err == nil {
+		return c
 	}
-	return "", ""
+	return eventCursor{}
 }
 
 // writeSSEFrame writes one BufferedEvent as an SSE record per §25.5.
