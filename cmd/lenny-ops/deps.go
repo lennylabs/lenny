@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,6 +77,21 @@ import (
 type redisFanOutEmitter struct {
 	stream *eventbuffer.StreamEmitter
 	local  *opsstream.Service
+
+	// writeFailed records that the last XADD failed, so the next successful one
+	// is this replica's own observation of Redis coming back. The source-health
+	// probe refreshes on an interval and cannot see an interruption shorter
+	// than one refresh, so without this edge the outage window a failed XADD
+	// opened would stay open until the probe happened to observe a full
+	// down-to-up cycle. spec: §25.5 (best-effort recovery flush).
+	writeFailed atomic.Bool
+
+	// onWriteRecovered, when non-nil, is invoked on the write path's
+	// failure-to-success edge. It is the same recovery-flush callback the
+	// source-health probe fires on its own edge; the flush is a no-op with no
+	// window open, and consuming the window is what keeps it to once per
+	// outage however many edges reported it.
+	onWriteRecovered func(context.Context)
 }
 
 // newRedisFanOutEmitter constructs an emitter that writes every event
@@ -117,6 +133,10 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 // source-health probe's next refresh. It opens the recovery-flush outage
 // window at this event's ring position, so every event emitted in the
 // detection lag is re-emitted when Redis recovers instead of being abandoned.
+// The first XADD that succeeds after one failed is the matching up edge for
+// that window, and it drives the flush directly: an outage shorter than one
+// probe refresh interval is invisible to the source-health loop, so the window
+// this path opened would otherwise stay open until some later outage closed it.
 // spec: §25.5 (best-effort recovery flush).
 func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalEvent) error {
 	buffered, err := e.local.PublishBuffered(ctx, event)
@@ -125,7 +145,11 @@ func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalE
 	}
 	if err := e.stream.Emit(ctx, buffered.Event); err != nil {
 		e.local.MarkRedisWriteFailure(buffered.ID)
+		e.writeFailed.Store(true)
 		return err
+	}
+	if e.writeFailed.CompareAndSwap(true, false) && e.onWriteRecovered != nil {
+		e.onWriteRecovered(ctx)
 	}
 	return nil
 }

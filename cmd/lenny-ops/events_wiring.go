@@ -68,6 +68,12 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 		// StreamEmitter the fan-out writes to (ReEmit skips the local
 		// re-publish since the events are already in the ring).
 		w.eventStream.SetRedisReEmitter(fanOut.ReEmit)
+		// The write path carries the other half of the recovery edge: an outage
+		// shorter than one source-health refresh interval is opened by a failed
+		// XADD and never observed by the probe, so the first XADD that succeeds
+		// after one failed drives the same flush. spec: §25.5 (best-effort
+		// recovery flush).
+		fanOut.onWriteRecovered = w.recoverEventStreamToRedis
 		opsEmitter = fanOut
 		log.Printf("lenny-ops: §25.5 operational events streaming to Redis %s (maxlen=%d)", eventbuffer.DefaultStreamKey, *w.f.eventsStreamMaxLen)
 	}

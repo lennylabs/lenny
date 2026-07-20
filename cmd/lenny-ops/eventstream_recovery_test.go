@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -123,10 +124,11 @@ func TestFanOutEmitterWritesOneEventKeyToBothTheRingAndTheStream(t *testing.T) {
 // opened by two signals and the source-health probe observes only one of them.
 // A failed XADD opens it the instant the write fails, so a Redis interruption
 // shorter than one probe refresh interval leaves a window open with no observed
-// down edge behind it. The flush must still close that window at the next
-// refresh: otherwise the events whose XADD failed are abandoned, and the stale
-// window survives into the next observed outage and widens that flush back over
-// already-delivered history.
+// down edge behind it. The write path carries its own up edge for that case:
+// the first XADD that succeeds after one failed drives the flush. Otherwise the
+// events whose XADD failed are abandoned, and the stale window survives into
+// the next observed outage and widens that flush back over already-delivered
+// history.
 //
 // This drives the probe loop through an unobserved interruption and then a
 // probe-observed outage, and asserts each buffered event reaches the recovered
@@ -155,6 +157,8 @@ func TestRecoveryFlushClosesAWindowTheProbeNeverObserved(t *testing.T) {
 	ctx := context.Background()
 
 	w := &opsWiring{opsWiringFields: opsWiringFields{eventStream: local}}
+	// The write path's own recovery edge, the half the probe cannot observe.
+	em.onWriteRecovered = w.recoverEventStreamToRedis
 	p := newSourceHealthProbe()
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -175,6 +179,11 @@ func TestRecoveryFlushClosesAWindowTheProbeNeverObserved(t *testing.T) {
 	}
 	mr.SetError("")
 	first := lastRingKey(t, local)
+	// The next successful XADD is this replica's own observation of Redis
+	// coming back, and it is what closes the window the interruption opened.
+	if err := em.Emit(ctx, events.OperationalEvent{Type: "dev.lenny.drift_detected"}); err != nil {
+		t.Fatalf("Emit after the interruption: %v", err)
+	}
 	awaitStreamed(t, client, first, "the event whose XADD failed during an interruption the probe never observed")
 
 	// A second outage, this one long enough for the probe to observe the down
@@ -244,5 +253,70 @@ func awaitStreamed(t *testing.T, client redis.UniversalClient, key, what string)
 				"(keys on the stream: %v)", what, streamedEventKeys(t, client))
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// spec: 25.5 (best-effort recovery flush) — the flush fires on the Redis
+// down-to-up edge the source-health loop observes, rather than on every refresh
+// that finds Redis reachable. A probe whose refreshes all find Redis up has
+// observed no outage and must do no flush work at all, and one observed outage
+// must produce exactly one flush however many reachable refreshes follow it.
+//
+// Nothing else pins this gate. The outage window inside the event stream is a
+// second guard in a different component, so a flush offered on every refresh
+// looks correct until the window is weakened or the flush gains a pre-window
+// side effect (a Redis round trip, a metric, a log), at which point it silently
+// becomes a per-refresh operation on every replica.
+func TestSourceHealthProbeFlushesOnTheRecoveryEdgeOnly_spec_25_5(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
+	t.Cleanup(func() { _ = client.Close() })
+
+	var downs, recoveries atomic.Int64
+	p := newSourceHealthProbe()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.run(ctx, 5*time.Millisecond, client, nil, redisEdgeCallbacks{
+			onRedisDown:      func() { downs.Add(1) },
+			onRedisRecovered: func(context.Context) { recoveries.Add(1) },
+		})
+	}()
+
+	// Many refreshes with Redis reachable throughout, and no outage anywhere in
+	// the history: the flush must never be offered.
+	time.Sleep(200 * time.Millisecond)
+	if got := recoveries.Load(); got != 0 {
+		t.Fatalf("a probe that never observed an outage offered the recovery flush %d time(s) over ~40 reachable refreshes; want 0", got)
+	}
+
+	// One observed outage, then many further reachable refreshes.
+	mr.SetError("LOADING Redis is loading the dataset in memory")
+	awaitCount(t, &downs, 1, "the probe to observe the outage")
+	mr.SetError("")
+	awaitCount(t, &recoveries, 1, "the probe to flush on the recovery edge")
+	time.Sleep(200 * time.Millisecond)
+	cancel()
+	<-done
+
+	if got := recoveries.Load(); got != 1 {
+		t.Errorf("one observed outage produced %d flush offers; want exactly 1 (the down-to-up edge)", got)
+	}
+	if got := downs.Load(); got != 1 {
+		t.Errorf("one observed outage produced %d down edges; want exactly 1", got)
+	}
+}
+
+// awaitCount waits until c reaches want.
+func awaitCount(t *testing.T, c *atomic.Int64, want int64, what string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for c.Load() < want {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s (count=%d, want %d)", what, c.Load(), want)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

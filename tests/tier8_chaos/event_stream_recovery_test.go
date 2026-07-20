@@ -664,25 +664,21 @@ func TestOpsEventStreamPollingAdvancesAcrossAnOutOfOrderRecoveryFlush(t *testing
 	}
 }
 
-// spec: 25.5 ("Events continue to flow to the SSE client with the canonical
-// degradation envelope embedded in a periodic :degradation comment line") — the
-// envelope is a recurring signal for the duration of a Redis outage rather than
-// a single announcement on the transition. A connection that sits in the
-// degraded stint while nothing is published must keep receiving it, so a
-// consumer that joined mid-outage or missed the first comment still learns its
-// view is degraded, and the connection carries a write that keeps an
-// intermediary from idling it out. The recovery announcement stays a single
-// edge event. The pre-fix handler wrote the envelope once on entering the
-// degraded source and then only when the fan-out flipped between serving and
-// unavailable, so an idle connection received exactly one comment however long
-// the outage lasted; this fails against that code.
+// spec: 25.5 (Degradation — a degraded SSE response carries the canonical
+// degradation envelope in a :degradation comment line, and the switch back to
+// the healthy source is announced with :degradation {"level":"healthy"}) — both
+// comments are transition announcements. A connection that sits in a degraded
+// stint while nothing is published and nothing about its classification changes
+// receives the envelope once, and the recovery announcement is likewise a single
+// edge event.
 //
-// diagnosis: a failure means an SSE consumer holding a connection through a
-// Redis outage stops being told its view is degraded — it sees one comment and
-// then silence, so a consumer that reconnects or joins mid-outage cannot tell a
-// degraded stream from a healthy idle one — or the recovery comment is emitted
-// more than once per recovery edge, which reads as repeated recoveries.
-func TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown(t *testing.T) {
+// diagnosis: a failure means the degradation envelope is written on a repeating
+// timer rather than on the transition, so an SSE consumer counting :degradation
+// lines, or an intermediary framing them, sees a line count that grows with the
+// outage duration rather than with the number of source transitions; or the
+// recovery comment is emitted more than once per recovery edge, which reads as
+// repeated recoveries.
+func TestOpsEventStreamAnnouncesTheDegradationEnvelopeOncePerTransition(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -725,13 +721,11 @@ func TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown(t *testing.
 
 	// The outage starts and nothing is published for its duration.
 	health.redis.Store(false)
-	deadline := time.Now().Add(20 * time.Second)
-	for strings.Count(rec.String(), ":degradation") < 3 {
-		if time.Now().After(deadline) {
-			t.Fatalf("an idle connection received %d :degradation comments over %s of Redis outage; the envelope must be re-emitted for the duration of the outage:\n%s",
-				strings.Count(rec.String(), ":degradation"), 20*time.Second, rec.String())
-		}
-		time.Sleep(100 * time.Millisecond)
+	waitContains(t, rec, sourceGatewayBuffer, 20*time.Second, "the degraded stint's :degradation announcement")
+	// Idle well past the fall-back poll cadence a heartbeat would have followed.
+	time.Sleep(3 * gatewayFallbackPollInterval)
+	if got := strings.Count(rec.String(), ":degradation"); got != 1 {
+		t.Fatalf("an idle connection received %d :degradation comments over a single unchanged degraded stint; want exactly 1 (the transition announcement):\n%s", got, rec.String())
 	}
 	if got := strings.Count(rec.String(), "\"level\":\"healthy\""); got != 0 {
 		t.Fatalf("the stream announced recovery %d times during the outage:\n%s", got, rec.String())
@@ -749,8 +743,13 @@ func TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown(t *testing.
 	<-done
 }
 
+// sourceGatewayBuffer is the §25.5 actualSource the degradation envelope carries
+// while a connection serves from the gateway-buffer fan-out during a Redis
+// outage.
+const sourceGatewayBuffer = "gateway-buffer"
+
 // gatewayFallbackPollInterval mirrors the §25.5 SSE fall-back poll cadence, the
-// interval the degradation envelope is re-emitted on while Redis is down.
+// interval the fan-out is re-polled on while Redis is down.
 const gatewayFallbackPollInterval = 2 * time.Second
 
 // spec: 25.5 (eventKey dedup across sources, exactly-once across the source
