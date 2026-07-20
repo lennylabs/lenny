@@ -142,17 +142,6 @@ func envInt(name string, fallback int) int {
 	return fallback
 }
 
-// envDuration parses the named environment variable as a Go duration,
-// falling back when it is unset or malformed.
-func envDuration(name string, fallback time.Duration) time.Duration {
-	if v := os.Getenv(name); v != "" {
-		if d, err := time.ParseDuration(v); err == nil {
-			return d
-		}
-	}
-	return fallback
-}
-
 // durationOrDefault converts a seconds count to a Duration, returning def
 // when seconds is non-positive. The §25.4 ops.security.oidc values arrive
 // from the chart as seconds; this keeps the flag defaults expressed as a
