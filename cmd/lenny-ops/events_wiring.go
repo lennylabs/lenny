@@ -53,6 +53,10 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 		// source-health probe reports Redis reachable.
 		streamOpts.RedisClient = w.opsStreamRedis
 		streamOpts.RedisStreamKey = eventbuffer.DefaultStreamKey
+		// The read side scans the same retained window the fan-out emitter
+		// trims the stream to, so a cursor naming an entry the stream still
+		// holds resolves instead of reading as evicted. spec: §25.5.
+		streamOpts.RedisStreamMaxLen = *w.f.eventsStreamMaxLen
 	}
 	w.eventStream = opsstream.New(streamOpts)
 	var opsEmitter events.EventEmitter = w.eventStream

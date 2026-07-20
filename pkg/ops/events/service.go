@@ -243,6 +243,16 @@ type Options struct {
 	// RedisStreamKey overrides the default ops:events:stream key when
 	// RedisClient is set. An empty value uses the §25.5 default.
 	RedisStreamKey string
+	// RedisStreamMaxLen is the MAXLEN the writer side trims the
+	// ops:events:stream to, and so the length of the window the read side
+	// scans when it translates a cursor or replays a backlog. It must track
+	// the operator-tunable value the fan-out emitter is built with: a reader
+	// bound below the writer's would scan only the oldest entries, find no
+	// entry at or after a recent cursor, and report an evicted-cursor gap plus
+	// a full-window replay for a cursor the stream still retains. A
+	// non-positive value uses the §25.5 default stream length. spec: §25.5
+	// (cross-source cursor translation; gapDetected on an evicted cursor).
+	RedisStreamMaxLen int64
 }
 
 // New returns a Service.
@@ -264,7 +274,7 @@ func New(opts Options) *Service {
 		health:    opts.SourceHealth,
 	}
 	if opts.RedisClient != nil {
-		s.redis = newRedisSource(opts.RedisClient, opts.RedisStreamKey)
+		s.redis = newRedisSource(opts.RedisClient, opts.RedisStreamKey, opts.RedisStreamMaxLen)
 	}
 	return s
 }

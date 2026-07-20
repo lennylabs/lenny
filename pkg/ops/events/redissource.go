@@ -169,15 +169,28 @@ func (t *redisTailConn) Close() error {
 type redisSource struct {
 	client RedisStreamClient
 	stream string
+	// maxWindow caps a single XRANGE scan at the stream's retained length, so
+	// a poll, a backlog replay, or a cursor translation reads the whole
+	// retained window and never materialises an unbounded slice. It is the
+	// MAXLEN the writer side trims the stream to, so a scan that finds no
+	// entry at or after a cursor establishes that the cursor was evicted
+	// rather than that the scan stopped short of it. spec: §25.5
+	// (cross-source cursor translation; gapDetected on an evicted cursor).
+	maxWindow int64
 }
 
-// newRedisSource returns a redisSource reading stream from client. An empty
-// stream falls back to the §25.5 default ops:events:stream key.
-func newRedisSource(client RedisStreamClient, stream string) *redisSource {
+// newRedisSource returns a redisSource reading stream from client, scanning at
+// most maxWindow entries per range read. An empty stream falls back to the
+// §25.5 default ops:events:stream key; a non-positive maxWindow falls back to
+// the default stream length.
+func newRedisSource(client RedisStreamClient, stream string, maxWindow int64) *redisSource {
 	if stream == "" {
 		stream = eventbuffer.DefaultStreamKey
 	}
-	return &redisSource{client: client, stream: stream}
+	if maxWindow <= 0 {
+		maxWindow = eventbuffer.DefaultStreamMaxLen
+	}
+	return &redisSource{client: client, stream: stream, maxWindow: maxWindow}
 }
 
 // redisEntry is one decoded stream entry paired with its Redis stream ID.
@@ -197,12 +210,6 @@ type redisEntry struct {
 	streamID string
 	event    gwevents.BufferedEvent
 }
-
-// maxWindow caps a single XRANGE scan at the §25.5 Tier 1 stream length so
-// a poll or a backlog replay never materialises an unbounded slice. The
-// stream is MAXLEN-bounded, so this reads the whole retained window at
-// most.
-const maxWindow = eventbuffer.DefaultStreamMaxLen
 
 // redisReadTimeout bounds every non-tailing Redis read a single poll or SSE
 // setup issues (the cursor resolve, the head/oldest bounds, and the backlog
@@ -243,7 +250,7 @@ func (rs *redisSource) ReadRange(ctx context.Context, sinceStreamID string, coun
 		start = "(" + sinceStreamID
 	}
 	if count <= 0 {
-		count = maxWindow
+		count = rs.maxWindow
 	}
 	msgs, err := rs.client.XRangeN(ctx, rs.stream, start, "+", count).Result()
 	if err != nil {
@@ -335,7 +342,7 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 	if eventKey == "" {
 		return "", false, nil
 	}
-	msgs, err := rs.client.XRangeN(ctx, rs.stream, "-", "+", maxWindow).Result()
+	msgs, err := rs.client.XRangeN(ctx, rs.stream, "-", "+", rs.maxWindow).Result()
 	if err != nil {
 		return "", false, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
 	}
@@ -433,7 +440,7 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 		res, err := client.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{rs.stream, lastID},
 			Block:   0,
-			Count:   maxWindow,
+			Count:   rs.maxWindow,
 		}).Result()
 		if err != nil {
 			if ctx.Err() != nil {

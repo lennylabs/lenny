@@ -179,7 +179,7 @@ func (s *Service) takeOutageWindow() (since uint64, open bool) {
 // against a duplicate stream entry. spec: §25.5 (best-effort recovery flush,
 // eventKey dedup).
 func (rs *redisSource) retainedEventKeys(ctx context.Context) (map[string]struct{}, error) {
-	msgs, err := rs.client.XRangeN(ctx, rs.stream, "-", "+", maxWindow).Result()
+	msgs, err := rs.client.XRangeN(ctx, rs.stream, "-", "+", rs.maxWindow).Result()
 	if err != nil {
 		return nil, fmt.Errorf("xrange scan %s: %w", rs.stream, err)
 	}

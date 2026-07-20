@@ -10,6 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 )
 
 // spec: 25.5 (best-effort recovery flush, eventKey dedup) — on a Redis
@@ -167,7 +168,7 @@ type scanFailingStream struct {
 }
 
 func (f *scanFailingStream) XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd {
-	if f.failScan && start == "-" && stop == "+" && count == maxWindow {
+	if f.failScan && start == "-" && stop == "+" && count == eventbuffer.DefaultStreamMaxLen {
 		cmd := redis.NewXMessageSliceCmd(ctx)
 		cmd.SetErr(errors.New("connection reset by peer"))
 		return cmd

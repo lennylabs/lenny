@@ -361,7 +361,7 @@ func TestResumeByEventKey_GapAtBothEndsOfTheRetainedWindow_spec_25_5(t *testing.
 			if tc.empty {
 				f = &fakeStream{}
 			}
-			rs := newRedisSource(f, "ops:events:stream")
+			rs := newRedisSource(f, "ops:events:stream", 0)
 			start, gap, err := rs.resumeByEventKey(context.Background(), tc.cursor)
 			if err != nil {
 				t.Fatalf("resume: %v", err)
@@ -624,7 +624,7 @@ func (t *tailClientStream) TailClient() (RedisTailClient, error) { return t.tail
 // BLOCK 0 fails the argument assertion.
 func TestRedisTail_IssuesBlockZeroAndClosesItsClientOnCancel_spec_25_5(t *testing.T) {
 	c := newParkedTailClient()
-	rs := newRedisSource(&tailClientStream{tail: c}, "")
+	rs := newRedisSource(&tailClientStream{tail: c}, "", 0)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	out := make(chan gwevents.BufferedEvent)
@@ -835,7 +835,7 @@ func TestResumeByEventKey_DoesNotRewindOverAnOutOfOrderRecoveryTail_spec_25_5(t 
 	f.add("31-0", evt("gw:31:1", "dev.lenny.alert_fired"))
 	f.add("40-0", evt("ops:20:1", "dev.lenny.escalation_created"))
 	f.add("41-0", evt("ops:21:1", "dev.lenny.escalation_created"))
-	rs := newRedisSource(f, "ops:events:stream")
+	rs := newRedisSource(f, "ops:events:stream", 0)
 
 	for _, tc := range []struct {
 		name      string
@@ -877,7 +877,7 @@ func TestResumeByEventKey_GapBoundIsTheLowestRetainedKey_spec_25_5(t *testing.T)
 	f := &fakeStream{}
 	f.add("30-0", evt("gw:30:1", "dev.lenny.alert_fired"))
 	f.add("40-0", evt("ops:20:1", "dev.lenny.escalation_created"))
-	rs := newRedisSource(f, "ops:events:stream")
+	rs := newRedisSource(f, "ops:events:stream", 0)
 
 	if _, gap, err := rs.resumeByEventKey(context.Background(), "ops:25:1"); err != nil || gap {
 		t.Errorf("resume gap = %v (err %v) for a cursor above the lowest retained key; want no gap", gap, err)
