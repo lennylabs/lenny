@@ -289,16 +289,6 @@ func New(opts Options) *Service {
 	return s
 }
 
-// redisPrimary reports whether the §25.5 Redis ops:events:stream is the
-// active read source: the client is wired and SourceHealth reports it
-// reachable. When true, polling and SSE serve the merged cross-replica view
-// from Redis; when false, the local ring buffer serves the request (the
-// gateway-buffer fall-back during a Redis-only outage is a separate path).
-// spec: §25.5 (source selection from the degradation matrix).
-func (s *Service) redisPrimary() bool {
-	return s.redis != nil && s.health != nil && s.health.RedisAvailable()
-}
-
 // observeGap fires the OnGap hook when configured. spec: §25.5 line 2788.
 func (s *Service) observeGap() {
 	if s.onGap != nil {
@@ -430,18 +420,6 @@ func (s *Service) unsubscribe(sub *subscription) {
 		}
 	}
 	s.subs = kept
-}
-
-// SubscriberCount returns the number of live subscriptions on this replica's
-// ring buffer. A connection holds one only while it is serving from a source
-// that reads the local ring (the gateway-buffer fall-back merges it, and the
-// dual-outage floor serves it directly), so this is the local fan-out's
-// subscriber count rather than the SSE connection count. ActiveStreams reports
-// the latter.
-func (s *Service) SubscriberCount() int {
-	s.subsMu.Lock()
-	defer s.subsMu.Unlock()
-	return len(s.subs)
 }
 
 // ActiveStreams returns the number of SSE connections the Service is currently

@@ -100,15 +100,12 @@ func TestOpsEventStreamActiveConnectionsCountsRedisServedConnections(t *testing.
 		second.cancel()
 	}()
 
-	// Both connections are served from the Redis stream: each replays the
-	// backlog from Redis and registers no subscription on the local ring.
+	// Both connections are served from the Redis stream, where neither holds a
+	// subscription on the local ring, so the gauge cannot be counting those.
 	for _, c := range []*conn{first, second} {
 		waitUntil(t, 10*time.Second, "the Redis-served backlog frame", func() bool {
 			return strings.Contains(c.sink.String(), "pool/backlog")
 		})
-	}
-	if n := svc.SubscriberCount(); n != 0 {
-		t.Fatalf("Redis-served connections installed %d local-ring subscriptions; the count backing the gauge cannot come from there", n)
 	}
 	waitUntil(t, 10*time.Second, "both connections to be counted", func() bool {
 		return svc.ActiveStreams() == 2

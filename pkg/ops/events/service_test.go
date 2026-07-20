@@ -105,9 +105,8 @@ func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 	}
 }
 
-// spec: §25.5 — live events flow to a connected subscriber. (Verified
-// via the synchronous SubscriberCount after a goroutine handles the
-// request.)
+// spec: §25.5 — live events flow to a connected subscriber. (Verified via the
+// synchronous ActiveStreams count after a goroutine handles the request.)
 func TestService_Stream_LiveDelivery(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 
@@ -125,7 +124,7 @@ func TestService_Stream_LiveDelivery(t *testing.T) {
 	}()
 
 	// Wait for the handler to install its subscription.
-	waitFor(t, func() bool { return s.SubscriberCount() == 1 })
+	waitFor(t, func() bool { return s.ActiveStreams() == 1 })
 
 	s.Publish(context.Background(), events.OperationalEvent{Type: "live"})
 	frame := readOneSSEFrame(t, pipeR)
@@ -230,7 +229,7 @@ func TestService_Publish_FansOutToWebhook(t *testing.T) {
 	}
 }
 
-// spec: §25.5 — SubscriberCount drops to zero after the SSE client
+// spec: §25.5 — the active-connection count drops to zero after the SSE client
 // disconnects.
 func TestService_Unsubscribe_OnClientDisconnect(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
@@ -246,12 +245,12 @@ func TestService_Unsubscribe_OnClientDisconnect(t *testing.T) {
 		defer close(done)
 		s.HandleStream(pipeW, platformAdminReq(req.WithContext(ctx)))
 	}()
-	waitFor(t, func() bool { return s.SubscriberCount() == 1 })
+	waitFor(t, func() bool { return s.ActiveStreams() == 1 })
 
 	cancel()
 	pipeW.Close()
 	<-done
-	waitFor(t, func() bool { return s.SubscriberCount() == 0 })
+	waitFor(t, func() bool { return s.ActiveStreams() == 0 })
 }
 
 type ssEvent struct {

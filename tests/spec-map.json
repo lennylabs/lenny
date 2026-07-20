@@ -3465,7 +3465,7 @@
         "tests/tier2_component/eventstream/event_stream_ahead_cursor_test.go::TestOpsEventStreamResumeAheadOfRedisWindowReportsGap",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamLiveTailWakesOnPublishAndExitsOnDisconnect",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamPerConnectionIndependentCursorLiveTail",
-        "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamPollItemShape",
+        "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamPollItemEncoding",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamSSEResumeHonorsRedisCursorSourceKind",
         "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamPollResolvesCursorBeyondDefaultStreamLength",
         "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamRecoveryFlushSeesRetainedKeyBeyondDefaultStreamLength",
@@ -3486,7 +3486,10 @@
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapRegistersEveryEventStreamAnnotatedTest",
         "tests/tier7a_load_local/ops_event_stream_gateway_seed_drop_test.go::TestOpsEventStreamGatewayStintDeliversEventsOlderThanAnInterleavedLocalPublish",
         "tests/tier7a_load_local/ops_event_stream_tail_unavailable_test.go::TestOpsEventStreamTailUnavailableDoesNotSpinAndFallsBack",
-        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamAnnouncesTheDegradationEnvelopeOncePerTransition"
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRepeatsTheDegradationEnvelopeOnTheFallBackCadence",
+        "tests/tier7a_load_local/ops_event_poll_resume_flush_drop_test.go::TestOpsEventPollDeliversPostRecoveryEventsAcrossTheFlushedTail",
+        "tests/tier7a_load_local/ops_event_stream_tail_budget_rearm_test.go::TestOpsEventStreamRearmsTheTailBudgetOnEverySourceTransition",
+        "tests/tier8_chaos/event_stream_tailbudget_test.go::TestOpsEventStreamReturnsToRedisAfterTheTailBudgetIsExhausted"
       ],
       "packages": [
         "pkg/ops/events",

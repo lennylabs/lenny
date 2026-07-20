@@ -171,22 +171,23 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 	}
 }
 
-// TestOpsEventStreamPollItemShape pins that a Redis-served poll item keeps the
-// buffer-served item shape on the wire: {"id":N,"event":{...}}. The wrapper id
-// is the local ring's per-replica sequence, so a Redis-served item leaves it
-// zero rather than stamping a stream-derived value that would put a second
-// value domain behind the same field. Ordering and resume run off the
-// pagination cursor and the CloudEvents id rather than the wrapper id.
+// TestOpsEventStreamPollItemEncoding pins that a Redis-served poll item keeps
+// the buffer-served item encoding on the wire: {"id":N,"event":{...}}. §25.3
+// defines the wrapper id as the monotonic uint64 the serving source assigned,
+// which is the emitting replica's ring sequence on the buffer path and the
+// stream position on the Redis path, so a Redis-served page rises with the
+// page. Resume runs off the pagination cursor and the CloudEvents id, which are
+// identical across sources.
 //
 // spec: 25.5 (Polling Delivery — the poll envelope and SSE frame served from
-// the Redis ops:events:stream carry the same item shape and CloudEvents record
-// as the buffer-served path; ordering and resume run off the pagination cursor
-// and the CloudEvents id, not the wrapper id).
+// the Redis ops:events:stream carry the same item encoding and CloudEvents
+// record as the buffer-served path); 25.3 (each event is assigned a monotonic
+// uint64 ID, per source rather than globally ordered, for cursor-based polling).
 // diagnosis: a failure means the Redis-served poll item dropped its top-level
-// wrapper id (diverging from the frozen buffer envelope) or stamped a
-// stream-derived position there, so the same lenny-ops endpoint emits two
-// items[].id value domains across the local ring buffer and the Redis source.
-func TestOpsEventStreamPollItemShape(t *testing.T) {
+// wrapper id, or filled it with something other than the source position §25.3
+// defines, such as a source-independent hash. A consumer ordering on the field
+// then reads a page that does not advance.
+func TestOpsEventStreamPollItemEncoding(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
 
@@ -228,16 +229,26 @@ func TestOpsEventStreamPollItemShape(t *testing.T) {
 	if len(body.Items) != 4 {
 		t.Fatalf("poll returned %d items, want the 4 emitted events", len(body.Items))
 	}
+	var prevWrapperID uint64
 	for i, item := range body.Items {
 		rawID, present := item["id"]
 		if !present {
-			t.Errorf("item %d dropped its top-level wrapper id; the Redis-served poll item must keep the {\"id\":N,\"event\":{...}} shape: %v", i, item)
+			t.Errorf("item %d dropped its top-level wrapper id; the Redis-served poll item must keep the {\"id\":N,\"event\":{...}} encoding: %v", i, item)
 		} else {
 			var wrapperID uint64
 			if err := json.Unmarshal(rawID, &wrapperID); err != nil {
 				t.Errorf("item %d wrapper id did not decode as a number: %v", i, err)
-			} else if wrapperID != 0 {
-				t.Errorf("item %d wrapper id = %d, want 0; a Redis-served item must not open a second items[].id value domain", i, wrapperID)
+			} else {
+				// §25.3 defines items[].id as the monotonic position the serving
+				// source assigned. On the Redis-served page that is the stream's
+				// own position, so it rises with the page.
+				if wrapperID == 0 {
+					t.Errorf("item %d wrapper id = 0; a Redis-served item carries the stream position it was assigned", i)
+				}
+				if i > 0 && wrapperID <= prevWrapperID {
+					t.Errorf("item %d wrapper id = %d, want greater than the previous item's %d; §25.3 assigns a monotonic per-source id", i, wrapperID, prevWrapperID)
+				}
+				prevWrapperID = wrapperID
 			}
 		}
 		raw, ok := item["event"]

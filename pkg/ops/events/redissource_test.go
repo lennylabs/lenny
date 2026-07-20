@@ -397,14 +397,13 @@ func TestResumeByEventKey_GapAtBothEndsOfTheRetainedWindow_spec_25_5(t *testing.
 // spec: 25.5 (source selection from the degradation matrix) — the Redis
 // source is used only when SourceHealth reports Redis reachable; a
 // Redis-down health signal falls back to the local ring buffer so a
-// nil-Redis or unreachable-Redis deployment keeps serving.
-func TestRedisPrimary_SelectedOnlyWhenRedisAvailable_spec_25_5(t *testing.T) {
+// nil-Redis or unreachable-Redis deployment keeps serving. The assertion is on
+// what the request is served, which is the only way source selection reaches a
+// caller.
+func TestRedisSourceServesOnlyWhenRedisAvailable_spec_25_5(t *testing.T) {
 	f := &fakeStream{}
 	f.add("1-0", evt("ops:1:1", "dev.lenny.alert_fired"))
 	s := New(Options{RedisClient: f, SourceHealth: StaticSourceHealth{Redis: false, Gateway: true}, Now: ts})
-	if s.redisPrimary() {
-		t.Fatal("redisPrimary must be false when SourceHealth reports Redis down")
-	}
 	// With Redis down, a poll serves from the empty local buffer, not Redis.
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/v1/admin/events", nil)
