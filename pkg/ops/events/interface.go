@@ -21,8 +21,8 @@ import (
 // eventsubscription.Service covers the subscription CRUD methods and
 // the keyset-paginated ListDeliveries. What this declaration does not
 // yet have is a single production type that satisfies it in one piece;
-// the HTTP routes are the contract today, and the aggregator question is
-// tracked as T-25.5.6. The declaration fixes the signature so test
+// the HTTP routes are the contract today, and the single-implementor
+// aggregator is deferred to a follow-on change. The declaration fixes the signature so test
 // doubles and alternative event sources substitute without divergence.
 // spec: §25.5 lines 2574-2585.
 type EventStreamService interface {

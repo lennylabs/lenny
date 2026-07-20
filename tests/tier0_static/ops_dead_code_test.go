@@ -61,8 +61,9 @@ var interfaceMethodNames = map[string]bool{
 // while the missing wiring is tracked where the audit can act on it.
 var trackedUnwiredDeclarations = map[string]string{
 	// The §25.5 secret-rotation overlap predicate. The delivery worker signs
-	// with the current secret alone and never consults it (TEST-GAPS T-25.5.25).
-	"method Record.WithinRotationOverlap": "TEST-GAPS T-25.5.25",
+	// with the current secret alone and never consults it; the missing wiring
+	// is recorded in the coverage audit (TEST-GAPS.md).
+	"method Record.WithinRotationOverlap": "the §25.5 secret-rotation overlap predicate, unwired and tracked in the coverage audit",
 }
 
 // TestOpsPackagesHaveNoUnreferencedFunctions asserts every function and method

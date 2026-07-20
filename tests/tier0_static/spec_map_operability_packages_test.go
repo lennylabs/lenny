@@ -836,7 +836,8 @@ func TestSpecMapRegistersEveryEventStreamAnnotatedTest(t *testing.T) {
 }
 
 // readResolvedTestGapFindings returns the set of TEST-GAPS.md finding ids the
-// ledger records as RESOLVED, keyed by the bare id ("T-25.5.7").
+// ledger records as RESOLVED, keyed by the bare finding id (the
+// "T-<section>.<seq>" token that opens each finding heading).
 func readResolvedTestGapFindings(t *testing.T, root string) map[string]bool {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(root, "TEST-GAPS.md"))
