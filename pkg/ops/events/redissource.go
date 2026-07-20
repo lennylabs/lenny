@@ -480,15 +480,19 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 // oldestAvailableCursor set to that entry's eventKey, matching the
 // buffer-served gap semantics. spec: §25.5 (XRANGE polling, cross-source
 // cursor translation, evicted-cursor gap).
-func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+// A Redis read error is returned rather than served as an empty page: the
+// source-health probe refreshes on an interval, so a request arriving inside
+// the window between Redis failing and the probe observing it still selects the
+// Redis source, and an empty page carrying the caller's cursor and no
+// degradation envelope is byte-indistinguishable from a healthy idle poll. The
+// caller reclassifies the request onto the source that can serve it. spec:
+// §25.5 (actualSource names the source the response was served from).
+func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
 	ctx, cancel := boundRedisRead(ctx)
 	defer cancel()
 	start, gap, err := s.redisResumePoint(ctx, position)
 	if err != nil {
-		// A Redis read error mid-poll: report no new events with the caller's
-		// cursor echoed so a retry resumes from the same point rather than
-		// silently losing position.
-		return EventPage{Items: []gwevents.BufferedEvent{}, Pagination: Pagination{CursorKind: SourceKindRedis, Cursor: encodeCursor(SourceKindRedis, position)}}
+		return EventPage{}, fmt.Errorf("resolve redis cursor: %w", err)
 	}
 
 	// Fetch one past the page so hasMore reflects a further raw entry. The
@@ -497,7 +501,7 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 	// while still advancing.
 	entries, err := s.redis.ReadRange(ctx, start, int64(limit)+1)
 	if err != nil {
-		return EventPage{Items: []gwevents.BufferedEvent{}, Pagination: Pagination{CursorKind: SourceKindRedis, Cursor: encodeCursor(SourceKindRedis, position)}}
+		return EventPage{}, fmt.Errorf("read redis page: %w", err)
 	}
 	hasMore := len(entries) > limit
 	if hasMore {
@@ -538,7 +542,7 @@ func (s *Service) redisPollPage(ctx context.Context, cursorKind, position string
 		page.Pagination.SuggestedAction = "resync"
 		s.observeGap()
 	}
-	return page
+	return page, nil
 }
 
 // redisResumePoint resolves the incoming cursor to a Redis stream position to

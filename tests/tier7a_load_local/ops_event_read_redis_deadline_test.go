@@ -15,8 +15,8 @@
 // caller: the request never answers, the caller times out, and the read
 // surface neither serves a page nor reports its degradation. The per-request
 // Redis reads therefore carry their own deadline, and the request answers
-// (empty, cursor echoed) while the next source-health refresh moves the
-// surface onto the gateway-buffer fall-back.
+// promptly with the outcome its failed read earns while the next source-health
+// refresh moves the surface onto the gateway-buffer fall-back.
 //
 // spec: §25.5 (the read surface degrades rather than blocking; the
 // per-request poll and SSE path does not block on source health).
@@ -159,10 +159,13 @@ func TestRedisReadDeadlineKeepsPollAnsweringWhenRedisIsUnreachable(t *testing.T)
 			rec := httptest.NewRecorder()
 			svc.HandlePoll(rec, platformAdminReq(req))
 			done <- time.Since(start)
-			if rec.Code != http.StatusOK {
-				t.Errorf("poll during an unobserved Redis outage returned HTTP %d, want 200: the "+
-					"read surface must serve an empty page with the caller's cursor echoed rather "+
-					"than failing", rec.Code)
+			// No gateway-buffer fall-back source is wired here, so a failed
+			// Redis read leaves gateway-originated events with nowhere to
+			// come from: the §25.5 dual-outage outcome. The read must say so
+			// rather than serve a page that reads as a healthy idle poll.
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Errorf("poll during an unobserved Redis outage returned HTTP %d, want 503: a page "+
+					"Redis did not serve must not be reported as a healthy empty poll", rec.Code)
 			}
 		}()
 	}

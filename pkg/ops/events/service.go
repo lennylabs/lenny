@@ -550,7 +550,7 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parseLimit(q)
 
-	page, perr := s.pollPage(r.Context(), src, kind, eventKey, filter, limit, desc)
+	page, deg, perr := s.pollPage(r.Context(), src, deg, kind, eventKey, filter, limit, desc)
 	if perr != nil {
 		// The gateway-buffer fall-back served nothing: no replica answered the
 		// §25.3 buffer query, so gateway-originated events have nowhere to come
@@ -576,21 +576,29 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // retained event.
 //
 // src is a parameter rather than a second selectSource call so the page and
-// the degradation envelope its caller attached describe the same source. spec:
-// §25.5 lines 2666-2699.
-func (s *Service) pollPage(ctx context.Context, src dataSource, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
-	var page EventPage
+// the degradation envelope its caller attached describe the same source. deg is
+// the envelope that classification produced; the returned envelope replaces it
+// when the request had to be re-classified onto another source mid-read, so the
+// label always names the source the response was served from. spec: §25.5 lines
+// 2666-2699.
+func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions.Degradation, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
+	var (
+		page EventPage
+		err  error
+	)
 	switch src {
 	case dsRedis:
-		page = s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
-	case dsGateway:
-		var err error
-		page, err = s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		page, err = s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
 		if err != nil {
-			return EventPage{}, err
+			page, deg, err = s.pollRedisUnreachable(ctx, cursorKind, eventKey, filter, limit, desc)
 		}
+	case dsGateway:
+		page, err = s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
 	default:
 		page = s.bufferPollPage(cursorKind, eventKey, filter, limit, desc)
+	}
+	if err != nil {
+		return EventPage{}, nil, err
 	}
 	// §25.5 read-time tenant filter: intersect the served events with the
 	// caller's tenant scope resolved at the opsserver boundary. It is a
@@ -601,7 +609,34 @@ func (s *Service) pollPage(ctx context.Context, src dataSource, cursorKind, even
 	// a caller whose context carries no resolved scope is served nothing. spec:
 	// §25.5 (SSE and polling apply the same tenant filter as delivery).
 	page.Items = s.filterForReader(ctx, page.Items)
-	return page, nil
+	return page, deg, nil
+}
+
+// pollRedisUnreachable re-classifies a poll whose Redis read failed onto the
+// source that can serve it, so the §25.5 degradation label never names Redis
+// for a page Redis did not serve.
+//
+// SourceHealth is a probe refreshed on an interval, so a request arriving
+// between Redis failing and the probe observing it selects the Redis source and
+// carries no degradation envelope. Serving that request as an empty page with
+// the caller's cursor echoed makes "Redis is unreachable and you are missing
+// events" indistinguishable from "no new events", and invites the caller to
+// keep polling as though its view were current. The request instead falls
+// through to the gateway-buffer fan-out under the case-1 envelope. With no
+// fall-back source wired, gateway-originated events have nowhere to come from,
+// which is the case-4 outcome: the error returns 503 EVENT_STREAM_UNAVAILABLE.
+// spec: §25.5 lines 2768-2780 (actualSource names the source the response was
+// served from; EVENT_STREAM_UNAVAILABLE when both sources are unreachable).
+func (s *Service) pollRedisUnreachable(ctx context.Context, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
+	if s.gateway == nil {
+		return EventPage{}, nil, fmt.Errorf("redis read failed and no gateway-buffer fall-back source is wired")
+	}
+	page, err := s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+	if err != nil {
+		return EventPage{}, nil, fmt.Errorf("gateway-buffer fall-back after a failed redis read: %w", err)
+	}
+	_, deg, _ := gatewayFallbackState()
+	return page, deg, nil
 }
 
 // bufferPollPage serves the §25.5 polling page from this replica's local

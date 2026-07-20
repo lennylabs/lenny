@@ -854,3 +854,99 @@ func TestOpsEventStreamOpenConnectionSeesFlushedEventsOnceAcrossRecovery(t *test
 		}
 	}
 }
+
+// deadRedisClient returns a §25.5 read-side stream client whose every read
+// fails immediately, standing in for a Redis that has become unreachable while
+// the source-health probe still reports it up. It is built from the running
+// container's connection options and then closed, so the failure reaches the
+// read path through the same client the production wiring uses.
+func deadRedisClient(t *testing.T, rd *containers.Redis) opsstream.RedisStreamClient {
+	t.Helper()
+	dead := redis.NewClient(rd.Client.Options())
+	if err := dead.Close(); err != nil {
+		t.Fatalf("close the stand-in Redis client: %v", err)
+	}
+	return opsstream.NewRedisStreamClient(dead)
+}
+
+// spec: 25.5 (degradation matrix — actualSource names the source the response
+// was served from; EVENT_STREAM_UNAVAILABLE when both sources are unreachable)
+// — the source-health probe refreshes on an interval, so a poll arriving after
+// Redis fails and before the probe observes it still selects the Redis source.
+// The response that poll's failed read produces must name the source that
+// actually served it.
+//
+// diagnosis: a poll whose Redis read failed is served as a healthy, undegraded,
+// empty page with the caller's cursor echoed, which is byte-indistinguishable
+// from a healthy idle poll. A caller cannot tell "Redis is unreachable and you
+// are missing events" from "no new events", and keeps polling as though its
+// view were current.
+func TestOpsEventStreamPollWithAFailedRedisReadIsNotReportedHealthy(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+
+	// The probe is stale: it still reports Redis reachable.
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(true)
+
+	// A gateway replica answering the §25.3 buffer query, so the read has a
+	// fall-back to be re-classified onto.
+	gwSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(gwevents.BufferedEventPage{Events: []gwevents.BufferedEvent{
+			{ID: 1, Event: gwevents.OperationalEvent{ID: "gw:2000:1", Type: "dev.lenny.alert_fired", SpecVersion: gwevents.CloudEventsSpecVersion, Time: time.Unix(2000, 0).UTC()}},
+		}})
+	}))
+	defer gwSrv.Close()
+	gwClient, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("t"),
+		Discovery:         gateway.StaticDiscovery{gwSrv.URL},
+		PerRequestTimeout: 3 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("gateway client: %v", err)
+	}
+
+	withFallback := opsstream.New(opsstream.Options{
+		RedisClient:  deadRedisClient(t, rd),
+		SourceHealth: health,
+		ReplicaID:    "ops-1",
+	})
+	withFallback.SetGatewayBufferSource(gwClient)
+
+	rec := httptest.NewRecorder()
+	withFallback.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poll with a gateway fall-back wired = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var page opsstream.EventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode poll page: %v (%s)", err, rec.Body.String())
+	}
+	if page.Degradation == nil {
+		t.Fatalf("a poll whose Redis read failed was served with no degradation envelope: %s", rec.Body.String())
+	}
+	if page.Degradation.ActualSource != "gateway-buffer" {
+		t.Errorf("degradation actualSource = %q, want gateway-buffer: the label must name the source that served the page", page.Degradation.ActualSource)
+	}
+	if len(page.Items) != 1 || page.Items[0].Event.ID != "gw:2000:1" {
+		t.Errorf("fall-back page served %d item(s), want the one gateway-buffer event", len(page.Items))
+	}
+
+	// With no fall-back source wired, gateway-originated events have nowhere to
+	// come from: the §25.5 dual-outage outcome rather than an empty 200.
+	noFallback := opsstream.New(opsstream.Options{
+		RedisClient:  deadRedisClient(t, rd),
+		SourceHealth: health,
+		ReplicaID:    "ops-1",
+	})
+	rec = httptest.NewRecorder()
+	noFallback.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("poll with a failed Redis read and no fall-back = %d, want 503: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "EVENT_STREAM_UNAVAILABLE") {
+		t.Errorf("503 body = %s, want the EVENT_STREAM_UNAVAILABLE code", rec.Body.String())
+	}
+}

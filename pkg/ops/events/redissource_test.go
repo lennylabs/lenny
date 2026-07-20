@@ -138,8 +138,8 @@ func (c *parkedTailClient) Close() error {
 // carries a platform-admin read scope, the grant a caller needs to observe the
 // whole window through the §25.5 read-endpoint tenant filter.
 func pollActiveSource(s *Service, ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
-	src, _, _ := s.selectSource()
-	page, _ := s.pollPage(WithReaderScope(ctx, "alice@acme.com", "", true), src, cursorKind, position, filter, limit, desc)
+	src, deg, _ := s.selectSource()
+	page, _, _ := s.pollPage(WithReaderScope(ctx, "alice@acme.com", "", true), src, deg, cursorKind, position, filter, limit, desc)
 	return page
 }
 

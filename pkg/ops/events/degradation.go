@@ -85,22 +85,30 @@ func (s *Service) streamState() (actualSource string, deg *conventions.Degradati
 		// normally.
 		return sourceRedisStream, nil, false
 	case gatewayUp:
-		// Case 1 — Redis unreachable, gateway up: fall back to the gateway
-		// event buffer. EVENT_STREAM_DEGRADED, HTTP 200, served as response
-		// metadata (not an HTTP error).
-		return sourceGatewayBuffer, &conventions.Degradation{
-			Level:         conventions.DegradationDegraded,
-			PrimarySource: sourceRedisStream,
-			ActualSource:  sourceGatewayBuffer,
-			FallbackPath:  []string{sourceRedisStream, sourceGatewayBuffer},
-			Warnings:      []string{"serving from the gateway event buffer; the Redis ops:events:stream is unreachable, so history is limited to the buffer window"},
-		}, false
+		return gatewayFallbackState()
 	default:
 		// Case 4 — Redis AND gateway unreachable: only this replica's
 		// local ring buffer (lenny-ops-originated events) is observable.
 		// Gateway-originated events have nowhere to land.
 		return dualOutageState()
 	}
+}
+
+// gatewayFallbackState returns the §25.5 case-1 classification: Redis is
+// unreachable and the gateway event buffer serves in its place, reported as
+// EVENT_STREAM_DEGRADED response metadata on an HTTP 200 rather than as an
+// HTTP error. It is reached both from the health matrix and from a request
+// whose Redis read failed inside the source-health refresh window, which is
+// served from the same fall-back and must carry the same label. spec: §25.5
+// lines 2768-2780 (Redis-down gateway-buffer fall-back).
+func gatewayFallbackState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
+	return sourceGatewayBuffer, &conventions.Degradation{
+		Level:         conventions.DegradationDegraded,
+		PrimarySource: sourceRedisStream,
+		ActualSource:  sourceGatewayBuffer,
+		FallbackPath:  []string{sourceRedisStream, sourceGatewayBuffer},
+		Warnings:      []string{"serving from the gateway event buffer; the Redis ops:events:stream is unreachable, so history is limited to the buffer window"},
+	}, false
 }
 
 // dualOutageState returns the §25.5 case-4 classification: the local ring is
