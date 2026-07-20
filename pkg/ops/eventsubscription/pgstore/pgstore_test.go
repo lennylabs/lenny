@@ -288,6 +288,11 @@ func TestPgStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	if len(aged) != 0 || !metaAged.GapDetected || metaAged.OldestAvailableCursor != "5" {
 		t.Fatalf("aged-out = %v meta %+v, want gapDetected with oldestAvailableCursor 5", deliveryIDs(aged), metaAged)
 	}
+	// The canonical §25.2 gap envelope is four fields: without the reason and
+	// the resync hint the caller has no documented recovery step.
+	if metaAged.GapReason != es.GapReasonAgedOut || metaAged.SuggestedAction != es.SuggestedActionResync {
+		t.Errorf("aged-out meta = %+v, want gapReason %q and suggestedAction %q", metaAged, es.GapReasonAgedOut, es.SuggestedActionResync)
+	}
 
 	// A malformed (non-numeric) cursor cannot be honored. It reports a gap
 	// toward the oldest retained delivery (id 5, the sole survivor) rather than
@@ -298,6 +303,9 @@ func TestPgStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	}
 	if len(badCur) != 0 || !metaBad.GapDetected || metaBad.OldestAvailableCursor != "5" {
 		t.Fatalf("malformed cursor = %v meta %+v, want gapDetected with oldestAvailableCursor 5", deliveryIDs(badCur), metaBad)
+	}
+	if metaBad.GapReason != es.GapReasonUnresolvable || metaBad.SuggestedAction != es.SuggestedActionResync {
+		t.Errorf("malformed-cursor meta = %+v, want gapReason %q and suggestedAction %q", metaBad, es.GapReasonUnresolvable, es.SuggestedActionResync)
 	}
 
 	// A malformed cursor for a subscription with no retained deliveries has no

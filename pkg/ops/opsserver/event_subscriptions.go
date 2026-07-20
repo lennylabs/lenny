@@ -231,7 +231,9 @@ func (s *Server) handleListEventSubscriptionDeliveries(w http.ResponseWriter, r 
 			HasMore:               page.HasMore,
 			CursorKind:            page.CursorKind,
 			GapDetected:           page.GapDetected,
+			GapReason:             page.GapReason,
 			OldestAvailableCursor: page.OldestAvailableCursor,
+			SuggestedAction:       page.SuggestedAction,
 		},
 	})
 }

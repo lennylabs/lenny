@@ -239,8 +239,7 @@ func (s *Store) ListDeliveries(ctx context.Context, subID string, cursor string,
 			return nil, eventsubscription.Pagination{}, err
 		}
 		if ok && cursorID < oldest {
-			page.GapDetected = true
-			page.OldestAvailableCursor = strconv.FormatInt(oldest, 10)
+			page.MarkGap(eventsubscription.GapReasonAgedOut, strconv.FormatInt(oldest, 10))
 		}
 	}
 	return out, page, nil
@@ -271,8 +270,7 @@ func (s *Store) deliveriesGap(ctx context.Context, subID string) ([]eventsubscri
 		return nil, eventsubscription.Pagination{}, err
 	}
 	if ok {
-		page.GapDetected = true
-		page.OldestAvailableCursor = strconv.FormatInt(oldest, 10)
+		page.MarkGap(eventsubscription.GapReasonUnresolvable, strconv.FormatInt(oldest, 10))
 	}
 	return nil, page, nil
 }

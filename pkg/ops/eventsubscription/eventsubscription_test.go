@@ -359,6 +359,11 @@ func TestMemoryStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	if !metaAged.GapDetected || metaAged.OldestAvailableCursor != "5" {
 		t.Fatalf("aged-out meta = %+v, want gapDetected with oldestAvailableCursor 5", metaAged)
 	}
+	// The canonical §25.2 gap envelope is four fields: without the reason and
+	// the resync hint the caller has no documented recovery step.
+	if metaAged.GapReason != es.GapReasonAgedOut || metaAged.SuggestedAction != es.SuggestedActionResync {
+		t.Errorf("aged-out meta = %+v, want gapReason %q and suggestedAction %q", metaAged, es.GapReasonAgedOut, es.SuggestedActionResync)
+	}
 
 	// A malformed cursor cannot be honored and reports the same gap toward
 	// the oldest retained delivery.
@@ -368,6 +373,9 @@ func TestMemoryStoreListDeliveriesKeysetPagination_spec_25_5(t *testing.T) {
 	}
 	if !metaBad.GapDetected || metaBad.OldestAvailableCursor != "5" {
 		t.Fatalf("malformed-cursor meta = %+v, want gapDetected with oldestAvailableCursor 5", metaBad)
+	}
+	if metaBad.GapReason != es.GapReasonUnresolvable || metaBad.SuggestedAction != es.SuggestedActionResync {
+		t.Errorf("malformed-cursor meta = %+v, want gapReason %q and suggestedAction %q", metaBad, es.GapReasonUnresolvable, es.SuggestedActionResync)
 	}
 }
 

@@ -45,6 +45,81 @@ func deliveriesServer(t *testing.T, n int) *opsserver.Server {
 	return opsserver.New(opsserver.Options{EventSubscriptions: eventsubscription.NewService(store)})
 }
 
+// TestEventSubscriptionDeliveriesGapEnvelopeContract pins the wire contract
+// for a deliveries cursor that can no longer be honored. Both an aged-out
+// cursor (its delivery removed by the retention purge) and a cursor that does
+// not resolve to a delivery position return the canonical §25.2 gap envelope:
+// gapDetected, gapReason, oldestAvailableCursor, and suggestedAction "resync",
+// so a client that fell behind retention has a documented recovery step rather
+// than a silently empty page.
+//
+// spec: §25.5 (gap on aged-out deliveries cursor), §25.2 (canonical gap
+// envelope).
+// diagnosis: a failure means the deliveries endpoint reports a gap without the
+// reason or the recovery hint the §25.2 envelope defines, so an agent that
+// outruns the delivery retention window receives an empty page it cannot
+// distinguish from the end of history and never resyncs.
+func TestEventSubscriptionDeliveriesGapEnvelopeContract(t *testing.T) {
+	ctx := context.Background()
+	store := eventsubscription.NewMemoryStore()
+	if err := store.Create(ctx, eventsubscription.Record{
+		ID: "sub-1", CallbackURL: "https://hooks.acme.com/lenny",
+		TenantFilter: eventsubscription.TenantFilterAll, Active: true,
+	}); err != nil {
+		t.Fatalf("seed subscription: %v", err)
+	}
+	// Three deliveries already past their retention expiry, then two live ones.
+	for i := 0; i < 5; i++ {
+		expires := time.Now().Add(24 * time.Hour)
+		if i < 3 {
+			expires = time.Now().Add(-time.Hour)
+		}
+		if _, err := store.RecordDelivery(ctx, eventsubscription.Delivery{
+			SubscriptionID: "sub-1", EventID: "evt", EventType: "dev.lenny.alert_fired",
+			Status: eventsubscription.DeliveryDelivered, ExpiresAt: expires,
+		}); err != nil {
+			t.Fatalf("seed delivery %d: %v", i, err)
+		}
+	}
+	if purged, err := store.DeleteExpired(ctx, time.Now(), 100); err != nil || purged != 3 {
+		t.Fatalf("retention purge = %d (%v), want 3", purged, err)
+	}
+	srv := opsserver.New(opsserver.Options{EventSubscriptions: eventsubscription.NewService(store)})
+
+	for _, tc := range []struct {
+		name   string
+		cursor string
+		reason string
+	}{
+		{"aged out under the retention purge", "2", eventsubscription.GapReasonAgedOut},
+		{"unresolvable continuation token", "not-a-cursor", eventsubscription.GapReasonUnresolvable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec, body := request(t, srv, http.MethodGet,
+				"/v1/admin/event-subscriptions/sub-1/deliveries?limit=2&cursor="+tc.cursor, nil, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200 with a gap envelope; body=%v", rec.Code, body)
+			}
+			if got := deliveryCount(t, body); got != 0 {
+				t.Errorf("gap response returned %d deliveries, want 0", got)
+			}
+			p := deliveryPagination(t, body)
+			if p["gapDetected"] != true {
+				t.Fatalf("gapDetected = %v, want true; envelope=%v", p["gapDetected"], p)
+			}
+			if p["gapReason"] != tc.reason {
+				t.Errorf("gapReason = %v, want %q", p["gapReason"], tc.reason)
+			}
+			if p["suggestedAction"] != eventsubscription.SuggestedActionResync {
+				t.Errorf("suggestedAction = %v, want %q", p["suggestedAction"], eventsubscription.SuggestedActionResync)
+			}
+			if p["oldestAvailableCursor"] != "4" {
+				t.Errorf("oldestAvailableCursor = %v, want the oldest retained delivery cursor 4", p["oldestAvailableCursor"])
+			}
+		})
+	}
+}
+
 // deliveryPagination extracts the §25.2 pagination envelope from a
 // decoded deliveries response, failing the test when it is absent.
 func deliveryPagination(t *testing.T, body map[string]any) map[string]any {

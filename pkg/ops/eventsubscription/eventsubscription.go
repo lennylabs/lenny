@@ -268,6 +268,38 @@ type Pagination struct {
 	// oldest retained delivery, so the caller can resume from the
 	// retention floor rather than silently miss purged rows.
 	OldestAvailableCursor string
+	// GapReason names why the cursor could not be honored, so a caller can
+	// tell an aged-out continuation token from one it never held.
+	GapReason string
+	// SuggestedAction is the canonical §25.2 recovery hint, "resync" on a
+	// gap. Without it a caller receiving a gap has no documented next step.
+	SuggestedAction string
+}
+
+// The canonical §25.2 gap fields the deliveries endpoint reports when a
+// supplied cursor cannot be honored. spec: §25.2 (gapDetected, gapReason,
+// oldestAvailableCursor, suggestedAction), §25.5 (gap on aged-out cursor).
+const (
+	// GapReasonAgedOut is the reason for a cursor whose delivery, and the
+	// rows below it, were removed by the retention purge.
+	GapReasonAgedOut = "cursor aged out under the delivery retention purge"
+	// GapReasonUnresolvable is the reason for a cursor that does not decode
+	// to a delivery position at all.
+	GapReasonUnresolvable = "cursor could not be resolved to a delivery position"
+	// SuggestedActionResync is the §25.2 recovery hint carried on every gap.
+	SuggestedActionResync = "resync"
+)
+
+// MarkGap fills the canonical §25.2 gap envelope: the flag, the reason, the
+// oldest retained cursor to resume from, and the resync hint. Every code path
+// that reports an un-honorable deliveries cursor goes through it so the four
+// fields never drift apart. spec: §25.2 (gap envelope), §25.5 (gap on aged-out
+// cursor).
+func (p *Pagination) MarkGap(reason, oldestAvailableCursor string) {
+	p.GapDetected = true
+	p.GapReason = reason
+	p.OldestAvailableCursor = oldestAvailableCursor
+	p.SuggestedAction = SuggestedActionResync
 }
 
 // Store persists §25.5 webhook subscriptions and their delivery rows.
@@ -940,8 +972,7 @@ func (m *MemoryStore) ListDeliveries(_ context.Context, subID string, cursor str
 	}
 	if haveCursor && len(out) == 0 {
 		if oldest, ok := m.oldestDeliveryIDLocked(subID); ok && cursorID < oldest {
-			page.GapDetected = true
-			page.OldestAvailableCursor = strconv.FormatInt(oldest, 10)
+			page.MarkGap(GapReasonAgedOut, strconv.FormatInt(oldest, 10))
 		}
 	}
 	return out, page, nil
@@ -970,8 +1001,7 @@ func (m *MemoryStore) oldestDeliveryIDLocked(subID string) (int64, bool) {
 func (m *MemoryStore) deliveriesGapLocked(subID string) Pagination {
 	p := Pagination{CursorKind: CursorKindPK}
 	if oldest, ok := m.oldestDeliveryIDLocked(subID); ok {
-		p.GapDetected = true
-		p.OldestAvailableCursor = strconv.FormatInt(oldest, 10)
+		p.MarkGap(GapReasonUnresolvable, strconv.FormatInt(oldest, 10))
 	}
 	return p
 }
