@@ -181,29 +181,31 @@ func TestEventStreamWiringReportsUnavailableWhenNoGatewayReplicaServes_spec_25_5
 // reports while serving from the gateway event buffer.
 const sourceLabelGatewayBuffer = "gateway-buffer"
 
-// TestEventStreamWiringClassifiesGatewayRefusalAsDualOutage asserts the §25.5
-// source-health signal and the data path it gates agree about the gateway. The
-// signal is measured on the surface the case-1 fall-back consumes, so a gateway
-// process that is serving but refuses lenny-ops the §25.3 buffer query is
-// classified down, and the read surface reports the dual-outage state it is
-// really in.
+// TestEventStreamWiringKeepsTheGatewayReachableSignalIndependentOfAdminAuthz
+// asserts that an authorization regression at the gateway admin gate does not
+// re-classify the §25.5 degradation state. The matrix branches on whether the
+// gateway is unreachable, so a gateway process that answers its liveness path
+// while refusing lenny-ops the §25.3 buffer query stays classified reachable.
 //
-// A probe measured on an unauthenticated liveness endpoint answers a different
-// question ("is the gateway process up") and reports such a gateway reachable.
-// The read surface then classifies case 1, routes the request to a source that
-// returns nothing, and an open SSE connection parks in the gateway stint
-// re-polling a fan-out that never answers.
+// Measuring the signal on the authenticated buffer endpoint instead makes a 403
+// from the admin gate read as a gateway outage, so a credential, role, or RBAC
+// regression silently moves the read surface from case 1 to case 4 and every
+// consumer sees a dual-outage classification for a gateway that is up. The
+// unservable gateway is still reported, through the fan-out path: the poll
+// escalates to 503 because no replica served the query, which is a data-path
+// outcome rather than a health-signal one.
 //
-// spec: §25.5 (degradation matrix — case 1 requires a gateway that can serve
-// the buffer; both sources unreachable is the dual-outage case), §25.4
-// (lenny-ops reaches the admin API as a service account holding platform-admin).
-func TestEventStreamWiringClassifiesGatewayRefusalAsDualOutage_spec_25_5(t *testing.T) {
+// spec: §25.5 (degradation matrix — the case-1 vs case-4 branch is gateway
+// reachability; EVENT_STREAM_UNAVAILABLE when no source can serve
+// gateway-originated events).
+func TestEventStreamWiringKeepsTheGatewayReachableSignalIndependentOfAdminAuthz_spec_25_5(t *testing.T) {
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/healthz" {
-			// The process is serving: a liveness probe finds this gateway up.
+		if r.URL.Path == gatewayLivenessPath {
+			// The process is serving: the §25.5 reachability input is up.
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		// The admin gate refuses lenny-ops, as an RBAC regression would.
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer gw.Close()
@@ -211,22 +213,27 @@ func TestEventStreamWiringClassifiesGatewayRefusalAsDualOutage_spec_25_5(t *test
 	w := buildRedisDownWiring(t, gw.URL)
 	go w.srcHealth.run(w.ctx, 200*time.Millisecond, w.redisClient, w.gwClient, redisEdgeCallbacks{})
 
-	deadline := time.Now().Add(10 * time.Second)
-	for w.srcHealth.GatewayAvailable() && time.Now().Before(deadline) {
+	// Give the probe several refreshes to settle, then assert it never reported
+	// the reachable gateway down.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !w.srcHealth.GatewayAvailable() {
+			t.Fatal("the source-health signal reports a gateway that answers its liveness path as " +
+				"unreachable because the admin gate refused lenny-ops; a gateway authorization " +
+				"regression must not re-classify the §25.5 degradation state from case 1 to case 4")
+		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	if w.srcHealth.GatewayAvailable() {
-		t.Fatalf("the source-health signal reports the gateway available while it refuses lenny-ops the "+
-			"§25.3 buffer query; the read surface would classify §25.5 case 1 and serve from a source that "+
-			"answers nothing, labelling the empty result %q", sourceLabelGatewayBuffer)
-	}
 
+	// The unservable gateway is reported by the data path rather than the
+	// health signal: no replica served the buffer query, so the poll escalates.
 	status, src, keys := awaitPoll(t, w, func(status int, _ string, _ []string) bool {
 		return status == http.StatusServiceUnavailable
 	})
 	if status != http.StatusServiceUnavailable {
-		t.Fatalf("poll status=%d actualSource=%q items=%v, want 503: with Redis down and the gateway "+
-			"refusing the buffer query neither source can serve gateway-originated events", status, src, keys)
+		t.Fatalf("poll status=%d actualSource=%q items=%v, want 503: no gateway replica served the "+
+			"buffer query, so the response carries no gateway-originated events and must not surface "+
+			"as a healthy %s page", status, src, keys, sourceLabelGatewayBuffer)
 	}
 }
 
