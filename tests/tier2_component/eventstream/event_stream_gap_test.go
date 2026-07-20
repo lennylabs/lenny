@@ -286,10 +286,17 @@ func pollRedisLimited(t *testing.T, s *opsstream.Service, cursor string, limit i
 // frames and whether a :gap comment were emitted during the backlog replay.
 func collectSSEResume(t *testing.T, s *opsstream.Service, target string) (dataFrames int, sawGap bool) {
 	t.Helper()
+	return collectSSEResumeWithHeader(t, s, httptest.NewRequest("GET", target, nil))
+}
+
+// collectSSEResumeWithHeader is collectSSEResume over a caller-built request,
+// so a test can carry a Last-Event-ID resume position rather than a ?cursor=.
+func collectSSEResumeWithHeader(t *testing.T, s *opsstream.Service, base *http.Request) (dataFrames int, sawGap bool) {
+	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	pr, pw := io.Pipe()
 	rw := &pipeResponseWriter{hdr: http.Header{}, w: pw}
-	req := httptest.NewRequest("GET", target, nil).WithContext(ctx)
+	req := base.WithContext(ctx)
 	go func() {
 		s.HandleStream(rw, req)
 		_ = pw.Close()
