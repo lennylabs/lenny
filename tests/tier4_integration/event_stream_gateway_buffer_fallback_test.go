@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -29,8 +30,12 @@ import (
 	"testing"
 	"time"
 
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -642,4 +647,152 @@ func TestOpsEventStreamReportsDualOutageWhenFanOutDiscoversNoGatewayReplica(t *t
 
 	cancel()
 	<-done
+}
+
+// realBufferReplica serves GET /v1/admin/events/buffer through the genuine
+// gateway admin Router over a real §25.3 ring buffer, so the fan-out meets the
+// endpoint's own query handling (an absent ?limit= defaults to 100, any limit
+// is capped at the ring capacity) rather than a stub that ignores the query.
+// The principal the auth step attaches is the §25.4 lenny-ops service account
+// as the spec defines it, holding platform-admin.
+func realBufferReplica(t *testing.T, buf *eventbuffer.EventBuffer) *httptest.Server {
+	t.Helper()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithEventBuffer(buf)
+	handler := router.Handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		p := authmw.Principal{
+			Subject:  "system:serviceaccount:lenny-system:lenny-ops-sa",
+			TenantID: "platform",
+			Roles:    []pkgauth.Role{pkgauth.RolePlatformAdmin},
+		}
+		handler.ServeHTTP(w, req.WithContext(authmw.WithPrincipal(req.Context(), p)))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// fillBufferReplica appends n alert_fired events to buf under the replica's
+// eventKey prefix, one per second, and returns the newest event's eventKey.
+func fillBufferReplica(buf *eventbuffer.EventBuffer, replica string, n int) string {
+	last := ""
+	for i := 1; i <= n; i++ {
+		last = fmt.Sprintf("%s:%d:%d", replica, 1000+i, i)
+		buf.Append(gwevents.OperationalEvent{
+			ID:          last,
+			Type:        "dev.lenny.alert_fired",
+			SpecVersion: gwevents.CloudEventsSpecVersion,
+			Time:        time.Unix(int64(1000+i), 0).UTC(),
+		})
+	}
+	return last
+}
+
+// spec: 25.5 (the Redis-down gateway-buffer fall-back serves the window the
+// replicas retain, and reports gapDetected only when the cursor aged out of
+// every replica's ring), 25.3 (GET /v1/admin/events/buffer defaults ?limit= to
+// 100 and caps it at the ring capacity) — driven against the genuine gateway
+// admin handler over a ring holding more than one default page, the cross-
+// process fan-out must reach each replica's HEAD. The pre-fix fetch issued the
+// bare path with no ?since= or ?limit=, so every replica answered from its
+// default cursor at its default page size and returned the OLDEST 100 entries
+// of its ring: the newest event was never served, an ordinary switch whose
+// cursor sat at the head was misreported as an eviction, and a ?limit= larger
+// than one upstream page was silently truncated. This fails against that code.
+//
+// diagnosis: a failure means the §25.5 Redis-down fall-back serves a stale
+// window instead of the retained one — events emitted during the outage sit at
+// the ring head outside the fetched window and are never delivered, every
+// source switch reports a spurious gap with suggestedAction resync and fires
+// lenny_ops_events_stream_gaps_total, and a caller's page limit is capped by an
+// upstream default it never asked for.
+func TestOpsEventStreamGatewayFallbackFetchesRetainedWindowNotOldestPage(t *testing.T) {
+	// A ring retaining well over the endpoint's 100-event default page.
+	buf := eventbuffer.NewEventBuffer(eventbuffer.DefaultBufferCapacity)
+	const retained = 300
+	newest := fillBufferReplica(buf, "gw-a", retained)
+	replica := realBufferReplica(t, buf)
+
+	client, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("test-token"),
+		Discovery:         gateway.StaticDiscovery{replica.URL},
+		PerRequestTimeout: 5 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+
+	var gaps atomic.Int64
+	svc := opsstream.New(opsstream.Options{
+		SourceHealth: redisDownGatewayUp{},
+		OnGap:        func() { gaps.Add(1) },
+	})
+	svc.SetGatewayBufferSource(client)
+
+	// The merged window reaches the head of the ring, so an event emitted
+	// during the outage is served rather than stranded behind the oldest page.
+	head := pollFallbackLimit(t, svc, "", retained)
+	if page := head; page.Degradation == nil || page.Degradation.ActualSource != "gateway-buffer" {
+		t.Fatalf("expected actualSource gateway-buffer degradation envelope, got %+v", page.Degradation)
+	}
+	if len(head.Items) != retained {
+		t.Errorf("served %d events, want the whole retained %d", len(head.Items), retained)
+	}
+	if n := len(head.Items); n == 0 || head.Items[n-1].Event.ID != newest {
+		t.Fatalf("window head = %+v, want the newest retained event %q", lastKey(head), newest)
+	}
+
+	// A switch whose carried position sits at the head of the retained window
+	// is an ordinary continuation: no gap comment, no counter increment.
+	cont := pollFallback(t, svc, mixedCursor(newest))
+	if cont.Pagination.GapDetected {
+		t.Errorf("a cursor at the retained head must not report a gap: %+v", cont.Pagination)
+	}
+	if len(cont.Items) != 0 {
+		t.Errorf("continuation served %d items, want none: the caller already holds the head", len(cont.Items))
+	}
+	if n := gaps.Load(); n != 0 {
+		t.Errorf("lenny_ops_events_stream_gaps_total fired %d times on an ordinary source switch, want 0", n)
+	}
+
+	// A ?limit= larger than one upstream page is honoured against the retained
+	// window, with hasMore computed against that window.
+	partial := pollFallbackLimit(t, svc, "", 200)
+	if len(partial.Items) != 200 {
+		t.Errorf("limit=200 served %d events, want 200 out of the %d retained", len(partial.Items), retained)
+	}
+	if !partial.Pagination.HasMore {
+		t.Errorf("hasMore = false with %d retained events beyond the page", retained-200)
+	}
+}
+
+// lastKey renders the newest eventKey a page carries, for a failure message.
+func lastKey(page opsstream.EventPage) string {
+	if len(page.Items) == 0 {
+		return "<empty>"
+	}
+	return page.Items[len(page.Items)-1].Event.ID
+}
+
+// pollFallbackLimit drives GET /v1/admin/events with an explicit ?limit= and
+// decodes the §25.5 poll envelope.
+func pollFallbackLimit(t *testing.T, svc *opsstream.Service, cursor string, limit int) opsstream.EventPage {
+	t.Helper()
+	target := fmt.Sprintf("/v1/admin/events?limit=%d", limit)
+	if cursor != "" {
+		target += "&cursor=" + cursor
+	}
+	rec := httptest.NewRecorder()
+	svc.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, target, nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poll status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	var page opsstream.EventPage
+	if err := json.NewDecoder(rec.Body).Decode(&page); err != nil {
+		t.Fatalf("decode poll body: %v", err)
+	}
+	return page
 }

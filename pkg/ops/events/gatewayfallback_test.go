@@ -5,9 +5,11 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
 
@@ -436,14 +439,195 @@ func TestFetchGatewayBuffer_ErrorsAndUnnarrowedQuery_spec_25_5(t *testing.T) {
 		t.Fatal("fetchGatewayBuffer must propagate a fan-out failure")
 	}
 
-	// The per-replica request carries no filter query.
+	// The per-replica request carries no filter narrowing, and asks for the
+	// retained window explicitly: since=0 at the endpoint's maximum page. The
+	// pre-fix query was the bare path, which the §25.3 handler answers at its
+	// 100-event default and so returns the oldest slice of the ring.
 	rec := &recordingGatewaySource{}
 	s.SetGatewayBufferSource(rec)
 	if _, err := s.fetchGatewayBuffer(context.Background()); err != nil {
 		t.Fatalf("fetchGatewayBuffer: %v", err)
 	}
-	if got := rec.paths[0]; got != gatewayBufferPath {
-		t.Fatalf("fan-out path = %q, want the unnarrowed %q", got, gatewayBufferPath)
+	got := rec.paths[0]
+	u, err := url.Parse(got)
+	if err != nil {
+		t.Fatalf("parse fan-out path %q: %v", got, err)
+	}
+	if u.Path != gatewayBufferPath {
+		t.Errorf("fan-out path = %q, want %q", u.Path, gatewayBufferPath)
+	}
+	q := u.Query()
+	if q.Get("eventType") != "" || q.Get("severity") != "" {
+		t.Errorf("fan-out query = %q, want no filter narrowing", u.RawQuery)
+	}
+	if q.Get("since") != "0" {
+		t.Errorf("fan-out since = %q, want 0", q.Get("since"))
+	}
+	if q.Get("limit") != strconv.Itoa(gatewayBufferPageLimit) {
+		t.Errorf("fan-out limit = %q, want the endpoint maximum %d", q.Get("limit"), gatewayBufferPageLimit)
+	}
+}
+
+// ringGatewaySource is a GatewayBufferSource backed by a real §25.3 ring buffer
+// per replica, answering ?since= / ?limit= the way the gateway's buffer
+// endpoint does: it caps any requested limit at the ring capacity and leaves a
+// non-positive or absent limit to the buffer's own 100-event default. It exists
+// so the fan-out is exercised against the counterparty's real pagination
+// instead of a fixed slice that ignores the query.
+type ringGatewaySource struct {
+	rings []*eventbuffer.EventBuffer
+}
+
+func (r *ringGatewaySource) FanOutGet(_ context.Context, path string) ([]gateway.ReplicaResult, error) {
+	u, err := url.Parse(path)
+	if err != nil {
+		return nil, err
+	}
+	q := u.Query()
+	since, _ := strconv.ParseUint(q.Get("since"), 10, 64)
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit > eventbuffer.DefaultBufferCapacity {
+		limit = eventbuffer.DefaultBufferCapacity
+	}
+	filter := gwevents.EventFilter{EventType: q.Get("eventType"), Severity: q.Get("severity")}
+	out := make([]gateway.ReplicaResult, 0, len(r.rings))
+	for i, ring := range r.rings {
+		body, mErr := json.Marshal(ring.Query(since, filter, limit))
+		if mErr != nil {
+			return nil, mErr
+		}
+		out = append(out, gateway.ReplicaResult{Endpoint: fmt.Sprintf("gw-%d", i), Body: body})
+	}
+	return out, nil
+}
+
+// fillRing appends n alert_fired events to ring under the replica's eventKey
+// prefix, one per second from base, and returns the newest event's key.
+func fillRing(ring *eventbuffer.EventBuffer, replica string, n int, base time.Time) string {
+	last := ""
+	for i := 1; i <= n; i++ {
+		last = fmt.Sprintf("%s:%d:%d", replica, 1000+i, i)
+		ring.Append(timedEvt(last, "dev.lenny.alert_fired", base.Add(time.Duration(i)*time.Second)))
+	}
+	return last
+}
+
+// spec: 25.5 (the Redis-down fall-back serves what the gateway replicas
+// retain), 25.3 (?limit= defaults to 100 and caps at the ring capacity) — the
+// fan-out reaches the HEAD of a replica ring holding more than one default
+// page, so an event emitted during the outage is served rather than stranded
+// behind the endpoint's oldest-100 default window. The pre-fix fetch issued the
+// bare path, so the replica answered from since=0 at limit=100 and the newest
+// event was outside the window; this fails against that code.
+func TestFetchGatewayBuffer_ReachesReplicaRingHead_spec_25_5(t *testing.T) {
+	base := ts()
+	ring := eventbuffer.NewEventBuffer(eventbuffer.DefaultBufferCapacity)
+	newest := fillRing(ring, "gw-a", 250, base)
+
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&ringGatewaySource{rings: []*eventbuffer.EventBuffer{ring}})
+
+	merged, err := s.fetchGatewayBuffer(context.Background())
+	if err != nil {
+		t.Fatalf("fetchGatewayBuffer: %v", err)
+	}
+	if len(merged) != 250 {
+		t.Errorf("merged window = %d events, want the whole retained 250", len(merged))
+	}
+	if len(merged) == 0 || merged[len(merged)-1].Event.ID != newest {
+		t.Fatalf("merged window head = %v, want the newest retained event %q", eventKeys(merged), newest)
+	}
+}
+
+// spec: 25.5 (the fall-back window reaches each replica's head), 25.3
+// (per-replica buffer-seq cursor with hasMore) — a replica retaining more than
+// the endpoint's maximum page is drained across successive fan-out rounds, each
+// resuming from the lowest outstanding cursor, so the merged window still
+// reaches the head. The pre-fix fetch issued one bare, cursorless request; this
+// fails against that code.
+func TestFetchGatewayBuffer_PagesUntilReplicaHasNoMore_spec_25_5(t *testing.T) {
+	base := ts()
+	// A ring larger than the endpoint's maximum page, so one round cannot
+	// carry it: the replica reports hasMore and the fetch must follow it.
+	deep := eventbuffer.NewEventBuffer(2 * eventbuffer.DefaultBufferCapacity)
+	newestDeep := fillRing(deep, "gw-a", 2*eventbuffer.DefaultBufferCapacity, base)
+	shallow := eventbuffer.NewEventBuffer(eventbuffer.DefaultBufferCapacity)
+	newestShallow := fillRing(shallow, "gw-b", 10, base)
+
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&ringGatewaySource{rings: []*eventbuffer.EventBuffer{deep, shallow}})
+
+	merged, err := s.fetchGatewayBuffer(context.Background())
+	if err != nil {
+		t.Fatalf("fetchGatewayBuffer: %v", err)
+	}
+	keys := make(map[string]struct{}, len(merged))
+	for _, ev := range merged {
+		keys[ev.Event.ID] = struct{}{}
+	}
+	if _, ok := keys[newestDeep]; !ok {
+		t.Errorf("merged window is missing the deep replica's newest event %q", newestDeep)
+	}
+	if _, ok := keys[newestShallow]; !ok {
+		t.Errorf("merged window is missing the shallow replica's newest event %q", newestShallow)
+	}
+	if want := 2*eventbuffer.DefaultBufferCapacity + 10; len(merged) != want {
+		t.Errorf("merged window = %d events, want %d with no duplicate across rounds", len(merged), want)
+	}
+}
+
+// spec: 25.5 (gapDetected only when the cursor aged out of every replica's
+// ring) — a poll carrying a cursor at the head of the retained window continues
+// with no gap and no gap-counter increment. The pre-fix fetch returned the
+// OLDEST page of the ring, so every event in the window ordered before the
+// carried cursor and the ordinary switch reported a spurious gap with
+// suggestedAction resync; this fails against that code.
+func TestGatewayPollPage_HeadCursorIsNotASpuriousGap_spec_25_5(t *testing.T) {
+	base := ts()
+	ring := eventbuffer.NewEventBuffer(eventbuffer.DefaultBufferCapacity)
+	newest := fillRing(ring, "gw-a", 250, base)
+
+	gaps := 0
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts, OnGap: func() { gaps++ }})
+	s.SetGatewayBufferSource(&ringGatewaySource{rings: []*eventbuffer.EventBuffer{ring}})
+
+	page, err := s.gatewayPollPage(context.Background(), SourceKindMixed, newest, gwevents.EventFilter{}, 10, false)
+	if err != nil {
+		t.Fatalf("gatewayPollPage: %v", err)
+	}
+	if page.Pagination.GapDetected {
+		t.Errorf("gapDetected = true for a cursor at the head of the retained window (reason %q)", page.Pagination.GapReason)
+	}
+	if gaps != 0 {
+		t.Errorf("gap counter = %d, want 0 for an ordinary source switch", gaps)
+	}
+	if len(page.Items) != 0 {
+		t.Errorf("items = %d, want none: the caller already holds the head", len(page.Items))
+	}
+}
+
+// spec: 25.5 (the fall-back pages the retained window at the caller's limit) —
+// a poll asking for more than one upstream page is served that many events with
+// hasMore computed against the retained window. The pre-fix fetch truncated the
+// window to the upstream 100-event default before the limit was applied, so a
+// larger limit returned a short page; this fails against that code.
+func TestGatewayPollPage_LimitLargerThanUpstreamPage_spec_25_5(t *testing.T) {
+	base := ts()
+	ring := eventbuffer.NewEventBuffer(eventbuffer.DefaultBufferCapacity)
+	fillRing(ring, "gw-a", 300, base)
+
+	s := New(Options{SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&ringGatewaySource{rings: []*eventbuffer.EventBuffer{ring}})
+
+	page, err := s.gatewayPollPage(context.Background(), SourceKindMixed, "", gwevents.EventFilter{}, 200, false)
+	if err != nil {
+		t.Fatalf("gatewayPollPage: %v", err)
+	}
+	if len(page.Items) != 200 {
+		t.Errorf("items = %d, want the requested 200 out of the 300 retained", len(page.Items))
+	}
+	if !page.Pagination.HasMore {
+		t.Error("hasMore = false with 100 retained events beyond the page")
 	}
 }
 

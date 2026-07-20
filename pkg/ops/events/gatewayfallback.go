@@ -26,6 +26,26 @@ const gatewayBufferPath = "/v1/admin/events/buffer"
 // client's FanOutTimeout; this caps the aggregate. spec: §25.5.
 const gatewayFetchTimeout = 5 * time.Second
 
+// gatewayBufferPageLimit is the ?limit= the fan-out asks each replica for. The
+// §25.3 buffer endpoint defaults an absent or non-positive limit to 100 and
+// caps any request at the ring capacity, so asking for the capacity is the
+// largest page a replica will serve and the only way to reach the head of a
+// ring that retains more than the default page. Leaving the query bare made
+// every replica answer from since=0 at that 100-event default, which returns
+// the OLDEST 100 entries of a 500-entry ring: the events emitted during the
+// outage sit at the head, outside the fetched window, so the fall-back served a
+// stale window instead of the retained one. spec: §25.3 (?limit= default 100,
+// capped at the ring capacity), §25.5 (the fall-back serves what the replicas
+// retain).
+const gatewayBufferPageLimit = DefaultBufferCapacity
+
+// gatewayBufferMaxPages bounds the per-replica paging loop so a replica that
+// keeps reporting hasMore (a ring larger than one page, or one filling faster
+// than the fan-out drains it) cannot spin the fetch unbounded. The aggregate
+// gatewayFetchTimeout bounds it in wall-clock terms as well; this bounds the
+// request count. spec: §25.5.
+const gatewayBufferMaxPages = 16
+
 // GatewayBufferSource fans the §25.3 gateway event-buffer query across every
 // gateway replica over the lenny-gateway-pods headless Service. It is the
 // §25.5 Redis-down fall-back source: with Redis
@@ -59,14 +79,73 @@ func (s *Service) fetchGatewayBuffer(ctx context.Context) ([]gwevents.BufferedEv
 	}
 	cctx, cancel := context.WithTimeout(ctx, gatewayFetchTimeout)
 	defer cancel()
-	results, err := s.gateway.FanOutGet(cctx, gatewayBufferPath)
-	if err != nil {
-		return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
+
+	var collected []gateway.ReplicaResult
+	since := uint64(0)
+	for page := 0; page < gatewayBufferMaxPages; page++ {
+		results, err := s.gateway.FanOutGet(cctx, gatewayBufferQuery(since))
+		if err != nil {
+			return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
+		}
+		if page == 0 {
+			// Reachability is decided by the first round: a fan-out none of
+			// the replicas served is the dual-outage case. A later round is a
+			// continuation over replicas already known to be reachable, so a
+			// failure there degrades the window rather than invalidating it.
+			if err := replicasServed(results); err != nil {
+				return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
+			}
+		}
+		collected = append(collected, results...)
+		next, more := nextBufferCursor(results)
+		if !more || next <= since {
+			break
+		}
+		since = next
 	}
-	if err := replicasServed(results); err != nil {
-		return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
+	return mergeReplicaBuffers(collected), nil
+}
+
+// gatewayBufferQuery builds the §25.3 buffer query for one fan-out round: a
+// cursor and the largest page the endpoint serves. Both are explicit because
+// the endpoint's defaults (since=0, limit=100) describe the oldest slice of a
+// replica's ring, and the fall-back needs its head. spec: §25.3 (?since=,
+// ?limit=), §25.5.
+func gatewayBufferQuery(since uint64) string {
+	return fmt.Sprintf("%s?since=%d&limit=%d", gatewayBufferPath, since, gatewayBufferPageLimit)
+}
+
+// nextBufferCursor returns the cursor the next fan-out round resumes from and
+// whether any replica has more to serve.
+//
+// One fan-out round issues one path to every replica, so the round has to
+// resume from a position that is safe for each replica that still has more.
+// The buffer ids are per-replica sequence numbers, so the lowest outstanding
+// cursor is that position: a replica sitting further ahead re-serves the span
+// it already returned, and mergeReplicaBuffers collapses the repeat by
+// eventKey. Resuming from the highest instead would step past events a slower
+// replica has not yet handed over. spec: §25.3 (per-replica buffer-seq cursor),
+// §25.5 (cross-replica eventKey dedup).
+func nextBufferCursor(results []gateway.ReplicaResult) (uint64, bool) {
+	var next uint64
+	found := false
+	for _, r := range results {
+		if r.Err != nil || len(r.Body) == 0 {
+			continue
+		}
+		var page gwevents.BufferedEventPage
+		if err := json.Unmarshal(r.Body, &page); err != nil {
+			continue
+		}
+		if !page.Pagination.HasMore {
+			continue
+		}
+		if !found || page.Pagination.Cursor < next {
+			next = page.Pagination.Cursor
+			found = true
+		}
 	}
-	return mergeReplicaBuffers(results), nil
+	return next, found
 }
 
 // ErrGatewayBufferUnavailable reports that no gateway replica served the §25.3

@@ -25,8 +25,12 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	gwevents "github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -1092,4 +1096,134 @@ func streamEventCounts(t *testing.T, client redis.UniversalClient, key string) m
 		counts[ev.ID]++
 	}
 	return counts
+}
+
+// opsBufferReplicaServer serves GET /v1/admin/events/buffer through the genuine
+// gateway admin Router over buf, so a chaos run meets the endpoint's real
+// pagination (an absent ?limit= defaults to 100, any limit is capped at the
+// ring capacity) rather than a stub that ignores the query. The attached
+// principal is the §25.4 lenny-ops service account holding platform-admin.
+func opsBufferReplicaServer(t *testing.T, buf *eventbuffer.EventBuffer) *httptest.Server {
+	t.Helper()
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
+		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+	}).WithEventBuffer(buf)
+	handler := router.Handler()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := authmw.Principal{
+			Subject:  "system:serviceaccount:lenny-system:lenny-ops-sa",
+			TenantID: "platform",
+			Roles:    []pkgauth.Role{pkgauth.RolePlatformAdmin},
+		}
+		handler.ServeHTTP(w, r.WithContext(authmw.WithPrincipal(r.Context(), p)))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+// gwBufferEvent builds a gateway-originated alert whose eventKey carries the
+// emission second, so the §25.5 eventKey ordering matches the emission order.
+func gwBufferEvent(sec int64, nonce int) gwevents.OperationalEvent {
+	return gwevents.OperationalEvent{
+		ID:          fmt.Sprintf("gw:%d:%d", sec, nonce),
+		Type:        "dev.lenny.alert_fired",
+		SpecVersion: gwevents.CloudEventsSpecVersion,
+		Time:        time.Unix(sec, 0).UTC(),
+	}
+}
+
+// spec: 25.5 (transparent Redis to gateway-buffer switch; no drop across the
+// switch; gapDetected only when the cursor aged out of every replica's ring) —
+// an open SSE connection injected with a live Redis outage, against a gateway
+// replica whose ring retains more than the §25.3 endpoint's default page, must
+// resume at its carried position without a spurious gap and must go on
+// receiving events the gateway emits AFTER the switch. The pre-fix fall-back
+// fetched the bare buffer path, so the replica answered from since=0 at its
+// 100-event default and returned the OLDEST slice of the ring: the carried
+// position ordered after that whole stale window (a spurious :gap) and every
+// event emitted during the outage landed at the ring head, outside it, so the
+// connection received nothing for the duration. This fails against that code.
+//
+// diagnosis: a failure means the §25.5 Redis-down fall-back serves a stale
+// window rather than the retained one — an open connection is told to resync on
+// an ordinary source switch, and the gateway events emitted during the outage
+// (the events the fall-back exists to carry) never reach it.
+func TestOpsEventStreamFallbackDeliversGatewayEventsEmittedAfterTheSwitch(t *testing.T) {
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// The replica ring already retains 300 events, three times the endpoint's
+	// default page, so the head is only reachable with an explicit ?limit=.
+	buf := eventbuffer.NewEventBuffer(eventbuffer.DefaultBufferCapacity)
+	for i := 1; i <= 300; i++ {
+		buf.Append(gwBufferEvent(int64(1000+i), i))
+	}
+	replica := opsBufferReplicaServer(t, buf)
+
+	gwClient, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("t"),
+		Discovery:         gateway.StaticDiscovery{replica.URL},
+		PerRequestTimeout: 3 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("gateway client: %v", err)
+	}
+
+	health := &toggleHealth{}
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	svc := opsstream.New(opsstream.Options{
+		RedisClient:  opsstream.NewRedisStreamClient(rd.Client),
+		SourceHealth: health,
+		ReplicaID:    "ops-1",
+	})
+	svc.SetGatewayBufferSource(gwClient)
+
+	// A Redis-served event whose eventKey orders inside the retained gateway
+	// window, so the position the connection carries into the fall-back is one
+	// the retained window can honour.
+	emitter := eventbuffer.NewStreamEmitter(eventbuffer.StreamEmitterOptions{
+		Client:    rd.Client,
+		Buffer:    eventbuffer.NewEventBuffer(0),
+		ReplicaID: "ops-1",
+	})
+	carried := gwevents.OperationalEvent{
+		ID:          "ops-1:1200:1",
+		Type:        "dev.lenny.drift_detected",
+		SpecVersion: gwevents.CloudEventsSpecVersion,
+		Time:        time.Unix(1200, 0).UTC(),
+	}
+	if err := emitter.Emit(ctx, carried); err != nil {
+		t.Fatalf("seed redis event: %v", err)
+	}
+
+	rec := newSyncBuffer()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/admin/events/stream", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.HandleStream(rec, platformAdminReq(req))
+	}()
+	waitContains(t, rec, "ops-1:1200:1", 5*time.Second, "the Redis-served backlog event")
+
+	// Inject the outage and let the connection settle into the fall-back.
+	health.redis.Store(false)
+	waitContains(t, rec, "gateway-buffer", 6*time.Second, "the gateway-buffer degradation announcement")
+	waitContains(t, rec, "gw:1300:300", 6*time.Second, "the newest event the replica ring already retained")
+
+	// The gateway keeps emitting while Redis is down. The new event lands at
+	// the ring head, which is exactly what the stale oldest-page window misses.
+	after := gwBufferEvent(9000, 1)
+	buf.Append(after)
+	waitContains(t, rec, after.ID, 8*time.Second, "a gateway event emitted after the switch to the fall-back")
+
+	cancel()
+	<-done
+
+	if strings.Contains(rec.String(), ":gap") {
+		t.Fatalf("an ordinary switch into the gateway-buffer fall-back emitted a :gap comment; the carried position sits inside the retained window:\n%s", rec.String())
+	}
 }
