@@ -101,15 +101,16 @@ func observeStreamGap() {
 	}
 }
 
-// subscriberCounter reports the live SSE subscriber count.
-type subscriberCounter interface{ SubscriberCount() int }
+// activeStreamCounter reports the live SSE connection count.
+type activeStreamCounter interface{ ActiveStreams() int }
 
 // sampleEventStreamGauges refreshes the §25.5 stream-length and
 // SSE-connection gauges. The stream length is the Redis XLEN of
 // ops:events:stream (0 when Redis is not wired); the SSE-connection
-// gauge reads the live subscriber count from the local stream service.
+// gauge reads the live connection count from the local stream service,
+// which counts every open connection whichever source it is served from.
 // spec: §25.5 lines 2787, 2789.
-func sampleEventStreamGauges(ctx context.Context, client redis.UniversalClient, subs subscriberCounter) {
+func sampleEventStreamGauges(ctx context.Context, client redis.UniversalClient, streams activeStreamCounter) {
 	if eventsStreamLength != nil && client != nil {
 		cctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		if n, err := client.XLen(cctx, eventbuffer.DefaultStreamKey).Result(); err == nil {
@@ -117,7 +118,7 @@ func sampleEventStreamGauges(ctx context.Context, client redis.UniversalClient, 
 		}
 		cancel()
 	}
-	if eventsSSEActiveConnections != nil && subs != nil {
-		eventsSSEActiveConnections.WithLabelValues().Set(float64(subs.SubscriberCount()))
+	if eventsSSEActiveConnections != nil && streams != nil {
+		eventsSSEActiveConnections.WithLabelValues().Set(float64(streams.ActiveStreams()))
 	}
 }

@@ -81,6 +81,15 @@ type Service struct {
 	subsMu sync.Mutex
 	subs   []*subscription
 
+	// activeStreams counts the SSE connections currently being served,
+	// whichever source each one reads from. It is the §25.5
+	// lenny_ops_events_sse_active_connections gauge's input: the local-ring
+	// subscriber list cannot serve that role, because a connection served from
+	// the Redis stream (the primary source whenever Redis is reachable) tails
+	// Redis on a client of its own and registers no local subscription, so the
+	// gauge would read zero in the steady state. spec: §25.5 (metrics).
+	activeStreams atomic.Int64
+
 	webhook WebhookFanOut
 	onGap   func()
 	health  SourceHealth
@@ -403,12 +412,24 @@ func (s *Service) unsubscribe(sub *subscription) {
 	s.subs = kept
 }
 
-// SubscriberCount returns the number of active SSE subscribers. Used
-// by the §25.5 lenny_ops_events_sse_active_connections gauge.
+// SubscriberCount returns the number of live subscriptions on this replica's
+// ring buffer. A connection holds one only while it is serving from a source
+// that reads the local ring (the gateway-buffer fall-back merges it, and the
+// dual-outage floor serves it directly), so this is the local fan-out's
+// subscriber count rather than the SSE connection count. ActiveStreams reports
+// the latter.
 func (s *Service) SubscriberCount() int {
 	s.subsMu.Lock()
 	defer s.subsMu.Unlock()
 	return len(s.subs)
+}
+
+// ActiveStreams returns the number of SSE connections the Service is currently
+// serving, independent of the source each one reads from. It backs the §25.5
+// lenny_ops_events_sse_active_connections gauge. A connection is counted once
+// for its whole life, including across a source switch. spec: §25.5 (metrics).
+func (s *Service) ActiveStreams() int {
+	return int(s.activeStreams.Load())
 }
 
 // parseFilter builds the §25.5 canonical filter from the query string
@@ -705,6 +726,11 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		scope:    scope,
 		scoped:   scoped,
 	}
+	// The connection is counted for its whole life, from the moment the session
+	// is built to the moment it returns, so the §25.5 active-connection gauge is
+	// independent of which source the session is serving from at any instant.
+	s.activeStreams.Add(1)
+	defer s.activeStreams.Add(-1)
 	sess.run(r.Context())
 }
 
