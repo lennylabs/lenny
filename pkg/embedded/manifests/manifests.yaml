@@ -4689,6 +4689,11 @@ spec:
             - --gateway-token-refresh-before-expiry=300s
             - --gateway-token-min-ttl=600s
             - --production=false
+            # §12.4 requires Redis AUTH and TLS; a dev install backed by a
+            # plaintext no-password Redis would otherwise fail the lenny-ops
+            # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
+            # acknowledges the insecure dev Redis, matching the gateway.
+            - --redis-allow-insecure
             # §25.10 line 3809 / line 3824 — drift detection knobs.
             # F-25.10.7, F-25.10.9.
             - --drift-snapshot-stale-warning-days=7
