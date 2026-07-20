@@ -1460,7 +1460,7 @@ func warningAlerts() []Rule {
 			Expr:        `increase(lenny_crd_ssa_conflict_total[5m]) > 10`,
 			Severity:    SeverityWarning,
 			Summary:     "Abnormal CRD Server-Side Apply ownership dispute",
-			Description: "The SSA conflict counter for any single resource exceeds 10 in a 5-minute window. Indicates an abnormal ownership dispute between controllers on the same CRD field.",
+			Description: "The lenny_crd_ssa_conflict_total counter for any (crd, controller) series exceeds 10 in a 5-minute window; each increment is one five-consecutive-409 stuck episode. Indicates an abnormal ownership dispute between controllers on the same CRD field. Consult the correlated crd_ssa_conflict_stuck structured log (labeled controller, resource, name) to identify the specific resource.",
 			SpecRef:     "§16.5",
 		},
 		{
