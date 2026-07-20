@@ -209,3 +209,63 @@ func TestFlushBufferedToRedis_ScanFailureDoesNotAbandonTheWindow_spec_25_5(t *te
 		t.Fatalf("repeat flush = (%d, %v); want nothing (the window was already flushed)", n, err)
 	}
 }
+
+// spec: 25.5 (best-effort recovery flush scoped to the outage window) — the
+// window's two openers race. The source-health probe can observe the outage in
+// the instant between an event's local publish and its failed XADD, anchoring
+// the window at that event's own ring position; the write failure that follows
+// then reports an earlier anchor. The window must widen to the earliest of the
+// two, or the flush queries past the event whose XADD failed and abandons it.
+// The pre-fix openOutageWindow kept the first anchor recorded and dropped the
+// earlier one, so this fails against that code.
+func TestOpenOutageWindow_WidensToTheEarliestAnchor_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	s := New(Options{RedisClient: f, SourceHealth: newMutableHealth(false, true), Now: ts})
+	var reEmitted []string
+	s.SetRedisReEmitter(func(_ context.Context, e gwevents.OperationalEvent) error {
+		reEmitted = append(reEmitted, e.ID)
+		return nil
+	})
+
+	// The event is in the ring; its XADD has not failed yet.
+	id := s.buffer.Append(evt("ops:1000:1", "dev.lenny.escalation_created"))
+
+	// The probe observes the outage first and anchors at the ring head, which
+	// is this event's own position.
+	s.MarkRedisOutage()
+	// The XADD then fails, reporting the earlier anchor.
+	s.MarkRedisWriteFailure(id)
+
+	n, err := s.FlushBufferedToRedis(context.Background())
+	if err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if n != 1 || len(reEmitted) != 1 || reEmitted[0] != "ops:1000:1" {
+		t.Fatalf("flush re-emitted %d event(s) %v; want the event whose XADD failed", n, reEmitted)
+	}
+}
+
+// spec: 25.5 (best-effort recovery flush scoped to the outage window) — a later
+// signal must still not narrow an open window past events it has yet to flush.
+func TestOpenOutageWindow_ALaterAnchorDoesNotNarrowTheWindow_spec_25_5(t *testing.T) {
+	f := &fakeStream{}
+	s := New(Options{RedisClient: f, SourceHealth: newMutableHealth(false, true), Now: ts})
+	var reEmitted []string
+	s.SetRedisReEmitter(func(_ context.Context, e gwevents.OperationalEvent) error {
+		reEmitted = append(reEmitted, e.ID)
+		return nil
+	})
+
+	s.MarkRedisOutage() // anchors at the empty ring head
+	first := s.buffer.Append(evt("ops:1000:1", "dev.lenny.escalation_created"))
+	s.buffer.Append(evt("ops:1001:1", "dev.lenny.drift_detected"))
+	// A second failed XADD reports a later anchor; the window keeps the first.
+	s.MarkRedisWriteFailure(first + 1)
+
+	if n, err := s.FlushBufferedToRedis(context.Background()); err != nil || n != 2 {
+		t.Fatalf("flush = (%d, %v); want both outage-window events", n, err)
+	}
+	if len(reEmitted) != 2 || reEmitted[0] != "ops:1000:1" {
+		t.Fatalf("re-emitted %v; want both events from the earliest anchor", reEmitted)
+	}
+}

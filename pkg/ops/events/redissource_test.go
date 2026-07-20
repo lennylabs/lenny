@@ -137,7 +137,8 @@ func (c *parkedTailClient) Close() error {
 // test exercises source selection as well as the page it produces.
 func pollActiveSource(s *Service, ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	src, _, _ := s.selectSource()
-	return s.pollPage(ctx, src, cursorKind, position, filter, limit, desc)
+	page, _ := s.pollPage(ctx, src, cursorKind, position, filter, limit, desc)
+	return page
 }
 
 func redisService(t *testing.T, f *fakeStream) *Service {
@@ -799,7 +800,7 @@ func TestRedisMintedCursorTranslatesAtOtherSources_spec_25_5(t *testing.T) {
 		gwEvt("gw:0500:1", 500),
 		gwEvt("gw:2000:1", 2000),
 	}}})
-	fanned := s.gatewayPollPage(context.Background(), kind, position, gwevents.EventFilter{}, 10, false)
+	fanned, _ := s.gatewayPollPage(context.Background(), kind, position, gwevents.EventFilter{}, 10, false)
 	if fanned.Pagination.GapDetected {
 		t.Errorf("the gateway-buffer fan-out reported a gap for a Redis-minted cursor: %+v", fanned.Pagination)
 	}

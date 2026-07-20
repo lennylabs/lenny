@@ -238,6 +238,7 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 
 	delivered := make(map[string]struct{})
 	resumed := false
+	unavailable := false
 	for {
 		if ctx.Err() != nil {
 			return
@@ -245,17 +246,37 @@ func (st *streamSession) serveGateway(ctx context.Context, src dataSource) {
 		if st.s.sourceChanged(src) {
 			return
 		}
-		if merged, err := st.s.fetchGatewayBuffer(ctx, st.filter); err == nil {
-			merged = st.s.unionLocalOrigin(merged, st.filter)
-			if !resumed && len(merged) > 0 {
-				st.seedGatewayResume(merged, delivered)
-				resumed = true
+		merged, err := st.s.fetchGatewayBuffer(ctx, st.filter)
+		if err != nil {
+			// No replica served the buffer query, so this connection is
+			// receiving lenny-ops-originated events only. Announce the
+			// dual-outage envelope once so the consumer stops reading the
+			// stream as a cross-replica view, and keep serving the local ring.
+			// spec: §25.5 (dual-outage local-buffer serving).
+			if !unavailable {
+				_, deg, _ := dualOutageState()
+				writeSSEDegradation(st.w, deg)
+				st.flusher.Flush()
+				unavailable = true
 			}
-			for _, ev := range merged {
-				st.deliverOnce(ev, delivered)
-			}
+			merged = nil
+		} else if unavailable {
+			// A replica answered again: the connection is back to the
+			// gateway-buffer fall-back view.
+			_, deg, _ := st.s.selectSource()
+			writeSSEDegradation(st.w, deg)
 			st.flusher.Flush()
+			unavailable = false
 		}
+		window := st.s.unionLocalOrigin(merged, st.filter)
+		if !resumed && err == nil && len(window) > 0 {
+			st.seedGatewayResume(window, delivered)
+			resumed = true
+		}
+		for _, ev := range window {
+			st.deliverOnce(ev, delivered)
+		}
+		st.flusher.Flush()
 		if !st.waitGatewayTick(ctx, sub, delivered) {
 			return
 		}

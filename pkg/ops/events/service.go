@@ -519,7 +519,15 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parseLimit(q)
 
-	page := s.pollPage(r.Context(), src, kind, eventKey, filter, limit, desc)
+	page, perr := s.pollPage(r.Context(), src, kind, eventKey, filter, limit, desc)
+	if perr != nil {
+		// The gateway-buffer fall-back served nothing: no replica answered the
+		// §25.3 buffer query, so gateway-originated events have nowhere to come
+		// from and the request is the §25.5 dual-outage case. spec: §25.5
+		// (EVENT_STREAM_UNAVAILABLE when both sources are unreachable).
+		writeStreamUnavailable(w)
+		return
+	}
 	// §25.5 Redis-down gateway-buffer fall-back: serving from the gateway buffer
 	// during a Redis outage is reported as response metadata
 	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
@@ -539,13 +547,17 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // src is a parameter rather than a second selectSource call so the page and
 // the degradation envelope its caller attached describe the same source. spec:
 // §25.5 lines 2666-2699.
-func (s *Service) pollPage(ctx context.Context, src dataSource, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+func (s *Service) pollPage(ctx context.Context, src dataSource, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
 	var page EventPage
 	switch src {
 	case dsRedis:
 		page = s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
 	case dsGateway:
-		page = s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		var err error
+		page, err = s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		if err != nil {
+			return EventPage{}, err
+		}
 	default:
 		page = s.bufferPollPage(cursorKind, eventKey, filter, limit, desc)
 	}
@@ -558,7 +570,7 @@ func (s *Service) pollPage(ctx context.Context, src dataSource, cursorKind, even
 	// in-process caller with no scope) is unaffected. spec: §25.5 (SSE and
 	// polling apply the same tenant filter as delivery).
 	page.Items = s.filterForReader(ctx, page.Items)
-	return page
+	return page, nil
 }
 
 // bufferPollPage serves the §25.5 polling page from this replica's local

@@ -400,7 +400,7 @@ func TestGatewayPollPage_ResumeLimitAndFetchError_spec_25_5(t *testing.T) {
 
 	// Resume after gw-a:1000:1 with a limit of 1: the page is the single event
 	// after the cursor, with hasMore true and a continuation cursor.
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{}, 1, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{}, 1, false)
 	if len(page.Items) != 1 || page.Items[0].Event.ID != "gw-a:1000:2" {
 		t.Fatalf("resumed page = %v, want [gw-a:1000:2]", page.Items)
 	}
@@ -408,14 +408,11 @@ func TestGatewayPollPage_ResumeLimitAndFetchError_spec_25_5(t *testing.T) {
 		t.Fatalf("resumed page must report hasMore with events remaining after the limit")
 	}
 
-	// A fan-out failure returns an empty page echoing the caller's cursor.
+	// A fan-out failure serves no gateway-buffer page at all: the request
+	// carries no gateway-originated events, so it is the dual-outage case.
 	s.SetGatewayBufferSource(&fakeGatewaySource{err: context.DeadlineExceeded})
-	errPage := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:2", gwevents.EventFilter{}, 10, false)
-	if len(errPage.Items) != 0 {
-		t.Fatalf("fan-out failure must serve an empty page, got %d items", len(errPage.Items))
-	}
-	if errPage.Pagination.Cursor != encodeCursor(SourceKindMixed, "gw-a:1000:2") {
-		t.Fatalf("fan-out failure cursor = %q, want the echoed caller cursor", errPage.Pagination.Cursor)
+	if _, err := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:2", gwevents.EventFilter{}, 10, false); err == nil {
+		t.Fatal("a fan-out failure must not serve a gateway-buffer page")
 	}
 }
 
@@ -435,7 +432,7 @@ func TestGatewayPollPage_GapOnAgedOutCursor_spec_25_5(t *testing.T) {
 		bufEvt("gw-a:2000:2", "dev.lenny.alert_fired"),
 	}}})
 
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{}, 10, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{}, 10, false)
 	if !page.Pagination.GapDetected {
 		t.Fatal("a cursor older than every retained gateway-buffer entry must report gapDetected")
 	}
@@ -467,7 +464,7 @@ func TestGatewayPollPage_ContinuesWithoutGapOnOrdinarySwitch_spec_25_5(t *testin
 		bufEvt("gw-a:1000:3", "dev.lenny.pool_state_changed"),
 	}}})
 
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:1000:2", gwevents.EventFilter{}, 10, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:1000:2", gwevents.EventFilter{}, 10, false)
 	if page.Pagination.GapDetected || gaps != 0 {
 		t.Fatal("a cursor ordering inside the retained window must not report a gap")
 	}
@@ -477,7 +474,7 @@ func TestGatewayPollPage_ContinuesWithoutGapOnOrdinarySwitch_spec_25_5(t *testin
 
 	// A filtered page whose cursor event does not match the filter is still a
 	// continuation rather than an eviction.
-	filtered := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{EventType: "pool_state_changed"}, 10, false)
+	filtered, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:1000:1", gwevents.EventFilter{EventType: "pool_state_changed"}, 10, false)
 	if filtered.Pagination.GapDetected || gaps != 0 {
 		t.Fatalf("narrowing the filter must not be reported as a gap: %+v", filtered.Pagination)
 	}
@@ -500,7 +497,7 @@ func TestGatewayPollPage_UnionsLocalOriginEvents_spec_25_5(t *testing.T) {
 		t.Fatalf("publish local event: %v", err)
 	}
 
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "", gwevents.EventFilter{}, 10, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "", gwevents.EventFilter{}, 10, false)
 	got := eventKeys(page.Items)
 	if len(got) != 2 {
 		t.Fatalf("served %v, want both the gateway event and the local-origin one", got)
@@ -616,7 +613,7 @@ func TestGatewayPollPage_EvictionGapMeasuredAgainstFanOutWindow_spec_25_5(t *tes
 
 	// A cursor newer than the local event but older than everything the
 	// gateway replicas still hold: the gateway events in between were evicted.
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:2000:1", gwevents.EventFilter{}, 10, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:2000:1", gwevents.EventFilter{}, 10, false)
 
 	if !page.Pagination.GapDetected {
 		t.Fatalf("gapDetected = false for a cursor older than the whole gateway window; items = %v", eventKeys(page.Items))
@@ -651,7 +648,7 @@ func TestGatewayPollPage_CursorInsideFanOutWindowIsNotAGap_spec_25_5(t *testing.
 		{ID: 2, Event: timedEvt("gw-a:6000:1", "dev.lenny.alert_fired", base.Add(6*time.Second))},
 	}}})
 
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:5000:1", gwevents.EventFilter{}, 10, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "gw-a:5000:1", gwevents.EventFilter{}, 10, false)
 	if page.Pagination.GapDetected {
 		t.Fatalf("gapDetected = true for a cursor inside the retained gateway window")
 	}
@@ -675,7 +672,7 @@ func TestGatewayPollPage_GapWhenNoEventOrdersAtOrAfterCursor_spec_25_5(t *testin
 		bufEvt("gw-a:1000:2", "dev.lenny.alert_fired"),
 	}}})
 
-	page := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:9000:1", gwevents.EventFilter{}, 10, false)
+	page, _ := s.gatewayPollPage(context.Background(), SourceKindMixed, "ops:9000:1", gwevents.EventFilter{}, 10, false)
 	if !page.Pagination.GapDetected {
 		t.Fatal("a cursor ordering after the whole fan-out window must report gapDetected")
 	}
@@ -801,4 +798,108 @@ func TestServeLocal_GapAtBothEndsOfTheRing_spec_25_5(t *testing.T) {
 			}
 		})
 	}
+}
+
+// refusingGatewaySource is a GatewayBufferSource whose replicas all refuse the
+// §25.3 buffer query, the way a gateway admin gate refuses a principal that
+// does not hold the platform-admin role. The fan-out itself succeeds; every
+// per-replica result carries the refusal.
+type refusingGatewaySource struct {
+	replicas int
+	called   chan struct{}
+	once     sync.Once
+}
+
+func (r *refusingGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.ReplicaResult, error) {
+	out := make([]gateway.ReplicaResult, 0, r.replicas)
+	for i := 0; i < r.replicas; i++ {
+		out = append(out, gateway.ReplicaResult{
+			Endpoint: "https://pod",
+			Err:      &gateway.HTTPError{Status: http.StatusForbidden, Body: []byte("admin endpoint requires the platform-admin role")},
+		})
+	}
+	if r.called != nil {
+		r.once.Do(func() { close(r.called) })
+	}
+	return out, nil
+}
+
+// spec: 25.5 (actualSource names the source the response was served from; both
+// sources unreachable returns 503 EVENT_STREAM_UNAVAILABLE) — when every
+// gateway replica refuses or fails the §25.3 buffer query, the fall-back has no
+// gateway-originated events at all. The pre-fix poll skipped every errored
+// replica and returned an empty 200 labelled gateway-buffer, so a refused
+// principal was indistinguishable from a quiet gateway; this fails against that
+// code by requiring the dual-outage 503.
+func TestHandlePoll_AllReplicasRefused_IsUnavailableNotDegradedOK_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&refusingGatewaySource{replicas: 2})
+	if _, err := s.Publish(context.Background(), evt("ops:1000:1", "dev.lenny.escalation_created")); err != nil {
+		t.Fatalf("publish local event: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: no replica served the buffer query, so the response carries no gateway events\n%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), codeEventStreamUnavailable) {
+		t.Errorf("body = %s, want the §25.5 %s error code", rec.Body.String(), codeEventStreamUnavailable)
+	}
+}
+
+// spec: 25.5 (dual-outage local-buffer serving) — an SSE connection in the
+// gateway-buffer fall-back whose replicas all refuse the query announces the
+// lenny-ops-local-buffer degradation, so the consumer learns it is receiving
+// this replica's events only rather than a cross-replica view. The pre-fix
+// serve loop silently skipped the failed fetch and kept the gateway-buffer
+// label; this fails against that code.
+func TestServeGateway_AllReplicasRefused_AnnouncesLocalBufferDegradation_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	src := &refusingGatewaySource{replicas: 2, called: make(chan struct{})}
+	s.SetGatewayBufferSource(src)
+	if _, err := s.Publish(context.Background(), evt("ops:1000:1", "dev.lenny.escalation_created")); err != nil {
+		t.Fatalf("publish local event: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	sess := &streamSession{s: s, w: rec, flusher: rec}
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { <-src.called; cancel() }()
+	sess.serveGateway(ctx, dsGateway)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, sourceOpsLocalBuffer) {
+		t.Fatalf("a fall-back serving no gateway replica must announce the %s degradation:\n%s", sourceOpsLocalBuffer, body)
+	}
+	if !strings.Contains(body, "ops:1000:1") {
+		t.Fatalf("the local ring must keep serving lenny-ops-originated events:\n%s", body)
+	}
+}
+
+// spec: 25.5 — a fan-out where at least one replica answered is still the
+// gateway-buffer fall-back: the merge is best-effort across the replicas that
+// did respond, so one failed pod does not escalate the request to the
+// dual-outage case.
+func TestFetchGatewayBuffer_OneReplicaAnsweringIsStillServed_spec_25_5(t *testing.T) {
+	s := New(Options{RedisClient: &fakeStream{}, SourceHealth: newMutableHealth(false, true), Now: ts})
+	s.SetGatewayBufferSource(&partialGatewaySource{})
+	merged, err := s.fetchGatewayBuffer(context.Background(), gwevents.EventFilter{})
+	if err != nil {
+		t.Fatalf("a fan-out with one answering replica must serve: %v", err)
+	}
+	if got := eventKeys(merged); len(got) != 1 || got[0] != "gw-a:1000:1" {
+		t.Fatalf("merged = %v, want the answering replica's event", got)
+	}
+}
+
+// partialGatewaySource answers from one replica and fails on the other.
+type partialGatewaySource struct{}
+
+func (partialGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.ReplicaResult, error) {
+	body, _ := json.Marshal(gwevents.BufferedEventPage{Events: []gwevents.BufferedEvent{bufEvt("gw-a:1000:1", "dev.lenny.alert_fired")}})
+	return []gateway.ReplicaResult{
+		{Endpoint: "https://pod-a", Body: body},
+		{Endpoint: "https://pod-b", Err: &gateway.HTTPError{Status: http.StatusInternalServerError}},
+	}, nil
 }

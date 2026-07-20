@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -58,7 +59,42 @@ func (s *Service) fetchGatewayBuffer(ctx context.Context, filter gwevents.EventF
 	if err != nil {
 		return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
 	}
+	if err := replicasServed(results); err != nil {
+		return nil, fmt.Errorf("gateway buffer fan-out: %w", err)
+	}
 	return mergeReplicaBuffers(results), nil
+}
+
+// ErrGatewayBufferUnavailable reports that no gateway replica served the §25.3
+// buffer query, so the §25.5 Redis-down fall-back has no gateway-originated
+// events to serve. The read surface treats it as the dual-outage case rather
+// than as an empty gateway-buffer page: an authorization refusal, a connection
+// failure, or a 5xx from every replica leaves the caller with this replica's
+// local ring alone, and labelling that a healthy cross-replica gateway-buffer
+// view would report a completeness the response does not have. spec: §25.5
+// (actualSource names the source the response was served from; both sources
+// unreachable is the dual-outage case).
+var ErrGatewayBufferUnavailable = errors.New("no gateway replica served the event-buffer query")
+
+// replicasServed reports ErrGatewayBufferUnavailable when the fan-out reached
+// replicas and every one of them failed, wrapping the first failure so the
+// cause (a 403 from the admin gate, a dial failure, a timeout) is inspectable.
+// A fan-out that discovered no replica at all is left to the merge, which
+// yields an empty window. spec: §25.5.
+func replicasServed(results []gateway.ReplicaResult) error {
+	if len(results) == 0 {
+		return nil
+	}
+	var first error
+	for _, r := range results {
+		if r.Err == nil {
+			return nil
+		}
+		if first == nil {
+			first = r.Err
+		}
+	}
+	return fmt.Errorf("%w: %d replica(s) failed: %w", ErrGatewayBufferUnavailable, len(results), first)
 }
 
 // bufferFilterQuery renders the §25.3 buffer endpoint query string for the
@@ -182,13 +218,15 @@ func dedupKey(e gwevents.OperationalEvent) string {
 // returns an empty page echoing the caller's cursor so a retry resumes from
 // the same position. The EVENT_STREAM_DEGRADED envelope is attached by the
 // caller. spec: §25.5 (Redis-down gateway-buffer fallback, eventKey dedup).
-func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position string, filter gwevents.EventFilter, limit int, desc bool) (EventPage, error) {
 	merged, err := s.fetchGatewayBuffer(ctx, filter)
 	if err != nil {
-		return EventPage{
-			Items:      []gwevents.BufferedEvent{},
-			Pagination: Pagination{CursorKind: SourceKindMixed, Cursor: encodeCursor(cursorKind, position)},
-		}
+		// No replica served the query, so this response carries no
+		// gateway-originated events at all. Reporting an empty
+		// gateway-buffer page would label a cross-replica view the caller
+		// did not receive; the §25.5 dual-outage classification is the
+		// truthful one. spec: §25.5.
+		return EventPage{}, err
 	}
 
 	// The eviction boundary is the oldest event the gateway replicas still
@@ -264,7 +302,7 @@ func (s *Service) gatewayPollPage(ctx context.Context, cursorKind, position stri
 		page.Pagination.SuggestedAction = "resync"
 		s.observeGap()
 	}
-	return page
+	return page, nil
 }
 
 // gatewayCursorGap reports whether the merged fan-out window can honour the

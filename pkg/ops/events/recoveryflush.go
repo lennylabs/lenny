@@ -126,13 +126,24 @@ func (s *Service) MarkRedisOutage() {
 }
 
 // openOutageWindow records since as the position the recovery flush queries
-// after, unless a window is already open. Keeping the first position is what
-// makes the window the whole outage: a later signal (a flapping probe, or a
-// second failed XADD) must not narrow it past events it has yet to flush.
+// after. An open window keeps the earliest position either signal reported
+// rather than the first one recorded: the two openers race, and the probe's
+// head-anchored window is the narrower of the two. When the probe observes the
+// outage in the instant between an event's local publish and its failed XADD,
+// it anchors the window at that event's own ring position, so the write failure
+// that follows finds a window already open and its earlier anchor would be
+// dropped. The flush would then query past the event whose XADD failed and
+// abandon it, which is the loss the window exists to prevent. Widening to the
+// minimum keeps the window the whole outage while still refusing to let a later
+// signal narrow it. spec: §25.5 (best-effort recovery flush scoped to the
+// outage window).
 func (s *Service) openOutageWindow(since uint64) {
 	s.outageMu.Lock()
 	defer s.outageMu.Unlock()
 	if s.inOutage {
+		if since < s.outageFrom {
+			s.outageFrom = since
+		}
 		return
 	}
 	s.outageFrom = since

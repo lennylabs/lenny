@@ -240,7 +240,7 @@ func awaitStreamed(t *testing.T, client redis.UniversalClient, key, what string)
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("%s never reached the recovered stream; its outage window was left open "+
+			t.Fatalf("%s never reached the recovered stream; its outage window was left open or narrowed "+
 				"(keys on the stream: %v)", what, streamedEventKeys(t, client))
 		}
 		time.Sleep(10 * time.Millisecond)

@@ -51,16 +51,22 @@ func eventStreamWiringFlags(gatewayURL string) *opsFlags {
 }
 
 // pollActualSource issues one poll against the wired read surface and
-// returns the HTTP status and the §25.5 degradation envelope's actualSource
-// ("" when no envelope is attached, the healthy Redis-served case).
-func pollActualSource(t *testing.T, w *opsWiring) (int, string) {
+// returns the HTTP status, the §25.5 degradation envelope's actualSource ("" when
+// no envelope is attached, the healthy Redis-served case), and the eventKeys the
+// page served.
+func pollActualSource(t *testing.T, w *opsWiring) (int, string, []string) {
 	t.Helper()
 	rec := httptest.NewRecorder()
 	w.eventStream.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
 	if rec.Code != http.StatusOK {
-		return rec.Code, ""
+		return rec.Code, "", nil
 	}
 	var body struct {
+		Items []struct {
+			Event struct {
+				ID string `json:"id"`
+			} `json:"event"`
+		} `json:"items"`
 		Degradation *struct {
 			ActualSource string `json:"actualSource"`
 		} `json:"degradation"`
@@ -68,29 +74,81 @@ func pollActualSource(t *testing.T, w *opsWiring) (int, string) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode poll response: %v; body=%s", err, rec.Body.String())
 	}
-	if body.Degradation == nil {
-		return rec.Code, ""
+	keys := make([]string, 0, len(body.Items))
+	for _, it := range body.Items {
+		keys = append(keys, it.Event.ID)
 	}
-	return rec.Code, body.Degradation.ActualSource
+	if body.Degradation == nil {
+		return rec.Code, "", keys
+	}
+	return rec.Code, body.Degradation.ActualSource, keys
 }
 
-// TestEventStreamWiringFallsBackToGatewayBufferWhenRedisIsUnreachable
-// exercises the §25.5 read side through the real lenny-ops composition root:
-// the event-stream build step and the gateway-link build step, wired against
-// an unreachable Redis and a gateway that answers.
+// buildRedisDownWiring builds the §25.5 read side through the real lenny-ops
+// composition root against an unreachable Redis and the gateway at gatewayURL.
+func buildRedisDownWiring(t *testing.T, gatewayURL string) *opsWiring {
+	t.Helper()
+	// Port 1 is reserved and never serves Redis, so the ops:events:stream is
+	// unreachable for the whole test: the Redis-down half of the §25.5
+	// case-1 branch.
+	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
+	t.Cleanup(func() { _ = rdb.Close() })
+
+	w := &opsWiring{f: eventStreamWiringFlags(gatewayURL)}
+	w.replicaID = "ops-a"
+	w.ctx, w.stop = context.WithCancel(context.Background())
+	t.Cleanup(w.stop)
+	w.redisClient = rdb
+
+	w.buildEventStreamAndWebhooks()
+	t.Cleanup(w.subscriptionCache.Stop)
+	w.buildGatewayLink()
+
+	if w.srcHealth == nil {
+		t.Fatal("no source-health signal was wired for a Redis-backed event stream; the §25.5 degradation matrix cannot be evaluated")
+	}
+	return w
+}
+
+// awaitPoll polls the wired read surface until want reports satisfied, so the
+// assertion runs after the source-health loop has resolved the live state of
+// both sources rather than on its optimistic cold start.
+func awaitPoll(t *testing.T, w *opsWiring, want func(status int, src string, keys []string) bool) (int, string, []string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		status, src, keys := pollActualSource(t, w)
+		if want(status, src, keys) {
+			return status, src, keys
+		}
+		if time.Now().After(deadline) {
+			return status, src, keys
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// TestEventStreamWiringReportsUnavailableWhenNoGatewayReplicaServes exercises
+// the §25.5 read side through the real lenny-ops composition root: the
+// event-stream build step and the gateway-link build step, wired against an
+// unreachable Redis and a gateway that answers the liveness path but serves no
+// §25.3 buffer query. That is the deployed state the read side has to classify
+// honestly: the gateway admin API refuses a principal that does not hold the
+// platform-admin role it requires, and a wiring with no headless Service
+// configured has no replica to fan out to at all. Either way the response
+// carries no gateway-originated events, so it is the §25.5 dual-outage case.
 //
-// The gateway test server answers the liveness path and refuses every admin
-// call, which is what a deployed gateway does to the lenny-ops
-// service-account principal: it does not hold the platform-admin role the
-// admin API requires. A source-health signal that read that refusal as an
-// outage reported the reachable gateway down, which put the read surface in
-// the §25.5 dual-outage case and served 503 for the whole Redis outage
-// instead of the gateway-buffer fall-back the wiring provides.
+// The assertion is on the status rather than the label, because actualSource is
+// computed from the source-health signal: a gateway-buffer label says only that
+// the surface chose the fall-back, and the pre-fix read path attached it to an
+// empty 200 whether or not a single gateway event was retrieved. That is what
+// let a refused fan-out read as a healthy degraded page; this fails against
+// that code.
 //
-// spec: §25.5 (degradation matrix — Redis unreachable with the gateway up
-// falls back to the gateway event buffer, HTTP 200 with the
-// EVENT_STREAM_DEGRADED envelope; both unreachable is the 503 case).
-func TestEventStreamWiringFallsBackToGatewayBufferWhenRedisIsUnreachable_spec_25_5(t *testing.T) {
+// spec: §25.5 (degradation matrix — actualSource names the source the response
+// was served from; EVENT_STREAM_UNAVAILABLE when no source can serve
+// gateway-originated events).
+func TestEventStreamWiringReportsUnavailableWhenNoGatewayReplicaServes_spec_25_5(t *testing.T) {
 	gw := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == gatewayLivenessPath {
 			w.WriteHeader(http.StatusOK)
@@ -104,45 +162,15 @@ func TestEventStreamWiringFallsBackToGatewayBufferWhenRedisIsUnreachable_spec_25
 	}))
 	defer gw.Close()
 
-	// Port 1 is reserved and never serves Redis, so the ops:events:stream is
-	// unreachable for the whole test: the Redis-down half of the §25.5
-	// case-1 branch.
-	rdb := redis.NewClient(&redis.Options{Addr: "127.0.0.1:1", MaxRetries: -1, DialTimeout: 200 * time.Millisecond})
-	defer func() { _ = rdb.Close() }()
-
-	w := &opsWiring{f: eventStreamWiringFlags(gw.URL)}
-	w.replicaID = "ops-a"
-	w.ctx, w.stop = context.WithCancel(context.Background())
-	defer w.stop()
-	w.redisClient = rdb
-
-	w.buildEventStreamAndWebhooks()
-	defer w.subscriptionCache.Stop()
-	w.buildGatewayLink()
-
-	if w.srcHealth == nil {
-		t.Fatal("no source-health signal was wired for a Redis-backed event stream; the §25.5 degradation matrix cannot be evaluated")
+	w := buildRedisDownWiring(t, gw.URL)
+	status, src, keys := awaitPoll(t, w, func(status int, _ string, _ []string) bool {
+		return status == http.StatusServiceUnavailable
+	})
+	if status != http.StatusServiceUnavailable {
+		t.Fatalf("the read surface reported status=%d actualSource=%q items=%v while no gateway replica served "+
+			"the buffer query, want 503: a fan-out that retrieved nothing must not surface as a healthy "+
+			"%s page", status, src, keys, sourceLabelGatewayBuffer)
 	}
-
-	// The source-health refresh runs on its own loop, so poll until it has
-	// resolved the live state of both sources.
-	deadline := time.Now().Add(20 * time.Second)
-	var status int
-	var src string
-	for {
-		status, src = pollActualSource(t, w)
-		if status == http.StatusOK && src == sourceLabelGatewayBuffer {
-			return
-		}
-		if time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	t.Fatalf("the wired read surface reported status=%d actualSource=%q during a Redis outage with the "+
-		"gateway answering, want 200 with %q: the gateway-buffer fall-back is not reachable through the "+
-		"composition root (a 503 means the surface took the dual-outage branch over a reachable gateway)",
-		status, src, sourceLabelGatewayBuffer)
 }
 
 // sourceLabelGatewayBuffer is the §25.5 actualSource label the read surface
