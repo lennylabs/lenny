@@ -42,6 +42,29 @@ type streamSession struct {
 	// kind (empty or non-redis so a switch resolves it by eventKey scan).
 	lastKind string
 	lastKey  string
+
+	// scope / scoped carry the §25.5 read-caller tenant scope resolved at the
+	// opsserver boundary. When scoped is true, admits gates every frame so a
+	// tenant-admin observes only its own tenant's events and never a
+	// platform-scoped one; when false (an in-process caller with no scope), no
+	// tenant filter is applied. spec: 25.5 (read-endpoint tenant filter).
+	scope  readerScope
+	scoped bool
+}
+
+// admits reports whether the SSE caller may observe ev under the §25.5
+// tenant-isolation rule. An unscoped session (no caller resolved) admits every
+// event; a scoped session defers to the resolved readerScope, so a tenant-admin
+// sees only its own tenant's events and a platform-scoped event is dropped for
+// it. The drop is silent: the frame is skipped and its eventKey is not marked
+// delivered, matching how the event-type/severity filter treats a non-match, so
+// the resume position never advances past an event the caller never received.
+// spec: 25.5 (read-endpoint tenant filter, silent drop).
+func (st *streamSession) admits(ev gwevents.OperationalEvent) bool {
+	if !st.scoped || st.scope.platformAdmin {
+		return true
+	}
+	return st.scope.admits(ev)
 }
 
 // run serves the SSE connection, following the live SourceHealth signal
@@ -128,7 +151,7 @@ func (st *streamSession) serveRedis(parent context.Context) {
 	lastStreamID := start
 	if entries, err := s.redis.ReadRange(ctx, start, 0); err == nil {
 		for _, e := range entries {
-			if st.filter.Matches(e.event.Event) {
+			if st.filter.Matches(e.event.Event) && st.admits(e.event.Event) {
 				writeSSEFrame(st.w, e.event)
 				st.markDelivered(e.event.Event.ID)
 			}
@@ -164,7 +187,7 @@ func (st *streamSession) serveRedis(parent context.Context) {
 			if !open {
 				return
 			}
-			if !st.filter.Matches(ev.Event) {
+			if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
 				continue
 			}
 			writeSSEFrame(st.w, ev)
@@ -209,7 +232,7 @@ func (st *streamSession) serveGateway(ctx context.Context) {
 				if _, seen := delivered[ev.Event.ID]; seen {
 					continue
 				}
-				if !st.filter.Matches(ev.Event) {
+				if !st.filter.Matches(ev.Event) || !st.admits(ev.Event) {
 					continue
 				}
 				writeSSEFrame(st.w, ev)
@@ -279,6 +302,9 @@ func (st *streamSession) serveLocal(ctx context.Context) {
 	}
 	backlog := st.s.buffer.Query(since, st.filter, 0)
 	for _, ev := range backlog.Events {
+		if !st.admits(ev.Event) {
+			continue
+		}
 		writeSSEFrame(st.w, ev)
 		st.markDelivered(ev.Event.ID)
 	}
@@ -297,6 +323,9 @@ func (st *streamSession) serveLocal(ctx context.Context) {
 		case ev, open := <-sub.ch:
 			if !open {
 				return
+			}
+			if !st.admits(ev.Event) {
+				continue
 			}
 			writeSSEFrame(st.w, ev)
 			st.markDelivered(ev.Event.ID)

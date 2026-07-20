@@ -492,13 +492,25 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 // 2666-2699.
 func (s *Service) pollPage(ctx context.Context, cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	src, _, _ := s.selectSource()
+	var page EventPage
 	switch src {
 	case dsRedis:
-		return s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		page = s.redisPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
 	case dsGateway:
-		return s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+		page = s.gatewayPollPage(ctx, cursorKind, eventKey, filter, limit, desc)
+	default:
+		page = s.bufferPollPage(cursorKind, eventKey, filter, limit, desc)
 	}
-	return s.bufferPollPage(cursorKind, eventKey, filter, limit, desc)
+	// §25.5 read-time tenant filter: intersect the served events with the
+	// caller's tenant scope resolved at the opsserver boundary. It is a
+	// post-query authorization filter applied after the source page is built,
+	// so the pagination cursor keeps advancing over the raw source position
+	// while a tenant-admin's page is narrowed to its own tenant and a
+	// platform-scoped event is dropped for it. A platform-admin (or an
+	// in-process caller with no scope) is unaffected. spec: §25.5 (SSE and
+	// polling apply the same tenant filter as delivery).
+	page.Items = s.filterForReader(ctx, page.Items)
+	return page
 }
 
 // bufferPollPage serves the §25.5 polling page from this replica's local
@@ -617,6 +629,12 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 	// eventKey is carried across a switch so the new source resumes with no
 	// drop, emitting a :gap comment when the new source cannot honour it.
 	// spec: §25.5 (transparent Redis to gateway-buffer switch and back).
+	// §25.5 read-time tenant filter: resolve the caller's tenant scope from
+	// the request context the opsserver boundary populated, and gate every SSE
+	// frame (backlog replay, live tail, and the gateway-buffer fall-back) on
+	// it so a tenant-admin observes only its own tenant's events. spec: §25.5
+	// (SSE applies the same tenant filter as delivery).
+	scope, scoped := readerScopeFrom(r.Context())
 	sess := &streamSession{
 		s:        s,
 		w:        w,
@@ -624,6 +642,8 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		filter:   filter,
 		lastKind: resumeKind,
 		lastKey:  resumeKey,
+		scope:    scope,
+		scoped:   scoped,
 	}
 	sess.run(r.Context())
 }
