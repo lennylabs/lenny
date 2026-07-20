@@ -48,26 +48,33 @@ func (s *Service) FlushBufferedToRedis(ctx context.Context) (int, error) {
 		return 0, nil
 	}
 
-	// The retained-key scan runs before the window is consumed, and a scan
-	// failure drops the optimization rather than the window. The down-to-up
-	// edge fires once per transition, so a window consumed by a failed scan
-	// would never be re-emitted and every event this replica buffered during
-	// the outage would be abandoned, which is the loss the flush exists to
-	// prevent. Without the scan the flush re-emits the whole window and
-	// consumer-side eventKey deduplication collapses anything already on the
-	// stream. spec: §25.5 (best-effort recovery flush, eventKey dedup).
-	present, scanErr := s.redis.retainedEventKeys(ctx)
-	if scanErr != nil {
-		present = nil
-		scanErr = fmt.Errorf("read retained eventKeys: %w", scanErr)
-	}
-
 	since, outage := s.takeOutageWindow()
 	if !outage {
 		return 0, nil
 	}
 
+	// The ring is snapshotted before the retained-key scan runs, so the scan can
+	// only be newer than the set of events it is filtering. Two triggers fire
+	// this flush (the source-health probe's down-to-up edge and the first XADD
+	// that succeeds after one failed), so an emit whose XADD succeeds runs
+	// concurrently with it: scanning first would capture the stream before that
+	// XADD landed, and the event would then be inside the queried window,
+	// missing from the scanned set, and re-emitted onto the stream a second
+	// time. The webhook worker pages the stream by position with no eventKey
+	// dedup of its own, so that duplicate entry becomes a duplicate webhook
+	// delivery. spec: §25.5 (best-effort recovery flush, eventKey dedup).
 	buffered := s.buffer.Query(since, gwevents.EventFilter{}, DefaultBufferCapacity).Events
+
+	// A scan failure drops the optimization rather than the window: the flush
+	// re-emits everything buffered and consumer-side eventKey deduplication
+	// collapses whatever already reached the stream. Abandoning the window
+	// instead would lose it for good, because the down-to-up edge fires once per
+	// transition. spec: §25.5 (best-effort recovery flush, eventKey dedup).
+	present, scanErr := s.redis.retainedEventKeys(ctx)
+	if scanErr != nil {
+		present = nil
+		scanErr = fmt.Errorf("read retained eventKeys: %w", scanErr)
+	}
 
 	flushed := 0
 	seen := make(map[string]struct{}, len(buffered))
