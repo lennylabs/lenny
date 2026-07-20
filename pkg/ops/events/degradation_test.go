@@ -48,15 +48,19 @@ func (idleTail) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSli
 
 func (idleTail) Close() error { return nil }
 
-// stubGatewaySource is a wired §25.5 gateway-buffer fall-back source that
-// reports no gateway-originated events. Wiring it is what makes a Redis outage
-// the case-1 gateway-buffer fall-back: with no source wired the read surface
-// resolves to the case-4 dual outage, because gateway-originated events then
-// have nowhere to fetch from.
+// stubGatewaySource is a wired §25.5 gateway-buffer fall-back source whose one
+// replica serves the query and holds no gateway-originated events. Wiring it is
+// what makes a Redis outage the case-1 gateway-buffer fall-back: with no source
+// wired the read surface resolves to the case-4 dual outage, because
+// gateway-originated events then have nowhere to fetch from.
+//
+// It serves a replica rather than none. A fan-out that discovers no replica at
+// all is itself the dual-outage case, so a no-replica stub would exercise case
+// 4 instead of the case-1 path these tests pin.
 type stubGatewaySource struct{}
 
 func (stubGatewaySource) FanOutGet(context.Context, string) ([]gateway.ReplicaResult, error) {
-	return nil, nil
+	return []gateway.ReplicaResult{{Endpoint: "gw-a", Body: json.RawMessage(`{"events":[]}`)}}, nil
 }
 
 // publishOne records one lenny-ops-originated event into the service buffer.

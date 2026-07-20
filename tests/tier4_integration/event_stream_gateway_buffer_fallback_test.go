@@ -563,3 +563,83 @@ func TestOpsEventStreamRedisMintedCursorContinuesInGatewayBufferFallback(t *test
 		t.Fatalf("the fall-back did not serve the continuation event gw-a:3000:1: %v", delivered)
 	}
 }
+
+// spec: 25.5 (actualSource names the source the response was served from;
+// EVENT_STREAM_UNAVAILABLE when neither source can serve gateway-originated
+// events) — a Redis-down fall-back whose fan-out discovers no gateway replica
+// is the dual-outage case, not a healthy but empty gateway-buffer page.
+// Discovery resolving an empty endpoint set (a stale or empty
+// lenny-gateway-pods endpoints list, a gateway Deployment scaled to zero)
+// leaves nothing in a position to answer the §25.3 buffer query, so polling
+// returns 503 EVENT_STREAM_UNAVAILABLE and the SSE stint announces the
+// lenny-ops-local-buffer envelope with gateway-events unavailable.
+//
+// The source-health probe does not cover this: it reaches the gateway over its
+// ClusterIP, a different resolution path from the headless-Service discovery
+// the fan-out uses, so it reports the gateway reachable while the fan-out can
+// reach nothing. The pre-fix fetch exempted a zero-result fan-out from the
+// "no replica served" check, so the poll answered 200 carrying the case-1
+// EVENT_STREAM_DEGRADED envelope with actualSource gateway-buffer and zero
+// events; this fails against that code.
+//
+// diagnosis: a failure means the §25.5 read surface labels a response
+// gateway-buffer when no gateway replica was reachable to serve it — a caller
+// reads the empty page as "the gateway buffer holds nothing" rather than "the
+// gateway-originated events are unobservable", and the SSE surface withholds
+// the unavailableFields the dual-outage envelope owes it.
+func TestOpsEventStreamReportsDualOutageWhenFanOutDiscoversNoGatewayReplica(t *testing.T) {
+	client, err := gateway.NewClient(gateway.Config{
+		BaseURL:           "http://gateway.invalid",
+		Token:             gateway.StaticToken("test-token"),
+		Discovery:         gateway.StaticDiscovery{},
+		PerRequestTimeout: 5 * time.Second,
+		FanOutTimeout:     2 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+
+	svc := opsstream.New(opsstream.Options{SourceHealth: redisDownGatewayUp{}, ReplicaID: "ops-1"})
+	svc.SetGatewayBufferSource(client)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)
+	svc.HandlePoll(rec, platformAdminReq(req))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("poll status = %d (body %s), want 503 EVENT_STREAM_UNAVAILABLE: no gateway replica "+
+			"was discovered, so the response carries no gateway-originated events and must not be "+
+			"labelled a gateway-buffer page", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "EVENT_STREAM_UNAVAILABLE") {
+		t.Errorf("poll body = %s, want the §25.5 EVENT_STREAM_UNAVAILABLE error code", rec.Body.String())
+	}
+
+	// The SSE surface still serves lenny-ops-originated events, under the
+	// dual-outage envelope rather than the gateway-buffer one.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := newFallbackSink()
+	sreq, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/v1/admin/events/stream", nil)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		svc.HandleStream(sink, platformAdminReq(sreq))
+	}()
+	waitFor(t, sink, `"actualSource":"lenny-ops-local-buffer"`, 5*time.Second,
+		"the §25.5 dual-outage degradation comment on a fan-out that discovered no replica")
+	if !strings.Contains(sink.String(), `"unavailableFields":["gateway-events"]`) {
+		t.Errorf("SSE degradation comment = %s, want unavailableFields [gateway-events]", sink.String())
+	}
+	// The stint announces the case-1 envelope on entry, before the first
+	// fan-out, and upgrades it on the first tick. What the connection must not
+	// be left reading is a gateway-buffer classification: the dual-outage
+	// envelope has to be the last word.
+	out := sink.String()
+	if last := strings.LastIndex(out, `"actualSource":"lenny-ops-local-buffer"`); last < strings.LastIndex(out, `"actualSource":"gateway-buffer"`) {
+		t.Errorf("the connection was left on the gateway-buffer classification while no replica was "+
+			"discovered; the dual-outage envelope must be the standing one: %s", out)
+	}
+
+	cancel()
+	<-done
+}

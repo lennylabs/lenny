@@ -58,15 +58,23 @@ func (f *fakeGatewaySource) FanOutGet(_ context.Context, _ string) ([]gateway.Re
 }
 
 // recordingGatewaySource records the fan-out paths it was asked for and serves
-// no replicas, so a test can assert what the read side asks each gateway pod
-// for.
+// one replica holding an empty buffer, so a test can assert what the read side
+// asks each gateway pod for. It serves a replica rather than none: a fan-out
+// that discovers no replica is the §25.5 dual-outage case, so a no-replica stub
+// would fail the fetch before the path assertion is reached.
 type recordingGatewaySource struct {
 	paths []string
 }
 
 func (r *recordingGatewaySource) FanOutGet(_ context.Context, path string) ([]gateway.ReplicaResult, error) {
 	r.paths = append(r.paths, path)
-	return nil, nil
+	return []gateway.ReplicaResult{{Endpoint: "gw-a", Body: emptyBufferPage()}}, nil
+}
+
+// emptyBufferPage is a §25.3 buffer response from a replica that served the
+// query and holds no events.
+func emptyBufferPage() json.RawMessage {
+	return json.RawMessage(`{"events":[]}`)
 }
 
 // filteringGatewaySource is a GatewayBufferSource that honours the §25.3

@@ -80,14 +80,25 @@ func (s *Service) fetchGatewayBuffer(ctx context.Context) ([]gwevents.BufferedEv
 // unreachable is the dual-outage case).
 var ErrGatewayBufferUnavailable = errors.New("no gateway replica served the event-buffer query")
 
-// replicasServed reports ErrGatewayBufferUnavailable when the fan-out reached
-// replicas and every one of them failed, wrapping the first failure so the
-// cause (a 403 from the admin gate, a dial failure, a timeout) is inspectable.
-// A fan-out that discovered no replica at all is left to the merge, which
-// yields an empty window. spec: §25.5.
+// replicasServed reports ErrGatewayBufferUnavailable when no replica served the
+// fan-out, wrapping the first failure so the cause (a 403 from the admin gate,
+// a dial failure, a timeout) is inspectable.
+//
+// A fan-out that discovered no replica at all is the same outcome and is
+// reported the same way. Discovery resolving an empty endpoint set (a stale or
+// empty lenny-gateway-pods endpoints list, a gateway Deployment scaled to zero)
+// yields no results, and treating that as a served-but-empty window would label
+// the response a cross-replica gateway-buffer view when nothing was in a
+// position to answer it. Zero discovered replicas is the strongest form of no
+// replica serving, and the source-health probe does not cover it: the probe
+// reaches the gateway over its ClusterIP, a different resolution path from the
+// headless-Service discovery the fan-out uses, so a reachable gateway with an
+// empty endpoints list classifies case 1 while the fan-out can reach nothing.
+// spec: §25.5 (actualSource names the source the response was served from;
+// both sources unreachable is the dual-outage case).
 func replicasServed(results []gateway.ReplicaResult) error {
 	if len(results) == 0 {
-		return nil
+		return fmt.Errorf("%w: fan-out discovered no gateway replica", ErrGatewayBufferUnavailable)
 	}
 	var first error
 	for _, r := range results {
