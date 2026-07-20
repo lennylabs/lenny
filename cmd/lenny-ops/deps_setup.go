@@ -19,6 +19,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
+	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
@@ -115,6 +116,7 @@ func (w *opsWiring) buildDependencies() {
 			log.Fatalf("lenny-ops: redis client: %v", err)
 		}
 		w.redisClient = client
+		w.opsStreamRedis = opsstream.NewRedisStreamClient(client)
 	}
 
 	// §12.6 StoreRouter + §11.7 durable platform-audit recorder. lenny-ops

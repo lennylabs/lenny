@@ -182,7 +182,7 @@ func TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad(t *test
 	health.redis.Store(true)
 	health.gateway.Store(true)
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: streamKey,
 		SourceHealth:   health,
 		ReplicaID:      "ops-1",

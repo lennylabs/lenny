@@ -494,7 +494,7 @@ func TestOpsEventStreamRedisMintedCursorContinuesInGatewayBufferFallback(t *test
 	health.redis.Store(true)
 	var gaps atomic.Int64
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:  rd.Client,
+		RedisClient:  opsstream.NewRedisStreamClient(rd.Client),
 		SourceHealth: health,
 		ReplicaID:    "ops-1",
 		OnGap:        func() { gaps.Add(1) },

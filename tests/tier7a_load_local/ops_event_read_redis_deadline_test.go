@@ -91,11 +91,34 @@ func (u *unreachableRedis) XRevRangeN(ctx context.Context, _, _, _ string, _ int
 	return cmd
 }
 
-func (u *unreachableRedis) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSliceCmd {
-	u.park(ctx)
+// TailClient hands the live tail a client whose blocked read parks the same
+// way, so the tail models a connection that never answers.
+func (u *unreachableRedis) TailClient() (opsstream.RedisTailClient, error) {
+	return &unreachableTail{u: u, closed: make(chan struct{})}, nil
+}
+
+// unreachableTail is one live tail's client against the unreachable Redis: the
+// blocking read parks until the tail closes it, matching a real XREAD BLOCK 0
+// that go-redis leaves in IO wait on context cancellation.
+type unreachableTail struct {
+	u      *unreachableRedis
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (t *unreachableTail) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSliceCmd {
+	t.u.mu.Lock()
+	t.u.calls++
+	t.u.mu.Unlock()
+	<-t.closed
 	cmd := redis.NewXStreamSliceCmd(ctx)
 	cmd.SetErr(context.DeadlineExceeded)
 	return cmd
+}
+
+func (t *unreachableTail) Close() error {
+	t.once.Do(func() { close(t.closed) })
+	return nil
 }
 
 // pollDeadlineBudget is the ceiling this test holds the read surface to: the

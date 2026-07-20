@@ -5,8 +5,10 @@ package events
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -94,10 +96,40 @@ func (f *fakeStream) XRevRangeN(ctx context.Context, stream, start, stop string,
 	return cmd
 }
 
-func (f *fakeStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
+// TailClient hands the live tail a client that parks like a real BLOCK 0 read
+// until the tail closes it, so a tail over the fake neither spins nor delivers.
+func (f *fakeStream) TailClient() (RedisTailClient, error) { return newParkedTailClient(), nil }
+
+// parkedTailClient models a real Redis connection under XREAD BLOCK 0: the
+// read parks indefinitely and, matching go-redis, does not observe a
+// deadline-free context cancellation. Only Close ends it. It is what lets a
+// tier-1 test pin that the tail closes its own client rather than relying on
+// the context to unblock the read.
+type parkedTailClient struct {
+	closed chan struct{}
+	once   sync.Once
+	// blocks records the XREAD BLOCK argument of every read it served.
+	blocks chan time.Duration
+}
+
+func newParkedTailClient() *parkedTailClient {
+	return &parkedTailClient{closed: make(chan struct{}), blocks: make(chan time.Duration, 4)}
+}
+
+func (c *parkedTailClient) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
+	select {
+	case c.blocks <- a.Block:
+	default:
+	}
+	<-c.closed
 	cmd := redis.NewXStreamSliceCmd(ctx)
-	cmd.SetErr(redis.Nil)
+	cmd.SetErr(errors.New("redis: client is closed"))
 	return cmd
+}
+
+func (c *parkedTailClient) Close() error {
+	c.once.Do(func() { close(c.closed) })
+	return nil
 }
 
 // pollActiveSource serves one poll page from the source the live
@@ -512,58 +544,33 @@ func TestHandleStreamRedis_RedisCursorResumes_spec_25_5(t *testing.T) {
 	}
 }
 
-// blockingStream models a real Redis XREAD BLOCK against go-redis v9: a
-// bounded block returns redis.Nil after the block elapses (or sooner when it
-// observes the request context), while BLOCK 0 blocks indefinitely and does
-// NOT observe a deadline-free context cancellation, matching go-redis v9,
-// which leaves an in-flight blocked read parked in IO wait after the context
-// is cancelled. It lets a tier-1 test pin that the live tail issues a bounded
-// block so a disconnected connection's goroutine exits rather than leaking.
-type blockingStream struct {
+// tailClientStream is a fakeStream that hands out one recording tail client a
+// test can inspect, so the XREAD the live tail issues and the close that ends
+// it are both observable.
+type tailClientStream struct {
 	fakeStream
-	reads   chan time.Duration
-	release chan struct{}
+	tail *parkedTailClient
 }
 
-func (b *blockingStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
-	select {
-	case b.reads <- a.Block:
-	default:
-	}
-	cmd := redis.NewXStreamSliceCmd(ctx)
-	if a.Block <= 0 {
-		// A literal BLOCK 0: block until the test releases this fake at
-		// cleanup, ignoring ctx cancellation as go-redis v9 does.
-		<-b.release
-		cmd.SetErr(redis.Nil)
-		return cmd
-	}
-	// A bounded block: wake when the block elapses or the read's context is
-	// cancelled, then report no new entry so the tail re-checks its context.
-	select {
-	case <-time.After(a.Block):
-	case <-ctx.Done():
-	}
-	cmd.SetErr(redis.Nil)
-	return cmd
-}
+func (t *tailClientStream) TailClient() (RedisTailClient, error) { return t.tail, nil }
 
-// spec: 25.5 (XREAD BLOCK per-connection live tail) — the live SSE tail
-// issues a bounded XREAD BLOCK so a deadline-free context cancellation tears
-// the per-connection goroutine down within one block interval. go-redis v9
-// does not interrupt a blocked read on ctx cancellation, so a zero block
-// would leave the tail parked in IO wait and leak a goroutine per
-// disconnected SSE connection.
-func TestRedisTail_BoundedBlockExitsOnCancel_spec_25_5(t *testing.T) {
-	b := &blockingStream{reads: make(chan time.Duration, 4), release: make(chan struct{})}
-	t.Cleanup(func() { close(b.release) })
-	rs := newRedisSource(b, "", 0)
+// spec: 25.5 ("The SSE handler ... reads from the Redis stream via XREAD BLOCK
+// 0 in a goroutine") — the per-connection live tail issues the blocking read
+// the spec names, with no client-side block bound, and ends it by closing the
+// connection it owns. go-redis does not interrupt a deadline-free blocked read
+// on context cancellation, so a tail that relied on the context alone would
+// park a goroutine per disconnected SSE connection; the parked fake here
+// ignores the context exactly as go-redis does, so a tail that does not close
+// its own client never returns. A tail that substitutes a bounded block for
+// BLOCK 0 fails the argument assertion.
+func TestRedisTail_IssuesBlockZeroAndClosesItsClientOnCancel_spec_25_5(t *testing.T) {
+	c := newParkedTailClient()
+	rs := newRedisSource(&tailClientStream{tail: c}, "")
 	ctx, cancel := context.WithCancel(context.Background())
 
 	out := make(chan gwevents.BufferedEvent)
 	done := make(chan struct{})
 	go func() {
-		// Drain until Tail closes out on exit.
 		for range out {
 		}
 		close(done)
@@ -571,9 +578,9 @@ func TestRedisTail_BoundedBlockExitsOnCancel_spec_25_5(t *testing.T) {
 	go rs.Tail(ctx, "", out)
 
 	select {
-	case got := <-b.reads:
-		if got <= 0 {
-			t.Fatalf("XREAD Block = %v; a bounded block is required so the tail exits on ctx cancel (BLOCK 0 leaks the goroutine)", got)
+	case got := <-c.blocks:
+		if got != 0 {
+			t.Fatalf("XREAD Block = %v; §25.5 states the per-connection live tail as XREAD BLOCK 0", got)
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Tail never issued an XREAD")
@@ -583,7 +590,12 @@ func TestRedisTail_BoundedBlockExitsOnCancel_spec_25_5(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(3 * time.Second):
-		t.Fatal("Tail did not exit within 3s of context cancellation")
+		t.Fatal("Tail did not exit within 3s of cancellation; it must close its own client to end the blocked read")
+	}
+	select {
+	case <-c.closed:
+	default:
+		t.Error("Tail left its dedicated client open after the connection was cancelled")
 	}
 }
 
@@ -596,18 +608,28 @@ type startRecordingStream struct {
 	firstStart chan string
 }
 
-func (s *startRecordingStream) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
+func (s *startRecordingStream) TailClient() (RedisTailClient, error) {
+	return &startRecordingTail{parked: newParkedTailClient(), firstStart: s.firstStart}, nil
+}
+
+// startRecordingTail records the starting stream ID of each XREAD and then
+// parks like a real BLOCK 0 read until the tail closes it.
+type startRecordingTail struct {
+	parked     *parkedTailClient
+	firstStart chan string
+}
+
+func (s *startRecordingTail) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
 	if len(a.Streams) == 2 {
 		select {
 		case s.firstStart <- a.Streams[1]:
 		default:
 		}
 	}
-	<-ctx.Done()
-	cmd := redis.NewXStreamSliceCmd(ctx)
-	cmd.SetErr(redis.Nil)
-	return cmd
+	return s.parked.XRead(ctx, a)
 }
+
+func (s *startRecordingTail) Close() error { return s.parked.Close() }
 
 // spec: 25.5 (contiguous backlog-to-live-tail seam) — on a fresh SSE
 // connection with no resume cursor against an empty stream, the live tail must
@@ -656,34 +678,6 @@ func eventKeys(items []gwevents.BufferedEvent) []string {
 		out[i] = it.Event.ID
 	}
 	return out
-}
-
-// spec: 25.5 (per-connection live tail) — the tail's XREAD BLOCK argument is
-// the cancellation latency of a disconnected connection's goroutine, and the
-// value the spec states (an unbounded block) is not usable because go-redis
-// does not interrupt one on context cancellation. The default therefore stays
-// short: a value in poll territory would make a disconnected connection's tail
-// outlive it by that long, and would read as a poll loop rather than the
-// blocking tail the spec describes. Operators tune it through Options.TailBlock.
-func TestDefaultTailBlockStaysShort_spec_25_5(t *testing.T) {
-	if DefaultTailBlock <= 0 {
-		t.Fatalf("DefaultTailBlock = %s; an unbounded block leaks a goroutine per disconnected SSE connection", DefaultTailBlock)
-	}
-	const ceiling = 2 * time.Second
-	if DefaultTailBlock > ceiling {
-		t.Fatalf("DefaultTailBlock = %s; want at most %s so a cancelled tail exits promptly", DefaultTailBlock, ceiling)
-	}
-}
-
-// spec: 25.5 (per-connection live tail) — an operator override reaches the
-// XREAD the tail issues, and a non-positive value falls back to the default.
-func TestTailBlockIsOperatorTunable_spec_25_5(t *testing.T) {
-	if got := newRedisSource(&fakeStream{}, "", 5*time.Second).block; got != 5*time.Second {
-		t.Errorf("configured tail block = %s, want 5s", got)
-	}
-	if got := newRedisSource(&fakeStream{}, "", 0).block; got != DefaultTailBlock {
-		t.Errorf("unset tail block = %s, want the %s default", got, DefaultTailBlock)
-	}
 }
 
 // spec: 25.5 (the opaque cursor carries the canonical eventKey so it

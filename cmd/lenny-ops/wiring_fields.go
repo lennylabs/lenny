@@ -58,17 +58,21 @@ type opsWiringFields struct {
 	traceShutdown func(context.Context) error
 
 	// §25.4 dependencies.
-	pgPool        *pgxpool.Pool
-	redisClient   redis.UniversalClient
-	clientset     *kubernetes.Clientset
-	dynClient     dynamic.Interface
-	apiextClient  apiextensionsclientset.Interface
-	gatewayHTTP   *http.Client
-	probes        map[string]probe.Func
-	storeRouter   *storerouter.SingleShardRouter
-	auditRecorder *opsaudit.Recorder
-	runbookSource opsserver.RunbookSource
-	elector       opsservice.Elector
+	pgPool      *pgxpool.Pool
+	redisClient redis.UniversalClient
+	// opsStreamRedis is the §25.5 event-stream read source's view of the
+	// platform Redis: the shared client for the range reads plus a dedicated
+	// client per live SSE tail. Nil when no Redis is wired. spec: §25.5.
+	opsStreamRedis opsstream.RedisStreamClient
+	clientset      *kubernetes.Clientset
+	dynClient      dynamic.Interface
+	apiextClient   apiextensionsclientset.Interface
+	gatewayHTTP    *http.Client
+	probes         map[string]probe.Func
+	storeRouter    *storerouter.SingleShardRouter
+	auditRecorder  *opsaudit.Recorder
+	runbookSource  opsserver.RunbookSource
+	elector        opsservice.Elector
 
 	// §25.5 event stream + webhook delivery.
 	eventStream        *opsstream.Service

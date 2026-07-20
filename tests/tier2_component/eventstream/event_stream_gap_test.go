@@ -117,7 +117,7 @@ func TestOpsEventStreamGapDetectedOnRedisEviction(t *testing.T) {
 
 	var gaps atomic.Int64
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: gapStreamKey,
 		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 		OnGap:          func() { gaps.Add(1) },
@@ -201,7 +201,7 @@ func TestOpsEventStreamPollItemShape(t *testing.T) {
 	}
 
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: key,
 		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 	})
@@ -371,7 +371,7 @@ func TestOpsEventStreamSSEResumeHonorsRedisCursorSourceKind(t *testing.T) {
 	}
 
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: key,
 		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 	})
@@ -424,7 +424,7 @@ func TestOpsEventStreamPerConnectionIndependentCursorLiveTail(t *testing.T) {
 	}
 
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: liveStreamKey,
 		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 	})
@@ -590,7 +590,7 @@ func TestOpsEventStreamLiveTailWakesOnPublishAndExitsOnDisconnect(t *testing.T) 
 	}
 
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: key,
 		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 	})

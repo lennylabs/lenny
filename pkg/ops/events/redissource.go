@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -16,11 +18,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 )
 
-// RedisStreamClient is the subset of redis.UniversalClient the §25.5
-// read-side Redis source consumes the ops:events:stream with:
-// XRANGE for polling and SSE backlog resume, XREVRANGE to bound the
-// retained window, and XREAD for the live SSE tail. redis.UniversalClient
-// satisfies it; tests substitute a real single-container client.
+// RedisStreamClient is the client surface the §25.5 read-side Redis source
+// consumes the ops:events:stream through: XRANGE for polling and SSE backlog
+// resume, XREVRANGE to bound the retained window, and a dedicated client per
+// live SSE tail. Wrap a go-redis client with NewRedisStreamClient to obtain
+// one.
 //
 // spec: §25.5 — the SSE handler reads Redis via XREAD BLOCK 0 with a
 // per-connection XRANGE resume from Last-Event-ID, and polling serves the
@@ -29,7 +31,124 @@ import (
 type RedisStreamClient interface {
 	XRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd
 	XRevRangeN(ctx context.Context, stream, start, stop string, count int64) *redis.XMessageSliceCmd
+	// TailClient checks out a client dedicated to one live SSE tail. The
+	// caller closes it when the tail ends.
+	TailClient() (RedisTailClient, error)
+}
+
+// RedisTailClient is the client one §25.5 live SSE tail issues its
+// XREAD BLOCK 0 on, and closes when the connection ends.
+//
+// The tail owns a client of its own rather than sharing the read source's,
+// because a deadline-free blocked read cannot be interrupted any other way:
+// go-redis leaves an in-flight XREAD BLOCK 0 parked in IO wait when the
+// request context is cancelled, since it derives the socket read deadline
+// from the block argument and the context deadline and neither exists here.
+// Closing the tail's own client closes the connection under that read, which
+// returns an error and lets the goroutine exit. A shared client cannot be
+// closed for one disconnecting connection, and the blocked read occupies its
+// connection for the life of the SSE connection either way. spec: §25.5 (the
+// SSE handler reads via XREAD BLOCK 0 in a goroutine, one independent read
+// cursor per connection).
+type RedisTailClient interface {
 	XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd
+	Close() error
+}
+
+// NewRedisStreamClient adapts a go-redis client to RedisStreamClient. The
+// non-tailing reads run on c's shared connection pool; each live SSE tail
+// dials a client of its own from c's options (see RedisTailClient) with a
+// single-connection pool, since a tail uses exactly one connection.
+func NewRedisStreamClient(c *redis.Client) RedisStreamClient {
+	return redisClientAdapter{Client: c}
+}
+
+// redisClientAdapter is the NewRedisStreamClient adapter. It forwards the
+// range reads to the shared client and dials a fresh client per tail.
+type redisClientAdapter struct {
+	*redis.Client
+}
+
+// TailClient dials a client dedicated to one live tail from the shared
+// client's connection options, so it reaches the same Redis (including a
+// Sentinel-resolved master, whose dialer the options carry) and honours the
+// same auth and TLS settings. It wraps the dialer to keep a handle on the
+// socket the tail blocks on, which is what redisTailConn.Close needs. Retries
+// are disabled on the tail client: the tail runs its own retry loop, and a
+// client-level retry would re-dial and block again after the close that is
+// trying to end the connection.
+func (a redisClientAdapter) TailClient() (RedisTailClient, error) {
+	opts := *a.Client.Options()
+	opts.PoolSize = 1
+	opts.MinIdleConns = 0
+	opts.MaxRetries = -1
+	tail := &redisTailConn{}
+	dial := opts.Dialer
+	if dial == nil {
+		return nil, fmt.Errorf("redis tail client: shared client exposes no dialer")
+	}
+	opts.Dialer = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		conn, err := dial(ctx, network, addr)
+		if err != nil {
+			return nil, err
+		}
+		tail.track(conn)
+		return conn, nil
+	}
+	tail.client = redis.NewClient(&opts)
+	return tail, nil
+}
+
+// redisTailConn is one live tail's dedicated client. It keeps a handle on
+// every socket its client dials so Close can shut the socket down directly.
+//
+// Closing the client alone does not end an in-flight XREAD BLOCK 0: go-redis
+// derives the socket read deadline from the block argument and the context
+// deadline, and with neither present the read has none, while the pool
+// shutdown that would close the socket waits on the connection that read is
+// holding. Closing the socket makes the read fail immediately, after which the
+// client shuts down without waiting. spec: §25.5 (XREAD BLOCK 0 live tail).
+type redisTailConn struct {
+	client *redis.Client
+
+	mu     sync.Mutex
+	conns  []net.Conn
+	closed bool
+}
+
+// track records a dialled socket, or closes it outright when the tail has
+// already ended so a late redial cannot resurrect the connection.
+func (t *redisTailConn) track(conn net.Conn) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.closed {
+		_ = conn.Close()
+		return
+	}
+	t.conns = append(t.conns, conn)
+}
+
+// XRead issues the tail's blocking read on its own connection.
+func (t *redisTailConn) XRead(ctx context.Context, a *redis.XReadArgs) *redis.XStreamSliceCmd {
+	return t.client.XRead(ctx, a)
+}
+
+// Close ends the tail's blocked read and releases its client. Safe to call
+// more than once and from another goroutine than the one inside XRead.
+func (t *redisTailConn) Close() error {
+	t.mu.Lock()
+	already := t.closed
+	t.closed = true
+	conns := t.conns
+	t.conns = nil
+	t.mu.Unlock()
+	for _, conn := range conns {
+		_ = conn.Close()
+	}
+	if already {
+		return nil
+	}
+	return t.client.Close()
 }
 
 // redisSource reads the §25.5 platform-scoped Redis stream that every
@@ -50,21 +169,15 @@ type RedisStreamClient interface {
 type redisSource struct {
 	client RedisStreamClient
 	stream string
-	// block is the XREAD BLOCK argument the live tail issues (see
-	// DefaultTailBlock).
-	block time.Duration
 }
 
 // newRedisSource returns a redisSource reading stream from client. An empty
 // stream falls back to the §25.5 default ops:events:stream key.
-func newRedisSource(client RedisStreamClient, stream string, block time.Duration) *redisSource {
+func newRedisSource(client RedisStreamClient, stream string) *redisSource {
 	if stream == "" {
 		stream = eventbuffer.DefaultStreamKey
 	}
-	if block <= 0 {
-		block = DefaultTailBlock
-	}
-	return &redisSource{client: client, stream: stream, block: block}
+	return &redisSource{client: client, stream: stream}
 }
 
 // redisEntry is one decoded stream entry paired with its Redis stream ID.
@@ -90,24 +203,6 @@ type redisEntry struct {
 // stream is MAXLEN-bounded, so this reads the whole retained window at
 // most.
 const maxWindow = eventbuffer.DefaultStreamMaxLen
-
-// DefaultTailBlock bounds each XREAD BLOCK issued by the live SSE tail unless
-// an operator overrides it through Options.TailBlock.
-//
-// spec: §25.5 specifies XREAD BLOCK 0 for the per-connection live tail. A
-// bounded block preserves the delivery semantics that line is about: the tail
-// sleeps inside Redis and wakes the instant a new entry is XADDed, so an event
-// is delivered as promptly as under BLOCK 0 rather than on a poll interval. The
-// bound exists because go-redis v9 does not interrupt an in-flight blocked read
-// on a deadline-free context cancellation: a literal BLOCK 0 read stays parked
-// in IO wait after the SSE connection disconnects, leaking a goroutine per
-// connection. A bounded block gives every read a deadline, so a cancelled tail
-// exits within one interval, and that interval is the cancellation latency the
-// operator is tuning. Both halves of that claim are pinned by test: delivery
-// latency well inside the interval, and goroutine exit after cancellation.
-// Raising this into poll territory breaks the first, so it is the value to
-// lower rather than raise.
-const DefaultTailBlock = time.Second
 
 // redisReadTimeout bounds every non-tailing Redis read a single poll or SSE
 // setup issues (the cursor resolve, the head/oldest bounds, and the backlog
@@ -252,19 +347,40 @@ func (rs *redisSource) resumeByEventKey(ctx context.Context, eventKey string) (s
 	return prev, false, nil
 }
 
-// Tail streams live events to out via a bounded XREAD BLOCK from
-// lastStreamID, closing out when ctx is cancelled or Redis returns a
-// terminal error. Each SSE connection runs its own Tail with its own
+// Tail streams live events to out via XREAD BLOCK 0 from lastStreamID,
+// closing out when ctx is cancelled or the tail's client cannot be dialled.
+// Each SSE connection runs its own Tail on its own client from its own
 // starting position, so the per-connection cursor is independent and no
-// consumer group is created. The block interval bounds cancellation latency
-// (see DefaultTailBlock): go-redis v9 does not interrupt a blocked read on a
-// deadline-free context cancellation, so a bounded block is what lets a
-// disconnected connection's goroutine exit instead of parking in IO wait
-// forever. A transient Redis error is retried after a short pause rather
-// than closing the channel, matching the §25.5 live-tail resilience the SSE
-// surface depends on. spec: §25.5 (XREAD BLOCK per-connection live tail).
+// consumer group is created.
+//
+// The tail's client is closed when ctx is cancelled, which is what ends the
+// blocked read: go-redis does not interrupt a deadline-free XREAD on context
+// cancellation, so without the close a disconnected connection's goroutine
+// would park in IO wait indefinitely (see RedisTailClient). A transient Redis
+// error is retried after a short pause rather than closing the channel,
+// matching the §25.5 live-tail resilience the SSE surface depends on. spec:
+// §25.5 (XREAD BLOCK 0 per-connection live tail).
 func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<- gwevents.BufferedEvent) {
 	defer close(out)
+
+	client, err := rs.client.TailClient()
+	if err != nil {
+		return
+	}
+	defer func() { _ = client.Close() }()
+
+	// Close the tail's client on cancellation so the in-flight blocked read
+	// returns. The watchdog exits with the tail, so it never outlives it.
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = client.Close()
+		case <-stopped:
+		}
+	}()
+
 	lastID := lastStreamID
 	if lastID == "" {
 		// "$" tails only entries that arrive after this call, so a backlog
@@ -275,19 +391,14 @@ func (rs *redisSource) Tail(ctx context.Context, lastStreamID string, out chan<-
 		if ctx.Err() != nil {
 			return
 		}
-		res, err := rs.client.XRead(ctx, &redis.XReadArgs{
+		res, err := client.XRead(ctx, &redis.XReadArgs{
 			Streams: []string{rs.stream, lastID},
-			Block:   rs.block,
+			Block:   0,
 			Count:   maxWindow,
 		}).Result()
 		if err != nil {
 			if ctx.Err() != nil {
 				return
-			}
-			if err == redis.Nil {
-				// The block elapsed with no new entry; loop to re-check the
-				// context and block again.
-				continue
 			}
 			// A transient Redis error: pause briefly and retry so a blip
 			// does not tear down the live connection.

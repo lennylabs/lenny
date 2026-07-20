@@ -234,13 +234,6 @@ type Options struct {
 	// RedisStreamKey overrides the default ops:events:stream key when
 	// RedisClient is set. An empty value uses the §25.5 default.
 	RedisStreamKey string
-	// TailBlock overrides the XREAD BLOCK argument the live per-connection
-	// SSE tail issues. It is operator-tunable: the value trades the tail's
-	// cancellation latency (a disconnected connection's goroutine exits
-	// within one block) against nothing on the delivery side, since the tail
-	// wakes on the XADD rather than at the end of the block. A non-positive
-	// value uses DefaultTailBlock. spec: §25.5 (per-connection live tail).
-	TailBlock time.Duration
 }
 
 // New returns a Service.
@@ -262,7 +255,7 @@ func New(opts Options) *Service {
 		health:    opts.SourceHealth,
 	}
 	if opts.RedisClient != nil {
-		s.redis = newRedisSource(opts.RedisClient, opts.RedisStreamKey, opts.TailBlock)
+		s.redis = newRedisSource(opts.RedisClient, opts.RedisStreamKey)
 	}
 	return s
 }

@@ -98,7 +98,7 @@ func TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation(t *testing.T) {
 	}
 
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: key,
 		SourceHealth:   opsstream.StaticSourceHealth{Redis: true, Gateway: true},
 	})

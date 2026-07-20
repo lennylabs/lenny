@@ -51,7 +51,7 @@ func TestRecoveryFlushReEmitsEventsBufferedBeforeTheProbeObservesTheOutage(t *te
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr(), MaxRetries: -1})
 	t.Cleanup(func() { _ = client.Close() })
 
-	local := opsstream.New(opsstream.Options{ReplicaID: "ops-1", RedisClient: client})
+	local := opsstream.New(opsstream.Options{ReplicaID: "ops-1", RedisClient: opsstream.NewRedisStreamClient(client)})
 	em := newRedisFanOutEmitter(client, local, "ops-1", eventbuffer.DefaultStreamMaxLen)
 	local.SetRedisReEmitter(em.ReEmit)
 	ctx := context.Background()

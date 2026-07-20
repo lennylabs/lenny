@@ -51,9 +51,8 @@ func (w *opsWiring) buildEventStreamAndWebhooks() {
 		// polling and SSE serve the merged cross-replica view (XRANGE
 		// polling / backlog resume, XREAD BLOCK 0 live tail) whenever the
 		// source-health probe reports Redis reachable.
-		streamOpts.RedisClient = w.redisClient
+		streamOpts.RedisClient = w.opsStreamRedis
 		streamOpts.RedisStreamKey = eventbuffer.DefaultStreamKey
-		streamOpts.TailBlock = *w.f.eventsTailBlock
 	}
 	w.eventStream = opsstream.New(streamOpts)
 	var opsEmitter events.EventEmitter = w.eventStream

@@ -63,7 +63,7 @@ func TestOpsEventStreamRecoveryFlushReEmitsBufferedEventsAfterRedisRecovers(t *t
 	health := &toggleHealth{}
 	health.redis.Store(true)
 	health.gateway.Store(true)
-	svc := opsstream.New(opsstream.Options{RedisClient: rd.Client, SourceHealth: health, ReplicaID: "ops-1"})
+	svc := opsstream.New(opsstream.Options{RedisClient: opsstream.NewRedisStreamClient(rd.Client), SourceHealth: health, ReplicaID: "ops-1"})
 
 	// The re-emit path writes directly to the recovered stream through the
 	// production StreamEmitter, which preserves each event's existing eventKey.
@@ -211,7 +211,7 @@ func TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage(t *testing.T)
 	health := &toggleHealth{}
 	health.redis.Store(true)
 	health.gateway.Store(true)
-	svc := opsstream.New(opsstream.Options{RedisClient: rd.Client, SourceHealth: health, ReplicaID: "ops-1"})
+	svc := opsstream.New(opsstream.Options{RedisClient: opsstream.NewRedisStreamClient(rd.Client), SourceHealth: health, ReplicaID: "ops-1"})
 	svc.SetGatewayBufferSource(gwClient)
 
 	// Seed a Redis-stream event the connection sees before the outage.
@@ -304,7 +304,7 @@ func TestOpsEventStreamRecoveryFlushDoesNotReplayTrimmedPreOutageEvents(t *testi
 	health.redis.Store(true)
 	health.gateway.Store(true)
 	svc := opsstream.New(opsstream.Options{
-		RedisClient:    rd.Client,
+		RedisClient:    opsstream.NewRedisStreamClient(rd.Client),
 		RedisStreamKey: streamKey,
 		SourceHealth:   health,
 		ReplicaID:      "ops-1",
@@ -435,7 +435,7 @@ func countKeys(msgs []redis.XMessage) map[string]int {
 // behaviour on a read error can be exercised against a real stream. Every
 // other read passes through untouched.
 type scanFaultingClient struct {
-	*redis.Client
+	opsstream.RedisStreamClient
 	scanFailures atomic.Int64
 }
 
@@ -445,7 +445,7 @@ func (c *scanFaultingClient) XRangeN(ctx context.Context, stream, start, stop st
 		cmd.SetErr(fmt.Errorf("connection reset by peer"))
 		return cmd
 	}
-	return c.Client.XRangeN(ctx, stream, start, stop, count)
+	return c.RedisStreamClient.XRangeN(ctx, stream, start, stop, count)
 }
 
 // spec: 25.5 (best-effort recovery flush) — the down-to-up edge fires once per
@@ -466,7 +466,7 @@ func TestOpsEventStreamRecoveryFlushSurvivesRetainedKeyScanFailure(t *testing.T)
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
 
-	faulting := &scanFaultingClient{Client: rd.Client}
+	faulting := &scanFaultingClient{RedisStreamClient: opsstream.NewRedisStreamClient(rd.Client)}
 	faulting.scanFailures.Store(1)
 
 	health := &toggleHealth{}
