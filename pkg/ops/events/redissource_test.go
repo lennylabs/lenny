@@ -970,6 +970,25 @@ func TestRedisResumePoint_SameSourceCursorResumesByStreamID_spec_25_5(t *testing
 	if got := eventKeys(page2.Items); len(got) != 1 || got[0] != "ops:3:1" {
 		t.Fatalf("continuation items = %v, want only ops:3:1", got)
 	}
+
+	// A poll that finds nothing new echoes the caller's position verbatim, so
+	// the repeat poll is still a positioned read rather than a scan.
+	head, err := decodeCursor(page2.Pagination.Cursor)
+	if err != nil {
+		t.Fatalf("decode the head cursor: %v", err)
+	}
+	f.reset()
+	idle := pollActiveSourceCursor(s, context.Background(), head, gwevents.EventFilter{}, 2, false)
+	if len(idle.Items) != 0 {
+		t.Fatalf("an idle poll served %d items, want 0", len(idle.Items))
+	}
+	echoed, err := decodeCursor(idle.Pagination.Cursor)
+	if err != nil || echoed != head {
+		t.Fatalf("idle poll echoed %+v (err %v), want the caller's %+v", echoed, err, head)
+	}
+	if got := f.windowScans(); got != 0 {
+		t.Errorf("an idle poll issued %d whole-window scan(s)", got)
+	}
 }
 
 // spec: 25.5 (a redis cursor whose stream ID the stream no longer retains, and
