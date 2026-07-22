@@ -64,7 +64,8 @@ func callToolThroughBridge(t *testing.T, ctx context.Context, allowDevHeaders bo
 	return out
 }
 
-// TestMCPBridgeForwardsJWTScopeClaimToBoundaryGate pins T-STD.8: the
+// TestMCPBridgeForwardsJWTScopeClaimToBoundaryGate pins the §25.12 RFC 9068
+// scope-claim enforcement on the MCP boundary: the
 // bridge attaches the authenticated Principal.Scopes onto the MCP request
 // context, so a Bearer-JWT caller whose scope claim excludes the tool is
 // denied SCOPE_FORBIDDEN at the pre-dispatch MCP-boundary gate. Against
