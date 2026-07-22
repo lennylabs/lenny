@@ -179,6 +179,26 @@ tests:
           path: spec.capabilities.injection.modes
           content: queued
 
+  # spec: §26.7 lines 323-325 — chat's capabilities block is
+  # `injection: { supported: true, modes: [immediate] }`, deliberately
+  # differing from the coding-agent default of [immediate, queued]. The
+  # exact-equal assertion (rather than `contains`) catches a regression
+  # that adds queued back or drops supported: true.
+  - it: stamps capabilities.injection.modes = [immediate] only on chat per §26.7 lines 323-325
+    documentSelector:
+      path: metadata.name
+      value: chat
+    asserts:
+      - equal:
+          path: spec.capabilities.interaction
+          value: multi_turn
+      - equal:
+          path: spec.capabilities.injection.supported
+          value: true
+      - equal:
+          path: spec.capabilities.injection.modes
+          value: [immediate]
+
   # spec: §26.3 line 165 — claude-code proxyDialect: [anthropic].
   # F-26.3.3 / F-26.9.2 / F-26.10.2 / F-26.11.2.
   - it: stamps credentialCapabilities.proxyDialect on claude-code per §26.3 line 165

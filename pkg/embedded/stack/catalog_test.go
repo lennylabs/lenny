@@ -117,6 +117,46 @@ func TestEchoRuntimeNotInReferenceCatalog_spec_26_1(t *testing.T) {
 	}
 }
 
+// TestChatRuntimeInjectionImmediateOnly asserts the chat reference
+// runtime's capabilities.injection block is supported:true with
+// modes:[immediate] exactly, no queued, distinguishing chat from the
+// coding-agent default of [immediate, queued]. spec: §26.7 lines 323-325.
+//
+// diagnosis: a failure means the chat entry's Capabilities.Injection
+// block drifted from the spec (queued crept back in, supported flipped
+// to false, or the field was dropped entirely), which would let the
+// gateway advertise queued-injection support for a runtime that cannot
+// honor it.
+func TestChatRuntimeInjectionImmediateOnly(t *testing.T) {
+	rts := ReferenceRuntimes()
+	var chat *ReferenceRuntime
+	for i, rt := range rts {
+		if rt.Name == "chat" {
+			chat = &rts[i]
+			break
+		}
+	}
+	if chat == nil {
+		t.Fatal("reference catalog is missing the chat runtime")
+	}
+	if chat.Capabilities == nil || chat.Capabilities.Injection == nil {
+		t.Fatal("chat runtime has no capabilities.injection block")
+	}
+	inj := chat.Capabilities.Injection
+	if !inj.Supported {
+		t.Error("chat capabilities.injection.supported = false, want true")
+	}
+	want := []string{"immediate"}
+	if len(inj.Modes) != len(want) {
+		t.Fatalf("chat capabilities.injection.modes = %v, want %v", inj.Modes, want)
+	}
+	for i, m := range want {
+		if inj.Modes[i] != m {
+			t.Errorf("chat capabilities.injection.modes = %v, want %v", inj.Modes, want)
+		}
+	}
+}
+
 func TestReferenceRuntimesReturnsCopy(t *testing.T) {
 	first := ReferenceRuntimes()
 	first[0].Name = "mutated"
