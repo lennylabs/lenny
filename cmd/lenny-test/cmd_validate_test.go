@@ -187,7 +187,11 @@ func TestValidateSpecMapTestFuncs(t *testing.T) {
 
 	// The pre-fix reference names a function the file no longer declares
 	// (renamed away): the gate fails and names the dangling reference.
-	// This is the case that would have caught the proposal-0055 rename.
+	// This is the case that would have caught the tier-4
+	// interactive-iteration test rename
+	// (TestInteractiveIterationInterruptThenQueuedMessage ->
+	// ...ThenResumeAndDeliver) that repointed sections 7.1 and 7.2 at a
+	// gone symbol.
 	r = specMapTestFuncsFixture(t,
 		map[string][]string{"7.2": {"tests/tier4/it_test.go::TestInteractiveIterationInterruptThenQueuedMessage"}},
 		map[string]string{"tests/tier4/it_test.go": withFunc}, nil)
