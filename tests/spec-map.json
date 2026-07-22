@@ -3901,13 +3901,15 @@
       "title": "langgraph",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier5_e2e_kind/framework_runtime_langgraph_test.go::TestLanggraphRuntimeSessionBootstrapsAndStreamsResponse"
+        "tests/tier5_e2e_kind/framework_runtime_langgraph_test.go::TestLanggraphRuntimeSessionBootstrapsAndStreamsResponse",
+        "tests/tier2_component/credential/checkpoint_scope_test.go::TestCredentialLeasingServiceIssuesCheckpointScopeBoundToSessionTenant",
+        "tests/tier9_security/checkpoint_tenant_isolation_test.go::TestCheckpointCredentialRejectsCrossTenantWrite"
       ],
       "packages": [
         "cmd/runtimes/langgraph"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for LangGraph. Conformance harness validates the integration level once the binary ships. TestLanggraphRuntimeSessionBootstrapsAndStreamsResponse pins the §26.8 bootstrap contract (adapter imports runtimeOptions.graphModule, compiles it, attaches a RunnableConfig, and drives message delivery through graph.ainvoke/astream, with the response reaching both the synchronous POST /messages response and the AttachSession events stream) via sessiondriver, and is currently a non-blocking skip: the langgraph reference runtime (github.com/lennylabs/runtime-langgraph) is not vendored in this repo, cmd/runtimes/langgraph does not exist, and no in-repo runtime adapter performs the graphModule import/compile/ainvoke bootstrap sequence yet. Unskip once a runnable langgraph image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture LangGraph graph module is available under tests/testdata."
+      "notes": "Reference runtime for LangGraph. Conformance harness validates the integration level once the binary ships. TestLanggraphRuntimeSessionBootstrapsAndStreamsResponse pins the §26.8 bootstrap contract (adapter imports runtimeOptions.graphModule, compiles it, attaches a RunnableConfig, and drives message delivery through graph.ainvoke/astream, with the response reaching both the synchronous POST /messages response and the AttachSession events stream) via sessiondriver, and is currently a non-blocking skip: the langgraph reference runtime (github.com/lennylabs/runtime-langgraph) is not vendored in this repo, cmd/runtimes/langgraph does not exist, and no in-repo runtime adapter performs the graphModule import/compile/ainvoke bootstrap sequence yet. Unskip once a runnable langgraph image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture LangGraph graph module is available under tests/testdata. TestCredentialLeasingServiceIssuesCheckpointScopeBoundToSessionTenant and TestCheckpointCredentialRejectsCrossTenantWrite pin the §26.8 checkpointing credential-scope sentence (datastore.checkpoint.rw, scoped to the session's tenant) and are non-blocking skips for a distinct reason from the bootstrap test: §4.9 (Credential Leasing Service) defines no datastore/checkpoint provider, no comparable scope grammar, and no runtimeOptions.checkpointBackend-triggered lease issuance at all, so this is a spec gap between §26.8 and its own defining section rather than only a missing-binary gap. Unskip once §4.9 (or a successor spec section) defines this credential scope and the gateway implements issuance and tenant-scoped enforcement for it."
     },
     "26.9": {
       "title": "mastra",
