@@ -88,7 +88,7 @@ func PoolConfigValidator(metrics PoolConfigMetricsSink) Decider {
 		// (spec/04_system-components.md §4.6.3 line 601). userInfo is
 		// populated by the API server from the authenticated principal and
 		// cannot be spoofed by the caller. Rule-set-1 warnings (e.g. the
-		// §5.2 line 516 terminationGracePeriodSeconds floor advisory) are
+		// §5.2 line 542 terminationGracePeriodSeconds floor advisory) are
 		// preserved on the rule-set-2 decision so they surface even when
 		// rule set 2 admits.
 		decision := pcv.DecideAuthorization(req.UserInfo.Username)
@@ -103,7 +103,7 @@ func PoolConfigValidator(metrics PoolConfigMetricsSink) Decider {
 // AdmissionResponse. Advisory warnings are propagated onto
 // AdmissionResponse.Warnings so the API server relays them to the client
 // without rejecting the request (spec/05_runtime-registry-and-pool-model.md
-// §5.2 line 516 — `terminationGracePeriodSeconds` floor above 600s emits
+// §5.2 line 542 — `terminationGracePeriodSeconds` floor above 600s emits
 // a warning, not a rejection).
 // poolLabel resolves the `pool` metric label for a rejected
 // SandboxTemplate. The object's metadata.name is authoritative; on a

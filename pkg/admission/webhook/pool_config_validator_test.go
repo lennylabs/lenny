@@ -201,7 +201,7 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 	return int64(maxConcurrent)*pcv.MaxTieredCheckpointCapSeconds(workspaceBytes) + testMinStreamDrainSeconds
 }
 
-// spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — a
+// spec: §5.2 line 542 (spec/05_runtime-registry-and-pool-model.md) — a
 // concurrent-workspace pool whose computed terminationGracePeriodSeconds
 // floor exceeds 600s is admitted with an advisory warning on the
 // AdmissionResponse, not rejected. The floor omits the BarrierAck term,
@@ -231,7 +231,7 @@ func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *te
 	}
 }
 
-// spec: §5.2 line 516 / §10.1 line 119 — an omitted
+// spec: §5.2 line 542 / §10.1 line 119 — an omitted
 // terminationGracePeriodSeconds is evaluated against the §4.6.1 120s
 // agent default; a multi-slot pool whose floor exceeds that default is
 // rejected fail-closed rather than admitted through the old nil-bypass.
@@ -258,7 +258,7 @@ func TestPoolConfigValidatorRejectsOmittedGraceBelowFloor_spec_5_2_516(t *testin
 	}
 }
 
-// spec: §5.2 line 516 — a deployer who sets
+// spec: §5.2 line 542 — a deployer who sets
 // maxTerminationGracePeriodSeconds gets a hard rejection when the floor
 // breaches the ceiling.
 func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t *testing.T) {
