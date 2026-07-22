@@ -3900,22 +3900,26 @@
     "26.8": {
       "title": "langgraph",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier5_e2e_kind/framework_runtime_langgraph_test.go::TestLanggraphRuntimeSessionBootstrapsAndStreamsResponse"
+      ],
       "packages": [
         "cmd/runtimes/langgraph"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for LangGraph. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for LangGraph. Conformance harness validates the integration level once the binary ships. TestLanggraphRuntimeSessionBootstrapsAndStreamsResponse pins the §26.8 bootstrap contract (adapter imports runtimeOptions.graphModule, compiles it, attaches a RunnableConfig, and drives message delivery through graph.ainvoke/astream, with the response reaching both the synchronous POST /messages response and the AttachSession events stream) via sessiondriver, and is currently a non-blocking skip: the langgraph reference runtime (github.com/lennylabs/runtime-langgraph) is not vendored in this repo, cmd/runtimes/langgraph does not exist, and no in-repo runtime adapter performs the graphModule import/compile/ainvoke bootstrap sequence yet. Unskip once a runnable langgraph image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture LangGraph graph module is available under tests/testdata."
     },
     "26.9": {
       "title": "mastra",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier5_e2e_kind/framework_runtime_mastra_test.go::TestMastraRuntimeSessionMapsToolCallsAndStreamsResponse"
+      ],
       "packages": [
         "cmd/runtimes/mastra"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for Mastra. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for Mastra. Conformance harness validates the integration level once the binary ships. TestMastraRuntimeSessionMapsToolCallsAndStreamsResponse pins the §26.9 bootstrap contract (adapter calls agent.stream(message), maps Mastra tool calls onto a §15.1 tool_use event reflecting Lenny's tool_call envelope, and returns the final assistant message as a response part) via sessiondriver, and is currently a non-blocking skip: the mastra reference runtime (github.com/lennylabs/runtime-mastra) is not vendored in this repo, cmd/runtimes/mastra does not exist, and no in-repo runtime adapter performs the agent.stream() bootstrap or tool-call mapping yet. Unskip once a runnable mastra image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture Mastra agent definition with at least one tool is available under tests/testdata."
     },
     "26.10": {
       "title": "openai-assistants",
