@@ -18,6 +18,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -117,6 +118,93 @@ func TestCreateSessionServiceValidationError_spec_15_2_1_1380(t *testing.T) {
 	}
 	if svcErr.HTTPStatus != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", svcErr.HTTPStatus)
+	}
+	// A validation rejection sets no Retry-After header, so the field stays
+	// zero — the boundary the §15 single-shot binder relies on to omit the
+	// backoff hint on a non-retryable envelope.
+	if svcErr.RetryAfterSeconds != 0 {
+		t.Errorf("RetryAfterSeconds: got %d, want 0 (validation error carries no Retry-After)", svcErr.RetryAfterSeconds)
+	}
+}
+
+// TestCreateAndStartServiceHappyPath exercises the create-and-start peer of
+// the shared §15.2.1 service layer: it runs the full create → finalize →
+// start chain in one call, claims a warm pod, launches the runtime, registers
+// the binding into podRegistry, and returns the CreateSessionResponse in
+// running state, the pod-bound session the §15 single-shot adapter binder
+// dispatches over. spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
+func TestCreateAndStartServiceHappyPath(t *testing.T) {
+	srv, registry, _, _ := podBindServer(t, "sess-cas-svc")
+
+	resp, svcErr := srv.CreateAndStartService(context.Background(), "acme", sessionserver.CreateSessionRequest{
+		RuntimeRef: "echo",
+		UserID:     "alice@acme.com",
+	})
+	if svcErr != nil {
+		t.Fatalf("unexpected service error: %+v", svcErr)
+	}
+	if resp.ID != "sess-cas-svc" {
+		t.Errorf("id: got %q, want sess-cas-svc", resp.ID)
+	}
+	// spec: §15.1 — the create-and-start path lands the session directly in
+	// running, unlike CreateSessionService which returns `created`.
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("state: got %q, want running", resp.State)
+	}
+	if resp.UploadToken == "" {
+		t.Error("service did not mint a §7.1 uploadToken")
+	}
+	// spec: §4.6 — the running session is registered into podRegistry, the
+	// registry the PodExecutor reads to dispatch a turn; a create-only
+	// CreateSessionService leaves this empty.
+	if _, ok := registry.Get("sess-cas-svc"); !ok {
+		t.Error("registry holds no binding after CreateAndStartService; the single-shot adapter would fail exec.Send with is-not-bound-to-a-pod")
+	}
+}
+
+// TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion pins the field
+// this step adds: a create-and-start against an exhausted warm pool returns
+// 503 SESSION_CREATION_FAILED, and the Retry-After header the REST surface
+// writes on the response header is captured into ServiceError.RetryAfterSeconds
+// so the §15 single-shot binder re-emits the identical backoff hint. This
+// value lives only on the recorder header, so it would be lost against the
+// pre-field code.
+// spec: §7.1 create-and-start atomicity; §15.1 line 1138 (Retry-After).
+func TestCreateAndStartServiceCarriesRetryAfterOnPoolExhaustion(t *testing.T) {
+	adapterSrv := adapter.New("adapter-test")
+	adapterSrv.WorkspaceRoot = t.TempDir()
+	adapterSrv.Runtime = &podBindRuntime{}
+
+	// A pool with no idle Sandbox exhausts the warm-pod claim, so the
+	// create-time claim returns the §7.1 SESSION_CREATION_FAILED atomicity
+	// envelope with a Retry-After header.
+	cluster := podBindClient(
+		t,
+		podBindWarmPool("echo-pool", "echo-tmpl"),
+		podBindTemplate("echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+	)
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{
+		IDFunc:                  func() string { return "sess-cas-exhausted" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               podBindBinder(cluster, podBindAdapterDialer(t, adapterSrv)),
+		PodRegistry:             podsession.NewRegistry(),
+		AgentNamespace:          podTestNS,
+	})
+
+	_, svcErr := srv.CreateAndStartService(context.Background(), "acme", sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
+	if svcErr == nil {
+		t.Fatal("expected a ServiceError for a create-and-start against an exhausted pool")
+	}
+	if svcErr.HTTPStatus != http.StatusServiceUnavailable {
+		t.Errorf("status: got %d, want 503", svcErr.HTTPStatus)
+	}
+	if svcErr.Code != "SESSION_CREATION_FAILED" {
+		t.Errorf("code: got %q, want SESSION_CREATION_FAILED", svcErr.Code)
+	}
+	// The backoff hint is captured off the recorder response header. A zero
+	// here means the field was never populated from Retry-After.
+	if svcErr.RetryAfterSeconds <= 0 {
+		t.Errorf("RetryAfterSeconds: got %d, want > 0 (captured from the Retry-After header)", svcErr.RetryAfterSeconds)
 	}
 }
 
