@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
+	"github.com/lennylabs/lenny/pkg/controller/ssaretry"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -335,7 +336,13 @@ func (r *PodReconciler) reconcileHostSchedulable(ctx context.Context, pod *corev
 			Labels:    map[string]string{LabelHostSchedulable: want},
 		},
 	}
-	return retryOnConflictSSA(ctx, func(int) error {
+	// The host-schedulable apply targets a corev1.Pod label under the sole
+	// WarmPoolController field manager, which is not a CRD field owned by
+	// another field manager. The empty CRD kind keeps the retry loop but
+	// suppresses the §4.6.3 stuck signal, since a Pod label conflict is
+	// outside the §16.1 lenny_crd_ssa_conflict_total counter scope.
+	id := ssaretry.ConflictID{}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
 		return r.Client.Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
 	})
 }
@@ -647,7 +654,13 @@ func (r *PodReconciler) reconcileDrainRequest(ctx context.Context, pod *corev1.P
 // idle-gated cert callers (reconcileCertIssuance, reconcileCertExpiry) ignore
 // the bool.
 func patchSandboxDraining(ctx context.Context, c client.Client, key client.ObjectKey, requireIdle bool) (transitioned bool, err error) {
-	err = retryOnConflictSSA(ctx, func(int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.Sandbox),
+		Namespace:  key.Namespace,
+		Name:       key.Name,
+	}
+	err = ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
 		var live lennyv1.Sandbox
 		if err := c.Get(ctx, key, &live); err != nil {
 			transitioned = false

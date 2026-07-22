@@ -17,6 +17,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/controller/ssaretry"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 	sandboxcond "github.com/lennylabs/lenny/pkg/sandbox/condition"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
@@ -434,7 +435,13 @@ func (g *ClaimGarbageCollector) drainSandbox(ctx context.Context, namespace, san
 		return nil
 	}
 	key := client.ObjectKey{Namespace: namespace, Name: sandboxName}
-	return retryOnConflictSSA(ctx, func(int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.Sandbox),
+		Namespace:  namespace,
+		Name:       sandboxName,
+	}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
 		var live lennyv1.Sandbox
 		if err := g.Client.Get(ctx, key, &live); err != nil {
 			return client.IgnoreNotFound(err)

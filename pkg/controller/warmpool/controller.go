@@ -15,7 +15,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"strconv"
 	"sync"
 	"time"
@@ -34,44 +33,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
+	"github.com/lennylabs/lenny/pkg/controller/ssaretry"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool/plan"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
-
-// retryOnConflictSSA implements the §4.6.3 SSA-conflict retry policy
-// for the WarmPoolController status applies: always re-read before
-// re-applying, never force-conflicts, bounded retry with jittered
-// backoff (100ms initial, 2s ceiling, 5 attempts).
-func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) error {
-	const maxAttempts = 5
-	delay := 100 * time.Millisecond
-	const maxDelay = 2 * time.Second
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := apply(attempt); err == nil {
-			return nil
-		} else if !apierrors.IsConflict(err) {
-			return err
-		} else {
-			lastErr = err
-		}
-		jitter := time.Duration(rand.Int63n(int64(delay) / 4))
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(delay + jitter):
-		}
-		if delay < maxDelay {
-			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
-			}
-		}
-	}
-	return lastErr
-}
 
 // conditionPoolWarmingUp is the §5.2 bootstrap condition the
 // WarmPoolController maintains on SandboxTemplate.status.
@@ -731,7 +698,13 @@ func (r *Reconciler) updateStatus(ctx context.Context, pool *lennyv1.SandboxWarm
 	ready := int32(decision.ReadyCount - drained)
 
 	key := client.ObjectKeyFromObject(pool)
-	return retryOnConflictSSA(ctx, func(attempt int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.SandboxWarmPool),
+		Namespace:  pool.Namespace,
+		Name:       pool.Name,
+	}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
 		var live lennyv1.SandboxWarmPool
 		if attempt == 0 {
 			live = *pool
@@ -829,7 +802,13 @@ func (r *Reconciler) updateTemplateCondition(ctx context.Context, tmpl *lennyv1.
 	setPoolSecurityDegraded(pool.Name, nonceOnly)
 
 	key := client.ObjectKeyFromObject(tmpl)
-	return retryOnConflictSSA(ctx, func(attempt int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.SandboxTemplate),
+		Namespace:  tmpl.Namespace,
+		Name:       tmpl.Name,
+	}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
 		var live lennyv1.SandboxTemplate
 		if attempt == 0 {
 			live = *tmpl

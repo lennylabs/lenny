@@ -15,7 +15,6 @@ package sandbox
 import (
 	"context"
 	"fmt"
-	"math/rand"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -34,46 +33,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/lifecycle"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/sandbox/resourceclass"
+	"github.com/lennylabs/lenny/pkg/controller/ssaretry"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
-
-// retryOnConflictSSA implements the §4.6.3 SSA-conflict retry policy:
-// always re-read before re-applying, never force-conflicts, bounded
-// retry with jittered backoff (100ms initial, 2s ceiling, 5 attempts
-// before logging the stuck-state event). The apply closure receives
-// the freshly-read live object on each attempt and may either Apply
-// the patch or return nil to short-circuit.
-func retryOnConflictSSA(ctx context.Context, apply func(attempt int) error) error {
-	const maxAttempts = 5
-	delay := 100 * time.Millisecond
-	const maxDelay = 2 * time.Second
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		if err := apply(attempt); err == nil {
-			return nil
-		} else if !apierrors.IsConflict(err) {
-			return err
-		} else {
-			lastErr = err
-		}
-		jitter := time.Duration(rand.Int63n(int64(delay) / 4))
-		sleep := delay + jitter
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(sleep):
-		}
-		if delay < maxDelay {
-			delay *= 2
-			if delay > maxDelay {
-				delay = maxDelay
-			}
-		}
-	}
-	return lastErr
-}
 
 // Reconciler materializes Sandbox resources into Pods and advances the
 // §6.2 warm-path phase (§4.6.1).
@@ -657,7 +621,13 @@ func (r *Reconciler) recordNonceOnlyCarrier(ctx context.Context, sb *lennyv1.San
 	patch := &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
 	}
-	return retryOnConflictSSA(ctx, func(int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.Sandbox),
+		Namespace:  sb.Namespace,
+		Name:       sb.Name,
+	}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
 		return r.Client.Patch(ctx, patch, client.RawPatch(types.ApplyPatchType, body),
 			client.FieldOwner(string(ownership.WarmPoolController)))
 	})
@@ -681,7 +651,13 @@ func (r *Reconciler) clearNonceOnlyCarrier(ctx context.Context, sb *lennyv1.Sand
 	patch := &lennyv1.Sandbox{
 		ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
 	}
-	return retryOnConflictSSA(ctx, func(int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.Sandbox),
+		Namespace:  sb.Namespace,
+		Name:       sb.Name,
+	}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(int) error {
 		return r.Client.Patch(ctx, patch, client.RawPatch(types.ApplyPatchType, body),
 			client.FieldOwner(string(ownership.WarmPoolController)))
 	})
@@ -825,7 +801,13 @@ func (r *Reconciler) syncStatus(ctx context.Context, sb *lennyv1.Sandbox, decisi
 	if ok, remaining := r.StatusDedup.Allow(key); !ok {
 		return remaining, nil
 	}
-	err := retryOnConflictSSA(ctx, func(attempt int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.Sandbox),
+		Namespace:  sb.Namespace,
+		Name:       sb.Name,
+	}
+	err := ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
 		var live lennyv1.Sandbox
 		if attempt == 0 {
 			live = *sb

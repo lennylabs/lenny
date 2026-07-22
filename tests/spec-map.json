@@ -103,6 +103,7 @@
         "pkg/admission/sandboxclaim_guard",
         "pkg/controller/poolscaling/strategy",
         "pkg/admission/ownership",
+        "pkg/controller/ssaretry",
         "pkg/adapter",
         "cmd/runtimes/echo",
         "pkg/gateway/interceptors",
@@ -364,16 +365,21 @@
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
         "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent"
       ],
       "packages": [
         "pkg/admission/ownership",
-        "pkg/controller/poolscaling"
+        "pkg/controller/poolscaling",
+        "pkg/controller/ssaretry",
+        "pkg/controller/warmpool"
       ],
       "depends_on_sections": [
         "4.6"
@@ -2497,11 +2503,17 @@
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent",
+        "tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go::TestMetricsReferenceCarriesCRDSSAConflictCounter"
       ],
       "packages": [
         "pkg/observability/metrics",
-        "pkg/gateway/metrics/gatewaymetrics"
+        "pkg/gateway/metrics/gatewaymetrics",
+        "pkg/controller/ssaretry"
       ],
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces §16.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed §16.1 metrics catalog (name, type, help) cross-checked for completeness against the §16.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
