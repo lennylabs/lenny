@@ -19,12 +19,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
 
-// TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2 is a
-// tier-3 contract test: it pushes the Embedded Mode bootstrap seed
-// through the real gateway admin bootstrap handler and asserts the
-// §26.2 shared coding-agent blocks and the §26.1 chat resource posture
-// survive registration. This guards the embedded-stack catalog against
-// dropping the §26 fields the chart install carries. F-26.2.3 / F-26.1.3.
+// TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2 is an
+// in-process unit guard: it pushes the Embedded Mode bootstrap seed
+// through the real gateway admin bootstrap handler (an in-memory
+// runtimestore.Memory and httptest, no real persistence boundary) and
+// asserts the §26.2 shared coding-agent blocks and the §26.1 chat resource
+// posture survive registration. This guards the embedded-stack catalog
+// against dropping the §26 fields the chart install carries; it is a fast
+// unit-level check that these fields reach the admin handler and its
+// in-memory store shape, not a persistence-crossing contract test. The
+// tier-4 owner that confirms the same fields survive a real Postgres round
+// trip is
+// tests/tier4_integration/reference_runtime_install_test.go::TestReferenceRuntimeInstallPersistsSharedCodingAgentFieldsThroughPostgres_spec_26_2.
+// F-26.2.3 / F-26.1.3.
 func TestBootstrapSeedRegistersReferenceFieldsThroughAdmin_spec_26_2(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	runtimes := runtimestore.NewMemory()

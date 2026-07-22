@@ -131,6 +131,110 @@ func TestReferenceRuntimeInstallGrantsOnlyDefaultTenant_spec_26_1(t *testing.T) 
 	}
 }
 
+// spec: §26.2 — "The four coding-agent runtimes (`claude-code`,
+// `gemini-cli`, `codex`, `cursor-cli`) share a common workspace shape. ...
+// This section defines the shared pattern so individual entries stay
+// focused on the differences." The section then declares the shared
+// `limits`, `setupCommandPolicy`, `capabilities`, and `egressProfile`
+// blocks (spec/26_reference-runtime-catalog.md:38-92); §26.1 line 22 /
+// §26.7 declare `chat`'s smaller Full-level posture (single resource
+// class, immediate-only injection). pkg/embedded/stack/runtimes_test.go
+// and pkg/embedded/stack/bootstrap_seed_admin_test.go already pin these
+// fields at the in-memory-store level; this test is the tier-4 owner that
+// confirms the same fields survive a real Postgres round trip, since
+// runtimestore.Runtime's §26.2 blocks are stored as JSON columns
+// (pkg/gateway/runtime/runtimestore/pgstore) and a column-mapping or
+// (de)serialization regression there would not surface in an in-memory
+// store.
+//
+// diagnosis: a failure means the §26.2 shared coding-agent fields (or the
+// §26.1/§26.7 chat posture) registered by the local-profile `lenny up`
+// install path do not survive a real Postgres-backed store, so an operator
+// reading a runtime's fields back from GET /v1/admin/runtimes/{name} after
+// a real bring-up would see a value that diverges from what the catalog
+// declared, even though the in-memory-store unit tests stay green.
+func TestReferenceRuntimeInstallPersistsSharedCodingAgentFieldsThroughPostgres_spec_26_2(t *testing.T) {
+	gateway.SkipUnlessAvailable(t)
+	ctx := context.Background()
+
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	gw := gateway.StartWith(t, "--dev-mode",
+		"--postgres-dsn="+pg.DSN,
+		"--postgres-billing-audit-ddl-dsn="+pg.DSN)
+	do := refRuntimeAdminReq(t, gw.BaseURL())
+
+	if err := stack.InstallReferenceRuntimes(ctx, gw.BaseURL(), io.Discard); err != nil {
+		t.Fatalf("InstallReferenceRuntimes: %v", err)
+	}
+
+	// claude-code carries the §26.2 shared coding-agent blocks. The
+	// default tenant was auto-granted access by the install, so the
+	// tenant-scoped GET reaches the record.
+	cc := refRuntimeAdminGet(t, do, "default", "claude-code")
+
+	limits, _ := cc["limits"].(map[string]any)
+	if maxAge, _ := limits["maxSessionAgeSeconds"].(float64); maxAge != 14400 {
+		t.Errorf("claude-code limits.maxSessionAgeSeconds via Postgres = %v, want 14400: %+v", limits["maxSessionAgeSeconds"], cc)
+	}
+
+	setupPolicy, _ := cc["setupCommandPolicy"].(map[string]any)
+	if mode, _ := setupPolicy["mode"].(string); mode != "allowlist" {
+		t.Errorf("claude-code setupCommandPolicy.mode via Postgres = %q, want allowlist: %+v", mode, cc)
+	}
+
+	pool, _ := cc["defaultPoolConfig"].(map[string]any)
+	if profile, _ := pool["egressProfile"].(string); profile != "restricted" {
+		t.Errorf("claude-code defaultPoolConfig.egressProfile via Postgres = %q, want restricted: %+v", profile, cc)
+	}
+
+	credCaps, _ := cc["credentialCapabilities"].(map[string]any)
+	dialect, _ := credCaps["proxyDialect"].([]any)
+	if len(dialect) != 1 || dialect[0] != "anthropic" {
+		t.Errorf("claude-code credentialCapabilities.proxyDialect via Postgres = %v, want [anthropic]: %+v", dialect, cc)
+	}
+
+	caps, _ := cc["capabilities"].(map[string]any)
+	if interaction, _ := caps["interaction"].(string); interaction != "multi_turn" {
+		t.Errorf("claude-code capabilities.interaction via Postgres = %q, want multi_turn: %+v", interaction, cc)
+	}
+
+	resourceClasses, _ := cc["allowedResourceClasses"].([]any)
+	if len(resourceClasses) != 3 {
+		t.Errorf("claude-code allowedResourceClasses via Postgres = %v, want 3 entries: %+v", resourceClasses, cc)
+	}
+
+	// chat is Full (hotRotation: true requires the Full-only lifecycle
+	// channel) and carries the small resource class only with
+	// immediate-only injection.
+	chat := refRuntimeAdminGet(t, do, "default", "chat")
+	if level, _ := chat["integrationLevel"].(string); level != "full" {
+		t.Errorf("chat integrationLevel via Postgres = %q, want full: %+v", level, chat)
+	}
+	chatClasses, _ := chat["allowedResourceClasses"].([]any)
+	if len(chatClasses) != 1 || chatClasses[0] != "small" {
+		t.Errorf("chat allowedResourceClasses via Postgres = %v, want [small]: %+v", chatClasses, chat)
+	}
+	chatCaps, _ := chat["capabilities"].(map[string]any)
+	chatInjection, _ := chatCaps["injection"].(map[string]any)
+	chatModes, _ := chatInjection["modes"].([]any)
+	if supported, _ := chatInjection["supported"].(bool); !supported || len(chatModes) != 1 {
+		t.Errorf("chat capabilities.injection via Postgres not stored as expected (supported+1 mode): %+v", chatCaps)
+	}
+}
+
+// refRuntimeAdminGet issues GET /v1/admin/runtimes/{name} as a
+// tenant-admin for tenantID and returns the decoded RuntimePayload body.
+func refRuntimeAdminGet(t *testing.T, do func(method, path, tenant, roles string, body any) (int, map[string]any), tenantID, name string) map[string]any {
+	t.Helper()
+	code, body := do(http.MethodGet, "/v1/admin/runtimes/"+name, tenantID, "tenant-admin", nil)
+	if code != http.StatusOK {
+		t.Fatalf("get runtime %q for tenant %q: status %d (%v)", name, tenantID, code, body)
+	}
+	return body
+}
+
 // refRuntimeAdminReq issues an HTTP request against a running gateway with
 // a dev-header identity carrying the caller-supplied roles under the given
 // tenant.
