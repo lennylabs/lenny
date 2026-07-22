@@ -11,8 +11,15 @@ The suite is implemented. `scaffolds_test.go` builds `cmd/lenny-compliance` and 
 - `TestReferenceCatalogNightly` asserts `pkg/compliance.ReferenceCatalog()` is structurally complete against the §26.1 reference-runtime manifest unconditionally. It additionally exercises the registry-driven image-pull contract, logging the recognized registry, only when `LENNY_REFERENCE_IMAGE_REGISTRY` is set; the multi-gigabyte image pull itself is a release-pipeline concern out of scope for the in-process test runner.
 - `TestThirdPartyRegistration` exercises `pkg/compliance.RegisterAdapterUnderTest`, the same entry point a downstream runtime project imports from its own test code, against the bundled echo runtime.
 - `TestFidelityMatrix` asserts the documented per-`MessagePart` fidelity table against the OpenAI Chat Completions and Open Responses translators in `pkg/gateway/externalapi/outputpartfidelity`.
+- `TestCodingAgentReferenceRuntimesFullBattery` stands `streaming-echo` in for the shared Full-level lifecycle contract (checkpoint, interrupt, credential rotation, deadline) for the four coding-agent reference runtimes (claude-code, gemini-cli, codex, cursor-cli), the same external-dependency-gated image-pull skip as `TestReferenceCatalogNightly` above.
+- `TestFrameworkReferenceRuntimesFullBattery` does the same for the five non-coding-agent reference runtimes (chat, langgraph, mastra, openai-assistants, crewai).
 
-Every test in the tier gates on the Go toolchain being on `PATH` (needed to build the harness and the runtimes); that is the one skip in the suite, and it is a genuine external-dependency skip rather than a missing deliverable. No test in the tier is currently blocked on an undelivered dependency.
+Every test in the tier gates on the Go toolchain being on `PATH` (needed to build the harness and the runtimes); that is a genuine external-dependency skip rather than a missing deliverable. The two Full-battery tests above skip their own image-pull portion under the identical `LENNY_REFERENCE_IMAGE_REGISTRY` condition as `TestReferenceCatalogNightly`, listed here so the tier's own doc-consistency guard (`tests/tier11_docs/conformance_readme_skip_state_test.go`) can confirm neither skip is a missing-deliverable gap masquerading as an environment skip:
+
+| Test | Blocked on |
+|:--|:--|
+| `TestCodingAgentReferenceRuntimesFullBattery` | `LENNY_REFERENCE_IMAGE_REGISTRY` unset (release-pipeline image pull, out of scope for the in-process test runner) |
+| `TestFrameworkReferenceRuntimesFullBattery` | `LENNY_REFERENCE_IMAGE_REGISTRY` unset (release-pipeline image pull, out of scope for the in-process test runner) |
 
 ## Build tag and invocation
 
