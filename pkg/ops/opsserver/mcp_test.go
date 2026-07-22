@@ -4,12 +4,18 @@ package opsserver_test
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/runbooks"
 )
@@ -306,6 +312,130 @@ func TestMCPManagementGatewayOwnedToolReportsUnavailable_spec_25_12(t *testing.T
 	if rpcErr == nil || rpcErr["code"].(float64) != -32000 {
 		t.Fatalf("error = %v, want -32000 ENDPOINT_UNAVAILABLE for a gateway-owned tool with no gateway wired; a nil error means the tool was replayed locally instead of routed to the gateway", rpcErr)
 	}
+}
+
+// TestMCPManagementGatewayOwnedToolThreadsGatewayAndBridge pins the
+// §25.12 WIRE assembly the direct-construction invoker units do not reach:
+// that opsserver.New threads Options.Gateway into the MCP invoker and
+// mounts the MCP server behind the scope-bridge on the live /mcp/management
+// route. It drives two invocations through the mounted route on a server
+// built with a real gateway client and the §25.4 auth gate:
+//
+//  1. An authorized platform-admin invoking the gateway-owned admin.create_pool
+//     reaches the stub gateway with the caller Authorization forwarded
+//     verbatim. A pre-wire opsserver.New passed a nil gateway argument, so the
+//     invoker reported ENDPOINT_UNAVAILABLE and the stub was never hit; the
+//     forwarded bearer proves Options.Gateway threads through to the invoker.
+//  2. A platform-admin whose JWT scope claim is narrowed to a domain that does
+//     not grant the gateway-owned mutation is denied SCOPE_FORBIDDEN before
+//     dispatch, and the stub gateway is never reached. This proves
+//     newMCPBridge sits in the mounted path: without the bridge the JWT scope
+//     claim never reaches the MCP-boundary gate and the call would fall
+//     through to the gateway instead of being rejected pre-dispatch.
+//
+// diagnosis: a gateway-owned tool that returns ENDPOINT_UNAVAILABLE for an
+// authorized caller means opsserver.New did not thread Options.Gateway into
+// the invoker; a narrowed-scope caller that reaches the gateway instead of
+// being denied SCOPE_FORBIDDEN means newMCPBridge is not mounted on the
+// /mcp/management route.
+//
+// spec: §25.12 (ManagementMCPAdapter dual routing; Security Model layers 2
+// and 3; the gateway-proxy client threaded through and the MCP server
+// mounted behind the scope bridge).
+func TestMCPManagementGatewayOwnedToolThreadsGatewayAndBridge_spec_25_12(t *testing.T) {
+	var gotAuth, gotMethod, gotPath string
+	var gotBody []byte
+	stub := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotMethod, gotPath = r.Method, r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"id":"pool-1"}`))
+	}))
+	defer stub.Close()
+
+	gw, err := gateway.NewClient(gateway.Config{BaseURL: stub.URL, PerRequestTimeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("build gateway client: %v", err)
+	}
+	signer := jwt.NewHMACSigner("ops-test", []byte("ops-test-secret"))
+	srv := opsserver.New(opsserver.Options{
+		Gateway: gw,
+		Auth: &opsserver.AuthConfig{
+			Options:     authmw.Options{Verifier: signer},
+			RateLimiter: opsserver.NewRateLimiter(1000, 1000),
+		},
+	})
+
+	// (1) An authorized platform-admin carrying no scope narrowing invokes
+	// the gateway-owned tool; the call must reach the stub gateway with the
+	// caller bearer forwarded.
+	adminTok := mintOpsToken(t, signer, "alice@acme.com", auth.RolePlatformAdmin)
+	rec, body := doJSON(t, srv, http.MethodPost, "/mcp/management",
+		map[string]string{"Authorization": "Bearer " + adminTok},
+		map[string]any{
+			"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{
+				"name":      "admin.create_pool",
+				"arguments": map[string]any{"name": "gvisor-a", "runtime": "gvisor"},
+			},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%v", rec.Code, body)
+	}
+	if rpcErr, ok := body["error"].(map[string]any); ok {
+		t.Fatalf("tools/call returned a JSON-RPC error for an authorized gateway-owned call: %v", rpcErr)
+	}
+	if gotAuth != "Bearer "+adminTok {
+		t.Errorf("stub gateway saw Authorization %q, want the forwarded caller bearer; Options.Gateway did not thread to the invoker", gotAuth)
+	}
+	if gotMethod != http.MethodPost || gotPath != "/v1/admin/pools" {
+		t.Errorf("stub gateway saw %s %s, want POST /v1/admin/pools", gotMethod, gotPath)
+	}
+	if string(gotBody) != `{"name":"gvisor-a","runtime":"gvisor"}` {
+		t.Errorf("stub gateway saw body %q, want the tool arguments", gotBody)
+	}
+
+	// (2) A platform-admin whose scope claim is narrowed to a domain that
+	// does not grant tools:pool:write must be denied SCOPE_FORBIDDEN before
+	// dispatch, and the stub gateway must not be reached.
+	gotAuth, gotMethod, gotPath = "", "", ""
+	narrowTok := mintOpsTokenWithScope(t, signer, "alice@acme.com", "tools:diagnostics:read", auth.RolePlatformAdmin)
+	rec, body = doJSON(t, srv, http.MethodPost, "/mcp/management",
+		map[string]string{"Authorization": "Bearer " + narrowTok},
+		map[string]any{
+			"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+			"params": map[string]any{
+				"name":      "admin.create_pool",
+				"arguments": map[string]any{"name": "gvisor-a", "runtime": "gvisor"},
+			},
+		})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC carries the error in the body); body=%v", rec.Code, body)
+	}
+	rpcErr, _ := body["error"].(map[string]any)
+	if rpcErr == nil || rpcErr["code"].(float64) != -32001 {
+		t.Fatalf("error = %v, want -32001 SCOPE_FORBIDDEN for a narrowed-scope caller; the MCP-boundary scope bridge is not on the mounted route", rpcErr)
+	}
+	data, _ := rpcErr["data"].(map[string]any)
+	if data == nil || data["code"] != "SCOPE_FORBIDDEN" {
+		t.Fatalf("error data = %v, want SCOPE_FORBIDDEN", data)
+	}
+	if gotAuth != "" || gotPath != "" {
+		t.Errorf("stub gateway was reached (auth=%q path=%q) for a scope-denied call; the rejection must be pre-dispatch", gotAuth, gotPath)
+	}
+}
+
+// mintOpsTokenWithScope signs a bearer carrying sub, an RFC 9068 scope
+// claim, and the given roles, so a test can exercise the §25.1 scope
+// narrowing the MCP-boundary gate enforces.
+func mintOpsTokenWithScope(t *testing.T, signer *jwt.HMACSigner, sub, scope string, roles ...auth.Role) string {
+	t.Helper()
+	tok, err := signer.Sign(jwt.Claims{Subject: sub, TenantID: "default", Roles: roles, Scope: scope})
+	if err != nil {
+		t.Fatalf("sign token: %v", err)
+	}
+	return tok
 }
 
 // TestMCPManagementUnavailableEndpointMapsTo32000 confirms a §25.12
