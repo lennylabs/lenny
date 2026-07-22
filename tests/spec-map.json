@@ -3887,13 +3887,17 @@
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
         "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery",
-        "cmd/lenny-gateway/cursor_translator_test.go::TestBuildLLMTranslatorRegistryRegistersCursorProvider"
+        "cmd/lenny-gateway/cursor_translator_test.go::TestBuildLLMTranslatorRegistryRegistersCursorProvider",
+        "pkg/gateway/sessionserver/start_cursor_credential_pool_internal_test.go::TestResolveCredentialPoolsCursorNoPoolConfiguredRejects",
+        "pkg/gateway/sessionserver/start_cursor_credential_pool_internal_test.go::TestResolveCredentialPoolsCursorProxyPoolConfiguredSucceeds",
+        "pkg/gateway/sessionserver/start_cursor_credential_pool_internal_test.go::TestResolveCredentialPoolsCursorDirectPoolConfiguredSucceeds"
       ],
       "packages": [
-        "cmd/runtimes/cursor-cli"
+        "cmd/runtimes/cursor-cli",
+        "pkg/gateway/sessionserver"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for Cursor CLI. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the cursor-cli name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
+      "notes": "Reference runtime for Cursor CLI. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the cursor-cli name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. The three start_cursor_credential_pool_internal_test.go cases pin the line-297 sentence \"Deployers who do not configure a Cursor credential pool can only register this runtime in direct-delivery mode\" against its actual enforcement point: the §4.9 session-creation pre-claim credential resolution (resolveCredentialPools), not agent-pool registration admission (POST /v1/admin/pools imposes no credential-pool-existence check on any runtime, cursor-cli included). TestResolveCredentialPoolsCursorNoPoolConfiguredRejects pins the negative path (tenant policy names a cursor_direct defaultPool that was never created as a CredentialPool object, so pre-claim resolves zero assignable pools and fails closed with ErrNoCredentialAvailable); the two ...Succeeds cases pin that once a Cursor CredentialPool exists, both proxy-mode (matching the runtime's declared credentialCapabilities.proxyDialect: [cursor]) and direct-mode delivery resolve successfully, so the constraint is specifically the absence of a configured pool rather than a hard restriction to direct-delivery mode."
     },
     "26.7": {
       "title": "chat",
