@@ -470,3 +470,133 @@ func TestRuntimeSDKQuickStartTTHW(t *testing.T) {
 	}
 	t.Logf("§24.18 quick-start scaffolded a Go minimal runtime in %s", elapsed)
 }
+
+// spec: 24.18 (python scaffold cells build)
+// diagnosis: the §24.18 Language x Template matrix declares every
+// python cell (minimal, coding, chat) "Standard" or "Full", "SDK-present"
+// and built on the `lenny-runtime` package. TestGenerateWritesFileSet
+// (cmd/lenny-ctl/runtimescaffold) only checks the emitted file set; it
+// never imports the generated main.py. A regression that breaks the
+// Python scaffold's syntax or its SDK import surface (a stale symbol
+// name, a broken f-string substitution) would ship undetected. This
+// test imports the generated entrypoint against the real Python
+// runtime-author SDK package for every python template. The test skips
+// when python3 is not on PATH.
+func TestRuntimeSDKScaffoldPythonCellsImport(t *testing.T) {
+	python := requireTool(t, "python3")
+	sdkRoot := pythonRuntimeRoot(t)
+
+	for _, tmpl := range []runtimescaffold.Template{
+		runtimescaffold.TemplateMinimal, runtimescaffold.TemplateCoding, runtimescaffold.TemplateChat,
+	} {
+		tmpl := tmpl
+		t.Run(string(tmpl), func(t *testing.T) {
+			dir := t.TempDir()
+			var out, errb bytes.Buffer
+			code := runtimescaffold.Generate(runtimescaffold.Spec{
+				Name:     "scaffold-build",
+				Language: runtimescaffold.LangPython,
+				Template: tmpl,
+			}, dir, &out, &errb)
+			if code != runtimescaffold.ExitOK {
+				t.Fatalf("generate: exit %d, stderr=%q", code, errb.String())
+			}
+			root := filepath.Join(dir, "scaffold-build")
+
+			// Importing main (rather than executing it) exercises the
+			// module's top-level syntax and its `from lenny_runtime
+			// import (...)` symbols against the real SDK package without
+			// invoking main(), which would block on stdin like the real
+			// adapter protocol loop.
+			cmd := exec.Command(python, "-c", "import main")
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "PYTHONPATH="+sdkRoot)
+			if combined, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("python -c \"import main\" (%s template): %v\n%s", tmpl, err, combined)
+			}
+		})
+	}
+}
+
+// spec: 24.18 (typescript scaffold cells build)
+// diagnosis: the §24.18 Language x Template matrix declares every
+// typescript cell (minimal, coding, chat) "Standard" or "Full",
+// "SDK-present" and built on the `@lennylabs/runtime-sdk` package.
+// TestGenerateWritesFileSet (cmd/lenny-ctl/runtimescaffold) only checks
+// the emitted file set; it never compiles the generated main.ts. A
+// regression that breaks the TypeScript scaffold's syntax or its SDK
+// import surface (a renamed export, a stale type name) would ship
+// undetected. This test type-checks and builds the generated
+// entrypoint with tsc against the real TypeScript runtime-author SDK
+// package for every typescript template. The scaffold's own
+// package.json declares "@lennylabs/runtime-sdk" as a registry
+// dependency; since the package is not published, the test links the
+// already-built in-repo SDK into the scaffold's node_modules instead of
+// running a network-dependent npm install. The test skips when the
+// Node toolchain is not on PATH.
+func TestRuntimeSDKScaffoldTypeScriptCellsBuild(t *testing.T) {
+	node := requireTool(t, "node")
+	npm := requireTool(t, "npm")
+
+	// Ensures the SDK's own devDependencies (typescript, @types/node)
+	// are installed and the SDK is built to dist/, so tsc can resolve
+	// "@lennylabs/runtime-sdk" against real, current type declarations.
+	buildTypeScriptRuntime(t, node, npm, "echo")
+	sdkRoot := typeScriptRuntimeRoot(t)
+	tsc := filepath.Join(sdkRoot, "node_modules", "typescript", "bin", "tsc")
+	if _, err := os.Stat(tsc); err != nil {
+		t.Fatalf("typescript compiler not found at %s after building the SDK: %v", tsc, err)
+	}
+
+	for _, tmpl := range []runtimescaffold.Template{
+		runtimescaffold.TemplateMinimal, runtimescaffold.TemplateCoding, runtimescaffold.TemplateChat,
+	} {
+		tmpl := tmpl
+		t.Run(string(tmpl), func(t *testing.T) {
+			dir := t.TempDir()
+			var out, errb bytes.Buffer
+			code := runtimescaffold.Generate(runtimescaffold.Spec{
+				Name:     "scaffold-build",
+				Language: runtimescaffold.LangTypeScript,
+				Template: tmpl,
+			}, dir, &out, &errb)
+			if code != runtimescaffold.ExitOK {
+				t.Fatalf("generate: exit %d, stderr=%q", code, errb.String())
+			}
+			root := filepath.Join(dir, "scaffold-build")
+			linkTypeScriptSDKForBuild(t, root, sdkRoot)
+
+			cmd := exec.Command(node, tsc, "-p", "tsconfig.json")
+			cmd.Dir = root
+			if combined, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("tsc -p tsconfig.json (%s template): %v\n%s", tmpl, err, combined)
+			}
+			entry := filepath.Join(root, "dist", "main.js")
+			if _, err := os.Stat(entry); err != nil {
+				t.Errorf("%s template: tsc reported success but did not emit %s: %v", tmpl, entry, err)
+			}
+		})
+	}
+}
+
+// linkTypeScriptSDKForBuild wires the already-built TypeScript
+// runtime-author SDK into a generated scaffold's node_modules so tsc
+// can resolve "@lennylabs/runtime-sdk" and the "node" type-roots
+// offline: it symlinks the SDK package root (built to dist/ by
+// buildTypeScriptRuntime, which also installed the SDK's own
+// @types/node) as node_modules/@lennylabs/runtime-sdk and
+// node_modules/@types.
+func linkTypeScriptSDKForBuild(t *testing.T, scaffoldDir, sdkRoot string) {
+	t.Helper()
+	scoped := filepath.Join(scaffoldDir, "node_modules", "@lennylabs")
+	if err := os.MkdirAll(scoped, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", scoped, err)
+	}
+	if err := os.Symlink(sdkRoot, filepath.Join(scoped, "runtime-sdk")); err != nil {
+		t.Fatalf("symlink @lennylabs/runtime-sdk: %v", err)
+	}
+	typesDir := filepath.Join(sdkRoot, "node_modules", "@types")
+	if err := os.Symlink(typesDir, filepath.Join(scaffoldDir, "node_modules", "@types")); err != nil {
+		t.Fatalf("symlink node_modules/@types: %v", err)
+	}
+}
