@@ -46,14 +46,27 @@ func TestClassify_spec_7_2_paths(t *testing.T) {
 			wantPath: 3, wantAction: ActionBufferInbox, wantStatus: session.DeliveryStatusQueued,
 		},
 		{
+			// §7.2 path 6 line 330: a suspended target without
+			// delivery:"immediate" remains buffered (inbox, queued).
 			name: "path6_suspended_buffers_inbox", state: session.StateSuspended,
 			src: SourceExternal, wantPath: 6, wantAction: ActionBufferInbox,
 			wantStatus: session.DeliveryStatusQueued,
 		},
 		{
-			name: "path6_suspended_immediate_still_buffers", state: session.StateSuspended,
+			// §7.2 path 6 line 327: a delivery:"immediate" message to a
+			// pod-held suspended session selects the atomic resume-and-deliver,
+			// returning delivered.
+			name: "path6_suspended_immediate_resumes", state: session.StateSuspended,
 			immediate: true, src: SourceInterSession,
-			wantPath: 6, wantAction: ActionBufferInbox, wantStatus: session.DeliveryStatusQueued,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusDelivered,
+		},
+		{
+			// §7.2 path 6: the resume-and-deliver selection is source-agnostic —
+			// an external-client immediate message to a suspended session also
+			// resumes-and-delivers.
+			name: "path6_suspended_immediate_external_resumes", state: session.StateSuspended,
+			immediate: true, src: SourceExternal,
+			wantPath: 6, wantAction: ActionResumeAndDeliver, wantStatus: session.DeliveryStatusDelivered,
 		},
 		{
 			name: "path7_resume_pending_dlq", state: session.StateResumePending,
