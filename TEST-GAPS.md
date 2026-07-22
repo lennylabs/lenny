@@ -62,7 +62,7 @@ Across 132 audited units: **1791 findings** — 515 High, 790 Medium, 332 Low, 1
 - [§4.4 Event / Checkpoint Store](#t-4.4) — 3H 5M 3L 1I — No tier4/5 test drives checkpoint-to-MinIO-then-resume; new node-drain e2e skips the checkpoint half.
 - [§4.5 Artifact Store](#t-4.5) — 3H 7M 2L 2I — Tenant-prefix isolation, DeleteByTenant, and T4 SSE-KMS selection tested only against in-memory fakes, never real MinIO/S3
 - [§4.6 Pod Lifecycle Controllers](#t-4.6) — 4H 9M 4L 1I — 3 High gaps still open: ADR-007 leader-kill chaos, etcd-unavailable chaos, cross-controller SSA-conflict test
-- [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 6L 2I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
+- [§4.7 Runtime Adapter](#t-4.7) — 6H 7M 7L 2I — Nonce-only HMAC/replay and reference-runtime conformance still unverified in a live pod; task-mode gap now moot (removed by 0002)
 - [§4.8 Gateway Policy Engine](#t-4.8) — 3H 9M 2L 1I — External gRPC interceptor path (and the protobuf contract, admission-gate ordering) still never exercised through a live gateway binary
 - [§4.9 Credential Leasing Service](#t-4.9) — 9H 12M 4L 1I — No proxy/SPIFFE/deny-list/fallback/lifecycle e2e coverage; pre-claim race now spans create->finalize (proposal 0007), still untested; three tier5 admission tests now fail closed against unrelated webhooks post-proposal-0035
 - [§5.1 Runtime](#t-5.1) — 2H 6M 2L 1I — publishedMetadata + MCP capability-inference contract tests still missing; integrationLevel/labels gaps closed
@@ -398,6 +398,7 @@ Counts: 4 High, 4 Medium, 3 Low, 1 Info.
 - **Dependencies:** none — buildable today.
 - **Suggested test:** Assign and check each `io.Copy` return value (or discard it explicitly with `_, _ =`), so `golangci-lint run --build-tags=integration ./tests/tier4_integration/...` is clean.
 - **Also observed** (2026-07-22, while closing T-26.2.5): reproduced again at `tests/tier4_integration/credential_denylist_proxy_test.go:314` and `tests/tier4_integration/llm_proxy_roundtrip_test.go:152` (line number shifted for the first file; same unchecked `io.Copy(io.Discard, resp.Body)` pattern).
+- **Also observed** (2026-07-22, while closing T-26.3.1): reproduced again at the same two locations, `tests/tier4_integration/credential_denylist_proxy_test.go:314` and `tests/tier4_integration/llm_proxy_roundtrip_test.go:152`.
 
 ## §4.2 Session Manager <a id="t-4.2"></a>
 **Spec file:** `spec/04_system-components.md`
@@ -1049,6 +1050,13 @@ Counts: 6 High, 7 Medium, 4 Low, 1 Info.
 - **Gap:** `cmd/lenny-compliance/standard_test.go:80,130,156,165,181,193,205` all fail with "fork/exec /tmp/compliance-standard-test-.../delegation-echo: no such file or directory" (run_id `4cc99b6d708050c6275228db`) — looks like a missing build/embed step for the delegation-echo fixture in this environment rather than a product defect. Discovered while closing T-25.4.40; an independent recurrence of the same class of defect T-4.7.21 records from T-25.5.22.
 - **Dependencies:** None — related to T-4.7.19's delegation-echo-under-parallel-execution flake and T-4.7.21's binary-absent observation.
 - **Suggested test:** Ensure the `delegation-echo` (and `echo`) runtime binaries are built and present before the `cmd/lenny-compliance` Standard-battery tests run, and add a pre-flight check that fails loudly with a clear diagnostic rather than surfacing as a `fork/exec` error deep in each test.
+
+### - [ ] T-4.7.23 — TestReferenceCatalogNightly is not registered in tests/spec-map.json despite being a named, spec-cited test [Low] — OPEN
+- **Spec/Doc:** "The three test runtimes ... run conformance on every PR. The nine reference runtimes ... run conformance on every nightly." (TESTING.md:1304, 1319-1320); `TestReferenceCatalogNightly` itself carries `// spec: 12.10 (reference-catalog conformance runs nightly)`.
+- **Existing tests:** `tests/tier10_conformance/scaffolds_test.go::TestReferenceCatalogNightly` validates the §26.1 catalog manifest by name. Its sibling tests in the same file, `TestCodingAgentReferenceRuntimesFullBattery` and `TestFrameworkReferenceRuntimesFullBattery`, are registered in `tests/spec-map.json`.
+- **Gap:** `grep -n "TestReferenceCatalogNightly" tests/spec-map.json` returns no matches, even though the test is named and spec-cited. `lenny-test validate-maps` does not catch this because it only requires tier-2+ test files (not individual named test functions) to appear in `tests/spec-map.json`, and the file itself is registered via its other tests. This is a spec-map traceability gap rather than a missing behavior test: a reader following the map from §12.10 or §26.1 to the reference-catalog nightly conformance test finds no entry pointing at it. Discovered while closing T-26.1.2.
+- **Dependencies:** None — buildable today by editing `tests/spec-map.json`.
+- **Suggested test:** Add a `TestReferenceCatalogNightly` entry alongside its siblings in the relevant `tests/spec-map.json` section(s) (§12.10 and/or §26.1), so the map's coverage-by-test-name view stays complete.
 
 ## §4.8 Gateway Policy Engine <a id="t-4.8"></a>
 **Spec file:** `spec/04_system-components.md`
