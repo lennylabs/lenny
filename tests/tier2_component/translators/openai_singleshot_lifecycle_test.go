@@ -26,9 +26,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/alicebob/miniredis/v2"
+	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -63,6 +66,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
@@ -183,7 +188,15 @@ func ssIdleSandbox(name, pool, podIP string) *lennyv1.Sandbox {
 func ssAdapterDialer(t *testing.T, rt adapter.RuntimeProcess) func(string) (*adapterclient.Client, error) {
 	t.Helper()
 	srv := adapter.New("singleshot-test")
-	srv.WorkspaceRoot = t.TempDir()
+	// Set the full §6.4 root layout, not just the whole-pod WorkspaceRoot, so
+	// the per-slot materialization path (WorkspaceBase/slots/{slotId}) the
+	// concurrent-workspace bind drives has a real tree to write into.
+	base := t.TempDir()
+	srv.WorkspaceRoot = filepath.Join(base, "workspace", "current")
+	srv.WorkspaceBase = filepath.Join(base, "workspace")
+	srv.SessionsRoot = filepath.Join(base, "sessions")
+	srv.ArtifactsRoot = filepath.Join(base, "artifacts")
+	srv.CredentialsDir = filepath.Join(base, "run", "lenny")
 	srv.Runtime = rt
 	lis := bufconn.Listen(1 << 20)
 	gs := adapter.NewGRPCServer(srv)
@@ -227,6 +240,56 @@ func ssRecyclingPool(name, runtimeRef string) poolstore.Pool {
 			},
 		},
 	}
+}
+
+// ssConcurrentPool is the §5.2 poolstore record for a concurrent-workspace
+// pool (maxConcurrentSessions > 1). A session on such a pool claims a per-slot
+// reservation (ClaimSlot) rather than an exclusive whole-pod claim, its bind
+// carries a non-empty SlotID, and its release routes through Binder.ReleaseSlot
+// so sibling slots multiplexed on the same pod survive.
+func ssConcurrentPool(name, runtimeRef string) poolstore.Pool {
+	return poolstore.Pool{
+		Name:          name,
+		RuntimeRef:    runtimeRef,
+		ExecutionMode: runtimestore.ExecutionModeSession,
+		SessionPolicy: &runtimestore.SessionPolicy{
+			MaxConcurrentSessions: 4,
+			// spec: §5.2 — maxConcurrentSessions > 1 requires the deployer
+			// process-level-isolation acknowledgment; the poolstore rejects the
+			// pool without it.
+			AcknowledgeProcessLevelIsolation: true,
+		},
+	}
+}
+
+// ssSlotBinder is ssBinder wired with a miniredis-backed §5.2 slot counter,
+// the intra-pod capacity gate the concurrent-session ClaimSlot / BindSlot path
+// requires; a binder with no counter fails closed on the slot path.
+func ssSlotBinder(t *testing.T, c client.Client, dial func(string) (*adapterclient.Client, error)) *podsession.Binder {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	b := ssBinder(c, dial)
+	b.SlotCounter = slotcounter.New(rc)
+	return b
+}
+
+// ssPodClaimExists reports whether the per-pod occupancy SandboxClaim exists
+// for pod. The per-pod claim is the §5.2 occupancy authority: session-mode
+// Release deletes it, while a per-slot ReleaseSlot keeps it while any sibling
+// slot on the pod still runs.
+func ssPodClaimExists(t *testing.T, c client.Client, pod string) bool {
+	t.Helper()
+	_, err := ssClaim(t, c, pod)
+	if err == nil {
+		return true
+	}
+	if apierrors.IsNotFound(err) {
+		return false
+	}
+	t.Fatalf("get per-pod claim for %s: %v", pod, err)
+	return false
 }
 
 // ssRecycleBoundary satisfies podsession.RecycleBoundaryArmer without a live
@@ -430,6 +493,87 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 	}
 	if claim.Status.Phase != string(claimstate.Recycling) {
 		t.Errorf("claim binding state = %q, want recycling (completed disposition recycles)", claim.Status.Phase)
+	}
+}
+
+// spec: §15 (single-shot bind and release), §5.2 (per-slot multiplexing:
+// releasing one slot leaves a sibling slot's pod live), §6.2 (per-slot vs
+// session-mode release), §4.6.3 (gateway writes no Sandbox.status).
+// diagnosis: on a concurrent-workspace pool (maxConcurrentSessions > 1) the
+// single-shot adapter must claim a per-slot reservation, dispatch with the
+// resolved slotId stamped on the registry binding, and release that one slot
+// through Binder.ReleaseSlot so a concurrently-held sibling slot on the same
+// pod survives. A failure means the slot path regressed: the bind carried no
+// slotId during exec.Send (the executor fails closed with SLOT_ID_REQUIRED or
+// misroutes into another slot), the binding was not removed after the call, or
+// the release drained the whole pod through session-mode Release (which
+// deletes the per-pod claim and tears down the sibling) instead of decrementing
+// only the request's slot.
+func TestSingleShotConcurrentSlotBindDispatchReleaseKeepsSibling_spec_5_2(t *testing.T) {
+	cluster := ssEnvClient(
+		t,
+		ssWarmPool("echo-pool", "echo-tmpl"),
+		ssTemplate("echo-tmpl", "echo"),
+		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+	)
+	binder := ssSlotBinder(t, cluster, ssAdapterDialer(t, &ssRespondingRuntime{out: make(chan []byte, 8)}))
+	binder.RecycleBoundary = ssRecycleBoundary{}
+	registry := podsession.NewRegistry()
+
+	// A sibling session already holds a slot on the shared pod. It is bound
+	// directly through the same binder so the pod genuinely multiplexes a
+	// concurrent slot the single-shot release must leave intact.
+	sibling, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
+		Pool: "echo-pool", SessionID: "sess-sibling", TenantID: "acme", Runtime: "echo",
+		MaxConcurrentSessions: 4, Plan: &adapterv1.WorkspacePlan{},
+	})
+	if err != nil {
+		t.Fatalf("bind sibling slot: %v", err)
+	}
+	defer sibling.Adapter.Close()
+	if !ssPodClaimExists(t, cluster, "sbx-1") {
+		t.Fatal("sibling BindSlot did not create the per-pod occupancy claim")
+	}
+
+	pools := poolstore.NewMemory()
+	if err := pools.Create(context.Background(), ssConcurrentPool("echo-pool", "echo")); err != nil {
+		t.Fatalf("create concurrent pool: %v", err)
+	}
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "sess-ss-slot" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          ssNS,
+		Pools:                   pools,
+	})
+	spy := &ssSpyExecutor{inner: executor.NewPodExecutor(registry, binder), registry: registry}
+
+	rr := ssDriveChat(t, ssChatHandler(store, srv, spy).Handler(), "echo", nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("concurrent-slot dispatch status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	if !spy.sawBinding {
+		t.Error("dispatch ran without a registered pod binding")
+	}
+	// A concurrent-workspace bind stamps the resolved slotId onto the registry
+	// binding; the executor reads it to route the per-slot message. The slotId
+	// equals the session id (§5.2), so a non-empty value matching the request's
+	// session id proves the slot path ran during exec.Send rather than the
+	// exclusive session-mode path (which carries an empty SlotID).
+	if spy.sawSlotID != "sess-ss-slot" {
+		t.Errorf("concurrent-slot bind carried slotId %q during dispatch, want sess-ss-slot", spy.sawSlotID)
+	}
+	// The deferred release removed the request's binding within the one call.
+	if _, ok := registry.Get("sess-ss-slot"); ok {
+		t.Error("binding still present after the single-shot request returned")
+	}
+	// The release routed through Binder.ReleaseSlot: it decremented only the
+	// request's slot, so the per-pod claim survives while the sibling slot runs.
+	// A session-mode Release would have drained the pod and deleted the claim.
+	if !ssPodClaimExists(t, cluster, "sbx-1") {
+		t.Error("the per-pod claim was deleted on release; the sibling slot's pod was torn down (session-mode drain instead of ReleaseSlot)")
 	}
 }
 
