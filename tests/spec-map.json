@@ -235,7 +235,8 @@
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestCheckpointHandshakeUnderGvisorTagsConsistent",
         "tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go::TestSignalCheckpointingRefusedUnderSandboxedProfiles",
-        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace"
+        "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointOnPodLossResumesWorkspace",
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces"
       ],
       "packages": [
         "pkg/store/event",
@@ -307,7 +308,9 @@
         "pkg/gateway/podlifecycle/podclaim/slotclaimer_test.go::TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4",
         "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueDispositionDrainsAsPodsFreeOnRealPool",
         "pkg/gateway/sessionserver/pool_exhaustion_queue_test.go::TestQueueWaitTimeoutReturnsRetryableExhaustionOnRealPool",
-        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestFallbackDoubleClaimFencedByDeterministicName"
+        "pkg/gateway/podlifecycle/podsession/binder_test.go::TestFallbackDoubleClaimFencedByDeterministicName",
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces",
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteCrossRefsResolve"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -422,7 +425,8 @@
         "tests/tier9_security/adapter_peercred_test.go::TestAdapterPeercredSelftestFaultCrashLoops",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPRejectsNonceLessAdversary_spec_4_7",
         "tests/tier9_security/adapter_mcp_nonce_test.go::TestConnectorMCPRejectsNonceLessAdversary_spec_4_7",
-        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7"
+        "tests/tier9_security/adapter_mcp_nonce_test.go::TestPlatformMCPNonceBearerReachesPrivilegedTool_spec_4_7",
+        "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces"
       ],
       "packages": [
         "pkg/adapter",
