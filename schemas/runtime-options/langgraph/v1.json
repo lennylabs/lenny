@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/runtime-options/langgraph/v1.json",
+  "title": "langgraph runtimeOptions v1",
+  "description": "Validates CreateSessionRequest.runtimeOptions for the langgraph runtime. See spec/14_workspace-plan-schema.md and spec/26_reference-runtime-catalog.md §26.8.",
+  "type": "object",
+  "properties": {
+    "graphModule": {
+      "type": "string",
+      "description": "Python dotted path to the LangGraph graph object"
+    },
+    "checkpointBackend": {
+      "type": "string",
+      "enum": ["memory", "postgres", "redis"],
+      "default": "postgres"
+    },
+    "recursionLimit": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "default": 25
+    },
+    "configSchema": {
+      "type": "object",
+      "description": "Runtime-specific config forwarded as LangGraph RunnableConfig.configurable"
+    }
+  },
+  "required": ["graphModule"],
+  "additionalProperties": false
+}

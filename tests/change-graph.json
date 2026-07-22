@@ -414,6 +414,9 @@
     "schemas/examples/": {
       "static": ["tests/tier0_static/schemas_test.go"]
     },
+    "schemas/runtime-options/": {
+      "contract": ["tests/tier3_contract/runtimeoptions_schema/..."]
+    },
     "pkg/session/state": {
       "unit": ["pkg/session/state/..."]
     },

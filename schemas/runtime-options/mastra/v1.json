@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/runtime-options/mastra/v1.json",
+  "title": "mastra runtimeOptions v1",
+  "description": "Validates CreateSessionRequest.runtimeOptions for the mastra runtime. See spec/14_workspace-plan-schema.md and spec/26_reference-runtime-catalog.md §26.9.",
+  "type": "object",
+  "properties": {
+    "agentModule": {
+      "type": "string",
+      "description": "TypeScript module path to the exported Mastra Agent"
+    },
+    "configSchema": {
+      "type": "object",
+      "description": "Runtime-specific config forwarded to the Mastra Agent at construction"
+    }
+  },
+  "required": ["agentModule"],
+  "additionalProperties": false
+}
