@@ -169,11 +169,11 @@ func TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: 5.2 (terminationGracePeriodSeconds floor), 10.1 (tiered-cap +
-// BarrierAck budget), 17.2
-// diagnosis: the §5.2 / §10.1 per-pod terminationGracePeriodSeconds floor
-// did not survive a SandboxTemplate's round-trip through the real CRD
-// codec, OR the budget input fields (executionMode, maxConcurrent,
+// spec: 5.2 (terminationGracePeriodSeconds floor), 10.1 (agent-pod grace
+// floor), 17.2
+// diagnosis: the §5.2 / §10.1 agent-pod terminationGracePeriodSeconds
+// floor did not survive a SandboxTemplate's round-trip through the real
+// CRD codec, OR the budget input fields (executionMode, maxConcurrent,
 // terminationGracePeriodSeconds) are dropped or renamed by the OpenAPI
 // schema. The test creates a schema-valid service-mode template whose
 // declared grace period is below the floor, reads it back, and asserts
@@ -183,10 +183,11 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	c, ctx := newClient(t)
 
 	// service mode with maxConcurrent: 8 fans the per-slot checkpoint cap
-	// across 8 slots. With the default 90s tier and 90s BarrierAck the
-	// floor is 8*90 + 90 + 30 = 840s; a declared 120s grace period is far
-	// below it. terminationGracePeriodSeconds is a schema-valid field, so
-	// the API server admits the object and the webhook is the gate.
+	// across 8 slots. With the default 90s tier the agent-pod floor is
+	// 8*90 + 30 = 750s (the BarrierAck term belongs to the gateway pod, not
+	// the agent floor); a declared 120s grace period is far below it.
+	// terminationGracePeriodSeconds is a schema-valid field, so the API
+	// server admits the object and the webhook is the gate.
 	grace := int64(120)
 	tpl := &lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "below-grace-floor", Namespace: admissionNS},
@@ -210,8 +211,97 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	if !d.BudgetExceeded {
 		t.Errorf("a grace-period-floor rejection must set BudgetExceeded so §16.1 counts it")
 	}
-	if !strings.Contains(d.Reason, "840s") {
-		t.Errorf("reason = %q, want it to name the 840s floor", d.Reason)
+	if !strings.Contains(d.Reason, "750s") {
+		t.Errorf("reason = %q, want it to name the 750s floor", d.Reason)
+	}
+}
+
+// spec: 5.2 (terminationGracePeriodSeconds floor), 10.1 (agent-pod grace
+// floor), 17.2
+// diagnosis: the §5.2 / §10.1 agent-pod grace floor is bypassed for an
+// omitted terminationGracePeriodSeconds. The SandboxTemplate CRD field is
+// *int64 with omitempty and no +kubebuilder:default, so an absent field
+// must round-trip back nil and the webhook must vet the pool against the
+// §4.6.1 120s effective default. The test creates a schema-valid
+// service-mode template with maxConcurrent: 2 and no grace field (floor
+// 2*90 + 30 = 210s > the 120s default), reads it back to confirm the
+// codec applied no default, and asserts DecideTemplate rejects it. A
+// non-nil round-tripped field means a +kubebuilder:default crept onto the
+// CRD; an admit means the omitted-field nil-bypass regressed and a pool
+// could be SIGKILL'd mid-checkpoint on drain.
+func TestDecideTemplateRejectsAbsentGraceBelowFloor_spec_5_2_516(t *testing.T) {
+	c, ctx := newClient(t)
+
+	tpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "absent-grace-below-floor", Namespace: admissionNS},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:    "claude-code",
+			ExecutionMode: "service",
+			MaxConcurrent: 2,
+			// terminationGracePeriodSeconds omitted: the §4.6.1 120s agent
+			// default is the effective grace, below the 210s floor.
+		},
+	}
+	got := roundTrip(t, c, ctx, tpl)
+
+	if got.Spec.TerminationGracePeriodSeconds != nil {
+		t.Fatalf("§5.2: an omitted terminationGracePeriodSeconds round-tripped to %d; the CRD field must carry no "+
+			"+kubebuilder:default so the webhook vets the §4.6.1 effective default, not a codec-supplied value",
+			*got.Spec.TerminationGracePeriodSeconds)
+	}
+
+	d := pcv.DecideTemplate(got)
+	if d.Allowed {
+		t.Fatal("§5.2: a service-mode SandboxTemplate whose omitted terminationGracePeriodSeconds defaults below the " +
+			"agent-pod floor must be rejected; the omitted field must not bypass the floor")
+	}
+	if d.Code != 422 {
+		t.Errorf("rejection code = %d, want 422", d.Code)
+	}
+	if !d.BudgetExceeded {
+		t.Errorf("a grace-period-floor rejection must set BudgetExceeded so §16.1 counts it")
+	}
+	if !strings.Contains(d.Reason, "agent-pod floor") {
+		t.Errorf("reason = %q, want it to name the §5.2 agent-pod floor", d.Reason)
+	}
+	if !strings.Contains(d.Reason, "210s") {
+		t.Errorf("reason = %q, want it to name the 210s floor", d.Reason)
+	}
+}
+
+// spec: 5.2 (terminationGracePeriodSeconds floor), 10.1 (agent-pod grace
+// floor), 17.2
+// diagnosis: the §5.2 / §10.1 agent-pod grace floor became over-broad and
+// rejects the default single-slot pool. The test is the positive control
+// for the omitted-field path: a single-slot default-tier pool with no
+// terminationGracePeriodSeconds must round-trip back nil (no codec
+// default) and be admitted, because the §4.6.1 120s effective default
+// equals the reconciled floor 1*90 + 30 = 120s. A reject here means the
+// §4.6.1-versus-floor reconciliation regressed and every default pool is
+// refused admission.
+func TestDecideTemplateAdmitsAbsentGraceAtFloor_spec_5_2_516(t *testing.T) {
+	c, ctx := newClient(t)
+
+	tpl := &lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "absent-grace-at-floor", Namespace: admissionNS},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:    "claude-code",
+			ExecutionMode: "session",
+			// terminationGracePeriodSeconds omitted: the §4.6.1 120s agent
+			// default equals the single-slot floor 1*90 + 30 = 120s.
+		},
+	}
+	got := roundTrip(t, c, ctx, tpl)
+
+	if got.Spec.TerminationGracePeriodSeconds != nil {
+		t.Fatalf("§5.2: an omitted terminationGracePeriodSeconds round-tripped to %d; the CRD field must carry no "+
+			"+kubebuilder:default so the webhook vets the §4.6.1 effective default, not a codec-supplied value",
+			*got.Spec.TerminationGracePeriodSeconds)
+	}
+
+	if d := pcv.DecideTemplate(got); !d.Allowed {
+		t.Fatalf("§5.2: a single-slot default-tier pool whose 120s effective default equals the agent-pod floor "+
+			"must be admitted: %q", d.Reason)
 	}
 }
 
