@@ -44,6 +44,13 @@ func (fixedKeyResolver) UpstreamCredential(credential.Lease) (string, bool) {
 // for the same openai_direct provider identity, and the pod-visible
 // output must be equivalent regardless of which upstream API answered
 // the call.
+//
+// diagnosis: once unskipped, a failure means the LLM proxy still
+// cannot serve both the OpenAI Chat Completions and Responses dialects
+// transparently for the same openai_direct provider identity — check
+// whether Handler still hardcodes DialectAnthropic on both translation
+// legs (pkg/gateway/llmproxy/llmproxy/handler.go) and whether
+// TranslatorRegistry still allows only one translator per provider.
 func TestCodexDialectSelectionTransparentToClient(t *testing.T) {
 	t.Skip("the LLM proxy Handler hardcodes the Anthropic dialect on both translation legs and " +
 		"TranslatorRegistry keys a single translator per provider, so it cannot yet serve the " +
