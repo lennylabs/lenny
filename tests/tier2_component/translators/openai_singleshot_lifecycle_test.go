@@ -484,6 +484,20 @@ func TestSingleShotBindsDispatchesAndRecyclesOnCompletion_spec_15(t *testing.T) 
 	if _, ok := registry.Get("sess-ss-ok"); ok {
 		t.Error("binding still present after the single-shot request returned")
 	}
+	// The handler persisted the completed disposition to the session row
+	// (§6.2). This is asserted independently of the recycle outcome below:
+	// the disposition passed to Binder.Release is derived from the session's
+	// completion store.Update, so a regression that recycled the pod while
+	// dropping or reordering that Update (leaving the row not-completed) would
+	// still pass the claim-recycling check. Reading the row back pins the
+	// completed state the handler must record.
+	sess, err := store.Get(context.Background(), "acme", "sess-ss-ok")
+	if err != nil {
+		t.Fatalf("session row missing after a completed single-shot turn: %v", err)
+	}
+	if sess.State != session.StateCompleted {
+		t.Errorf("session row state = %q, want %q (handler records the completed disposition)", sess.State, session.StateCompleted)
+	}
 	// completed disposition on a recycling pool: the per-pod claim is patched
 	// bound → recycling (§6.2 clean-terminal recycle), not deleted. The
 	// gateway writes no Sandbox.status (§4.6.3).
