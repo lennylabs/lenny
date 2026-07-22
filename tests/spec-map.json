@@ -3823,12 +3823,14 @@
     "26.2": {
       "title": "Shared Patterns for Coding-Agent Runtimes",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier4_integration/coding_agent_session_test.go::TestCodingAgentUploadArchiveMaterializesAndSealsToArtifacts"
+      ],
       "packages": [
         "cmd/runtimes"
       ],
       "blocked_until_phase": "11",
-      "notes": "Phase 4 ships the shared adapter patterns that coding-agent runtimes inherit. Conformance harness validates the integration level once the binary ships."
+      "notes": "Phase 4 ships the shared adapter patterns that coding-agent runtimes inherit. Conformance harness validates the integration level once the binary ships. The tier-4 test pins the uploadArchive-materialize-then-seal-to-artifacts flow (workspace root, output survival) against the real adapter, checkpointer, and cataloging seams."
     },
     "26.3": {
       "title": "claude-code",
