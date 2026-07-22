@@ -169,9 +169,10 @@ func (i *opsInvoker) invokeLocal(ctx context.Context, tool mcp.Tool, args json.R
 // invokeGateway dispatches a gateway-owned tool by proxying its mapped
 // admin-API call to the gateway through the identity-forwarding
 // ProxyAdminCall. It reuses buildToolRequest to form the path, query, and
-// body, assembles the forward headers (the caller identity the CODE-3
-// bridge captured, plus Content-Type, the X-Lenny-Caller marker, and the
-// §25.12 correlation headers), and maps the raw gateway (status, body)
+// body, assembles the forward headers (the caller identity the opsserver
+// MCP bridge middleware captured, read via MCPCallerIdentityHeaders, plus
+// Content-Type, the X-Lenny-Caller marker, and the §25.12 correlation
+// headers), and maps the raw gateway (status, body)
 // into the tool result with the same §25.2 dry-run probe the local path
 // applies. A gateway RBAC denial (a 4xx/5xx body) re-emits verbatim as an
 // isError tool result. A transport failure, or a nil gateway client in a
@@ -208,9 +209,10 @@ func (i *opsInvoker) invokeGateway(ctx context.Context, tool mcp.Tool, args json
 }
 
 // gatewayForwardHeaders assembles the headers the gateway proxy forwards
-// for a gateway-owned tool call. The caller identity the CODE-3 bridge
-// captured (the raw Authorization bearer or, under AllowDevHeaders, the
-// dev-mode identity headers) is forwarded first so the gateway
+// for a gateway-owned tool call. The caller identity the opsserver MCP
+// bridge middleware captured, read via MCPCallerIdentityHeaders (the raw
+// Authorization bearer or, under AllowDevHeaders, the dev-mode identity
+// headers), is forwarded first so the gateway
 // re-authorizes as the real caller; the invoker then adds the
 // Content-Type, the X-Lenny-Caller marker, and the §25.12 correlation
 // headers exactly as the local replay does. ProxyAdminCall sets no
