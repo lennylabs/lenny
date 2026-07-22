@@ -32,7 +32,8 @@ type awaitTaskResult struct {
 
 // terminateSession transitions a session to completed via the §15.1
 // /terminate endpoint, which accepts any non-terminal state (including
-// the `created` state a freshly delegated child starts in).
+// the `running` state a freshly delegated child starts in, since it is
+// materialized synchronously within lenny/delegate_task).
 func (c mcpClient) terminateSession(id string) {
 	c.t.Helper()
 	code, body := c.rest(http.MethodPost, "/v1/sessions/"+id+"/terminate", nil)
@@ -105,8 +106,9 @@ func TestDelegationAwaitChildren(t *testing.T) {
 		if code != http.StatusOK {
 			t.Fatalf("GET child B: status %d (%v)", code, body)
 		}
-		if got, _ := body["state"].(string); got != "created" {
-			t.Errorf("child B state after mode=any await = %q, want it left untouched (created); "+
+		if got, _ := body["state"].(string); got != "running" {
+			t.Errorf("child B state after mode=any await = %q, want it left untouched (running); "+
+				"a delegated child is materialized to running within delegate_task, and "+
 				"mode=any must not auto-cancel the still-running sibling", got)
 		}
 	})

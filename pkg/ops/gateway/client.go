@@ -426,3 +426,51 @@ func (c *Client) doRaw(ctx context.Context, method, base, path string) ([]byte, 
 	}
 	return body, nil
 }
+
+// ProxyAdminCall executes one gateway-proxied admin-API call on behalf
+// of an MCP caller. It forwards the supplied headers verbatim (the
+// caller's Authorization bearer or dev-mode identity headers, the
+// correlation headers, and Content-Type) and sets NO service-account
+// bearer, so the gateway's own OIDC/RBAC re-authorizes as the real
+// caller. It returns the gateway's status and body for any completed
+// HTTP response including 4xx/5xx, without wrapping into *HTTPError, so
+// a gateway RBAC denial re-emits verbatim to the agent. Only a
+// transport-level failure (the request never completed) returns a
+// non-nil err.
+//
+// Unlike do/doRaw, this method stamps no service-account bearer and
+// runs no 401-revocation path: the forwarded identity is the caller's,
+// so a gateway 401 is the caller's problem to surface, not a signal to
+// drop the service-account token.
+//
+// spec: §25.12 (Headers and Correlation; Security Model layer 3 — RBAC
+// on the forwarded identity), §25.4 (TLS handshake posture)
+func (c *Client) ProxyAdminCall(ctx context.Context, method, path string, body []byte, headers http.Header) (status int, respBody []byte, err error) {
+	var bodyReader io.Reader
+	if body != nil {
+		bodyReader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+	if err != nil {
+		return 0, nil, fmt.Errorf("gateway client: build proxy request: %w", err)
+	}
+	// Copy the caller-assembled headers verbatim. No service-account
+	// bearer is set, so the gateway re-authorizes as the forwarded
+	// identity.
+	for name, values := range headers {
+		for _, v := range values {
+			req.Header.Add(name, v)
+		}
+	}
+	resp, err := c.http.Do(req)
+	c.recordHandshake(req.URL.Scheme, err)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	respBody, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return 0, nil, fmt.Errorf("gateway client: read proxy response: %w", err)
+	}
+	return resp.StatusCode, respBody, nil
+}

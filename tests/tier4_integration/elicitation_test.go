@@ -141,20 +141,6 @@ func (c mcpClient) delegateChild(parentID, runtimeRef string) string {
 	return out.ChildSessionID
 }
 
-// startSession transitions an already-created session to running so
-// it can itself delegate. A delegated child lands in the created
-// state, so the lifecycle walk is created -> finalize -> ready ->
-// start -> running.
-func (c mcpClient) startSession(id string) {
-	c.t.Helper()
-	for _, step := range []string{"finalize", "start"} {
-		code, body := c.rest(http.MethodPost, "/v1/sessions/"+id+"/"+step, nil)
-		if code != http.StatusOK {
-			c.t.Fatalf("%s session %s: status %d (%v)", step, id, code, body)
-		}
-	}
-}
-
 // spec: 9.2 (hop-by-hop elicitation chain through the platform MCP server)
 // diagnosis: a §9.2 elicitation raised by a delegated child did not
 // forward hop-by-hop to the human-facing root through the real
@@ -166,12 +152,14 @@ func TestMCPElicitationChain(t *testing.T) {
 	gw := gateway.StartWith(t, "--dev-mode")
 	c := mcpClient{t: t, base: gw.BaseURL()}
 
-	// Build a root -> child -> leaf §8 delegation tree. Each ancestor
-	// must be running to delegate; the leaf stays in its created state
-	// (non-terminal), which is all lenny/request_elicitation requires.
+	// Build a root -> child -> leaf §8 delegation tree. Each delegated
+	// child is materialized to running synchronously within
+	// lenny/delegate_task (§8.2 steps 5-9), so both the intermediate
+	// child and the leaf are running (non-terminal), which is all
+	// lenny/request_elicitation requires and lets the child delegate
+	// onward without a separate finalize+start walk.
 	root := c.runningSession()
 	child := c.delegateChild(root, "echo-mid")
-	c.startSession(child)
 	leaf := c.delegateChild(child, "echo-leaf")
 
 	// The leaf raises an elicitation. The §9.2 dispatcher walks the

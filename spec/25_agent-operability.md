@@ -4584,8 +4584,8 @@ During MCP initialization, the agent declares its capabilities in the `initializ
 | Capability declaration | Filter effect |
 |---|---|
 | `{"access": ["admin-api"]}` (or omitted) | All tools the caller's scopes permit. Default. |
-| `{"access": ["admin-api"], "scope": "operability"}` | Only operability tools (health, diagnostics, runbooks, events, audit, drift, backup/restore, upgrade, locks, escalations, caller identity, operations inventory). |
-| `{"access": ["admin-api"], "scope": "admin"}` | Only platform-management tools (tenant/pool/credential/runtime/quota lifecycle). |
+| `{"access": ["admin-api"], "scope": "operability"}` | Only operability tools, classified by the tool's `x-lenny-scope` domain prefix (`tools:{domain}:{action}`). The operability domains are `health`, `diagnostics`, `runbooks`, `events`, `audit`, `drift`, `backup`, `restore`, `upgrade`, `locks`, `escalation`, `logs`, `me` (caller identity), `operations` (operations inventory), `recommendations`, and the introspection and control domains `config`, `schema`, `sessions`, `tree`, `platform`, and `preflight`. A tool whose domain is in this set is an operability tool regardless of whether it is served by lenny-ops or proxied to the gateway admin API. |
+| `{"access": ["admin-api"], "scope": "admin"}` | Only platform-management tools, classified as every tool whose `x-lenny-scope` domain prefix is not in the operability-domain set above (for example `tenant`, `pool`, `credential_pool`, `runtime`, `quota`, `user`, `rbac`, `connector`, `environment`, `delegation_policy`, and the other platform-lifecycle domains). The operability and admin sets partition the full tool inventory. |
 | `{"access": ["admin-api"], "readOnly": true}` | Only observation-category tools regardless of domain. |
 | `{"access": ["admin-api"], "nonDestructive": true}` | Excludes tools with `x-lenny-category: "destructive"`. |
 | `{"access": ["admin-api"], "tenantScoped": true}` | Only tools whose underlying endpoints are accessible to `tenant-admin` callers. |

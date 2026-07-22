@@ -205,6 +205,114 @@ func TestFanOutGet_PartialFailure(t *testing.T) {
 	}
 }
 
+// TestProxyAdminCall_ForbiddenReturnsVerbatim verifies the §25.12
+// identity-forwarding proxy re-emits a gateway RBAC denial verbatim:
+// a 403 comes back as (403, body, nil) with no *HTTPError wrapping so
+// the denial reaches the agent unchanged.
+func TestProxyAdminCall_ForbiddenReturnsVerbatim(t *testing.T) {
+	const denial = `{"error":{"code":"RBAC_FORBIDDEN","message":"platform-admin required"}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(denial))
+	}))
+	defer srv.Close()
+
+	c, _ := gateway.NewClient(gateway.Config{BaseURL: srv.URL, Token: gateway.StaticToken("sa-token")})
+	status, body, err := c.ProxyAdminCall(context.Background(), http.MethodPost, "/v1/admin/tenants", nil, nil)
+	if err != nil {
+		t.Fatalf("ProxyAdminCall err = %v, want nil for a completed 403", err)
+	}
+	var httpErr *gateway.HTTPError
+	if errors.As(err, &httpErr) {
+		t.Fatalf("ProxyAdminCall wrapped into *HTTPError; want raw passthrough")
+	}
+	if status != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", status)
+	}
+	if string(body) != denial {
+		t.Errorf("body = %q, want verbatim %q", body, denial)
+	}
+}
+
+// TestProxyAdminCall_SuccessReturnsBody verifies the §25.12 proxy
+// returns the gateway 200 body verbatim.
+func TestProxyAdminCall_SuccessReturnsBody(t *testing.T) {
+	const payload = `{"pool":"default-gvisor","desired":12}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer srv.Close()
+
+	c, _ := gateway.NewClient(gateway.Config{BaseURL: srv.URL})
+	status, body, err := c.ProxyAdminCall(context.Background(), http.MethodGet, "/v1/admin/pools/default-gvisor", nil, nil)
+	if err != nil {
+		t.Fatalf("ProxyAdminCall: %v", err)
+	}
+	if status != http.StatusOK {
+		t.Errorf("status = %d, want 200", status)
+	}
+	if string(body) != payload {
+		t.Errorf("body = %q, want %q", body, payload)
+	}
+}
+
+// TestProxyAdminCall_ForwardsHeadersVerbatimAndSetsNoSABearer verifies
+// the §25.12 identity-forwarding contract: the caller-assembled headers
+// (the forwarded Authorization bearer and correlation headers) reach the
+// gateway verbatim, and the client stamps no service-account bearer of
+// its own even when a Token source is configured, so the gateway
+// re-authorizes as the real caller (§25.12 Security Model layer 3).
+func TestProxyAdminCall_ForwardsHeadersVerbatimAndSetsNoSABearer(t *testing.T) {
+	var gotAuth, gotOp, gotCT string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		gotOp = r.Header.Get("X-Lenny-Operation-ID")
+		gotCT = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	// A Token source is configured to prove ProxyAdminCall ignores it
+	// and never overrides the forwarded caller identity with the SA bearer.
+	c, _ := gateway.NewClient(gateway.Config{BaseURL: srv.URL, Token: gateway.StaticToken("sa-token")})
+	hdr := http.Header{}
+	hdr.Set("Authorization", "Bearer caller-jwt")
+	hdr.Set("X-Lenny-Operation-ID", "op-42")
+	hdr.Set("Content-Type", "application/json")
+	body := []byte(`{"name":"acme"}`)
+	if _, _, err := c.ProxyAdminCall(context.Background(), http.MethodPost, "/v1/admin/tenants", body, hdr); err != nil {
+		t.Fatalf("ProxyAdminCall: %v", err)
+	}
+	if gotAuth != "Bearer caller-jwt" {
+		t.Errorf("Authorization = %q, want forwarded caller bearer, not the SA token", gotAuth)
+	}
+	if gotOp != "op-42" {
+		t.Errorf("X-Lenny-Operation-ID = %q, want forwarded verbatim", gotOp)
+	}
+	if gotCT != "application/json" {
+		t.Errorf("Content-Type = %q, want forwarded verbatim", gotCT)
+	}
+}
+
+// TestProxyAdminCall_TransportFailureReturnsErr verifies the §25.12
+// proxy returns a non-nil err only when the request never completes:
+// a dial failure surfaces as an error so the invoker maps it to
+// ENDPOINT_UNAVAILABLE.
+func TestProxyAdminCall_TransportFailureReturnsErr(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	url := srv.URL
+	srv.Close() // close so the dial fails
+
+	c, _ := gateway.NewClient(gateway.Config{BaseURL: url, PerRequestTimeout: 500 * time.Millisecond})
+	status, body, err := c.ProxyAdminCall(context.Background(), http.MethodGet, "/v1/admin/pools", nil, nil)
+	if err == nil {
+		t.Fatalf("ProxyAdminCall err = nil, want transport failure")
+	}
+	if status != 0 || body != nil {
+		t.Errorf("status/body = %d/%q, want 0/nil on transport failure", status, body)
+	}
+}
+
 // failingTokenSource is a TokenSource that always errors. Used to
 // confirm the client surfaces refresh failures.
 type failingTokenSource struct{ err error }
