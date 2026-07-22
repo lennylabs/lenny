@@ -422,12 +422,21 @@ type CreateAndStartResponse = CreateSessionResponse
 // precondition table to running before returning.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
-	if !s.createAndStartGates(w, r, tenantID) {
+
+	// spec: §11.1; §10.6; §15.2.1 rule 1 — decode and build the row first so
+	// the §11.1 concurrency and admission-rate gates and the §10.6
+	// environment-admission gate, which read the resolved runtimeRef,
+	// isolation profile, pool, and environment, can run against the decoded
+	// request. The whole gate set runs after the decode so the §11.1
+	// concurrency-and-rate-before-policy ordering is preserved on this path
+	// as it is on the two-step create path, and always before
+	// mintClaimStartPersist claims a pod.
+	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID)
+	if !ok {
 		return
 	}
 
-	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID)
-	if !ok {
+	if !s.createAndStartGates(w, r, tenantID, row) {
 		return
 	}
 
@@ -444,13 +453,21 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	s.writeCreateSessionResponse(w, row, level, uploadToken, build.planWarnings)
 }
 
-// createAndStartGates runs the §15.1 admission gates that precede any row
-// construction on the combined create-and-start path: the active-user
-// gate, the §12.8 tenant-state gate, the §12.9 tenant data-classification
-// gate, the §11 session-quota gate, and the §4.8 policy chain. Each writes
-// its own §15.1 error envelope and returns false; true means the request
-// may proceed to row construction. spec: §15.1, §12.8, §12.9, §11, §4.8.
-func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+// createAndStartGates runs the §15.1 admission gates on the combined
+// create-and-start path over the decoded, built row: the active-user gate,
+// the §12.8 tenant-state gate, the §12.9 tenant data-classification gate,
+// the §11 session-quota gate, the §11.1 concurrency and admission-rate
+// gates, the §4.8 policy chain, and the §10.6 environment-admission gate.
+// The §11.1 concurrency and admission-rate gates run before the policy
+// chain and the §10.6 environment-admission gate runs after it, in the same
+// relative order the two-step create path applies them (createAdmissionGates
+// in create.go), so an over-limit create reserves no rate or token budget.
+// The gates read the resolved runtimeRef, isolation profile, pool, and
+// environment from the row, so this runs after buildCreateAndStartRow. Each
+// gate writes its own §15.1 error envelope and returns false; true means the
+// request may proceed to the pod claim.
+// spec: §15.1, §12.8, §12.9, §11, §11.1, §10.6, §4.8, §15.2.1 rule 1.
+func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session) bool {
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
@@ -469,7 +486,35 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return false
 	}
-	return s.requirePolicyChain(w, r, tenantID)
+	// spec: §11.1 line 8 — global, per-user, and per-runtime concurrent-session
+	// admission caps. Enforced before the admission-rate and policy gates so an
+	// over-limit create consumes no rate budget and reserves no token budget,
+	// matching the two-step create path. The caller's subject is the per-user
+	// scope key; an unauthenticated principal leaves the per-user scope inert.
+	concUser := ""
+	if p, ok := getPrincipal(r); ok {
+		concUser = p.Subject
+	}
+	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, row.RuntimeRef) {
+		return false
+	}
+	// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+	// admission limits, enforced before the §4.8 policy chain so an over-limit
+	// create never reserves token budget. The row carries the pool-resolved
+	// isolation profile and the client-pinned pool, so the per-pool scope keys
+	// on the actual target.
+	if !s.requireAdmissionRateLimit(w, r, tenantID, row.RuntimeRef, row.IsolationProfile, row.Pool) {
+		return false
+	}
+	if !s.requirePolicyChain(w, r, tenantID) {
+		return false
+	}
+	// spec: §11.1 line 13 / §10.6 — a create-and-start that names no
+	// environment is admitted only when the caller belongs to at least one
+	// environment or the tenant's noEnvironmentPolicy resolves to allow-all;
+	// the platform default deny-all rejects with 403, closing the fail-open
+	// the create-and-start path had before it ran this gate.
+	return s.requireEnvironmentAdmission(w, r, row.Environment, row.RuntimeRef)
 }
 
 // createAndStartBuild carries the per-create resolution
