@@ -3856,13 +3856,16 @@
       "title": "claude-code",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery",
+        "tests/tier4_integration/claude_code_session_test.go::TestClaudeCodeAdapterReusesChildProcessAcrossMessages",
+        "tests/tier4_integration/claude_code_session_test.go::TestClaudeCodeAdapterForceKillsUnresponsiveChildWithinFiveSeconds"
       ],
       "packages": [
-        "cmd/runtimes/claude-code"
+        "cmd/runtimes/claude-code",
+        "tests/testinfra/runtimes/coding-agent-stub"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for Anthropic Claude Code. Ships behind the runtime catalog. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the claude-code name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
+      "notes": "Reference runtime for Anthropic Claude Code. Ships behind the runtime catalog. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the claude-code name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. The tier-4 tests pin the two lines-220-222 bootstrap behaviors the external claude-code adapter binary implements and no in-repo binary otherwise exercises (multi-turn reuse of the spawned `claude` child process, and the SIGTERM-then-5s-force-kill teardown) against tests/testinfra/runtimes/coding-agent-stub, an in-repo double driven through the real pkg/gateway/session/executor.SubprocessExecutor."
     },
     "26.4": {
       "title": "gemini-cli",

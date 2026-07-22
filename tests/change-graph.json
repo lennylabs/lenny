@@ -482,6 +482,9 @@
       "conformance": ["tests/tier10_conformance/basic/...", "cmd/lenny-compliance/..."],
       "load_kind": ["tests/tier7b_load_kind/scenarios/startup_latency/..."]
     },
+    "tests/testinfra/runtimes/coding-agent-stub/": {
+      "integration": ["tests/tier4_integration/claude_code_session_test.go"]
+    },
     "cmd/lenny-compliance/": {
       "unit": ["cmd/lenny-compliance/..."],
       "conformance": [
