@@ -2380,13 +2380,14 @@
         "cmd/lenny-compliance/full.go::checkCheckpointQuiesce",
         "cmd/lenny-compliance/full.go::checkInterruptAck",
         "cmd/lenny-compliance/full.go::checkCredentialRotation",
-        "cmd/lenny-compliance/full.go::checkDeadlineSignal"
+        "cmd/lenny-compliance/full.go::checkDeadlineSignal",
+        "tests/tier11_docs/scaffold_readme_spec_anchors_test.go::TestScaffoldedREADMESpecAnchorsResolveToLiveSections"
       ],
       "packages": [
         "cmd/lenny-compliance"
       ],
       "blocked_until_phase": "2.8",
-      "notes": "Phase 2.8 extends the conformance harness with the Full-level test categories from §15.4.6. The harness runs a Unix-socket lifecycle-channel server, points the runtime at it via the LENNY_ADAPTER_MANIFEST env var, and asserts each lifecycle event round-trip. Standard-level categories ship in Phase 9 alongside delegation-echo."
+      "notes": "Phase 2.8 extends the conformance harness with the Full-level test categories from §15.4.6. The harness runs a Unix-socket lifecycle-channel server, points the runtime at it via the LENNY_ADAPTER_MANIFEST env var, and asserts each lifecycle event round-trip. Standard-level categories ship in Phase 9 alongside delegation-echo. TestScaffoldedREADMESpecAnchorsResolveToLiveSections (tier-11) scaffolds a runtime through runtimescaffold.Generate and resolves every §-cited section number in the emitted README, including §26.12 and §15.4.6, against the live headings in the corresponding spec file."
     },
     "15.5": {
       "title": "API Versioning and Stability",
