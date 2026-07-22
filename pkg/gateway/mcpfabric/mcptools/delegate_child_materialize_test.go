@@ -34,7 +34,7 @@ type fakeChildMaterializer struct {
 	calls []string
 }
 
-func (f *fakeChildMaterializer) Materialize(_ context.Context, _, childID string) (session.State, error) {
+func (f *fakeChildMaterializer) MaterializeDelegatedChild(_ context.Context, _, childID string) (session.State, error) {
 	f.calls = append(f.calls, childID)
 	return f.state, f.err
 }

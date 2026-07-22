@@ -821,7 +821,10 @@ func (e *DelegatedChildNotCreatedError) Error() string {
 // pod, assign the credential lease, stream the exported files through the §6.3
 // binder, launch, transition the existing row StateCreated -> running via
 // store.Update, and publish the bind into the shared executor Registry. It
-// performs no store.Create: the row already exists.
+// performs no store.Create: the row already exists. When the gateway runs
+// without a pod binder (a minimal or dev-mode deployment) it skips the claim
+// and launch and transitions the row directly, mirroring the top-level
+// create-and-start path at mintClaimStartPersist.
 //
 // registerBinding is required for reachability: startOnPod returns a
 // *podsession.BindResult but does not register it, and PodExecutor.streamFor
@@ -865,45 +868,60 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		return "", fmt.Errorf("parse stored workspace plan for delegated child %s: %w", childID, err)
 	}
 
-	// spec: §8.2 step 5 / §4.9 / §7.1 step 3 — claim the warm pod and run the
-	// pre-claim credential availability resolution in one phase, exactly as the
-	// top-level create path does at claimAtCreate. On failure no pod is claimed
-	// (the pre-check gates the claim), so the typed sentinel returns directly.
-	outcome, err := s.claimAtCreate(ctx, row, plan)
-	if err != nil {
-		return "", err
-	}
-	level := outcome.Level
-	row.ExecutionMode = level.ExecutionMode
-	row.ScrubPolicy = level.ScrubPolicy
-	row.ConversationContinuity = level.ConversationContinuity
-	// spec: §4.9 — thread the create-time credential resolution into the
-	// same-call startOnPod so the §4.9 pre-check runs exactly once before the
-	// claim rather than re-resolving at the prepare dispatch, mirroring
-	// mintClaimStartPersist.
-	startCtx := &startContext{
-		CredPools:         outcome.CredPools,
-		PoolDeliveryModes: outcome.PoolDeliveryModes,
-		UserCredProviders: outcome.UserCredProviders,
-	}
-	var createClaim *podsession.ClaimResult
-	if outcome.Claim != nil {
-		createClaim = outcome.Claim
-		row.PodAssignment = createClaim.SandboxName
-		row.PoolRef = createClaim.Pool
-		startCtx.PodClaim = createClaim.PodClaim
-	}
-
-	// spec: §8.2 steps 6-8 — stream the stamped exported files through the §6.3
-	// binder and launch against the claimed pod. On failure release the
-	// create-time claim (unless the binder already owns its release) and return
-	// the typed sentinel; the row stays StateCreated, so no pod leaks.
-	bound, err := s.startOnPod(ctx, row, plan, startCtx)
-	if err != nil {
-		if createClaimNeedsRollback(createClaim, err) {
-			s.rollbackClaim(ctx, createClaim, row.ID)
+	// When the gateway is wired with a pod binder, run the §8.2 steps 5-8 claim
+	// and launch phases against a warm pod. A minimal or dev-mode gateway that
+	// runs without a pod binder skips the claim exactly as the top-level
+	// create-and-start path does at mintClaimStartPersist, transitioning the
+	// child to running without a pod so the in-process delegation flow stays
+	// exercised. spec: §8.2.
+	var (
+		bound       *podsession.BindResult
+		createClaim *podsession.ClaimResult
+		level       SessionIsolationLevel
+		claimed     bool
+	)
+	if s.podBinder != nil {
+		// spec: §8.2 step 5 / §4.9 / §7.1 step 3 — claim the warm pod and run
+		// the pre-claim credential availability resolution in one phase, exactly
+		// as the top-level create path does at claimAtCreate. On failure no pod
+		// is claimed (the pre-check gates the claim), so the typed sentinel
+		// returns directly.
+		outcome, err := s.claimAtCreate(ctx, row, plan)
+		if err != nil {
+			return "", err
 		}
-		return "", err
+		claimed = true
+		level = outcome.Level
+		row.ExecutionMode = level.ExecutionMode
+		row.ScrubPolicy = level.ScrubPolicy
+		row.ConversationContinuity = level.ConversationContinuity
+		// spec: §4.9 — thread the create-time credential resolution into the
+		// same-call startOnPod so the §4.9 pre-check runs exactly once before
+		// the claim rather than re-resolving at the prepare dispatch, mirroring
+		// mintClaimStartPersist.
+		startCtx := &startContext{
+			CredPools:         outcome.CredPools,
+			PoolDeliveryModes: outcome.PoolDeliveryModes,
+			UserCredProviders: outcome.UserCredProviders,
+		}
+		if outcome.Claim != nil {
+			createClaim = outcome.Claim
+			row.PodAssignment = createClaim.SandboxName
+			row.PoolRef = createClaim.Pool
+			startCtx.PodClaim = createClaim.PodClaim
+		}
+
+		// spec: §8.2 steps 6-8 — stream the stamped exported files through the
+		// §6.3 binder and launch against the claimed pod. On failure release the
+		// create-time claim (unless the binder already owns its release) and
+		// return the typed sentinel; the row stays StateCreated, so no pod leaks.
+		bound, err = s.startOnPod(ctx, row, plan, startCtx)
+		if err != nil {
+			if createClaimNeedsRollback(createClaim, err) {
+				s.rollbackClaim(ctx, createClaim, row.ID)
+			}
+			return "", err
+		}
 	}
 
 	// spec: §8.2 step 9 / §8.8 — transition the existing StateCreated row to
@@ -913,9 +931,11 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 	// registry entry leaks past the failed write.
 	updated, err := s.store.Update(ctx, tenantID, childID, func(rr *sessionstore.Session) error {
 		transitionStart(rr)
-		rr.ExecutionMode = level.ExecutionMode
-		rr.ScrubPolicy = level.ScrubPolicy
-		rr.ConversationContinuity = level.ConversationContinuity
+		if claimed {
+			rr.ExecutionMode = level.ExecutionMode
+			rr.ScrubPolicy = level.ScrubPolicy
+			rr.ConversationContinuity = level.ConversationContinuity
+		}
 		if createClaim != nil {
 			rr.PoolRef = createClaim.Pool
 		}

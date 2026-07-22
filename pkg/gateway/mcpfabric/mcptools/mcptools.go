@@ -325,7 +325,7 @@ type CredentialAvailabilityChecker interface {
 //
 // spec: §8.2 lines 93-97
 type ChildMaterializer interface {
-	Materialize(ctx context.Context, tenantID, childID string) (session.State, error)
+	MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error)
 }
 
 // Deps carries the gateway services the MCP tools dispatch to.

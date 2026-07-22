@@ -2604,7 +2604,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// overwrites it and the handle reads running.
 		childState := res.Child.State
 		if deps.ChildMaterializer != nil {
-			st, mErr := deps.ChildMaterializer.Materialize(ctx, tenant, res.Child.ID)
+			st, mErr := deps.ChildMaterializer.MaterializeDelegatedChild(ctx, tenant, res.Child.ID)
 			if mErr != nil {
 				return mcp.ToolResult{}, materializeToolError(mErr, targetRef, res.Child.ID)
 			}
@@ -2634,7 +2634,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	})
 }
 
-// materializeToolError maps a ChildMaterializer.Materialize failure to the
+// materializeToolError maps a ChildMaterializer.MaterializeDelegatedChild failure to the
 // canonical MCP tool error the delegating parent observes. The materialization
 // composes the same create-and-start engine the top-level session-start path
 // runs, so it returns the same typed credential sentinels, and this switch
