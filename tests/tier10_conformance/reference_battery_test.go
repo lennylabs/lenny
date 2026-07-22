@@ -89,7 +89,7 @@ func buildEchoImage(t *testing.T) string {
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("docker build: %v\n%s", err, out)
 	}
-	t.Cleanup(func() { exec.Command("docker", "rmi", "-f", tag).Run() })
+	t.Cleanup(func() { _ = exec.Command("docker", "rmi", "-f", tag).Run() })
 	return tag
 }
 
