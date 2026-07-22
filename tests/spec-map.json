@@ -3825,7 +3825,8 @@
         "charts/lenny/tests/reference-runtimes_test.yaml",
         "pkg/embedded/stack/runtimes_test.go::TestInstallReferenceRuntimesGrantsOpenAIAssistantsAndCrewAI_spec_26_1",
         "tests/tier4_integration/reference_runtime_install_test.go::TestReferenceRuntimeInstallGrantsOnlyDefaultTenant_spec_26_1",
-        "cmd/lenny-test/cmd_run_conformance_reference_catalog_test.go::TestRunConformanceTierReferenceCatalogSubsetExecutesChecks"
+        "cmd/lenny-test/cmd_run_conformance_reference_catalog_test.go::TestRunConformanceTierReferenceCatalogSubsetExecutesChecks",
+        "tests/tier4_integration/coding_agent_direct_delivery_test.go::TestCodingAgentDirectDeliveryFromAirGappedSecret"
       ],
       "packages": [
         "cmd/runtimes/",
