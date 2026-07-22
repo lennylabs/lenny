@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
+	"github.com/lennylabs/lenny/pkg/controller/ssaretry"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
@@ -231,7 +232,13 @@ func (r *OccupancyReconciler) observeClaim(ctx context.Context, namespace, podNa
 // §4.6.3 retry policy applies on HTTP 409.
 func (r *OccupancyReconciler) patchPhase(ctx context.Context, sb *lennyv1.Sandbox, phase state.State) error {
 	key := client.ObjectKeyFromObject(sb)
-	return retryOnConflictSSA(ctx, func(attempt int) error {
+	id := ssaretry.ConflictID{
+		Controller: string(ownership.WarmPoolController),
+		CRD:        string(ownership.Sandbox),
+		Namespace:  sb.Namespace,
+		Name:       sb.Name,
+	}
+	return ssaretry.RetryOnConflictSSA(ctx, id, func(attempt int) error {
 		live := sb
 		if attempt > 0 {
 			var fresh lennyv1.Sandbox

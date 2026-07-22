@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -76,6 +77,25 @@ import (
 type redisFanOutEmitter struct {
 	stream *eventbuffer.StreamEmitter
 	local  *opsstream.Service
+
+	// writeFailed records that the last XADD failed, so the next successful one
+	// is this replica's own observation of Redis coming back. The source-health
+	// probe refreshes on an interval and cannot see an interruption shorter
+	// than one refresh, so without this edge the outage window a failed XADD
+	// opened would stay open until the probe happened to observe a full
+	// down-to-up cycle. spec: §25.5 (best-effort recovery flush).
+	writeFailed atomic.Bool
+
+	// onWriteRecovered, when non-nil, is notified on the write path's
+	// failure-to-success edge. It signals the recovery-flush worker rather than
+	// running the flush: Emit is the EventEmitter every lenny-ops subsystem
+	// holds, so a flush on this goroutine would put a full retained-window scan
+	// and one XADD per buffered event in front of a controller reconcile. It
+	// reports an edge and returns. The same worker serves the source-health
+	// probe's own edge; the flush is a no-op with no window open, and consuming
+	// the window is what keeps it to once per outage however many edges
+	// reported it. spec: §25.5 (best-effort recovery flush).
+	onWriteRecovered func()
 }
 
 // newRedisFanOutEmitter constructs an emitter that writes every event
@@ -106,15 +126,63 @@ func newRedisFanOutEmitter(client redis.UniversalClient, local *opsstream.Servic
 }
 
 // Emit publishes to the local opsstream.Service first so SSE subscribers
-// and the polling cursor see the event immediately, then XADDs to the
-// §25.5 Redis stream. A Redis write failure is surfaced as the
-// returned error; the local publish has already succeeded so the §25.5
-// "fall back to gateway buffer" path is preserved.
+// and the polling cursor see the event immediately, then XADDs the stored
+// event (carrying the eventKey the local publish minted, so the ring copy and
+// the stream copy share one key and dedup collapses them) to the §25.5 Redis
+// stream. A Redis write failure is surfaced as the returned error; the local
+// publish has already succeeded so the §25.5 "fall back to gateway buffer"
+// path is preserved.
+//
+// A failed XADD is also the moment the Redis outage starts, ahead of the
+// source-health probe's next refresh. It opens the recovery-flush outage
+// window at this event's ring position, so every event emitted in the
+// detection lag is re-emitted when Redis recovers instead of being abandoned.
+// The first XADD that succeeds after one failed is the matching up edge for
+// that window, and it reports the edge to the recovery-flush worker: an outage
+// shorter than one probe refresh interval is invisible to the source-health
+// loop, so the window this path opened would otherwise stay open until some
+// later outage closed it. Reporting the edge is bounded work; the flush itself
+// runs on the worker, off this caller's goroutine. spec: §25.5 (best-effort
+// recovery flush).
 func (e *redisFanOutEmitter) Emit(ctx context.Context, event events.OperationalEvent) error {
-	if _, err := e.local.Publish(ctx, event); err != nil {
+	buffered, err := e.local.PublishBuffered(ctx, event)
+	if err != nil {
 		return err
 	}
-	return e.stream.Emit(ctx, event)
+	if err := e.stream.Emit(ctx, buffered.Event); err != nil {
+		e.local.MarkRedisWriteFailure(buffered.ID)
+		e.writeFailed.Store(true)
+		return err
+	}
+	if e.writeFailed.CompareAndSwap(true, false) && e.onWriteRecovered != nil {
+		e.onWriteRecovered()
+	}
+	return nil
+}
+
+// ReEmit XADDs event to the §25.5 Redis ops:events:stream without
+// re-publishing it to the local ring buffer. It backs the §25.5 best-effort
+// recovery flush: on a Redis down-to-up edge the event stream re-emits the
+// lenny-ops-originated events it buffered locally during the outage, and
+// those events are already in the local ring, so re-emitting them through the
+// full fan-out Emit would double the local delivery. The StreamEmitter
+// preserves the event's existing eventKey, so consumer-side deduplication
+// still collapses a re-emitted event a consumer already saw.
+//
+// A failed re-emit arms the same write-path edge a failed Emit does. The flush
+// reopens its outage window on a failed re-emit, but the window alone does not
+// schedule a retry: only an edge does. Without arming this one, a flush that
+// failed because Redis went back down would leave the reopened window waiting
+// on the source-health probe to observe a full down-to-up cycle, which it
+// cannot see for an interruption shorter than one refresh interval. Arming it
+// here makes the next successful write this replica performs the up edge that
+// retries the flush. spec: §25.5 (best-effort recovery flush).
+func (e *redisFanOutEmitter) ReEmit(ctx context.Context, event events.OperationalEvent) error {
+	if err := e.stream.Emit(ctx, event); err != nil {
+		e.writeFailed.Store(true)
+		return err
+	}
+	return nil
 }
 
 // Compile-time guard that *redisFanOutEmitter satisfies the §4.0

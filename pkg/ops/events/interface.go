@@ -13,15 +13,17 @@ import (
 )
 
 // EventStreamService is the canonical §25.5 event-stream service
-// contract — the eight-method surface the spec at lines 2574–2585
-// names as the unifying interface for the operational-event delivery
-// surface. v1 splits the implementation across two packages: this
-// package's Service covers StreamEvents/ListEvents; the
-// eventsubscription.Service covers the four CRUD methods. The two
-// not-yet-implemented methods (UpdateSubscription, ListDeliveries)
-// land with §25.5 F-25.5.7 — until then this interface declaration
-// fixes the contract so test doubles and alternative event sources
-// can substitute against the spec's signature without divergence.
+// contract — the surface the spec at lines 2574–2585 names as the
+// unifying interface for the operational-event delivery surface. Every
+// method is implemented, split across two packages: this package's
+// Service covers StreamEvents and ListEvents against the Redis
+// ops:events:stream, the gateway-buffer fan-out, and the local ring;
+// eventsubscription.Service covers the subscription CRUD methods and
+// the keyset-paginated ListDeliveries. What this declaration does not
+// yet have is a single production type that satisfies it in one piece;
+// the HTTP routes are the contract today, and the single-implementor
+// aggregator is deferred to a follow-on change. The declaration fixes the signature so test
+// doubles and alternative event sources substitute without divergence.
 // spec: §25.5 lines 2574-2585.
 type EventStreamService interface {
 	StreamEvents(ctx context.Context, w http.ResponseWriter, filter EventFilter) error
@@ -64,9 +66,16 @@ type SubscriptionUpdate struct {
 	Active      *bool     `json:"active,omitempty"`
 }
 
-// EventPage is the canonical §25.5 polling-response envelope. Items
-// is the page of CloudEvents records; Pagination follows the §25.2
-// canonical envelope. spec: §25.5 lines 2687-2699.
+// EventPage is the canonical §25.5 polling-response envelope. Items is the
+// page of CloudEvents records, each carrying the §25.3 top-level wrapper id:
+// the monotonic position the source that served it assigned, which is the
+// emitting replica's ring position on the buffer-served and fan-out paths and
+// the Redis stream position on the Redis-served path. The id is per-source
+// rather than globally ordered, so agents deduplicate across sources on the
+// canonical eventKey and resume on the CloudEvents id (Event.ID) and the opaque
+// pagination cursor. Pagination follows the §25.2 canonical envelope. spec:
+// §25.5 lines 2687-2699; §25.3 (monotonic per-source id for cursor-based
+// polling).
 type EventPage struct {
 	Items      []gwevents.BufferedEvent `json:"items"`
 	Pagination Pagination               `json:"pagination"`

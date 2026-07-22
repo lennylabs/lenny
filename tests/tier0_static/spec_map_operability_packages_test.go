@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -682,5 +684,287 @@ func TestSpecMapShippedOperabilitySectionsCarryNoBlockedUntilPhase(t *testing.T)
 		t.Errorf("spec-map.json carries a stale blocked_until_phase for §25 sections whose "+
 			"implementation is already shipped and reachable through a deployed binary: %s",
 			strings.Join(stale, "; "))
+	}
+}
+
+// eventStreamTestDirs are the repo-relative directories holding the §25.5 and
+// §25.3 event-stream tier tests. Each one exists to pin an event-stream
+// behavior, so a test living there that names either section in its `// spec:`
+// annotation belongs in that section's spec-map entry.
+var eventStreamTestDirs = []string{
+	"tests/tier2_component/eventstream",
+	"tests/tier7a_load_local",
+	"tests/tier8_chaos",
+	"tests/tier9_security",
+}
+
+// specAnnotatedTests returns, for each Test function declared under dir, the
+// spec sections its preceding `// spec:` annotation names, keyed by the
+// spec-map entry form "<repo-relative file>::<TestName>".
+//
+// The annotation is the comment block immediately above the function
+// declaration, which is where test-coverage.md places it. Sections are matched
+// as bare dotted ids so both "// spec: 25.5 (…)" and "// spec: §25.5 (…)" are
+// recognised.
+func specAnnotatedTests(t *testing.T, root, dir string) map[string][]string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(root, dir))
+	if err != nil {
+		t.Fatalf("read %s: %v", dir, err)
+	}
+	out := map[string][]string{}
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		rel := dir + "/" + e.Name()
+		body, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		var block []string
+		for _, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
+			switch {
+			case strings.HasPrefix(trimmed, "//"):
+				block = append(block, trimmed)
+			case strings.HasPrefix(trimmed, "func Test"):
+				name := trimmed[len("func "):]
+				name = name[:strings.Index(name, "(")]
+				out[rel+"::"+name] = specSectionsIn(block)
+				block = nil
+			case trimmed == "":
+				// A blank line separates the annotation from unrelated
+				// comments above it, so the block restarts.
+				block = nil
+			default:
+				block = nil
+			}
+		}
+	}
+	return out
+}
+
+// specSectionsIn extracts the spec sections named on a `// spec:` line in the
+// comment block, normalised to bare dotted ids.
+func specSectionsIn(block []string) []string {
+	var out []string
+	for _, line := range block {
+		lower := strings.ToLower(line)
+		idx := strings.Index(lower, "spec:")
+		if idx < 0 {
+			continue
+		}
+		field := strings.NewReplacer("§", " ", "(", " ", ")", " ", ",", " ", ";", " ").Replace(line[idx+len("spec:"):])
+		for _, tok := range strings.Fields(field) {
+			tok = strings.Trim(tok, ".")
+			if strings.Count(tok, ".") == 1 && strings.IndexFunc(tok, func(r rune) bool { return r != '.' && (r < '0' || r > '9') }) < 0 {
+				out = append(out, tok)
+			}
+		}
+	}
+	return out
+}
+
+// spec: 25.5 (Operational Event Stream), 25.3 (Event Buffer) — the spec-map is
+// the harness's index from a spec section to the tests that verify it, so a
+// test that pins an event-stream behavior is only counted as coverage of that
+// section once it is registered there.
+//
+// diagnosis: a tier test under the event-stream directories annotates itself
+// with §25.5 or §25.3 but does not appear in that section's spec-map `tests`
+// list. The section's coverage ledger under-reports by exactly that test, and
+// an audit reading the spec-map would re-open a behavior as uncovered although
+// a passing test pins it. Add the "<file>::<TestName>" entry to the section.
+func TestSpecMapRegistersEveryEventStreamAnnotatedTest(t *testing.T) {
+	t.Parallel()
+	root := schematest.RepoRoot(t)
+	specMap := readSpecMapTests(t)
+
+	registered := map[string]map[string]bool{}
+	for _, section := range []string{"25.3", "25.5"} {
+		registered[section] = map[string]bool{}
+	}
+	// The map's paths are stripped of their "::TestName" suffix by
+	// readSpecMapTests, so the raw file is re-read for the qualified entries.
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
+	if err != nil {
+		t.Fatalf("read spec-map.json: %v", err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("parse spec-map.json: %v", err)
+	}
+	for section := range registered {
+		for _, entry := range doc.Sections[section].Tests {
+			registered[section][entry] = true
+			// A whole-file entry covers every test the file declares.
+			if idx := strings.Index(entry, "::"); idx < 0 {
+				registered[section][entry+"::*"] = true
+			}
+		}
+	}
+	if len(specMap["25.5"]) == 0 {
+		t.Fatal("spec-map §25.5 lists no tests")
+	}
+
+	var missing []string
+	for _, dir := range eventStreamTestDirs {
+		for entry, sections := range specAnnotatedTests(t, root, dir) {
+			file := entry[:strings.Index(entry, "::")]
+			for _, section := range sections {
+				reg, tracked := registered[section]
+				if !tracked {
+					continue
+				}
+				if reg[entry] || reg[file+"::*"] {
+					continue
+				}
+				missing = append(missing, "§"+section+" "+entry)
+			}
+		}
+	}
+	sort.Strings(missing)
+	if len(missing) > 0 {
+		t.Errorf("event-stream tests annotated with a spec section but absent from that section's spec-map entry:\n  %s",
+			strings.Join(missing, "\n  "))
+	}
+}
+
+// readResolvedTestGapFindings returns the set of TEST-GAPS.md finding ids the
+// ledger records as RESOLVED, keyed by the bare finding id (the
+// "T-<section>.<seq>" token that opens each finding heading).
+func readResolvedTestGapFindings(t *testing.T, root string) map[string]bool {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join(root, "TEST-GAPS.md"))
+	if err != nil {
+		t.Fatalf("read TEST-GAPS.md: %v", err)
+	}
+	out := map[string]bool{}
+	for _, line := range strings.Split(string(body), "\n") {
+		if !strings.HasPrefix(line, "### - [x] ") {
+			continue
+		}
+		rest := strings.TrimPrefix(line, "### - [x] ")
+		id := strings.Fields(rest)
+		if len(id) == 0 {
+			continue
+		}
+		out[strings.TrimSpace(id[0])] = true
+	}
+	return out
+}
+
+// outstandingWorkMarkers are the phrasings a §25 doc comment uses when it
+// declares a behavior still unbuilt. A comment that carries one of them
+// alongside a finding id is asserting that the finding's work has not landed.
+var outstandingWorkMarkers = []string{
+	"not-yet-implemented",
+	"not yet implemented",
+	"unimplemented",
+	"still-outstanding",
+	"still outstanding",
+	"outstanding work",
+	"until then",
+	"unbuilt",
+}
+
+// findingIDPattern matches an F- or T- §25 finding id inside a comment.
+var findingIDPattern = regexp.MustCompile(`\b[FT]-(25\.[0-9]+\.[0-9]+)\b`)
+
+// opsDocComments walks the non-test Go sources under pkg/ops and returns each
+// contiguous `//` comment block, keyed by "<repo-relative file>:<line>".
+func opsDocComments(t *testing.T, root string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	base := filepath.Join(root, "pkg", "ops")
+	err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		body, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return rerr
+		}
+		rel, rerr := filepath.Rel(root, path)
+		if rerr != nil {
+			return rerr
+		}
+		var block []string
+		start := 0
+		flush := func() {
+			if len(block) > 0 {
+				out[rel+":"+strconv.Itoa(start)] = strings.Join(block, " ")
+			}
+			block = nil
+		}
+		for i, line := range strings.Split(string(body), "\n") {
+			trimmed := strings.TrimSpace(line)
+			if strings.HasPrefix(trimmed, "//") {
+				if len(block) == 0 {
+					start = i + 1
+				}
+				block = append(block, strings.TrimSpace(strings.TrimPrefix(trimmed, "//")))
+				continue
+			}
+			flush()
+		}
+		flush()
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk pkg/ops: %v", err)
+	}
+	return out
+}
+
+// spec: 25.5 (the EventStreamService surface and the read side it declares),
+// 25.2 (agent-operability packages under pkg/ops)
+//
+// diagnosis: a doc comment under pkg/ops declares work outstanding and names
+//
+//	the finding that tracks it, while TEST-GAPS.md records that finding as
+//	RESOLVED. The comment is the surface a reader trusts about what the
+//	package implements, and the ledger quotes those comments back as its
+//	evidence, so a stale one makes the code and the ledger contradict each
+//	other: a reader is told a method is unimplemented while the method is
+//	shipped and exercised. Rewrite the comment to state the behavior the
+//	package now has, and drop the finding reference.
+func TestOpsDocCommentsDoNotClaimResolvedFindingsAreOutstanding(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	resolved := readResolvedTestGapFindings(t, root)
+
+	var stale []string
+	for where, comment := range opsDocComments(t, root) {
+		lower := strings.ToLower(comment)
+		outstanding := false
+		for _, marker := range outstandingWorkMarkers {
+			if strings.Contains(lower, marker) {
+				outstanding = true
+				break
+			}
+		}
+		if !outstanding {
+			continue
+		}
+		for _, m := range findingIDPattern.FindAllStringSubmatch(comment, -1) {
+			if resolved["T-"+m[1]] {
+				stale = append(stale, where+" → "+m[0]+" (TEST-GAPS.md records T-"+m[1]+" RESOLVED)")
+			}
+		}
+	}
+	sort.Strings(stale)
+	if len(stale) > 0 {
+		t.Errorf("pkg/ops doc comments declare work outstanding against a finding TEST-GAPS.md already records as RESOLVED:\n  %s",
+			strings.Join(stale, "\n  "))
 	}
 }

@@ -185,3 +185,43 @@ func TestSATokenInterceptorVerifierMissingToken_spec_10_2_227(t *testing.T) {
 		t.Fatal("verifier must not be consulted when the token is absent")
 	}
 }
+
+// VerifyUser reports the ServiceAccount username the apiserver authenticated
+// the token as, which is what a caller authorizing a specific service account
+// (rather than only proving the token is authentic for this deployment) gates
+// on. spec: §10.2 line 227, §25.4 ("Calling the Gateway").
+func TestTokenReviewVerifierReportsTheAuthenticatedUser_spec_10_2_227(t *testing.T) {
+	const opsSA = "system:serviceaccount:lenny-system:lenny-ops-sa"
+	cs := fake.NewSimpleClientset()
+	cs.PrependReactor("create", "tokenreviews", func(action k8stesting.Action) (bool, k8sruntime.Object, error) {
+		tr := action.(k8stesting.CreateAction).GetObject().(*authnv1.TokenReview)
+		// The apiserver returns the intersection of the requested audiences
+		// and the audiences the token was actually minted for, so a request
+		// naming another deployment's audience is granted nothing.
+		tr.Status = authnv1.TokenReviewStatus{
+			Authenticated: true,
+			User:          authnv1.UserInfo{Username: opsSA},
+		}
+		for _, requested := range tr.Spec.Audiences {
+			if requested == testAud {
+				tr.Status.Audiences = append(tr.Status.Audiences, requested)
+			}
+		}
+		return true, tr, nil
+	})
+	v := TokenReviewVerifier{Reviews: cs.AuthenticationV1().TokenReviews()}
+
+	user, err := v.VerifyUser(context.Background(), "tok", testAud)
+	if err != nil {
+		t.Fatalf("VerifyUser: %v", err)
+	}
+	if user != opsSA {
+		t.Fatalf("VerifyUser = %q, want the authenticated ServiceAccount username %q", user, opsSA)
+	}
+
+	// An audience the apiserver did not grant is a refusal, and reports no
+	// username: a token minted for another deployment must authorize nothing.
+	if user, err := v.VerifyUser(context.Background(), "tok", "some-other-deployment"); !errors.Is(err, ErrSATokenAudienceMismatch) || user != "" {
+		t.Fatalf("VerifyUser(other audience) = (%q, %v), want an audience mismatch with no username", user, err)
+	}
+}

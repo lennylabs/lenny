@@ -61,7 +61,7 @@ func TestService_Stream_ReplaysBacklog(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
-	s.HandleStream(rec, req.WithContext(ctx))
+	s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 
 	frames := parseSSEFrames(rec.Body.String())
 	if len(frames) != 2 {
@@ -94,7 +94,7 @@ func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
-	s.HandleStream(rec, req.WithContext(ctx))
+	s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 
 	frames := parseSSEFrames(rec.Body.String())
 	if len(frames) != 1 {
@@ -105,9 +105,8 @@ func TestService_Stream_ResumesAfterLastEventID(t *testing.T) {
 	}
 }
 
-// spec: §25.5 — live events flow to a connected subscriber. (Verified
-// via the synchronous SubscriberCount after a goroutine handles the
-// request.)
+// spec: §25.5 — live events flow to a connected subscriber. (Verified via the
+// synchronous ActiveStreams count after a goroutine handles the request.)
 func TestService_Stream_LiveDelivery(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
 
@@ -121,11 +120,11 @@ func TestService_Stream_LiveDelivery(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.HandleStream(pipeW, req.WithContext(ctx))
+		s.HandleStream(pipeW, platformAdminReq(req.WithContext(ctx)))
 	}()
 
 	// Wait for the handler to install its subscription.
-	waitFor(t, func() bool { return s.SubscriberCount() == 1 })
+	waitFor(t, func() bool { return s.ActiveStreams() == 1 })
 
 	s.Publish(context.Background(), events.OperationalEvent{Type: "live"})
 	frame := readOneSSEFrame(t, pipeR)
@@ -150,7 +149,7 @@ func TestService_Stream_FilterByEventType(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
-	s.HandleStream(rec, req.WithContext(ctx))
+	s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 
 	frames := parseSSEFrames(rec.Body.String())
 	if len(frames) != 1 || frames[0].Type != "dev.lenny.alert_fired" {
@@ -168,7 +167,7 @@ func TestService_Poll_PaginationEnvelope(t *testing.T) {
 	}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events?limit=3", nil)
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, req)
+	s.HandlePoll(rec, platformAdminReq(req))
 
 	var page opsstream.EventPage
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
@@ -194,7 +193,7 @@ func TestService_Poll_PaginationEnvelope(t *testing.T) {
 	next := "/v1/admin/events?limit=3&cursor=" + url.QueryEscape(page.Pagination.Cursor)
 	req = httptest.NewRequest(http.MethodGet, next, nil)
 	rec = httptest.NewRecorder()
-	s.HandlePoll(rec, req)
+	s.HandlePoll(rec, platformAdminReq(req))
 	page = opsstream.EventPage{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page2: %v", err)
@@ -230,7 +229,7 @@ func TestService_Publish_FansOutToWebhook(t *testing.T) {
 	}
 }
 
-// spec: §25.5 — SubscriberCount drops to zero after the SSE client
+// spec: §25.5 — the active-connection count drops to zero after the SSE client
 // disconnects.
 func TestService_Unsubscribe_OnClientDisconnect(t *testing.T) {
 	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
@@ -244,14 +243,14 @@ func TestService_Unsubscribe_OnClientDisconnect(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		s.HandleStream(pipeW, req.WithContext(ctx))
+		s.HandleStream(pipeW, platformAdminReq(req.WithContext(ctx)))
 	}()
-	waitFor(t, func() bool { return s.SubscriberCount() == 1 })
+	waitFor(t, func() bool { return s.ActiveStreams() == 1 })
 
 	cancel()
 	pipeW.Close()
 	<-done
-	waitFor(t, func() bool { return s.SubscriberCount() == 0 })
+	waitFor(t, func() bool { return s.ActiveStreams() == 0 })
 }
 
 type ssEvent struct {

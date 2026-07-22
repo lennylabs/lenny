@@ -103,6 +103,7 @@
         "pkg/admission/sandboxclaim_guard",
         "pkg/controller/poolscaling/strategy",
         "pkg/admission/ownership",
+        "pkg/controller/ssaretry",
         "pkg/adapter",
         "cmd/runtimes/echo",
         "pkg/gateway/interceptors",
@@ -364,16 +365,21 @@
         "tests/tier1_unit/rbac/rbac_test.go::TestClusterRolesGrantRequiredVerbs",
         "tests/tier9_security/controller_rbac_test.go::TestControllerCanPatchSandboxesLiveRBAC",
         "tests/tier2_component/controllers/ssa_ownership_conflict_test.go::TestSSARejectsCrossControllerFieldWrite",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAReturnsOnFirstSuccess",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSADoesNotRetryNonConflict",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSARetriesAndBacksOffOnConflict",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAHonorsContextCancellation",
         "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusReReadsAndNeverForcesOnSSAConflict",
-        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts"
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent"
       ],
       "packages": [
         "pkg/admission/ownership",
-        "pkg/controller/poolscaling"
+        "pkg/controller/poolscaling",
+        "pkg/controller/ssaretry",
+        "pkg/controller/warmpool"
       ],
       "depends_on_sections": [
         "4.6"
@@ -2497,11 +2503,17 @@
         "pkg/controller/warmpool/pod_reconciler_test.go::TestPodReconcileUptimePassesRuntimeClass_spec_16_1",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestRetirementCounterPartitionAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
-        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree"
+        "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree",
+        "pkg/controller/warmpool/ssa_retry_internal_test.go::TestUpdateStatusEmitsStuckSignalWithOwningCRDIdentity",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmitsStuckSignalAfterFiveConflicts",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAFourConflictsThenSucceedEmitsNothing",
+        "pkg/controller/ssaretry/ssaretry_test.go::TestRetryOnConflictSSAEmptyCRDIsSilent",
+        "tests/tier11_docs/crd_ssa_conflict_metric_reference_test.go::TestMetricsReferenceCarriesCRDSSAConflictCounter"
       ],
       "packages": [
         "pkg/observability/metrics",
-        "pkg/gateway/metrics/gatewaymetrics"
+        "pkg/gateway/metrics/gatewaymetrics",
+        "pkg/controller/ssaretry"
       ],
       "blocked_until_phase": "2.5",
       "notes": "Phase 2.5 ships the label-hygiene validator that enforces §16.1.1 high-cardinality rules and the typed Counter/Gauge/Histogram constructors. catalog.go is the typed §16.1 metrics catalog (name, type, help) cross-checked for completeness against the §16.1 table. OTLP delivery to provider-native collectors (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on AKS) is covered by the tier-6 e2e cloud scaffold."
@@ -3317,6 +3329,7 @@
         "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
         "tests/tier11_docs/recommendations_post_restart_reconciliation_test.go",
         "tests/tier5_e2e_kind/event_buffer_fanout_test.go::TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey",
+        "tests/tier7a_load_local/event_buffer_fanout_dedup_test.go::TestGatewayBufferFanOutDedupIsConcurrentSafeAndDeterministic",
         "tests/tier8_chaos/store_failure_test.go",
         "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesTriggeringCheck_spec_25_3",
         "cmd/lenny-ops/servicebody_selfhealth_payload_test.go::TestSelfHealthChangePayloadNamesRecoveredCheck_spec_25_3",
@@ -3325,7 +3338,8 @@
         "pkg/gateway/operability/health/service_test.go::TestOnTransitionCarriesComponentSnapshots",
         "pkg/gateway/operability/health/service_test.go::TestTriggeringComponentsNamesChangedComponent",
         "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphGatewayOperabilityPackagesSelectUnitTier",
-        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphLennyGatewayBinarySelectsUnitTier"
+        "tests/tier0_static/change_graph_gateway_operability_selection_test.go::TestChangeGraphLennyGatewayBinarySelectsUnitTier",
+        "tests/tier9_security/ops_event_buffer_fanout_authz_test.go::TestOpsGatewayBufferFanOutRequiresPlatformAdmin_spec_25_4_25_5"
       ],
       "packages": [
         "pkg/gateway/operability/health",
@@ -3344,7 +3358,7 @@
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsPackagesWithSuiteSelectUnitTier",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphOpsDedicatedSuitesSelectHigherTiers",
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphLennyOpsBinarySelectsUnitTier",
-    "tests/tier0_static/degradation_lock_line_citation_test.go::TestSpec254DegradationWarningLineCitationsAreFresh",
+        "tests/tier0_static/degradation_lock_line_citation_test.go::TestSpec254DegradationWarningLineCitationsAreFresh",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestMeResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestLockResponseSchemaConformance",
         "tests/tier3_contract/ops_endpoints/openapi_conformance_test.go::TestOperationsPageSchemaConformance",
@@ -3444,6 +3458,7 @@
         "tests/tier3_contract/cloudevents/ops_event_stream_test.go::TestOperationalEventStreamCloudEventsConformance",
         "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamGapDetectedOnRedisEviction",
         "tests/tier2_component/eventstream/read_surface_tenant_rbac_test.go::TestOpsEventStreamReadSurfaceTenantScopedCallerIsolation",
+        "tests/tier9_security/event_stream_read_tenant_isolation_test.go::TestOpsEventPollTenantAdminScopedToOwnTenant_spec_25_5",
         "cmd/lenny-ops/eventmetrics_stream_test.go::TestEventsStreamLengthGaugeAtMaxLen_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookDNSRebindingRejectedAtDelivery_spec_25_5",
         "tests/tier9_security/event_webhook_ssrf_test.go::TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5",
@@ -3454,7 +3469,54 @@
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestOpsColdStartWithPostgresDownEmitsSubscriptionsUnavailable",
         "tests/tier4_integration/event_subscription_cold_start_test.go::TestSubscriptionCacheColdStartNoDeliveryThenResumesOnPostgresRecovery",
         "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamServesGatewayEventsFromGatewayBufferWhenRedisDown",
-        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapEventStreamNotesDoNotOverclaimRedisSupport"
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushReEmitsBufferedEventsAfterRedisRecovers",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamSwitchesToGatewayBufferAndBackOnRedisOutage",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamFallbackDeliversGatewayEventsEmittedAfterTheSwitch",
+        "tests/tier3_contract/ops_endpoints/deliveries_pagination_test.go::TestEventSubscriptionDeliveriesPaginationContract",
+        "tests/tier7a_load_local/ops_event_read_redis_deadline_test.go::TestRedisReadDeadlineKeepsPollAnsweringWhenRedisIsUnreachable",
+        "tests/tier7a_load_local/ops_event_read_redis_maxlen_resume_test.go::TestOpsEventPollResumesInsideTheReadDeadlineOnAMaxLenStream",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapEventStreamNotesDoNotOverclaimRedisSupport",
+        "tests/tier2_component/eventstream/event_stream_active_connections_test.go::TestOpsEventStreamActiveConnectionsCountsRedisServedConnections",
+        "tests/tier2_component/eventstream/event_stream_ahead_cursor_test.go::TestOpsEventStreamResumeAheadOfGatewayWindowReportsGap",
+        "tests/tier2_component/eventstream/event_stream_ahead_cursor_test.go::TestOpsEventStreamResumeAheadOfRedisWindowReportsGap",
+        "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamLiveTailWakesOnPublishAndExitsOnDisconnect",
+        "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamPerConnectionIndependentCursorLiveTail",
+        "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamPollItemEncoding",
+        "tests/tier2_component/eventstream/event_stream_gap_test.go::TestOpsEventStreamSSEResumeHonorsRedisCursorSourceKind",
+        "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamPollResolvesCursorBeyondDefaultStreamLength",
+        "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamRecoveryFlushSeesRetainedKeyBeyondDefaultStreamLength",
+        "tests/tier2_component/eventstream/event_stream_stream_maxlen_test.go::TestOpsEventStreamPollResolvesRecentCursorOnAnOverLongStream",
+        "tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go::TestOpsEventStreamReportsDualOutageWhenFanOutDiscoversNoGatewayReplica",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushKeepsTheWindowOpenWhenReEmitsFail",
+        "tests/tier2_component/eventstream/event_stream_tail_test.go::TestOpsEventStreamLiveTailIssuesBlockZeroOnItsOwnConnection",
+        "tests/tier7a_load_local/event_buffer_fanout_dedup_test.go::TestGatewayBufferFanOutDedupIsConcurrentSafeAndDeterministic",
+        "tests/tier7a_load_local/ops_event_stream_replay_dedup_test.go::TestOpsEventStreamFullWindowReplayDeliversEachEventOnce_spec_25_5",
+        "tests/tier7a_load_local/ops_event_stream_source_switch_order_test.go::TestOpsEventStreamSourceSwitchDeliversEachEventOnceInOrderUnderLoad",
+        "tests/tier7a_load_local/ops_event_stream_recovery_flush_resume_test.go::TestOpsEventStreamResumeDoesNotRewindOnRecoveryFlush",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamOpenConnectionSeesFlushedEventsOnceAcrossRecovery",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamPollWithAFailedRedisReadIsNotReportedHealthy",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamPollingAdvancesAcrossAnOutOfOrderRecoveryFlush",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushDoesNotReplayTrimmedPreOutageEvents",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRecoveryFlushSurvivesRetainedKeyScanFailure",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown",
+        "tests/tier9_security/event_stream_read_tenant_isolation_test.go::TestOpsEventReadWithNoResolvedScopeServesNothing_spec_25_5",
+        "tests/tier9_security/event_stream_read_tenant_isolation_test.go::TestOpsEventStreamTenantAdminSSEScopedToOwnTenant_spec_25_5",
+        "tests/tier9_security/ops_event_buffer_fanout_authz_test.go::TestOpsGatewayBufferFanOutRequiresPlatformAdmin_spec_25_4_25_5",
+        "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapRegistersEveryEventStreamAnnotatedTest",
+        "tests/tier7a_load_local/ops_event_stream_gateway_seed_drop_test.go::TestOpsEventStreamGatewayStintDeliversEventsOlderThanAnInterleavedLocalPublish",
+        "tests/tier7a_load_local/ops_event_stream_tail_unavailable_test.go::TestOpsEventStreamTailUnavailableDoesNotSpinAndFallsBack",
+        "tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRepeatsTheDegradationEnvelopeOnTheFallBackCadence",
+        "tests/tier7a_load_local/ops_event_poll_resume_flush_drop_test.go::TestOpsEventPollDeliversPostRecoveryEventsAcrossTheFlushedTail",
+        "tests/tier7a_load_local/ops_event_stream_tail_budget_rearm_test.go::TestOpsEventStreamRearmsTheTailBudgetOnEverySourceTransition",
+        "tests/tier8_chaos/event_stream_tailbudget_test.go::TestOpsEventStreamReturnsToRedisAfterTheTailBudgetIsExhausted",
+        "tests/tier7a_load_local/ops_event_stream_recovery_flush_dedup_test.go::TestOpsEventStreamRecoveryFlushDoesNotDuplicateConcurrentEmit",
+        "tests/tier7a_load_local/ops_event_stream_tail_test.go::TestOpsEventStreamTailDeliversPromptlyAndExitsOnCancel",
+        "tests/tier2_component/eventstream/readerscope_testsupport_test.go",
+        "tests/tier3_contract/cloudevents/readerscope_testsupport_test.go",
+        "tests/tier4_integration/readerscope_testsupport_test.go",
+        "tests/tier7a_load_local/readerscope_testsupport_test.go",
+        "tests/tier8_chaos/readerscope_testsupport_test.go",
+        "tests/tier9_security/readerscope_testsupport_test.go"
       ],
       "packages": [
         "pkg/ops/events",
@@ -3466,7 +3528,7 @@
         "cmd/lenny-ops"
       ],
       "blocked_until_phase": "14",
-      "notes": "§25.5 Operational Event Stream. See TESTING.md §25 for the test plan. pkg/ops/events serves the SSE and polling read surface from its own in-memory ring buffer; the read-side Redis stream source and the Redis-down/gateway-down degradation matrix are still F-25.5.1/F-25.5.14, tracked by the tests/tier5_e2e_kind/event_buffer_fanout_test.go t.Skip scaffold and named in the package's own doc comment. pkg/ops/opsservice.RedisEventSource and the Redis fan-out emitter feed the webhook delivery worker (a distinct consumer from the SSE/polling Service) via cmd/lenny-ops/events_wiring.go. pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go); pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046); pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
+      "notes": "§25.5 Operational Event Stream. See TESTING.md §25 for the test plan. pkg/ops/events now consumes the Redis ops:events:stream (pkg/ops/events/redissource.go: XRANGE for polling and Last-Event-ID resume, XREAD BLOCK 0 for the live SSE tail) and falls back to a cross-process fan-out of the gateway event buffer over the lenny-gateway-pods headless Service (deduped by eventKey) when Redis is down, keeping its in-memory ring buffer as the local-origin source and best-effort re-flushing buffered events to Redis on recovery; the read-side Redis source and the Redis-down/gateway-down degradation matrix formerly tracked as F-25.5.1/F-25.5.14 are built by proposal 0053 and exercised by the un-skipped tests/tier5_e2e_kind/event_buffer_fanout_test.go, tests/tier4_integration/event_stream_gateway_buffer_fallback_test.go, tests/tier8_chaos/event_stream_recovery_test.go, and tests/tier2_component/eventstream tests. pkg/ops/opsservice.RedisEventSource and the Redis fan-out emitter feed the webhook delivery worker (a distinct consumer from the SSE/polling Service) via cmd/lenny-ops/events_wiring.go. pkg/ops/opsserver serves the /v1/admin/events and /v1/admin/event-subscriptions endpoints (event_subscriptions.go) and applies the read-time tenant filter resolved from the caller; pkg/ops/eventsubscription/pgstore is the Postgres-backed webhook subscription registry (migration 0046) with keyset deliveries pagination; pkg/ops/opsservice.SubscriptionCache is the §25.5 SubscriptionSource adapter that bridges the request-scoped Store API to the webhookloop worker and now carries the per-subscription TenantFilter; pkg/webhookdelivery is the webhook transport with the per-delivery SSRF guard."
     },
     "25.6": {
       "title": "Diagnostic Endpoints",

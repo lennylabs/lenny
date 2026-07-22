@@ -19,21 +19,29 @@
 package ops_endpoints_test
 
 import (
+	"bufio"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
@@ -256,11 +264,16 @@ func TestEventStreamPollingCursorContract(t *testing.T) {
 		t.Errorf("hasMore = %v, want true after a one-item page of three events", pag["hasMore"])
 	}
 	firstItem := items[0].(map[string]any)
+	if _, ok := firstItem["id"]; !ok {
+		t.Errorf("poll item dropped its top-level wrapper id; the /v1/admin/events envelope item shape is {\"id\":N,\"event\":{...}}: %v", firstItem)
+	}
 	cursor, _ := pag["cursor"].(string)
 	if cursor == "" {
 		t.Fatal("first page returned no cursor")
 	}
-	// Second page with the cursor advances past the first event.
+	// Second page with the cursor advances past the first event. The item's
+	// top-level wrapper id is the per-source buffer position and must advance
+	// across the page boundary.
 	body2, _ := pollBody(t, srv, "/v1/admin/events?limit=1&cursor="+cursor)
 	items2, _ := body2["items"].([]any)
 	if len(items2) != 1 {
@@ -268,7 +281,7 @@ func TestEventStreamPollingCursorContract(t *testing.T) {
 	}
 	secondItem := items2[0].(map[string]any)
 	if secondItem["id"] == firstItem["id"] {
-		t.Errorf("cursor did not advance: second page re-served event %v", firstItem["id"])
+		t.Errorf("cursor did not advance: second page re-served item id %v", firstItem["id"])
 	}
 }
 
@@ -518,9 +531,10 @@ func TestWebhookDeliveryHMACContract(t *testing.T) {
 			{ID: eventID, Type: "dev.lenny.alert_fired", Body: body},
 		}},
 		Subscriptions: fixedSubscriptions{sub: opsservice.WebhookSubscription{
-			ID:          "sub-1",
-			CallbackURL: receiver.URL,
-			Secret:      secret,
+			ID:           "sub-1",
+			CallbackURL:  receiver.URL,
+			Secret:       secret,
+			TenantFilter: eventsubscription.TenantFilterAll,
 		}},
 	})
 
@@ -547,9 +561,10 @@ func TestWebhookDeliveryHMACContract(t *testing.T) {
 			{ID: eventID, Type: "dev.lenny.alert_fired", Body: body},
 		}},
 		Subscriptions: fixedSubscriptions{sub: opsservice.WebhookSubscription{
-			ID:          "sub-1",
-			CallbackURL: receiver.URL,
-			Secret:      secret,
+			ID:           "sub-1",
+			CallbackURL:  receiver.URL,
+			Secret:       secret,
+			TenantFilter: eventsubscription.TenantFilterAll,
 		}},
 	})
 	if err := worker2.Tick(context.Background()); err != nil {
@@ -560,5 +575,441 @@ func TestWebhookDeliveryHMACContract(t *testing.T) {
 	}
 	if len(got.deliveryIDs) != 2 {
 		t.Errorf("delivery ids after two deliveries = %d, want 2 (each attempt gets a unique X-Lenny-Delivery-Id)", len(got.deliveryIDs))
+	}
+}
+
+// serveSSERaw issues an SSE request against the assembled server with a
+// pre-cancelled context and returns the raw response body, so a test can pin
+// the comment lines (":degradation", ":gap") the frame parser discards.
+func serveSSERaw(t *testing.T, srv *opsserver.Server, target string) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req.WithContext(ctx))
+	return rec.Body.String()
+}
+
+// TestEventStreamNoRedisWiredEmitsNoDegradationEnvelopeContract pins the §25.5
+// degradation matrix at the wire: it keys on the two source-health signals and
+// enumerates exactly three read-side states, of which Redis-reachable is the
+// healthy, envelope-free one. A lenny-ops replica with no Redis client wired is
+// in that healthy state, so GET /v1/admin/events serializes no degradation
+// object and an SSE connection emits no :degradation comment.
+//
+// spec: 25.5 (Degradation — the read surface attaches the EVENT_STREAM_DEGRADED
+// envelope when serving from the gateway-buffer fall-back during a Redis
+// outage, and the lenny-ops-local-buffer envelope when both sources are
+// unreachable)
+// diagnosis: A failure means the read surface reports a fourth degradation
+// state that the §25.5 matrix does not define. Every poll response from a
+// Redis-less deployment carries a degradation object on an otherwise healthy
+// 200, and every SSE connection opens with a :degradation comment, so a
+// consumer that treats the envelope as an outage signal reads a permanent
+// outage that is not happening.
+func TestEventStreamNoRedisWiredEmitsNoDegradationEnvelopeContract(t *testing.T) {
+	srv := eventStreamServer(
+		t, 0,
+		gwevents.OperationalEvent{Type: "dev.lenny.alert_fired", Severity: "critical"},
+	)
+
+	body, _ := pollBody(t, srv, "/v1/admin/events")
+	if deg, ok := body["degradation"]; ok {
+		t.Errorf("poll response carried a degradation object (%v) from a replica with no Redis client wired; §25.5 classifies that state healthy", deg)
+	}
+
+	raw := serveSSERaw(t, srv, "/v1/admin/events/stream")
+	if strings.Contains(raw, ":degradation") {
+		t.Errorf("SSE connection emitted a :degradation comment from a replica with no Redis client wired: %q", raw)
+	}
+}
+
+// fakeRedisStream is a minimal §25.5 RedisStreamClient backed by an in-memory
+// slice of stream entries, so a contract test can drive GET /v1/admin/events
+// from the Redis source without a Redis process. Only the range reads the poll
+// path issues are implemented.
+type fakeRedisStream struct{ entries []redis.XMessage }
+
+func (f *fakeRedisStream) add(id string, ev gwevents.OperationalEvent) {
+	body, _ := json.Marshal(ev)
+	f.entries = append(f.entries, redis.XMessage{ID: id, Values: map[string]any{"event": string(body)}})
+}
+
+func (f *fakeRedisStream) XRangeN(ctx context.Context, _, _, _ string, count int64) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+	out := f.entries
+	if count > 0 && int64(len(out)) > count {
+		out = out[:count]
+	}
+	cmd.SetVal(out)
+	return cmd
+}
+
+func (f *fakeRedisStream) XRevRangeN(ctx context.Context, _, _, _ string, _ int64) *redis.XMessageSliceCmd {
+	cmd := redis.NewXMessageSliceCmd(ctx)
+	if n := len(f.entries); n > 0 {
+		cmd.SetVal([]redis.XMessage{f.entries[n-1]})
+	}
+	return cmd
+}
+
+func (f *fakeRedisStream) TailClient() (opsstream.RedisTailClient, error) {
+	return nil, errors.New("contract fake serves the poll path only")
+}
+
+// pollItemIDs drives GET /v1/admin/events and returns the top-level wrapper id
+// of every item on the page.
+func pollItemIDs(t *testing.T, srv *opsserver.Server) []uint64 {
+	t.Helper()
+	body, _ := pollBody(t, srv, "/v1/admin/events")
+	raw, ok := body["items"].([]any)
+	if !ok {
+		t.Fatalf("poll response has no items array: %v", body)
+	}
+	ids := make([]uint64, 0, len(raw))
+	for i, it := range raw {
+		item, ok := it.(map[string]any)
+		if !ok {
+			t.Fatalf("item %d is not an object: %v", i, it)
+		}
+		n, ok := item["id"].(float64)
+		if !ok {
+			t.Fatalf("item %d has no numeric top-level wrapper id: %v", i, item)
+		}
+		ids = append(ids, uint64(n))
+	}
+	return ids
+}
+
+// fanOutReplicas is a §25.5 gateway-buffer fan-out source serving one fixed
+// §25.3 buffer page per gateway replica, so a contract test can assemble the
+// Redis-down case-1 page from more than one replica without a live gateway.
+// Each replica numbers its own ring from zero, which is what makes a merged
+// page the place two items can arrive carrying the same wrapper id.
+type fanOutReplicas struct {
+	pages [][]gwevents.BufferedEvent
+}
+
+func (f fanOutReplicas) FanOutGet(_ context.Context, _ string) ([]gateway.ReplicaResult, error) {
+	out := make([]gateway.ReplicaResult, 0, len(f.pages))
+	for _, evs := range f.pages {
+		body, err := json.Marshal(gwevents.BufferedEventPage{Events: evs})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, gateway.ReplicaResult{Endpoint: "https://gw", Body: body})
+	}
+	return out, nil
+}
+
+// TestEventStreamPollItemIDCarriesTheSourcePositionContract pins the value
+// domain of items[].id on GET /v1/admin/events. §25.3 defines the field as the
+// monotonic uint64 ID the source assigns each event, per source rather than
+// globally ordered, used for cursor-based polling, and the gateway serves that
+// same ring position on its own GET /v1/admin/events/buffer. The §25.5 read
+// surface carries it through: the local ring reports its own sequence, the
+// gateway-buffer fan-out reports each responding replica's position verbatim,
+// and the Redis-served page reports the stream's own monotonic position. The
+// identity that is stable for one event across sources is the canonical
+// eventKey the CloudEvents id carries, which is what a caller deduplicates on.
+//
+// spec: 25.3 (each event is assigned a monotonic uint64 ID, per replica rather
+// than globally ordered, for cursor-based polling); 25.5 (Polling Delivery —
+// agents that need to deduplicate across sources use eventKey)
+// diagnosis: A failure means items[].id no longer carries the §25.3 source
+// position. One JSON field then means a monotonic position on the gateway's
+// buffer endpoint and something else on the §25.5 read surface, so a consumer
+// ordering or de-duplicating on it across the two endpoints reads a stream that
+// jumps, and the field loses the monotonicity §25.3 defines it by.
+func TestEventStreamPollItemIDCarriesTheSourcePositionContract(t *testing.T) {
+	seed := []gwevents.OperationalEvent{
+		{ID: "gw-a:1700000000000:1", Type: "dev.lenny.alert_fired", SpecVersion: "1.0"},
+		{ID: "gw-b:1700000000001:1", Type: "dev.lenny.pool_state_changed", SpecVersion: "1.0"},
+	}
+	const capacity = 16
+
+	// Source 1: this replica's local ring, the source a replica with no Redis
+	// client wired serves from.
+	localIDs := pollItemIDs(t, eventStreamServer(t, capacity, seed...))
+
+	// Source 2: the Redis ops:events:stream, the healthy-state primary.
+	f := &fakeRedisStream{}
+	f.add("1700000000000-0", seed[0])
+	f.add("1700000000001-0", seed[1])
+	redisStream := opsstream.New(opsstream.Options{
+		Capacity:     capacity,
+		RedisClient:  f,
+		SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+	})
+	redisIDs := pollItemIDs(t, opsserver.New(opsserver.Options{EventStream: redisStream}))
+
+	// Source 3: the Redis-down gateway-buffer fan-out, assembled from two
+	// replicas whose buffer pages carry the ring positions each replica
+	// assigned.
+	const (
+		replicaOnePosition = 7
+		replicaTwoPosition = 4
+	)
+	fanOut := opsstream.New(opsstream.Options{
+		Capacity:     capacity,
+		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
+	})
+	fanOut.SetGatewayBufferSource(fanOutReplicas{pages: [][]gwevents.BufferedEvent{
+		{{ID: replicaOnePosition, Event: seed[0]}},
+		{{ID: replicaTwoPosition, Event: seed[1]}},
+	}})
+	fanOutIDs := pollItemIDs(t, opsserver.New(opsserver.Options{EventStream: fanOut}))
+
+	for _, src := range []struct {
+		name string
+		ids  []uint64
+	}{{"local-ring", localIDs}, {"redis", redisIDs}, {"gateway-buffer", fanOutIDs}} {
+		if len(src.ids) != len(seed) {
+			t.Fatalf("%s-served page items = %d, want %d", src.name, len(src.ids), len(seed))
+		}
+	}
+
+	// The fan-out serves each responding replica's §25.3 buffer position
+	// unchanged, the same value that replica's own GET /v1/admin/events/buffer
+	// reports for the event.
+	if fanOutIDs[0] != replicaOnePosition || fanOutIDs[1] != replicaTwoPosition {
+		t.Errorf("gateway-buffer fan-out items[].id = %v, want the responding replicas' own positions %v; the §25.5 read surface must not redefine the §25.3 field",
+			fanOutIDs, []uint64{replicaOnePosition, replicaTwoPosition})
+	}
+
+	// The local ring reports its own monotonic sequence, starting at its first
+	// position rather than at an arbitrary synthetic value.
+	if localIDs[0] != 1 || localIDs[1] != 2 {
+		t.Errorf("local-ring items[].id = %v, want the ring's monotonic sequence [1 2]", localIDs)
+	}
+
+	// Every source's page rises monotonically, which is the property §25.3
+	// defines the field by and a caller ordering on it relies on.
+	for _, src := range []struct {
+		name string
+		ids  []uint64
+	}{{"local-ring", localIDs}, {"redis", redisIDs}} {
+		for i, id := range src.ids {
+			if id == 0 {
+				t.Errorf("%s item %d carries items[].id = 0 on a served record", src.name, i)
+			}
+			if i > 0 && id <= src.ids[i-1] {
+				t.Errorf("%s items[].id = %v is not monotonic across the page; §25.3 assigns a monotonic per-source id", src.name, src.ids)
+			}
+		}
+	}
+
+	// The identity that is stable for one event across sources is the canonical
+	// eventKey the CloudEvents id carries, which the poll envelope serves
+	// unchanged from every source.
+	for _, src := range []struct {
+		name string
+		srv  *opsserver.Server
+	}{
+		{"local-ring", eventStreamServer(t, capacity, seed...)},
+		{"redis", opsserver.New(opsserver.Options{EventStream: redisStream})},
+		{"gateway-buffer", opsserver.New(opsserver.Options{EventStream: fanOut})},
+	} {
+		keys := pollItemEventKeys(t, src.srv)
+		if len(keys) != len(seed) || keys[0] != seed[0].ID || keys[1] != seed[1].ID {
+			t.Errorf("%s-served page eventKeys = %v, want %v; the cross-source identity is the CloudEvents id",
+				src.name, keys, []string{seed[0].ID, seed[1].ID})
+		}
+	}
+}
+
+// pollItemEventKeys returns the canonical eventKey each item on a poll page
+// carries in its CloudEvents id, the identity §25.5 has agents deduplicate on
+// across sources.
+func pollItemEventKeys(t *testing.T, srv *opsserver.Server) []string {
+	t.Helper()
+	body, _ := pollBody(t, srv, "/v1/admin/events")
+	raw, ok := body["items"].([]any)
+	if !ok {
+		t.Fatalf("poll response has no items array: %v", body)
+	}
+	keys := make([]string, 0, len(raw))
+	for i, it := range raw {
+		item, ok := it.(map[string]any)
+		if !ok {
+			t.Fatalf("item %d is not an object: %v", i, it)
+		}
+		ev, ok := item["event"].(map[string]any)
+		if !ok {
+			t.Fatalf("item %d carries no CloudEvents record: %v", i, item)
+		}
+		id, ok := ev["id"].(string)
+		if !ok {
+			t.Fatalf("item %d CloudEvents record carries no id: %v", i, ev)
+		}
+		keys = append(keys, id)
+	}
+	return keys
+}
+
+// flippableHealth is a §25.5 SourceHealth whose Redis reachability changes at
+// runtime, so a contract test can move an open SSE connection across a source
+// boundary and observe what the wire carries.
+type flippableHealth struct {
+	redis   atomic.Bool
+	gateway atomic.Bool
+}
+
+func (h *flippableHealth) RedisAvailable() bool   { return h.redis.Load() }
+func (h *flippableHealth) GatewayAvailable() bool { return h.gateway.Load() }
+
+// parkedTail is a §25.5 tail client whose XREAD BLOCK 0 parks until the tail
+// closes it, the way a real blocked read does, so a healthy Redis stint holds
+// the connection open instead of ending immediately.
+type parkedTail struct {
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (p *parkedTail) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSliceCmd {
+	<-p.closed
+	cmd := redis.NewXStreamSliceCmd(ctx)
+	cmd.SetErr(errors.New("redis: client is closed"))
+	return cmd
+}
+
+func (p *parkedTail) Close() error {
+	p.once.Do(func() { close(p.closed) })
+	return nil
+}
+
+// tailableRedisStream is a fakeRedisStream whose live tail can be established.
+type tailableRedisStream struct{ fakeRedisStream }
+
+func (t *tailableRedisStream) TailClient() (opsstream.RedisTailClient, error) {
+	return &parkedTail{closed: make(chan struct{})}, nil
+}
+
+// TestEventStreamDegradationCommentRepeatsOnTheFallBackCadenceContract pins the
+// :degradation line sequence an SSE consumer observes across enter-degraded,
+// idle, and recover. §25.5 states that events continue to flow to the SSE client
+// with the canonical degradation envelope embedded in a periodic :degradation
+// comment line, so an idle degraded connection keeps receiving the envelope on
+// the fall-back poll cadence, and the return to health is announced with a
+// single {"level":"healthy"} line.
+//
+// spec: 25.5 (Redis-unavailable fallback — the canonical degradation envelope is
+// embedded in a periodic :degradation comment line, and the switch back to the
+// healthy source emits :degradation {"level":"healthy"})
+// diagnosis: A failure means the degradation envelope is announced once per
+// transition instead of on a cadence. A consumer that attaches mid-outage, or
+// whose intermediary buffered or dropped the single announcement, never learns
+// it is on the gateway-buffer fall-back and reads a truncated event flow as a
+// healthy one.
+func TestEventStreamDegradationCommentRepeatsOnTheFallBackCadenceContract(t *testing.T) {
+	health := &flippableHealth{}
+	// Both sources unreachable: the connection serves this replica's own ring
+	// under the dual-outage envelope.
+	health.redis.Store(false)
+	health.gateway.Store(false)
+
+	stream := opsstream.New(opsstream.Options{
+		RedisClient:  &tailableRedisStream{},
+		SourceHealth: health,
+	})
+	if _, err := stream.Publish(context.Background(), gwevents.OperationalEvent{Type: "dev.lenny.alert_fired"}); err != nil {
+		t.Fatalf("seed event: %v", err)
+	}
+	httpSrv := httptest.NewServer(opsserver.New(opsserver.Options{EventStream: stream}))
+	defer httpSrv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, httpSrv.URL+"/v1/admin/events/stream", nil)
+	if err != nil {
+		t.Fatalf("build SSE request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("open SSE connection: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var (
+		mu    sync.Mutex
+		lines []string
+	)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if line := sc.Text(); strings.HasPrefix(line, ":degradation") {
+				mu.Lock()
+				lines = append(lines, line)
+				mu.Unlock()
+			}
+		}
+	}()
+	snapshot := func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), lines...)
+	}
+
+	// Wait for the degraded stint's entry announcement, then idle across
+	// several fall-back poll intervals. The envelope repeats on that cadence,
+	// so a connection that publishes nothing still accumulates lines.
+	waitFor(t, func() bool { return len(snapshot()) >= 1 }, "the degraded stint's first :degradation line")
+	waitFor(t, func() bool { return len(snapshot()) >= 3 }, "the periodic re-emission of the :degradation envelope")
+	degraded := snapshot()
+	for i, line := range degraded {
+		if !strings.Contains(line, "lenny-ops-local-buffer") {
+			t.Errorf("degraded :degradation line %d = %q, want the dual-outage envelope naming the local buffer", i, line)
+		}
+	}
+
+	// Redis recovers: the connection switches back, announces recovery exactly
+	// once, and stops carrying the degraded envelope.
+	before := len(degraded)
+	health.redis.Store(true)
+	health.gateway.Store(true)
+	waitFor(t, func() bool {
+		for _, line := range snapshot()[before:] {
+			if strings.Contains(line, `"level":"healthy"`) {
+				return true
+			}
+		}
+		return false
+	}, "the recovery announcement")
+	// Idle past the fall-back cadence: a healthy connection carries no envelope,
+	// and the recovery line is not repeated.
+	time.Sleep(3 * gatewayFallBackPollInterval)
+	cancel()
+	<-readDone
+
+	healthy := 0
+	for _, line := range snapshot()[before:] {
+		if strings.Contains(line, `"level":"healthy"`) {
+			healthy++
+			continue
+		}
+		t.Errorf("after recovery the connection emitted a degraded :degradation line %q, want only the healthy announcement", line)
+	}
+	if healthy != 1 {
+		t.Fatalf("healthy :degradation lines after recovery = %d, want exactly 1: %v", healthy, snapshot()[before:])
+	}
+}
+
+// gatewayFallBackPollInterval mirrors the §25.5 SSE fall-back poll cadence the
+// handler re-emits the degradation envelope on, so the contract test idles
+// across whole intervals rather than a bare sleep constant.
+const gatewayFallBackPollInterval = 2 * time.Second
+
+// waitFor polls cond until it holds or the deadline passes.
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

@@ -19,11 +19,15 @@
 // platform-upgrade lifecycle, ops self-health). Both feed the same
 // Redis stream (§25.5 "Both write to the same Redis stream"); the
 // Service consumes either side via Publish, which keeps the in-memory
-// transport-agnostic. The Redis stream source and the Redis-down /
-// gateway-down degradation matrix are F-25.5.1 / F-25.5.14; this
-// package serves the §25.5 read surface over the buffer source and
-// encodes the source kind into every cursor so the surface is
-// forward-compatible when the Redis source lands.
+// transport-agnostic. The read side selects its source from SourceHealth:
+// the Redis ops:events:stream is primary (redissource.go: XRANGE for
+// polling and Last-Event-ID resume, XREAD BLOCK 0 for the live SSE tail),
+// a cross-process fan-out of the gateway event buffer over the
+// lenny-gateway-pods headless Service (deduped by eventKey) is the
+// Redis-down fallback, and the in-memory ring buffer remains the
+// lenny-ops-origin source and the dual-down floor. Every cursor encodes
+// its source kind so a mid-connection source switch translates by
+// eventKey and reports gapDetected on an evicted event.
 package events
 
 import (
@@ -77,9 +81,132 @@ type Service struct {
 	subsMu sync.Mutex
 	subs   []*subscription
 
+	// activeStreams counts the SSE connections currently being served,
+	// whichever source each one reads from. It is the §25.5
+	// lenny_ops_events_sse_active_connections gauge's input: the local-ring
+	// subscriber list cannot serve that role, because a connection served from
+	// the Redis stream (the primary source whenever Redis is reachable) tails
+	// Redis on a client of its own and registers no local subscription, so the
+	// gauge would read zero in the steady state. spec: §25.5 (metrics).
+	activeStreams atomic.Int64
+
 	webhook WebhookFanOut
 	onGap   func()
 	health  SourceHealth
+
+	// redis, when non-nil, is the §25.5 primary read source: the Redis
+	// ops:events:stream every replica XADDs to. It is selected over the
+	// local ring buffer whenever SourceHealth reports Redis reachable, so
+	// polling and SSE serve the merged cross-replica view. The local
+	// buffer stays the lenny-ops-origin source for a dual outage. spec:
+	// §25.5.
+	redis *redisSource
+
+	// gateway, when non-nil, is the §25.5 Redis-down fall-back source: it
+	// fans GET /v1/admin/events/buffer across every gateway replica over the
+	// lenny-gateway-pods headless Service and the read surface merges the
+	// per-replica pages deduped by eventKey. It is selected only during a
+	// Redis-down / gateway-up outage. Injected
+	// post-construction because the gateway client is built after the
+	// Service. spec: §25.5 (Redis-down gateway-buffer fallback).
+	gateway GatewayBufferSource
+
+	// outageMu guards the recovery-flush outage window. outageFrom is the
+	// local ring position at the moment the replica-level source-health probe
+	// observed Redis going down, and inOutage records that such an edge was
+	// seen. Together they bound the §25.5 recovery flush to the events
+	// buffered during the outage. spec: §25.5 (best-effort recovery flush).
+	outageMu   sync.Mutex
+	outageFrom uint64
+	inOutage   bool
+
+	// redisReEmit, when non-nil, re-emits a locally-buffered event to the
+	// Redis ops:events:stream without re-publishing it to the local ring.
+	// It backs the §25.5 best-effort recovery flush: on a Redis down-to-up
+	// edge the replica re-emits the lenny-ops-originated events it buffered
+	// locally during the outage, deduped by eventKey. Injected
+	// post-construction from the same StreamEmitter the fan-out emitter
+	// writes through. spec: §25.5 (best-effort recovery flush).
+	redisReEmit func(context.Context, gwevents.OperationalEvent) error
+}
+
+// dataSource names the read source the §25.5 poll and SSE handlers serve a
+// request from. It is resolved from the live SourceHealth degradation matrix
+// so the actualSource label and the data path stay in agreement. spec: §25.5
+// (source selection from the degradation matrix).
+type dataSource int
+
+const (
+	// dsRedis serves from the Redis ops:events:stream (the merged
+	// cross-replica primary source).
+	dsRedis dataSource = iota
+	// dsGateway serves from the gateway event buffer fanned over the
+	// lenny-gateway-pods headless Service (the Redis-down fall-back).
+	dsGateway
+	// dsLocalBuffer serves from this replica's own ring buffer (the
+	// lenny-ops-origin source: no Redis wired, or a dual outage).
+	dsLocalBuffer
+)
+
+// SetGatewayBufferSource injects the §25.5 Redis-down gateway-buffer
+// fall-back source. It is called once during wiring after the gateway
+// admin-API client is constructed, since the client does not exist at the
+// Service construction site. A nil source leaves the read surface serving
+// the local ring buffer during a Redis outage (no cross-process fetch).
+// spec: §25.5.
+func (s *Service) SetGatewayBufferSource(src GatewayBufferSource) {
+	s.gateway = src
+}
+
+// SetRedisReEmitter injects the §25.5 recovery-flush re-emit path: a
+// function that XADDs one event to the Redis ops:events:stream without
+// re-publishing it to the local ring. It is wired from the same
+// StreamEmitter the fan-out emitter uses. A nil re-emitter disables the
+// recovery flush (a no-Redis deployment has nothing to flush to). spec:
+// §25.5 (best-effort recovery flush).
+func (s *Service) SetRedisReEmitter(fn func(context.Context, gwevents.OperationalEvent) error) {
+	s.redisReEmit = fn
+}
+
+// selectSource resolves the §25.5 read source for the current request from
+// the live degradation matrix, and returns the degradation envelope to
+// attach and whether the dual Redis + gateway outage holds. It makes
+// streamState's actualSource label drive the real data-path selection: a
+// gateway-buffer label with no gateway client wired, or a redis-stream label
+// with no Redis client wired, both fall through to the local ring buffer so
+// the surface keeps serving lenny-ops-originated events.
+//
+// A Redis-down classification with no gateway source wired is the dual-outage
+// case however the gateway probe reads: gateway-originated events have nowhere
+// to fetch from, so the response carries the case-4 lenny-ops-local-buffer
+// envelope and polling returns 503 EVENT_STREAM_UNAVAILABLE. Labelling that
+// response gateway-buffer while serving this replica's ring would report a
+// cross-replica view the caller is not receiving.
+//
+// The §25.5 degradation matrix keys on SourceHealth alone and enumerates three
+// read-side states: Redis reachable (healthy, no envelope), Redis unreachable
+// with the gateway reachable, and both unreachable. A deployment with no Redis
+// client wired at all is not one of them: it is a healthy replica whose only
+// source is its own ring, so it serves that ring and attaches no envelope.
+// spec: §25.5 (lines 2768-2780).
+func (s *Service) selectSource() (dataSource, *conventions.Degradation, bool) {
+	actual, deg, dualDown := s.streamState()
+	switch actual {
+	case sourceRedisStream:
+		if s.redis != nil {
+			return dsRedis, deg, dualDown
+		}
+		// No Redis read source is wired, so the healthy classification is
+		// served from this replica's own ring with no envelope attached.
+		return dsLocalBuffer, deg, dualDown
+	case sourceGatewayBuffer:
+		if s.gateway != nil {
+			return dsGateway, deg, dualDown
+		}
+		_, deg, dualDown = dualOutageState()
+		return dsLocalBuffer, deg, dualDown
+	}
+	return dsLocalBuffer, deg, dualDown
 }
 
 // subscription is one active SSE subscriber.
@@ -115,6 +242,27 @@ type Options struct {
 	// EVENT_STREAM_UNAVAILABLE (dual Redis + gateway outage). A nil value
 	// is treated as fully healthy. spec: §25.5 lines 2768-2780.
 	SourceHealth SourceHealth
+	// RedisClient, when non-nil, wires the §25.5 Redis ops:events:stream
+	// as the primary read source: XRANGE for polling and SSE backlog
+	// resume from Last-Event-ID, XREAD BLOCK 0 for the live per-connection
+	// SSE tail. It is selected over the local ring buffer whenever
+	// SourceHealth reports Redis reachable. A nil client keeps the local
+	// buffer as the only source (the cold-start / no-Redis deployment).
+	// spec: §25.5.
+	RedisClient RedisStreamClient
+	// RedisStreamKey overrides the default ops:events:stream key when
+	// RedisClient is set. An empty value uses the §25.5 default.
+	RedisStreamKey string
+	// RedisStreamMaxLen is the MAXLEN the writer side trims the
+	// ops:events:stream to, and so the length of the window the read side
+	// scans when it translates a cursor or replays a backlog. It must track
+	// the operator-tunable value the fan-out emitter is built with: a reader
+	// bound below the writer's would scan only the oldest entries, find no
+	// entry at or after a recent cursor, and report an evicted-cursor gap plus
+	// a full-window replay for a cursor the stream still retains. A
+	// non-positive value uses the §25.5 default stream length. spec: §25.5
+	// (cross-source cursor translation; gapDetected on an evicted cursor).
+	RedisStreamMaxLen int64
 }
 
 // New returns a Service.
@@ -127,7 +275,7 @@ func New(opts Options) *Service {
 	if replicaID == "" {
 		replicaID = "ops"
 	}
-	return &Service{
+	s := &Service{
 		buffer:    eventbuffer.NewEventBuffer(opts.Capacity),
 		now:       now,
 		replicaID: replicaID,
@@ -135,6 +283,10 @@ func New(opts Options) *Service {
 		onGap:     opts.OnGap,
 		health:    opts.SourceHealth,
 	}
+	if opts.RedisClient != nil {
+		s.redis = newRedisSource(opts.RedisClient, opts.RedisStreamKey, opts.RedisStreamMaxLen)
+	}
+	return s
 }
 
 // observeGap fires the OnGap hook when configured. spec: §25.5 line 2788.
@@ -152,8 +304,22 @@ func (s *Service) observeGap() {
 // subsystem that takes an EventEmitter; in v1 the in-memory write
 // never errors, so the error is always nil unless ctx is cancelled.
 func (s *Service) Publish(ctx context.Context, e gwevents.OperationalEvent) (uint64, error) {
+	buffered, err := s.PublishBuffered(ctx, e)
+	return buffered.ID, err
+}
+
+// PublishBuffered publishes e and returns the stored BufferedEvent: the
+// assigned ring position together with the stamped event carrying the
+// canonical eventKey this replica minted for it. The fan-out emitter writes
+// that exact event on to the Redis ops:events:stream, so one event carries one
+// eventKey on both sides and the §25.5 cross-source dedup (the recovery
+// flush's retained-key check and every consumer's own dedup) collapses the two
+// copies. It also gives the emitter the ring position to anchor the
+// recovery-flush outage window at when the XADD fails. spec: §25.5 (canonical
+// eventKey across sources, best-effort recovery flush).
+func (s *Service) PublishBuffered(ctx context.Context, e gwevents.OperationalEvent) (gwevents.BufferedEvent, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, err
+		return gwevents.BufferedEvent{}, err
 	}
 	if e.SpecVersion == "" {
 		e.SpecVersion = gwevents.CloudEventsSpecVersion
@@ -165,11 +331,12 @@ func (s *Service) Publish(ctx context.Context, e gwevents.OperationalEvent) (uin
 		e.ID = s.eventKey(e.Time)
 	}
 	id := s.buffer.Append(e)
-	s.fanOutToSubscribers(gwevents.BufferedEvent{ID: id, Event: e})
+	buffered := gwevents.BufferedEvent{ID: id, Event: e}
+	s.fanOutToSubscribers(buffered)
 	if s.webhook != nil {
 		s.webhook(ctx, e)
 	}
-	return id, nil
+	return buffered, nil
 }
 
 // eventKey composes the §25.5 canonical cross-source identifier
@@ -255,12 +422,12 @@ func (s *Service) unsubscribe(sub *subscription) {
 	s.subs = kept
 }
 
-// SubscriberCount returns the number of active SSE subscribers. Used
-// by the §25.5 lenny_ops_events_sse_active_connections gauge.
-func (s *Service) SubscriberCount() int {
-	s.subsMu.Lock()
-	defer s.subsMu.Unlock()
-	return len(s.subs)
+// ActiveStreams returns the number of SSE connections the Service is currently
+// serving, independent of the source each one reads from. It backs the §25.5
+// lenny_ops_events_sse_active_connections gauge. A connection is counted once
+// for its whole life, including across a source switch. spec: §25.5 (metrics).
+func (s *Service) ActiveStreams() int {
+	return int(s.activeStreams.Load())
 }
 
 // parseFilter builds the §25.5 canonical filter from the query string
@@ -335,13 +502,21 @@ func parseSortOrder(q url.Values) (desc bool, err error) {
 // been evicted. spec: §25.5 lines 2687-2699; §25.2 lines 234-275.
 func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	// §25.5 degradation case 4: when both the Redis stream and the gateway
+	// §25.5 dual Redis + gateway outage: when both the Redis stream and the gateway
 	// buffer are unreachable, polling for gateway-originated events cannot
 	// be served and cannot partial-serve, so it fails with a transient
 	// 503 the agent retries. The SSE surface still serves
 	// lenny-ops-originated events from the local buffer. spec: §25.5 lines
 	// 2768-2780.
-	_, deg, dualDown := s.streamState()
+	// The source is resolved exactly once per request. SourceHealth is a
+	// live signal refreshed by a background probe, so re-resolving it for the
+	// data path would let a refresh landing mid-request attach a
+	// gateway-buffer degradation envelope to a page served from the Redis
+	// stream (or no envelope at all to a page served from the fan-out). The
+	// resolved source is threaded into pollPage so the label and the data
+	// path come from one classification. spec: §25.5 (actualSource names the
+	// source the response was served from).
+	src, deg, dualDown := s.selectSource()
 	if dualDown {
 		writeStreamUnavailable(w)
 		return
@@ -356,15 +531,23 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 		conventions.WriteError(w, http.StatusBadRequest, codeInvalidEventFilter, conventions.CategoryPermanent, err.Error())
 		return
 	}
-	kind, eventKey, err := decodeCursor(q.Get("cursor"))
+	cur, err := decodeCursor(q.Get("cursor"))
 	if err != nil {
 		conventions.WriteError(w, http.StatusBadRequest, codeInvalidEventFilter, conventions.CategoryPermanent, err.Error())
 		return
 	}
 	limit := parseLimit(q)
 
-	page := s.pollPage(kind, eventKey, filter, limit, desc)
-	// §25.5 degradation case 1: serving from the gateway-buffer fall-back
+	page, deg, perr := s.pollPage(r.Context(), src, deg, cur, filter, limit, desc)
+	if perr != nil {
+		// The gateway-buffer fall-back served nothing: no replica answered the
+		// §25.3 buffer query, so gateway-originated events have nowhere to come
+		// from and the request is the §25.5 dual-outage case. spec: §25.5
+		// (EVENT_STREAM_UNAVAILABLE when both sources are unreachable).
+		writeStreamUnavailable(w)
+		return
+	}
+	// §25.5 Redis-down gateway-buffer fall-back: serving from the gateway buffer
 	// during a Redis outage is reported as response metadata
 	// (EVENT_STREAM_DEGRADED, HTTP 200), not an HTTP error. spec: §25.5
 	// lines 2768-2772.
@@ -373,13 +556,85 @@ func (s *Service) HandlePoll(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(page)
 }
 
-// pollPage resolves the incoming opaque cursor to a buffer position by
-// eventKey, runs the buffer query, and wraps the result in the §25.2
-// canonical envelope with opaque source-kind cursors. When the cursor's
-// eventKey is no longer retained (evicted), the page reports gapDetected
-// and serves from the oldest retained event. spec: §25.5 lines
+// pollPage serves one poll page from src, the source its caller resolved for
+// this request. It resolves the incoming opaque cursor to a position in that
+// source, runs the query, and wraps the result in the §25.2 canonical envelope
+// with opaque source-kind cursors. When the cursor's position is no longer
+// retained (evicted), the page reports gapDetected and serves from the oldest
+// retained event.
+//
+// src is a parameter rather than a second selectSource call so the page and
+// the degradation envelope its caller attached describe the same source. deg is
+// the envelope that classification produced; the returned envelope replaces it
+// when the request had to be re-classified onto another source mid-read, so the
+// label always names the source the response was served from. spec: §25.5 lines
 // 2666-2699.
-func (s *Service) pollPage(cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
+func (s *Service) pollPage(ctx context.Context, src dataSource, deg *conventions.Degradation, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
+	var (
+		page EventPage
+		err  error
+	)
+	switch src {
+	case dsRedis:
+		page, err = s.redisPollPage(ctx, cur, filter, limit, desc)
+		if err != nil {
+			page, deg, err = s.pollRedisUnreachable(ctx, cur, filter, limit, desc)
+		}
+	case dsGateway:
+		page, err = s.gatewayPollPage(ctx, cur.Kind, cur.EventKey, filter, limit, desc)
+	default:
+		page = s.bufferPollPage(cur.Kind, cur.EventKey, filter, limit, desc)
+	}
+	if err != nil {
+		return EventPage{}, nil, err
+	}
+	// §25.5 read-time tenant filter: intersect the served events with the
+	// caller's tenant scope resolved at the opsserver boundary. It is a
+	// post-query authorization filter applied after the source page is built,
+	// so the pagination cursor keeps advancing over the raw source position
+	// while a tenant-admin's page is narrowed to its own tenant and a
+	// platform-scoped event is dropped for it. A platform-admin is unaffected;
+	// a caller whose context carries no resolved scope is served nothing. spec:
+	// §25.5 (SSE and polling apply the same tenant filter as delivery).
+	page.Items = s.filterForReader(ctx, page.Items)
+	return page, deg, nil
+}
+
+// pollRedisUnreachable re-classifies a poll whose Redis read failed onto the
+// source that can serve it, so the §25.5 degradation label never names Redis
+// for a page Redis did not serve.
+//
+// SourceHealth is a probe refreshed on an interval, so a request arriving
+// between Redis failing and the probe observing it selects the Redis source and
+// carries no degradation envelope. Serving that request as an empty page with
+// the caller's cursor echoed makes "Redis is unreachable and you are missing
+// events" indistinguishable from "no new events", and invites the caller to
+// keep polling as though its view were current. The request instead falls
+// through to the gateway-buffer fan-out under the case-1 envelope. With no
+// fall-back source wired, gateway-originated events have nowhere to come from,
+// which is the case-4 outcome: the error returns 503 EVENT_STREAM_UNAVAILABLE.
+// spec: §25.5 lines 2768-2780 (actualSource names the source the response was
+// served from; EVENT_STREAM_UNAVAILABLE when both sources are unreachable).
+func (s *Service) pollRedisUnreachable(ctx context.Context, cur eventCursor, filter gwevents.EventFilter, limit int, desc bool) (EventPage, *conventions.Degradation, error) {
+	if s.gateway == nil {
+		return EventPage{}, nil, fmt.Errorf("redis read failed and no gateway-buffer fall-back source is wired")
+	}
+	page, err := s.gatewayPollPage(ctx, cur.Kind, cur.EventKey, filter, limit, desc)
+	if err != nil {
+		return EventPage{}, nil, fmt.Errorf("gateway-buffer fall-back after a failed redis read: %w", err)
+	}
+	_, deg, _ := gatewayFallbackState()
+	return page, deg, nil
+}
+
+// bufferPollPage serves the §25.5 polling page from this replica's local
+// ring buffer: the lenny-ops-origin source used when no Redis client is
+// wired or during a dual Redis + gateway outage. It resolves the incoming
+// opaque cursor to a buffer position by eventKey, runs the buffer query, and
+// wraps the result in the §25.2 canonical envelope. When the cursor's
+// eventKey is no longer retained (evicted), the page reports gapDetected and
+// serves from the oldest retained event. spec: §25.5 lines 2666-2699.
+func (s *Service) bufferPollPage(cursorKind, eventKey string, filter gwevents.EventFilter, limit int, desc bool) EventPage {
 	var since uint64
 	servedKind := SourceKindBuffer
 	gap := false
@@ -474,75 +729,63 @@ func (s *Service) HandleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resumeKey := resumeEventKey(r)
-	sub := s.subscribe(filter, 64)
-	defer s.unsubscribe(sub)
-
-	// Resolve the resume point. The subscription is already installed so
-	// no concurrent publish is missed between the backlog scan and live
-	// delivery.
-	var since uint64
-	gap := false
-	if resumeKey != "" {
-		if id, found := s.buffer.Lookup(resumeKey); found {
-			since = id
-		} else {
-			gap = true
-		}
-	}
+	resume := resumeCursor(r)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
 
-	// §25.5 degradation cases 1 and 4: announce the fall-back source on
-	// the stream so the consumer learns it is receiving a degraded view —
-	// the gateway buffer during a Redis outage, or only this replica's
-	// lenny-ops-originated events during a dual Redis + gateway outage
-	// (the local ring buffer holds no gateway-originated events). spec:
-	// §25.5 lines 2768-2780.
-	if _, deg, _ := s.streamState(); deg != nil {
-		writeSSEDegradation(w, deg)
+	// §25.5 transparent source switching: one connection serves from the
+	// active source and follows the live SourceHealth signal across
+	// transitions (Redis stream ↔ gateway-buffer fan-out ↔ local ring
+	// buffer), announcing each transition on the stream. The last delivered
+	// eventKey is carried across a switch so the new source resumes with no
+	// drop, emitting a :gap comment when the new source cannot honour it.
+	// spec: §25.5 (transparent Redis to gateway-buffer switch and back).
+	// §25.5 read-time tenant filter: resolve the caller's tenant scope from
+	// the request context the opsserver boundary populated, and gate every SSE
+	// frame (backlog replay, live tail, and the gateway-buffer fall-back) on
+	// it so a tenant-admin observes only its own tenant's events. spec: §25.5
+	// (SSE applies the same tenant filter as delivery).
+	scope := readerScopeFrom(r.Context())
+	sess := &streamSession{
+		s:            s,
+		w:            w,
+		flusher:      flusher,
+		filter:       filter,
+		lastKind:     resume.Kind,
+		lastKey:      resume.EventKey,
+		lastStreamID: resume.StreamID,
+		scope:        scope,
+		// The dedup set spans every source the session serves from, so it is
+		// sized to the largest window the session can replay. spec: §25.5
+		// (exactly-once across the source switch).
+		delivered: deliveredKeys{window: s.deliveredKeyWindow()},
 	}
-
-	if gap {
-		writeSSEGap(w, resumeKey)
-		s.observeGap()
-	}
-	backlog := s.buffer.Query(since, filter, 0)
-	for _, ev := range backlog.Events {
-		writeSSEFrame(w, ev)
-	}
-	flusher.Flush()
-
-	ctx := r.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case ev, open := <-sub.ch:
-			if !open {
-				return
-			}
-			writeSSEFrame(w, ev)
-			flusher.Flush()
-		}
-	}
+	// The connection is counted for its whole life, from the moment the session
+	// is built to the moment it returns, so the §25.5 active-connection gauge is
+	// independent of which source the session is serving from at any instant.
+	s.activeStreams.Add(1)
+	defer s.activeStreams.Add(-1)
+	sess.run(r.Context())
 }
 
-// resumeEventKey reads the §25.5 SSE resume position from the request,
-// preferring the SSE-standard Last-Event-ID header (the CloudEvents id)
-// and falling back to ?cursor= (the opaque poll cursor, whose encoded
-// eventKey resolves to the same position). spec: §25.5 lines 2679-2680.
-func resumeEventKey(r *http.Request) string {
+// resumeCursor reads the §25.5 SSE resume position and its source kind from
+// the request. The SSE-standard Last-Event-ID header carries a CloudEvents
+// id (an eventKey with no source kind), so it resolves by eventKey scan and
+// reports an empty kind. The ?cursor= fallback carries the source kind the
+// poll minted; its position is the same canonical eventKey either way, which
+// each source translates to a local position by scan. spec: §25.5
+// lines 2679-2680 (Last-Event-ID / cursor resume, cross-source translation).
+func resumeCursor(r *http.Request) eventCursor {
 	if v := r.Header.Get("Last-Event-ID"); v != "" {
-		return v
+		return eventCursor{EventKey: v}
 	}
-	if _, key, err := decodeCursor(r.URL.Query().Get("cursor")); err == nil {
-		return key
+	if c, err := decodeCursor(r.URL.Query().Get("cursor")); err == nil {
+		return c
 	}
-	return ""
+	return eventCursor{}
 }
 
 // writeSSEFrame writes one BufferedEvent as an SSE record per §25.5.

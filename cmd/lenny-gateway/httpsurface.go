@@ -11,11 +11,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
@@ -47,6 +49,7 @@ import (
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry"
+	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -83,6 +86,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	addr := f.addr
 	multiTenant := f.multiTenant
 	tenantIDClaim := f.tenantIDClaim
+	adminSATokenAudience := f.adminSATokenAudience
+	platformAdminServiceAccounts := f.platformAdminServiceAccounts
 	devMode := f.devMode
 	jwksPublish := f.jwksPublish
 	deprecatedAPIVersionsCSV := f.deprecatedAPIVersionsCSV
@@ -879,6 +884,21 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// that leaves introspectionEnabled off pays nothing beyond a cached
 		// config read and keeps its JWT groups. F-10.6.8.
 		GroupIntrospector: introspection.New(tenantIntrospectionConfig{store: w.tenants}),
+		// spec: §25.4 ("Calling the Gateway") — lenny-ops reaches the admin
+		// API as a regular authenticated client under a dedicated service
+		// account holding platform-admin, through the standard RBAC gates.
+		// The credential it presents is the projected ServiceAccount token
+		// the chart mounts, which is not a Lenny-minted JWT, so the bearer
+		// chain resolves it through a Kubernetes TokenReview and grants the
+		// roles this deployment configured for the named account. Without it
+		// the §25.5 Redis-down gateway-buffer fan-out is refused on every
+		// replica and the case-1 fall-back has no data source.
+		ServiceIdentity: serviceidentity.New(serviceidentity.Config{
+			Verifier: w.saUserVerifier,
+			Audience: *adminSATokenAudience,
+			Roles:    platformAdminServiceAccountRoles(splitCSV(*platformAdminServiceAccounts)),
+			TenantID: jwtaudit.PlatformTenantID,
+		}),
 	}
 	// §13.3 line 601 — fail-closed token validation. Only when Postgres
 	// backs the revocation rehydration (below) is the staleness gate
@@ -994,3 +1014,18 @@ func healthStatusChangedPayload(prev, curr health.Status, prevComponents, currCo
 // extracted per-group step of the §4.1 background-worker stage.
 //
 // spec: §4.1 gateway background subsystems; §12.5 gateway-leader election.
+
+// platformAdminServiceAccountRoles maps each configured ServiceAccount
+// username onto the §10.2 platform-admin role, which is the grant §25.4
+// defines for the lenny-ops service account. spec: §25.4 ("It uses a
+// dedicated service account (`lenny-ops-sa`) with `platform-admin` role").
+func platformAdminServiceAccountRoles(accounts []string) map[string][]auth.Role {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make(map[string][]auth.Role, len(accounts))
+	for _, a := range accounts {
+		out[a] = []auth.Role{auth.RolePlatformAdmin}
+	}
+	return out
+}

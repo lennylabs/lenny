@@ -567,6 +567,16 @@ spec:
             - --sa-token-audience={{ . }}
             {{- end }}
             {{- end }}
+            # §25.4 "Calling the Gateway": lenny-ops calls the admin API as
+            # a regular authenticated client under a dedicated service
+            # account holding platform-admin, through the standard RBAC.
+            # It presents the projected ServiceAccount token mounted by the
+            # ops Deployment for the lenny-gateway audience, which the
+            # gateway validates with a Kubernetes TokenReview and maps onto
+            # the platform-admin role. The §25.5 Redis-down gateway-buffer
+            # fan-out reads GET /v1/admin/events/buffer under this grant.
+            - --admin-sa-token-audience=lenny-gateway
+            - --platform-admin-service-accounts=system:serviceaccount:{{ .Release.Namespace }}:lenny-ops-sa
             # §9.2 platform-wide elicitation content-integrity floor.
             # The admin API's GET endpoint reports the effective mode
             # as max(floor, tenantStored); a PUT below the floor is

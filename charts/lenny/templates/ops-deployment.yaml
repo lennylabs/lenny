@@ -18,11 +18,22 @@ capabilities dropped, read-only root filesystem, RuntimeDefault
 seccomp) shared with the controller. Postgres and Redis stay
 bring-your-own external services (§17.9); the lenny-ops binary reads
 its connection settings from the LENNY_POSTGRES_DSN and LENNY_REDIS_URL
-environment variables (cmd/lenny-ops/flags.go), but unlike
-controller-deployment.yaml and gateway-deployment.yaml this Deployment
-renders no values path that sets them — postgres.dsn and redis.url are
-not wired here even when set. Every render therefore runs lenny-ops in
-the §25.4 degraded single-process mode.
+environment variables (cmd/lenny-ops/flags.go).
+
+§25.5 read-side wiring: lenny-ops reads the platform-scoped
+ops:events:stream Redis stream (§25.5 lines 2558, 2602; the StoreRouter
+PlatformRedis() route at §25.4 line 1512) to serve the SSE, polling, and
+webhook read surface, and falls back to the gateway event buffer over the
+lenny-gateway-pods headless Service when Redis is unreachable (§25.5
+gateway-buffer fallback). This Deployment therefore wires Redis from the
+same redis.provider / redis.url values the gateway and controller consume
+(the LENNY_REDIS_URL / Sentinel env block below, sourced from the
+lenny-datastore-conn Secret). Without Redis configured the read side runs
+on lenny-ops's own per-replica in-memory buffer (§25.5 cold-start), and
+the Redis-down gateway-buffer fallback is unreachable, so a stock render
+that leaves redis.url empty stays in that degraded single-process mode.
+Postgres (postgres.dsn) is not wired here, so audit, backup, and upgrade
+state degrade gracefully when Postgres is absent (§25.4).
 */ -}}
 {{- /* §17.8.5 line 1323: "Attempts to disable lenny-ops via Helm values
    are rejected at chart validation." The chart has no ops.enabled key;
@@ -36,6 +47,24 @@ the §25.4 degraded single-process mode.
 {{- fail "§17.8.5 line 1323: ops.enabled is not a supported Helm value (lenny-ops is mandatory); remove the ops.enabled key from your values." -}}
 {{- end -}}
 {{- end -}}
+{{- /* §25.5 read-side Redis topology. lenny-ops consumes the same
+   redis.provider / redis.url values the gateway and controller do, across
+   every §17.9.3 topology: external (url), Sentinel, and Cluster. The
+   lenny-ops binary reads --redis-url, --redis-sentinel-addrs, and
+   --redis-cluster-addrs (cmd/lenny-ops/flags.go), so the §25.5
+   ops:events:stream is the read source on each of them and no topology
+   silently drops lenny-ops onto its in-memory buffer. The connection URL
+   and the Sentinel AUTH credentials come from the lenny-datastore-conn
+   Secret so no secret material lands in the pod spec; the cluster seed
+   addresses are not secret and render as plain env. */ -}}
+{{- $redis := .Values.redis -}}
+{{- $redisProvider := include "lenny.redisProvider" . -}}
+{{- $redisCluster := (and $redis (hasKey $redis "cluster")) | ternary $redis.cluster dict -}}
+{{- $hasRedis := and (eq $redisProvider "external") $redis $redis.url (ne $redis.url "") -}}
+{{- $hasRedisCluster := and (eq $redisProvider "cluster") $redisCluster (hasKey $redisCluster "addrs") (ne ($redisCluster.addrs | toString) "") -}}
+{{- $useSentinel := eq $redisProvider "sentinel" -}}
+{{- $hasRedisPassword := and $useSentinel (ne ($redis.password | default "" | toString) "") -}}
+{{- $hasSentinelPassword := and $useSentinel (ne ($redis.sentinelPassword | default "" | toString) "") -}}
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -145,6 +174,13 @@ spec:
             - --gateway-ca-bundle-file=/etc/lenny/gateway-ca/ca.crt
             {{- end }}
             - --production={{ .Values.ops.production }}
+            {{- if .Values.global.devMode }}
+            # §12.4 requires Redis AUTH and TLS; a dev install backed by a
+            # plaintext no-password Redis would otherwise fail the lenny-ops
+            # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
+            # acknowledges the insecure dev Redis, matching the gateway.
+            - --redis-allow-insecure
+            {{- end }}
             {{- if .Values.ops.prometheus.url }}
             # §25.16 line 5124: when ops.prometheus.url is set, lenny-ops
             # uses the supplied BYO Prometheus HTTP API for §25.4
@@ -292,6 +328,55 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- /* §25.5 lines 2558-2602 — the platform-scoped
+                   ops:events:stream Redis connection the read side (SSE,
+                   polling, webhook worker) consumes, and the durable tier
+                   for §25.4 escalations and remediation locks. External
+                   (url) mode reads the connection URL from the
+                   lenny-datastore-conn Secret; the plaintext dev Redis is
+                   acknowledged via --redis-allow-insecure above. */}}
+            {{- if $hasRedis }}
+            - name: LENNY_REDIS_URL
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-url
+            {{- end }}
+            {{- /* §12.4 lines 260-264 — Redis Cluster seed nodes (plain
+                   env; addresses are not secret). lenny-ops reaches the
+                   §25.5 ops:events:stream through the cluster client on
+                   this topology. */}}
+            {{- if $hasRedisCluster }}
+            - name: LENNY_REDIS_CLUSTER_ADDRS
+              value: {{ $redisCluster.addrs | quote }}
+            {{- end }}
+            {{- /* §17.9.3 / §12.4 — Redis Sentinel topology. The sentinel
+                   addresses and master name are not secret (plain env);
+                   the data AUTH password and the optional sentinel AUTH
+                   password come from the datastore Secret. TLS is requested
+                   on the Sentinel path so §12.4 AUTH+TLS holds. */}}
+            {{- if $useSentinel }}
+            - name: LENNY_REDIS_SENTINEL_ADDRS
+              value: {{ join "," $redis.sentinels | quote }}
+            - name: LENNY_REDIS_SENTINEL_MASTER
+              value: {{ $redis.sentinelMaster | quote }}
+            - name: LENNY_REDIS_TLS
+              value: "true"
+            {{- if $hasRedisPassword }}
+            - name: LENNY_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-password
+            {{- end }}
+            {{- if $hasSentinelPassword }}
+            - name: LENNY_REDIS_SENTINEL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: lenny-datastore-conn
+                  key: redis-sentinel-password
+            {{- end }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.ops.httpPort }}

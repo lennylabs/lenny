@@ -244,7 +244,7 @@ func TestEventWebhookRebindingDeliveryMarkedFailed_spec_25_5(t *testing.T) {
 		}},
 		Subscriptions: fixedSubs{{
 			ID: "sub-rebind", CallbackURL: callback, Secret: []byte("whsec"),
-			Types: []string{"dev.lenny.alert_fired"},
+			Types: []string{"dev.lenny.alert_fired"}, TenantFilter: "*",
 		}},
 		Transport:    transport,
 		Recorder:     rec,

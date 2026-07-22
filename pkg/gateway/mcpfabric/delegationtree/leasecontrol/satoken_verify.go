@@ -55,6 +55,17 @@ type TokenReviewVerifier struct {
 // reaching the apiserver, an unauthenticated verdict, or an audience that
 // the apiserver did not grant all reject the call.
 func (v TokenReviewVerifier) Verify(ctx context.Context, token, audience string) error {
+	_, err := v.VerifyUser(ctx, token, audience)
+	return err
+}
+
+// VerifyUser performs the same fail-closed TokenReview as Verify and returns
+// the ServiceAccount username the apiserver authenticated the token as
+// (`system:serviceaccount:<namespace>:<name>`). A caller that authorizes a
+// specific service account, rather than only proving the token is authentic
+// for this deployment, needs that username; Verify is the outcome-only form.
+// spec: §10.2 line 227.
+func (v TokenReviewVerifier) VerifyUser(ctx context.Context, token, audience string) (string, error) {
 	review := &authnv1.TokenReview{
 		Spec: authnv1.TokenReviewSpec{
 			Token:     token,
@@ -63,13 +74,13 @@ func (v TokenReviewVerifier) Verify(ctx context.Context, token, audience string)
 	}
 	res, err := v.Reviews.Create(ctx, review, metav1.CreateOptions{})
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrSATokenReviewFailed, err)
+		return "", fmt.Errorf("%w: %v", ErrSATokenReviewFailed, err)
 	}
 	if !res.Status.Authenticated {
 		if msg := res.Status.Error; msg != "" {
-			return fmt.Errorf("%w: %s", ErrSATokenUnauthenticated, msg)
+			return "", fmt.Errorf("%w: %s", ErrSATokenUnauthenticated, msg)
 		}
-		return ErrSATokenUnauthenticated
+		return "", ErrSATokenUnauthenticated
 	}
 	// TokenReview returns the granted audiences: the intersection of the
 	// requested set and the audiences the token was actually minted for. A
@@ -78,10 +89,10 @@ func (v TokenReviewVerifier) Verify(ctx context.Context, token, audience string)
 	// deployment's audience, so the membership check below is load-bearing.
 	for _, granted := range res.Status.Audiences {
 		if granted == audience {
-			return nil
+			return res.Status.User.Username, nil
 		}
 	}
-	return ErrSATokenAudienceMismatch
+	return "", ErrSATokenAudienceMismatch
 }
 
 const (

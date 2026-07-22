@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
+	opsevents "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 )
@@ -201,8 +202,15 @@ func (s *Server) handleRotateEventSubscriptionSecret(w http.ResponseWriter, r *h
 }
 
 // handleListEventSubscriptionDeliveries implements
-// GET /v1/admin/event-subscriptions/{id}/deliveries. spec: §25.5 line
-// 2569.
+// GET /v1/admin/event-subscriptions/{id}/deliveries. The endpoint is
+// keyset-paginated with the canonical §25.2 envelope: it reads ?cursor=
+// (an opaque continuation token) alongside ?limit= (default 100, max
+// 1000, clamped by the service), returns the page newest-first, and
+// assembles the §25.2 pagination envelope from the store's metadata. The
+// envelope is built here from the events.Pagination type so the
+// eventsubscription package needs no reference to pkg/ops/events, which
+// already imports it. spec: §25.5 (deliveries keyset pagination), §25.2
+// (canonical pagination envelope).
 func (s *Server) handleListEventSubscriptionDeliveries(w http.ResponseWriter, r *http.Request) {
 	limit := 0
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -210,10 +218,22 @@ func (s *Server) handleListEventSubscriptionDeliveries(w http.ResponseWriter, r 
 			limit = n
 		}
 	}
-	deliveries, err := s.eventSubscriptions.ListDeliveries(r.Context(), r.PathValue("id"), limit, subscriptionCaller(r))
+	cursor := r.URL.Query().Get("cursor")
+	deliveries, page, err := s.eventSubscriptions.ListDeliveries(r.Context(), r.PathValue("id"), cursor, limit, subscriptionCaller(r))
 	if err != nil {
 		writeEventSubscriptionError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"deliveries": deliveries})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deliveries": deliveries,
+		"pagination": opsevents.Pagination{
+			Cursor:                page.Cursor,
+			HasMore:               page.HasMore,
+			CursorKind:            page.CursorKind,
+			GapDetected:           page.GapDetected,
+			GapReason:             page.GapReason,
+			OldestAvailableCursor: page.OldestAvailableCursor,
+			SuggestedAction:       page.SuggestedAction,
+		},
+	})
 }

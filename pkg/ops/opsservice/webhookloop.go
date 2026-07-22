@@ -23,6 +23,11 @@ type WebhookEvent struct {
 	ID string
 	// Type is the CloudEvents type attribute (e.g. dev.lenny.alert_fired).
 	Type string
+	// TenantID is the lennytenantid CloudEvents extension: the tenant the
+	// event is labeled with. An empty value denotes a platform-scoped
+	// event (no tenant label), which only a tenantFilter: "*" subscription
+	// receives. spec: 25.5
+	TenantID string
 	// Body is the serialized CloudEvents JSON record posted to the
 	// callback URL.
 	Body []byte
@@ -40,6 +45,11 @@ type WebhookSubscription struct {
 	// Types, when non-empty, restricts delivery to events whose type is
 	// in the set. An empty set matches every event type.
 	Types []string
+	// TenantFilter is the §25.5 tenant-isolation gate. The wildcard "*"
+	// matches every event, including platform-scoped (no-label) events; a
+	// concrete tenant id matches only events labeled with that tenant.
+	// spec: 25.5
+	TenantFilter string
 	// Generation is the §25.5 line 2751 per-subscription invalidation
 	// counter. The worker re-checks it against the cache immediately
 	// before each delivery so a subscription deleted or updated since the
@@ -59,6 +69,24 @@ func (s WebhookSubscription) matches(eventType string) bool {
 		}
 	}
 	return false
+}
+
+// matchesTenant reports whether the subscription's tenantFilter admits an
+// event carrying tenantID. A platform-scoped event (empty tenantID, no
+// tenant label) is matched only by the wildcard filter; a labeled event
+// is matched by the wildcard filter or by a filter equal to the event's
+// tenant. Any other filter, including an empty one, fails closed on the
+// tenant-isolation boundary. spec: 25.5 — event delivery filters each
+// event against the subscription's tenantFilter; platform-scoped events
+// reach only tenantFilter: "*" subscriptions.
+func (s WebhookSubscription) matchesTenant(tenantID string) bool {
+	if s.TenantFilter == eventsubscription.TenantFilterAll {
+		return true
+	}
+	if tenantID == "" {
+		return false
+	}
+	return s.TenantFilter == tenantID
 }
 
 // EventSource yields the operational events the §25.5 worker delivers.
@@ -226,7 +254,7 @@ func (w *WebhookWorker) Tick(ctx context.Context) error {
 	var pending int64
 	for _, ev := range events {
 		for _, sub := range subs {
-			if sub.matches(ev.Type) {
+			if sub.matches(ev.Type) && sub.matchesTenant(ev.TenantID) {
 				pending++
 			}
 		}
@@ -235,7 +263,12 @@ func (w *WebhookWorker) Tick(ctx context.Context) error {
 
 	for _, ev := range events {
 		for _, sub := range subs {
-			if !sub.matches(ev.Type) {
+			// §25.5: an event is delivered only when the subscription's
+			// type filter and its tenantFilter both admit it. The tenant
+			// predicate runs next to the type predicate so a cross-tenant
+			// or platform-scoped event never reaches a tenant-scoped
+			// subscription.
+			if !sub.matches(ev.Type) || !sub.matchesTenant(ev.TenantID) {
 				continue
 			}
 			if ctx.Err() != nil {

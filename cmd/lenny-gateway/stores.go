@@ -91,6 +91,7 @@ import (
 	capoverridepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
@@ -1849,6 +1850,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	clusterBurst := f.clusterBurst
 	clusterQPS := f.clusterQPS
 	saTokenAudience := f.saTokenAudience
+	adminSATokenAudience := f.adminSATokenAudience
 	slotCounterPostgresFallbackMaxSeconds := f.slotCounterPostgresFallbackMaxSeconds
 
 	// The stores, Redis client, executor, credential assigner, and pool
@@ -1914,6 +1916,12 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		// is no in-cluster client or no configured audience, in which case
 		// the SA-token interceptor degrades to the audience-only decode.
 		saTokenVerifier leasecontrol.TokenVerifier
+		// saUserVerifier is the same TokenReview verifier in the form the
+		// §25.4 admin-API service-identity resolver needs: it reports the
+		// ServiceAccount username the apiserver authenticated, so the resolver
+		// can grant a role to a named account rather than to any authentic
+		// token.
+		saUserVerifier serviceidentity.SATokenAuthenticator
 	)
 	if *agentNamespace != "" {
 		cfg, err := ctrl.GetConfig()
@@ -1960,13 +1968,20 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 		// deployment-specific audience at the same time. Built from a
 		// clientset here where the rest config is in scope; wired onto the
 		// §8.6 GatewayControl listener below. F-10.2.10.
-		if *saTokenAudience != "" {
+		// The same verifier backs the §25.4 admin-API service-identity
+		// resolver, whose audience is configured separately from the §10.3
+		// GatewayControl audience, so it is built whenever either is set.
+		if *saTokenAudience != "" || *adminSATokenAudience != "" {
 			cs, err := kubernetes.NewForConfig(cfg)
 			if err != nil {
 				log.Fatalf("lenny-gateway: §10.2 build TokenReview client: %v", err)
 			}
-			saTokenVerifier = leasecontrol.TokenReviewVerifier{
+			verifier := leasecontrol.TokenReviewVerifier{
 				Reviews: cs.AuthenticationV1().TokenReviews(),
+			}
+			saUserVerifier = verifier
+			if *saTokenAudience != "" {
+				saTokenVerifier = verifier
 			}
 		}
 		dialOpt, err := adapter.TLSClientOption(*adapterTLSCert, *adapterTLSKey, *adapterCA)
@@ -2179,6 +2194,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	w.clusterClient = clusterClient
 	w.kubeHealthzProbe = kubeHealthzProbe
 	w.saTokenVerifier = saTokenVerifier
+	w.saUserVerifier = saUserVerifier
 	w.sessionSealer = sessionSealer
 }
 
