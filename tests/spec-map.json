@@ -3843,7 +3843,9 @@
         "tests/tier4_integration/coding_agent_gitclone_credential_helper_test.go::TestCodingAgentGitCloneCredentialHelperNeverExposesRawToken",
         "tests/tier4_integration/coding_agent_credentials_test.go::TestCodingAgentLLMInferenceScopeInjectedByProxyNeverHandedToPod",
         "tests/tier4_integration/coding_agent_credentials_test.go::TestCodingAgentPublicRepoWorkspacePlanIssuesNoVCSLease",
-        "pkg/sandbox/egress/profile_test.go::TestUnrestrictedEgressProfileAcceptedForCodingAgentOptIn_spec_26_2"
+        "pkg/sandbox/egress/profile_test.go::TestUnrestrictedEgressProfileAcceptedForCodingAgentOptIn_spec_26_2",
+        "tests/tier4_integration/setup_command_policy_test.go::TestSessionCreateEnforcesCodingAgentSetupCommandAllowlist",
+        "tests/tier4_integration/setup_command_policy_test.go::TestAdapterRunSetupOverGRPCNeutersShellStringWhenShellFalse"
       ],
       "packages": [
         "cmd/runtimes",
