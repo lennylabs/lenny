@@ -600,3 +600,174 @@ func linkTypeScriptSDKForBuild(t *testing.T, scaffoldDir, sdkRoot string) {
 		t.Fatalf("symlink node_modules/@types: %v", err)
 	}
 }
+
+// spec: 15.7, 24.18 (runtime SDK quick-start Basic-level compliance)
+// diagnosis: TESTING.md §13.7 item 1 ("Adapter binary protocol
+// compliance") requires that the SDK skeleton emitted by `lenny runtime
+// init --language <lang> --template minimal` — not just the
+// hand-curated sdks/runtime/*/examples/echo sources the tests above
+// build — passes lenny-compliance --level basic. §15.7 makes the
+// stdin/stdout JSON Lines binary protocol "the entire Basic-level wire
+// surface" and every integration level's foundation, and the SDKs
+// degrade gracefully to it when the manifest advertises no platform MCP
+// server, so a scaffolded minimal skeleton (Standard level, no manifest
+// under lenny-compliance) must still clear every Basic-level check. A
+// failure here means the runtimescaffold templates have drifted from
+// what the SDKs' own Basic-level frame loop actually requires, a drift
+// the hand-written example runtimes would not catch.
+func TestRuntimeSDKQuickStartScaffoldPassesBasicCompliance(t *testing.T) {
+	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
+
+	t.Run("go", func(t *testing.T) {
+		if _, err := exec.LookPath("go"); err != nil {
+			t.Skip("go toolchain not on PATH")
+		}
+		dir := t.TempDir()
+		var out, errb bytes.Buffer
+		code := runtimescaffold.Generate(runtimescaffold.Spec{
+			Name:     "quickstart-basic",
+			Language: runtimescaffold.LangGo,
+			Template: runtimescaffold.TemplateMinimal,
+		}, dir, &out, &errb)
+		if code != runtimescaffold.ExitOK {
+			t.Fatalf("generate: exit %d, stderr=%q", code, errb.String())
+		}
+		root := filepath.Join(dir, "quickstart-basic")
+
+		// The scaffold's go.mod requires the published (unpublished, in
+		// this repo's phase) github.com/lennylabs/runtime-sdk-go module;
+		// replace it with a temp module built from the in-repo SDK source
+		// so the build needs no network.
+		sdkMod := buildScaffoldGoSDKReplacement(t)
+		goMod := filepath.Join(root, "go.mod")
+		raw, err := os.ReadFile(goMod)
+		if err != nil {
+			t.Fatalf("read %s: %v", goMod, err)
+		}
+		raw = append(raw, []byte("\nreplace github.com/lennylabs/runtime-sdk-go => "+sdkMod+"\n")...)
+		if err := os.WriteFile(goMod, raw, 0o644); err != nil {
+			t.Fatalf("write %s: %v", goMod, err)
+		}
+
+		runtimeBin := filepath.Join(t.TempDir(), "quickstart-basic")
+		build := exec.Command("go", "build", "-o", runtimeBin, ".")
+		build.Dir = root
+		// Resolve the module graph offline; the replacement module is
+		// local and the scaffold's go.mod carries no go.sum.
+		build.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+		if combined, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("go build the scaffolded runtime: %v\n%s", err, combined)
+		}
+
+		report := runCompliance(t, compliance, runtimeBin, "basic")
+		assertAllPassed(t, report)
+	})
+
+	t.Run("python", func(t *testing.T) {
+		python := requireTool(t, "python3")
+		dir := t.TempDir()
+		var out, errb bytes.Buffer
+		code := runtimescaffold.Generate(runtimescaffold.Spec{
+			Name:     "quickstart-basic",
+			Language: runtimescaffold.LangPython,
+			Template: runtimescaffold.TemplateMinimal,
+		}, dir, &out, &errb)
+		if code != runtimescaffold.ExitOK {
+			t.Fatalf("generate: exit %d, stderr=%q", code, errb.String())
+		}
+		entry := filepath.Join(dir, "quickstart-basic", "main.py")
+
+		// The scaffold's requirements.txt names the published lenny-runtime
+		// PyPI package; point PYTHONPATH at the in-repo SDK package instead
+		// of installing it, mirroring buildPythonRuntime above.
+		script := "#!/bin/sh\n" +
+			"export PYTHONPATH=" + shellQuote(pythonRuntimeRoot(t)) + "\n" +
+			"exec " + shellQuote(python) + " " + shellQuote(entry) + " \"$@\"\n"
+		wrapper := writeWrapper(t, "py-quickstart-basic", script)
+
+		report := runCompliance(t, compliance, wrapper, "basic")
+		assertAllPassed(t, report)
+	})
+
+	t.Run("typescript", func(t *testing.T) {
+		node := requireTool(t, "node")
+		npm := requireTool(t, "npm")
+
+		// Builds the in-repo SDK's own dist/ and devDependencies
+		// (typescript, @types/node) so tsc can resolve
+		// "@lennylabs/runtime-sdk" against real, current type
+		// declarations, the same precondition
+		// TestRuntimeSDKScaffoldTypeScriptCellsBuild relies on.
+		buildTypeScriptRuntime(t, node, npm, "echo")
+		sdkRoot := typeScriptRuntimeRoot(t)
+		tsc := filepath.Join(sdkRoot, "node_modules", "typescript", "bin", "tsc")
+		if _, err := os.Stat(tsc); err != nil {
+			t.Fatalf("typescript compiler not found at %s after building the SDK: %v", tsc, err)
+		}
+
+		dir := t.TempDir()
+		var out, errb bytes.Buffer
+		code := runtimescaffold.Generate(runtimescaffold.Spec{
+			Name:     "quickstart-basic",
+			Language: runtimescaffold.LangTypeScript,
+			Template: runtimescaffold.TemplateMinimal,
+		}, dir, &out, &errb)
+		if code != runtimescaffold.ExitOK {
+			t.Fatalf("generate: exit %d, stderr=%q", code, errb.String())
+		}
+		root := filepath.Join(dir, "quickstart-basic")
+		linkTypeScriptSDKForBuild(t, root, sdkRoot)
+
+		build := exec.Command(node, tsc, "-p", "tsconfig.json")
+		build.Dir = root
+		if combined, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("tsc -p tsconfig.json: %v\n%s", err, combined)
+		}
+		entry := filepath.Join(root, "dist", "main.js")
+		if _, err := os.Stat(entry); err != nil {
+			t.Fatalf("tsc reported success but did not emit %s: %v", entry, err)
+		}
+
+		script := "#!/bin/sh\n" +
+			"exec " + shellQuote(node) + " " + shellQuote(entry) + " \"$@\"\n"
+		wrapper := writeWrapper(t, "ts-quickstart-basic", script)
+
+		report := runCompliance(t, compliance, wrapper, "basic")
+		assertAllPassed(t, report)
+	})
+}
+
+// buildScaffoldGoSDKReplacement copies the in-repo Go runtime-author SDK
+// package into a temp directory declaring the published module path
+// (github.com/lennylabs/runtime-sdk-go), so a scaffolded Go skeleton's
+// go.mod can `replace` the unpublished module with it for an offline
+// build. This mirrors the buildSDKReplacementModule test helper in
+// cmd/lenny-ctl/runtimescaffold; it is duplicated here rather than
+// imported because that helper is unexported and lives in another
+// package's _test.go file.
+func buildScaffoldGoSDKReplacement(t *testing.T) string {
+	t.Helper()
+	srcDir := filepath.Join(runtimeRepoRoot(t), "sdks", "runtime", "go", "runtime")
+	entries, err := os.ReadDir(srcDir)
+	if err != nil {
+		t.Fatalf("read SDK source %s: %v", srcDir, err)
+	}
+	dst := t.TempDir()
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(srcDir, e.Name()))
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		if err := os.WriteFile(filepath.Join(dst, e.Name()), raw, 0o644); err != nil {
+			t.Fatalf("write %s: %v", e.Name(), err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dst, "go.mod"),
+		[]byte("module github.com/lennylabs/runtime-sdk-go\n\ngo 1.25\n"), 0o644); err != nil {
+		t.Fatalf("write SDK go.mod: %v", err)
+	}
+	return dst
+}
