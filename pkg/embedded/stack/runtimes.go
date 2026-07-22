@@ -112,6 +112,21 @@ func installReferenceRuntimes(ctx context.Context, gatewayURL, echoImageRef stri
 	return nil
 }
 
+// InstallReferenceRuntimes runs the exact §17.4 local-profile lenny up
+// install-and-auto-grant sequence against the gateway at gatewayURL: it
+// registers the §26 reference-runtime catalog plus the §15.4.4 echo
+// conformance exemplar as platform-global records and grants the default
+// tenant access to each, with no runnable image resolved (echoImageRef is
+// empty, matching a no-substrate caller). It is exported so a tier-4
+// integration test can exercise this exact codepath — the one
+// installRuntimesFn wires into the real bring-up — against a real gateway
+// and Postgres; the bring-up itself keeps calling the unexported
+// installReferenceRuntimes through installRuntimesFn. spec: §26.1
+// (auto-grant), §17.4 (Embedded Mode seed).
+func InstallReferenceRuntimes(ctx context.Context, gatewayURL string, out io.Writer) error {
+	return installReferenceRuntimes(ctx, gatewayURL, "", out)
+}
+
 // grantedRuntimeNames returns the runtime names lenny up auto-grants the
 // default tenant access to: the §26 reference runtimes in catalog order
 // followed by the §15.4.4 echo runtime. echo is appended explicitly
