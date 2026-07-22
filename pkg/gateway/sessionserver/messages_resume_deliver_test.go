@@ -12,6 +12,7 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/codes"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
@@ -20,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -186,6 +188,55 @@ func TestResumeAndDeliverResumeFailureBuffersQueuedRowUnchanged(t *testing.T) {
 	}
 	if n, _ := inbox.Len(context.Background(), "acme", "s-resume-fail"); n != 1 {
 		t.Errorf("inbox depth = %d, want 1 (the message must be buffered, not dropped)", n)
+	}
+}
+
+// TestResumeAndDeliverResumeFailureRecordsTransientCategory pins the §16.3
+// error-taxonomy bucket the coordinator stamps on the session.prompt span when
+// resumeHeldPod fails. The taxonomy defines only TRANSIENT, PERMANENT, POLICY,
+// and UPSTREAM; a resume fault is a store-write failure (or a lost
+// terminal-transition race the suspended-guard rejects) that the `queued`
+// fallback recovers from, so it is TRANSIENT, matching the create-path
+// convention for a store-write failure. This locks the choice so the category
+// cannot silently drift to UPSTREAM (the post-resume executor.Send bucket) or a
+// non-existent constant.
+//
+// spec: §16.3 (error taxonomy — TRANSIENT for a recoverable store-write fault),
+// 7.2 (path 6 line 330 — the message is not silently dropped)
+//
+// diagnosis: a failure means the resume-fault span was tagged with the wrong
+// §16.3 category — an UPSTREAM/pod fault or a non-taxonomy value — instead of
+// TRANSIENT, so operators would misclassify a recoverable coordinator-internal
+// resume fault as an external dependency failure.
+func TestResumeAndDeliverResumeFailureRecordsTransientCategory(t *testing.T) {
+	rec, restore := installSpanRecorder(t)
+	defer restore()
+
+	inner := memstore.New()
+	seedSuspendedSession(t, inner, "s-resume-cat", "pod-4")
+	store := &updateFailStore{Store: inner, err: errors.New("store update failed")}
+	srv, _ := inboxServer(t, store, executor.NewEchoExecutor())
+
+	rr := sendMessageRequest(t, srv.Handler(), "s-resume-cat", immediateMessage("wake up"))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status %d, body=%s (a resume failure must fail closed to a 200 queued receipt)", rr.Code, rr.Body.String())
+	}
+
+	span := findSpan(rec.Ended(), "session.prompt")
+	if span == nil {
+		t.Fatalf("session.prompt span not recorded on the resume-failure path")
+	}
+	if span.Status().Code != codes.Error {
+		t.Errorf("span status = %v, want codes.Error on a resume failure", span.Status().Code)
+	}
+	var got string
+	for _, kv := range span.Attributes() {
+		if string(kv.Key) == tracing.AttrErrorCategory {
+			got = kv.Value.AsString()
+		}
+	}
+	if got != string(tracing.CategoryTransient) {
+		t.Errorf("error.category = %q, want %q (a recoverable coordinator-internal resume fault is TRANSIENT)", got, tracing.CategoryTransient)
 	}
 }
 

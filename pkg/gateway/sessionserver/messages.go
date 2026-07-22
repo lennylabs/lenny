@@ -576,10 +576,18 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 			// message. bufferIncomingMessages yields the `queued` receipt
 			// the ActionBufferInbox case produces (line 330: the message is
 			// not silently dropped).
-			// A resume fault (store error or the misroute/terminal-race
-			// guard rejection) is a coordinator-internal failure the §7.2
-			// path-6 `queued` fallback recovers from, so it is transient on
-			// the span rather than an upstream/pod fault.
+			//
+			// spec: §16.3 error taxonomy — the taxonomy defines only
+			// TRANSIENT, PERMANENT, POLICY, and UPSTREAM. A resume fault is
+			// either the resumeHeldPod store.Update write failing or its
+			// suspended-guard rejecting a lost terminal-transition race;
+			// neither contacted the pod/executor (not UPSTREAM) nor was
+			// denied by the policy engine (not POLICY). The `queued`
+			// fallback preserves the message and the inbox drains on the
+			// next ready_for_input, so the fault is recoverable and TRANSIENT
+			// is the correct bucket, matching the create-path convention that
+			// tags a store-write failure TRANSIENT (create.go persist-failure
+			// path).
 			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
 			if berr != nil {
