@@ -174,16 +174,21 @@ type SandboxTemplateSpec struct {
 	// +optional
 	MaxTerminationGracePeriodSeconds *int64 `json:"maxTerminationGracePeriodSeconds,omitempty"`
 
-	// TerminationGracePeriodSeconds is the §5.2 deployer-set pod
-	// terminationGracePeriodSeconds for this pool. spec: §5.2 line 516 —
-	// for service-mode pools the deployer sets it to cover the per-slot
-	// checkpoint budget fanned across maxConcurrent slots
-	// (`maxConcurrent × max_tiered_checkpoint_cap
-	// + checkpointBarrierAckTimeoutSeconds + 30`), while a session-mode
-	// pool uses a multiplier of 1; §6.4 line 67 requires at least
+	// TerminationGracePeriodSeconds is the §5.2 deployer-set
+	// terminationGracePeriodSeconds for this pool's agent pods. The
+	// pool-config webhook vets it against the agent-pod grace floor
+	// `maxConcurrent × max_tiered_checkpoint_cap + 30`: the per-slot
+	// checkpoint cap summed across all slots plus the minimum
+	// stream-drain budget, where a session-mode pool uses a multiplier
+	// of 1. The floor omits checkpointBarrierAckTimeoutSeconds, which is
+	// the gateway's wall-clock wait for CheckpointBarrierAck and belongs
+	// to the gateway pod's grace period rather than the agent-pod floor.
+	// The webhook evaluates the floor against the effective grace
+	// period: this declared value when set, otherwise the §4.6.1 120s
+	// agent default. §6.4 additionally requires at least
 	// `LENNY_DEMOTE_TIMEOUT_SECONDS + 5s`. When set, it replaces the
 	// §4.6.1 120s default base; MaxTerminationGracePeriodSeconds still
-	// clamps it down.
+	// clamps it down. spec: §5.2, §4.6.1.
 	// +optional
 	TerminationGracePeriodSeconds *int64 `json:"terminationGracePeriodSeconds,omitempty"`
 
@@ -201,13 +206,12 @@ type SandboxTemplateSpec struct {
 
 	// CheckpointBarrierAckTimeoutSeconds is the §10.1 wall-clock deadline
 	// the gateway waits for `CheckpointBarrierAck` from every coordinated
-	// pod during a rolling drain. The pool-config webhook adds it to the
-	// per-pod `terminationGracePeriodSeconds` floor (fanned across
-	// maxConcurrent slots for a service-mode pool, multiplier of 1 for a
-	// session-mode pool) and additionally enforces the §10.1 line 124
-	// BarrierAck-floor rule
-	// (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`).
-	// Unset defaults to the §10.1 line 122 90s.
+	// pod during a rolling drain. It sizes the gateway pod's grace period
+	// rather than the agent-pod TerminationGracePeriodSeconds floor, which
+	// the agent pod's own preStop drain does not incur. The pool-config
+	// webhook enforces the independent §10.1 BarrierAck-floor rule
+	// (`checkpointBarrierAckTimeoutSeconds ≥ max_tiered_checkpoint_cap`)
+	// on this field. Unset defaults to the §10.1 90s. spec: §10.1.
 	// +optional
 	CheckpointBarrierAckTimeoutSeconds *int64 `json:"checkpointBarrierAckTimeoutSeconds,omitempty"`
 

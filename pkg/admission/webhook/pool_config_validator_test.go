@@ -5,6 +5,7 @@ package webhook_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -184,32 +185,80 @@ func TestPoolConfigValidatorBudgetViolationPrecedesAuthz(t *testing.T) {
 	}
 }
 
-// spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — a
+// testMinStreamDrainSeconds mirrors the unexported minStreamDrainSeconds
+// constant decideTerminationBudget adds to the per-slot checkpoint budget,
+// so the expected floors in this external test package derive from the
+// same arithmetic the validator computes rather than from pre-baked
+// literals. spec: §5.2 (stream-drain budget).
+const testMinStreamDrainSeconds = 30
+
+// graceFloor mirrors the BarrierAck-free agent-pod floor the validator
+// enforces: maxConcurrent × max_tiered_checkpoint_cap + minStreamDrainSeconds.
+// The checkpointBarrierAckTimeoutSeconds term is deliberately absent; it
+// belongs to the gateway pod's grace period, not the agent floor.
+// spec: §5.2, §10.1.
+func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
+	return int64(maxConcurrent)*pcv.MaxTieredCheckpointCapSeconds(workspaceBytes) + testMinStreamDrainSeconds
+}
+
+// spec: §5.2 line 542 (spec/05_runtime-registry-and-pool-model.md) — a
 // concurrent-workspace pool whose computed terminationGracePeriodSeconds
 // floor exceeds 600s is admitted with an advisory warning on the
-// AdmissionResponse, not rejected.
+// AdmissionResponse, not rejected. The floor omits the BarrierAck term,
+// so a maxConcurrent=8 default-tier pool floors at 8×90 + 30 = 750s; the
+// pool must declare a grace period at or above that floor to admit.
 func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *testing.T) {
+	floor := graceFloor(8, 0) // 8*90 + 30 = 750s > 600s
+	grace := floor
+	tpl := lennyv1.SandboxTemplate{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
+		Spec: lennyv1.SandboxTemplateSpec{
+			RuntimeRef:                    "r",
+			ExecutionMode:                 "service",
+			MaxConcurrent:                 8,
+			TerminationGracePeriodSeconds: &grace,
+		},
+	}
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	if !resp.Allowed {
+		t.Fatalf("an above-600s floor with a matching grace must be admitted with a warning: %+v", resp.Result)
+	}
+	if len(resp.Warnings) != 1 {
+		t.Fatalf("want one warning, got %v", resp.Warnings)
+	}
+	if !strings.Contains(resp.Warnings[0], fmt.Sprintf("%ds", floor)) {
+		t.Errorf("warning %q does not name the %ds floor", resp.Warnings[0], floor)
+	}
+}
+
+// spec: §5.2 line 542 / §10.1 line 119 — an omitted
+// terminationGracePeriodSeconds is evaluated against the §4.6.1 120s
+// agent default; a multi-slot pool whose floor exceeds that default is
+// rejected fail-closed rather than admitted through the old nil-bypass.
+func TestPoolConfigValidatorRejectsOmittedGraceBelowFloor_spec_5_2_516(t *testing.T) {
+	// maxConcurrent=2, default tier → floor 2*90 + 30 = 210s > the 120s
+	// §4.6.1 default the podspec renders for an omitted field.
 	tpl := lennyv1.SandboxTemplate{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 		Spec: lennyv1.SandboxTemplateSpec{
 			RuntimeRef:    "r",
 			ExecutionMode: "service",
-			MaxConcurrent: 8, // 8*90 + 90 + 30 = 840s > 600s
+			MaxConcurrent: 2,
 		},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
-	if !resp.Allowed {
-		t.Fatalf("an above-600s floor must be admitted with a warning: %+v", resp.Result)
+	if resp.Allowed {
+		t.Fatalf("an omitted grace whose 120s default under-provisions must be rejected: floor=%ds", graceFloor(2, 0))
 	}
-	if len(resp.Warnings) != 1 {
-		t.Fatalf("want one warning, got %v", resp.Warnings)
+	if resp.Result == nil || resp.Result.Code != 422 {
+		t.Fatalf("rejection code = %v, want 422", resp.Result)
 	}
-	if !strings.Contains(resp.Warnings[0], "840s") {
-		t.Errorf("warning %q does not name the floor", resp.Warnings[0])
+	if !strings.Contains(resp.Result.Message, pcv.ReasonInvalidPoolConfiguration) {
+		t.Errorf("message = %q, want %s", resp.Result.Message, pcv.ReasonInvalidPoolConfiguration)
 	}
 }
 
-// spec: §5.2 line 516 — a deployer who sets
+// spec: §5.2 line 542 — a deployer who sets
 // maxTerminationGracePeriodSeconds gets a hard rejection when the floor
 // breaches the ceiling.
 func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t *testing.T) {
@@ -250,7 +299,8 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 
 	t.Run("budget rejection increments the counter with the pool label", func(t *testing.T) {
 		spy := &budgetCounterSpy{}
-		// session-mode pool, default 90s tier, grace 1s → floor 210s > 1s.
+		// session-mode pool, default 90s tier, grace 1s → floor
+		// 1 × 90 + 30 = 120s > 1s.
 		tpl := lennyv1.SandboxTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 			Spec: lennyv1.SandboxTemplateSpec{
@@ -288,11 +338,13 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 
 	t.Run("admitted template does not increment the counter", func(t *testing.T) {
 		spy := &budgetCounterSpy{}
+		// Single-slot pool at the reconciled floor 1×90 + 30 = 120s,
+		// derived from graceFloor so it tracks the timing constants.
 		tpl := lennyv1.SandboxTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 			Spec: lennyv1.SandboxTemplateSpec{
 				RuntimeRef:                    "r",
-				TerminationGracePeriodSeconds: int64p(210),
+				TerminationGracePeriodSeconds: int64p(graceFloor(1, 0)),
 			},
 		}
 		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))

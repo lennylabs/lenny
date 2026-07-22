@@ -16,10 +16,12 @@ import (
 
 // PoolConfigMetricsSink receives the §16.1 line 129
 // lenny_pool_termination_budget_exceeded_total counter, labeled by pool,
-// each time the webhook rejects a SandboxTemplate write on the §10.1
-// line 119 tiered-cap + BarrierAck termination-budget inequality. The
-// lenny-webhook binary supplies a CounterVec-backed implementation; a nil
-// sink disables emission without changing the admission decision.
+// each time the webhook rejects a SandboxTemplate write on the §5.2 /
+// §10.1 line 119 agent-pod grace floor (maxConcurrentSessions ×
+// max_tiered_checkpoint_cap + 30 against the effective
+// terminationGracePeriodSeconds). The lenny-webhook binary supplies a
+// CounterVec-backed implementation; a nil sink disables emission without
+// changing the admission decision.
 type PoolConfigMetricsSink interface {
 	IncPoolTerminationBudgetExceeded(pool string)
 }
@@ -33,14 +35,14 @@ type PoolConfigMetricsSink interface {
 //
 // The Decider dispatches on the admitted resource's Kind: a
 // SandboxWarmPool is validated against the warm-count budget rules and
-// a SandboxTemplate against the §5.2 execution-mode rules and the §10.1
-// termination-budget rule. A rule-set-1 violation is rejected with HTTP
-// 422 and the INVALID_POOL_CONFIGURATION reason code the
+// a SandboxTemplate against the §5.2 execution-mode rules and the §5.2 /
+// §10.1 agent-pod grace floor. A rule-set-1 violation is rejected with
+// HTTP 422 and the INVALID_POOL_CONFIGURATION reason code the
 // PoolScalingController keys its admission-denial backoff on.
 //
 // metrics, when non-nil, receives the §16.1 line 129 budget-rejection
-// counter for every SandboxTemplate write rejected on the §10.1 line 119
-// termination-budget inequality.
+// counter for every SandboxTemplate write rejected on the §5.2 / §10.1
+// line 119 agent-pod grace floor.
 //
 // A decode failure or an unexpected Kind rejects, consistent with the
 // webhook's fail-closed deployment: a pool configuration the webhook
@@ -65,8 +67,8 @@ func PoolConfigValidator(metrics PoolConfigMetricsSink) Decider {
 				return Deny(http.StatusBadRequest, "decode SandboxTemplate object: "+err.Error())
 			}
 			ruleSet1 = pcv.DecideTemplate(&tpl)
-			// spec: §16.1 line 129 — count the §10.1 line 119
-			// termination-budget rejections, labeled by pool. Only the
+			// spec: §16.1 line 129 — count the §5.2 / §10.1 line 119
+			// agent-pod grace floor rejections, labeled by pool. Only the
 			// SandboxTemplate carries the budget fields, so only this branch
 			// can produce a BudgetExceeded decision.
 			if metrics != nil && !ruleSet1.Allowed && ruleSet1.BudgetExceeded {
@@ -86,7 +88,7 @@ func PoolConfigValidator(metrics PoolConfigMetricsSink) Decider {
 		// (spec/04_system-components.md §4.6.3 line 601). userInfo is
 		// populated by the API server from the authenticated principal and
 		// cannot be spoofed by the caller. Rule-set-1 warnings (e.g. the
-		// §5.2 line 516 terminationGracePeriodSeconds floor advisory) are
+		// §5.2 line 542 terminationGracePeriodSeconds floor advisory) are
 		// preserved on the rule-set-2 decision so they surface even when
 		// rule set 2 admits.
 		decision := pcv.DecideAuthorization(req.UserInfo.Username)
@@ -101,7 +103,7 @@ func PoolConfigValidator(metrics PoolConfigMetricsSink) Decider {
 // AdmissionResponse. Advisory warnings are propagated onto
 // AdmissionResponse.Warnings so the API server relays them to the client
 // without rejecting the request (spec/05_runtime-registry-and-pool-model.md
-// §5.2 line 516 — `terminationGracePeriodSeconds` floor above 600s emits
+// §5.2 line 542 — `terminationGracePeriodSeconds` floor above 600s emits
 // a warning, not a rejection).
 // poolLabel resolves the `pool` metric label for a rejected
 // SandboxTemplate. The object's metadata.name is authoritative; on a
