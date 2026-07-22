@@ -217,6 +217,9 @@
       "component": ["tests/tier2_component/gateway_subsystems/environment_test.go"],
       "integration": ["tests/tier4_integration/environment_filtering_test.go"]
     },
+    "pkg/embedded/stack": {
+      "unit": ["pkg/embedded/stack/..."]
+    },
     "pkg/api/v1/session": {
       "unit": ["pkg/api/v1/session/..."],
       "component": ["tests/tier2_component/gateway_subsystems/session_orchestrator_test.go"],
