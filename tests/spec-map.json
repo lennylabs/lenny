@@ -3860,7 +3860,8 @@
       "title": "codex",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery",
+        "tests/tier3_contract/codex_dialect_selection/selection_test.go::TestCodexDialectSelectionTransparentToClient"
       ],
       "packages": [
         "cmd/runtimes/codex"
