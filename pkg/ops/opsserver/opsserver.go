@@ -434,7 +434,7 @@ func New(opts Options) *Server {
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
 	// services registered above.
-	s.mcp = mcp.NewServer(s.mcpInvoker())
+	s.mcp = mcp.NewServer(s.mcpInvoker(opsOwnedToolNames(), nil))
 	s.mux.Handle("/mcp/management", s.mcp)
 	s.mux.Handle("/mcp/management/", s.mcp)
 	// §25.4 idempotency sits closest to the mux, inside the auth wrapper,

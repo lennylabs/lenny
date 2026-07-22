@@ -269,6 +269,45 @@ func TestMCPRunbooksListForwardsOptionalFilter_spec_25_12(t *testing.T) {
 	}
 }
 
+// TestMCPManagementGatewayOwnedToolWithoutGatewayReportsUnavailable pins
+// the §25.12 transparent dual-routing branch on the public tools/call
+// surface: a gateway-owned tool (absent from RouteSchemas(), for example
+// admin.create_pool) is proxied to the gateway rather than replayed
+// locally. With no gateway client wired (the local-only dev posture that
+// opsserver.New builds by default), the proxy has no target, so the tool
+// maps to the -32000 ENDPOINT_UNAVAILABLE error and stays listed.
+//
+// This is the corrected outcome. Before the routing branch existed the
+// invoker replayed every tool locally, so admin.create_pool 404'd against
+// the lenny-ops mux and came back as an isError tool result with a nil
+// JSON-RPC error, never reaching this -32000. A pre-fix invoker fails this
+// assertion.
+//
+// diagnosis: a gateway-owned tool that returns a normal result (or a
+// 404-shaped isError) instead of -32000 means the ops-vs-gateway routing
+// branch is not firing, so gateway-owned tools are being replayed against
+// the lenny-ops mux that does not serve them.
+//
+// spec: §25.12 (transparent dual routing; a nil gateway makes a
+// gateway-owned tool report ENDPOINT_UNAVAILABLE).
+func TestMCPManagementGatewayOwnedToolReportsUnavailable_spec_25_12(t *testing.T) {
+	srv := opsserver.New(opsserver.Options{})
+	rec, body := doJSON(t, srv, http.MethodPost, "/mcp/management", nil, map[string]any{
+		"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+		"params": map[string]any{
+			"name":      "admin.create_pool",
+			"arguments": map[string]any{"name": "gvisor-a", "runtime": "gvisor"},
+		},
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (JSON-RPC carries the error in the body)", rec.Code)
+	}
+	rpcErr, _ := body["error"].(map[string]any)
+	if rpcErr == nil || rpcErr["code"].(float64) != -32000 {
+		t.Fatalf("error = %v, want -32000 ENDPOINT_UNAVAILABLE for a gateway-owned tool with no gateway wired; a nil error means the tool was replayed locally instead of routed to the gateway", rpcErr)
+	}
+}
+
 // TestMCPManagementUnavailableEndpointMapsTo32000 confirms a §25.12
 // tools/call against an unconfigured ops endpoint maps the 503 to the
 // -32000 ENDPOINT_UNAVAILABLE error.
