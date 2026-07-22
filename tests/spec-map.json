@@ -3966,7 +3966,8 @@
         "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_test.go::TestMastraRuntimeOptionsSchema",
         "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery",
         "tests/tier4_integration/framework_delegation_test.go::TestLanggraphAndMastraRegisterDelegateTaskOnlyWhenPolicyRefSet",
-        "tests/tier4_integration/framework_runtime_protocols_test.go::TestFrameworkRuntimeQueuedInjectionAcrossProtocols"
+        "tests/tier4_integration/framework_runtime_protocols_test.go::TestFrameworkRuntimeQueuedInjectionAcrossProtocols",
+        "charts/lenny/tests/reference-runtimes_test.yaml"
       ],
       "packages": [
         "cmd/runtimes/mastra"
