@@ -129,9 +129,6 @@ exceptions:
   - section: "25.17"
     reason: non-normative
     justification: End-to-end worked operational example; illustrative narrative.
-  - section: "26"
-    reason: non-normative
-    justification: Reference-runtime catalog intro and conventions; per-runtime behavior is §26.3 through §26.11.
   - section: "26.3"
     reason: deferred
     justification: The claude-code reference runtime is built in Wave 6 (Phase 11).
