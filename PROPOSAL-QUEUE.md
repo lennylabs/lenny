@@ -134,7 +134,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-03 — MCP management tool dispatch, identity/scope forwarding, and capability classification — §25.12/§25.4
-- **status:** claimed:proposal-A@2026-07-22T04:48:12Z
+- **status:** landed:0052 (implemented by proposal-A 2026-07-22; SPEC-1 §25.12 capability-classification clarification applied and verified as its own commit 15176596; green + review-clean at 94.1% changed-line coverage; the reached tiers pass locally — build/vet, tier-1/2 touched packages, tier-3 contract (capability matrix + JWT-scope gate), tier-9 security; tier-4 integration verified green by the build's own verify pass. Closes T-25.12.2/.3/.7/.22 + T-STD.8; T-25.12.11 stays OPEN as now-buildable gateway-outage chaos. Ready for --no-ff integration.)
 - **assigned:** proposal-A
 - **findings:** T-25.12.2, T-25.12.3, T-25.12.7, T-STD.8
 - **root spec gap:** The `/mcp/management` tools/call surface has no routing predicate to split ops-owned vs gateway-proxied tools, no identity/scope forwarding (the JWT `scope` claim and `Authorization` header are dropped on both the internal REST replay and gateway proxy), and no data source for the operability-vs-admin capability classification.
