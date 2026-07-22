@@ -315,7 +315,8 @@ func TestMCPManagementGatewayOwnedToolReportsUnavailable_spec_25_12(t *testing.T
 }
 
 // TestMCPManagementGatewayOwnedToolThreadsGatewayAndBridge pins the
-// §25.12 WIRE assembly the direct-construction invoker units do not reach:
+// §25.12 constructor mount-and-threading assembly the direct-construction
+// invoker units do not reach:
 // that opsserver.New threads Options.Gateway into the MCP invoker and
 // mounts the MCP server behind the scope-bridge on the live /mcp/management
 // route. It drives two invocations through the mounted route on a server
