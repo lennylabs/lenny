@@ -66,6 +66,14 @@ func init() {
 // the single-shot binder and pins the §11.1 concurrency-and-rate-before-policy
 // ordering by observing that neither the admission-rate counter nor the
 // policy chain runs on a create the concurrency gate denies.
+//
+// spec: §11.1 (concurrency, admission-rate, over-limit reserves no budget), §15.2.1 rule 1
+// diagnosis: the built-in single-shot create-and-start path reordered the
+// §11.1 admission-rate gate or the §4.8 policy chain ahead of the §11.1
+// concurrency gate, reserving rate or token budget on an over-limit create
+// that is ultimately denied; the shared §15.2.1 create-and-start service the
+// built-in adapters route through no longer enforces the
+// concurrency-and-rate-before-policy ordering.
 type Scenario struct {
 	counters *scenkit.Counters
 
@@ -224,16 +232,18 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 	if unexpected := s.counters.Get("unexpected_denial"); unexpected != 0 {
 		return fmt.Errorf("%d over-limit creates denied with an unexpected code, want the §11.1 QUOTA_EXCEEDED concurrency denial", unexpected)
 	}
-	// spec: §11.1 — an over-limit create reserves no rate budget. The
-	// admission-rate gate runs after the concurrency gate, so a create the
-	// concurrency gate denied must never increment the rate counter.
+	// spec: §11.1; §15.2.1 rule 1 — an over-limit create reserves no rate
+	// budget. The admission-rate gate runs after the concurrency gate on the
+	// shared §15.2.1 create-and-start path, so a create the concurrency gate
+	// denied must never increment the rate counter.
 	if rateIncrs != 0 {
 		return fmt.Errorf("§11.1 ordering violated: the admission-rate counter was incremented %d times on over-limit creates, want 0 (an over-limit create is denied before the admission-rate gate and reserves no rate budget)", rateIncrs)
 	}
-	// spec: §11.1 — an over-limit create reserves no token budget. The §4.8
-	// policy chain (and its built-in §11.2 QuotaEvaluator) runs after the
-	// concurrency gate, so a create the concurrency gate denied must never
-	// invoke the chain.
+	// spec: §11.1; §15.2.1 rule 1 — an over-limit create reserves no token
+	// budget. The §4.8 policy chain (and its built-in §11.2 QuotaEvaluator)
+	// runs after the concurrency gate on the shared §15.2.1 create-and-start
+	// path, so a create the concurrency gate denied must never invoke the
+	// chain.
 	if policyRuns != 0 {
 		return fmt.Errorf("§11.1 ordering violated: the §4.8 policy chain ran %d times on over-limit creates, want 0 (an over-limit create is denied before the policy chain and reserves no token budget)", policyRuns)
 	}
