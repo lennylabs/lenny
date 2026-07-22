@@ -3115,11 +3115,14 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [anthropic, openai, google]
-      # spec: §26.7 line 340 — maxUploadSize: 10MB (file attachments only;
-      # no archive uploads), distinct from the §26.2 shared coding-agent
-      # 500 MB cap.
+      # spec: §26.7 lines 338-341 — the limits block declares
+      # maxSessionAge: 3600, maxUploadSize: 10MB (file attachments only;
+      # no archive uploads, distinct from the §26.2 shared coding-agent
+      # 500 MB cap), and maxRequestInputWaitSeconds: 600.
       limits:
+        maxSessionAgeSeconds: 3600
         maxUploadSizeBytes: 10485760
+        maxRequestInputWaitSeconds: 600
       # spec: §26.7 lines 342-345 — chat has no shell, so setup commands
       # are unsupported (mode: none) and the setup timeout is 0.
       setupCommandPolicy:

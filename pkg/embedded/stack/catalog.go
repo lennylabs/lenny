@@ -204,10 +204,15 @@ var referenceRuntimes = []ReferenceRuntime{
 			Injection:   &injectionCaps{Supported: true, Modes: []string{"immediate"}},
 		},
 		CredentialCapabilities: &credentialCapabilities{HotRotation: true, ProxyDialect: []string{"anthropic", "openai", "google"}},
-		// spec: §26.7 line 340 — maxUploadSize: 10MB (file attachments
-		// only; no archive uploads), distinct from the §26.2 shared
-		// coding-agent 500 MB cap.
-		Limits: &runtimeLimits{MaxUploadSizeBytes: 10 * 1024 * 1024},
+		// spec: §26.7 lines 338-341 — the limits block declares
+		// maxSessionAge: 3600, maxUploadSize: 10MB (file attachments
+		// only; no archive uploads, distinct from the §26.2 shared
+		// coding-agent 500 MB cap), and maxRequestInputWaitSeconds: 600.
+		Limits: &runtimeLimits{
+			MaxSessionAgeSeconds:       3600,
+			MaxUploadSizeBytes:         10 * 1024 * 1024,
+			MaxRequestInputWaitSeconds: 600,
+		},
 		Labels: referenceLabels(""),
 	},
 	{

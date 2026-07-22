@@ -134,6 +134,22 @@ tests:
           path: spec.limits.maxUploadSizeBytes
           value: 10485760
 
+  # spec: §26.7 lines 338-341 — the chat limits block also declares
+  # maxSessionAge: 3600 and maxRequestInputWaitSeconds: 600 alongside
+  # maxUploadSize; both must register on the chart entry rather than
+  # falling back to the platform default.
+  - it: stamps maxSessionAgeSeconds and maxRequestInputWaitSeconds on chat per §26.7 lines 338-341
+    documentSelector:
+      path: metadata.name
+      value: chat
+    asserts:
+      - equal:
+          path: spec.limits.maxSessionAgeSeconds
+          value: 3600
+      - equal:
+          path: spec.limits.maxRequestInputWaitSeconds
+          value: 600
+
   # spec: §26.7 lines 342-345 — chat declares setupCommandPolicy.mode:
   # none (no setup commands supported) and setupPolicy.timeoutSeconds: 0,
   # reflecting the §26.7 lead's statement that the runtime has no shell.

@@ -196,6 +196,45 @@ func TestChatRuntimeMaxUploadSize(t *testing.T) {
 	}
 }
 
+// TestChatRuntimeSessionAndInputWaitLimits asserts the chat reference
+// runtime's limits.maxSessionAgeSeconds and
+// limits.maxRequestInputWaitSeconds register at the runtime-specific
+// values the manifest declares alongside maxUploadSize, rather than
+// being left unset and falling back to the platform default. spec:
+// §26.7 lines 338-341 ("limits: maxSessionAge: 3600 maxUploadSize: 10MB
+// ... maxRequestInputWaitSeconds: 600").
+//
+// diagnosis: a failure means the chat entry's Limits block omits
+// MaxSessionAgeSeconds or MaxRequestInputWaitSeconds (or carries a
+// value other than 3600/600), so the registered chat manifest would
+// fall back to the platform default session age and input-wait
+// ceiling instead of the runtime-specific caps the §26.7 limits block
+// declares.
+func TestChatRuntimeSessionAndInputWaitLimits(t *testing.T) {
+	rts := ReferenceRuntimes()
+	var chat *ReferenceRuntime
+	for i, rt := range rts {
+		if rt.Name == "chat" {
+			chat = &rts[i]
+			break
+		}
+	}
+	if chat == nil {
+		t.Fatal("reference catalog is missing the chat runtime")
+	}
+	if chat.Limits == nil {
+		t.Fatal("chat runtime has no limits block; want maxSessionAgeSeconds: 3600, maxRequestInputWaitSeconds: 600")
+	}
+	const wantSessionAge = 3600
+	if chat.Limits.MaxSessionAgeSeconds != wantSessionAge {
+		t.Errorf("chat limits.maxSessionAgeSeconds = %d, want %d", chat.Limits.MaxSessionAgeSeconds, wantSessionAge)
+	}
+	const wantInputWait = 600
+	if chat.Limits.MaxRequestInputWaitSeconds != wantInputWait {
+		t.Errorf("chat limits.maxRequestInputWaitSeconds = %d, want %d", chat.Limits.MaxRequestInputWaitSeconds, wantInputWait)
+	}
+}
+
 // TestChatRuntimeSupportedProvidersAndProxyDialect asserts the chat
 // reference runtime's supportedProviders and
 // credentialCapabilities.proxyDialect slices register exactly the three

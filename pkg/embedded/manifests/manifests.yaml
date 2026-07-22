@@ -5221,6 +5221,14 @@ spec:
     - anthropic
     - openai
     - google
+  limits:
+    maxRequestInputWaitSeconds: 600
+    maxSessionAgeSeconds: 3600
+    maxUploadSizeBytes: 10485760
+  setupCommandPolicy:
+    mode: none
+  setupPolicy:
+    timeoutSeconds: 0
 ---
 # Source: lenny/templates/reference-runtimes.yaml
 apiVersion: lenny.dev/v1alpha1
