@@ -3937,7 +3937,8 @@
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
         "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery",
-        "tests/tier5_e2e_kind/framework_runtime_openai_assistants_test.go::TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls"
+        "tests/tier5_e2e_kind/framework_runtime_openai_assistants_test.go::TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls",
+        "charts/lenny/tests/reference-runtimes_test.yaml"
       ],
       "packages": [
         "cmd/runtimes/openai-assistants"
@@ -3950,7 +3951,8 @@
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
         "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery",
-        "tests/tier4_integration/framework_runtime_crewai_delegation_test.go::TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth"
+        "tests/tier4_integration/framework_runtime_crewai_delegation_test.go::TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth",
+        "charts/lenny/tests/reference-runtimes_test.yaml"
       ],
       "packages": [
         "cmd/runtimes/crewai"

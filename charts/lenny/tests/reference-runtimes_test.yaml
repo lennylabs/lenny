@@ -443,6 +443,33 @@ tests:
           path: spec.isolationProfile
           value: sandboxed
 
+  # spec: §26.10 line 436 — openai-assistants declares isolationProfile:
+  # sandboxed as its runtime-level default. A regression that left this
+  # entry unpinned or dropped it below the §17.9.1 composition dimension's
+  # sandboxed default would silently register the runtime on the runc
+  # RuntimeClass under a default install.
+  - it: defaults the seeded isolationProfile to sandboxed on openai-assistants per §26.10 line 436
+    documentSelector:
+      path: metadata.name
+      value: openai-assistants
+    asserts:
+      - equal:
+          path: spec.isolationProfile
+          value: sandboxed
+
+  # spec: §26.11 line 465 — crewai declares isolationProfile: sandboxed
+  # as its runtime-level default because it is a Python framework that
+  # executes arbitrary user code. A default install must seed crewai onto
+  # gVisor via the §17.9.1 composition dimension's sandboxed default.
+  - it: defaults the seeded isolationProfile to sandboxed on crewai per §26.11 line 465
+    documentSelector:
+      path: metadata.name
+      value: crewai
+    asserts:
+      - equal:
+          path: spec.isolationProfile
+          value: sandboxed
+
   # baseline -> standard (runc): the §17.9.1 dimension maps onto the §5.3
   # runtime profile so a baseline install seeds runc runtimes. F-17.9.10.
   - it: maps isolationProfile=baseline to the standard §5.3 profile
