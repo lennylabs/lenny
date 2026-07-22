@@ -3821,12 +3821,15 @@
       "tests": [
         "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney",
         "tests/tier10_conformance/reference_battery_test.go::TestImageDeploymentConformance",
-        "charts/lenny/tests/reference-runtimes_test.yaml"
+        "charts/lenny/tests/reference-runtimes_test.yaml",
+        "pkg/embedded/stack/runtimes_test.go::TestInstallReferenceRuntimesGrantsOpenAIAssistantsAndCrewAI_spec_26_1"
       ],
       "packages": [
-        "cmd/runtimes/"
+        "cmd/runtimes/",
+        "pkg/embedded/stack"
       ],
-      "blocked_until_phase": "2"
+      "blocked_until_phase": "2",
+      "notes": "TestInstallReferenceRuntimesGrantsOpenAIAssistantsAndCrewAI_spec_26_1 pins, by name, the §26.1 default-tenant auto-grant (\"For `local` profile installations, `lenny up` auto-grants access to the `default` tenant for every reference runtime it installs\") for the openai-assistants and crewai framework runtimes specifically, so a regression that dropped either from the grant set without removing it from the catalog fails on a named assertion. It runs today (unskipped): the auto-grant is asserted against the embedded-stack bootstrap seed and a fake gateway, independent of the runnable-image blocker that gates the §26.10/§26.11 session-creation tests."
     },
     "26.2": {
       "title": "Shared Patterns for Coding-Agent Runtimes",

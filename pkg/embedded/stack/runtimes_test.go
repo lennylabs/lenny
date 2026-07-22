@@ -251,6 +251,56 @@ func TestInstallReferenceRuntimesGrantsEcho_spec_26_1(t *testing.T) {
 	}
 }
 
+// TestInstallReferenceRuntimesGrantsOpenAIAssistantsAndCrewAI_spec_26_1
+// asserts by name that the §26.1 default-tenant auto-grant covers the
+// openai-assistants and crewai framework runtimes, so an operator running
+// `lenny up` can invoke either without a manual tenant-access grant. The
+// two other auto-grant tests in this file (Echo and the generic
+// referenceRuntimes loop) already exercise this path indirectly; this
+// test pins it explicitly for these two runtimes by name so a regression
+// that dropped either from the grant set (without removing it from the
+// catalog) fails on a named assertion rather than only a generic loop.
+//
+// spec: §26.1 ("For `local` profile installations, `lenny up`
+// auto-grants access to the `default` tenant for every reference runtime
+// it installs").
+//
+// diagnosis: a failure here means installReferenceRuntimes registered
+// openai-assistants or crewai as a platform-global record but did not
+// POST the default-tenant tenant-access grant for it, so a developer
+// running `lenny up` would need a manual grant before either runtime is
+// reachable by the default tenant.
+func TestInstallReferenceRuntimesGrantsOpenAIAssistantsAndCrewAI_spec_26_1(t *testing.T) {
+	var grantedNames []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/tenant-access") {
+			// /v1/admin/runtimes/<name>/tenant-access
+			parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/admin/runtimes/"), "/")
+			grantedNames = append(grantedNames, parts[0])
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	if err := installReferenceRuntimes(context.Background(), srv.URL, "", io.Discard); err != nil {
+		t.Fatalf("expected success, got %v", err)
+	}
+
+	for _, name := range []string{"openai-assistants", "crewai"} {
+		found := false
+		for _, n := range grantedNames {
+			if n == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("default-tenant auto-grant did not cover %q; granted %v", name, grantedNames)
+		}
+	}
+}
+
 // TestInstallReferenceRuntimesWarnDoesNotListEcho_spec_26_3 asserts the
 // placeholder-pin WARN stays scoped to the §26 reference runtimes so the
 // runnable echo runtime is not listed as un-startable. spec: §26.3, §15.4.4.
