@@ -3872,7 +3872,8 @@
       "title": "cursor-cli",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery",
+        "cmd/lenny-gateway/cursor_translator_test.go::TestBuildLLMTranslatorRegistryRegistersCursorProvider"
       ],
       "packages": [
         "cmd/runtimes/cursor-cli"
