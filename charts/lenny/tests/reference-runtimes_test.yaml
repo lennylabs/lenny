@@ -122,6 +122,21 @@ tests:
           path: spec.integrationLevel
           value: full
 
+  # spec: §26.7 lines 342-345 — chat declares setupCommandPolicy.mode:
+  # none (no setup commands supported) and setupPolicy.timeoutSeconds: 0,
+  # reflecting the §26.7 lead's statement that the runtime has no shell.
+  - it: stamps setupCommandPolicy.mode none and a zero setup timeout on chat per §26.7 lines 342-345
+    documentSelector:
+      path: metadata.name
+      value: chat
+    asserts:
+      - equal:
+          path: spec.setupCommandPolicy.mode
+          value: none
+      - equal:
+          path: spec.setupPolicy.timeoutSeconds
+          value: 0
+
   - it: renders no runtimes when the catalog is disabled
     set:
       referenceRuntimes.enabled: false

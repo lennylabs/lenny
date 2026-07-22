@@ -3115,6 +3115,12 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [anthropic, openai, google]
+      # spec: §26.7 lines 342-345 — chat has no shell, so setup commands
+      # are unsupported (mode: none) and the setup timeout is 0.
+      setupCommandPolicy:
+        mode: none
+      setupPolicy:
+        timeoutSeconds: 0
     # spec: §26.8 lines 376-381 — langgraph declares anthropic/openai/google
     # proxy dialects, v1 runtimeOptionsSchema URL, multi_turn + queued
     # injection. F-26.9.2 pattern.
