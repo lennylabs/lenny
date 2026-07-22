@@ -127,24 +127,48 @@ func gatewayErrorCode(t *testing.T, text string) string {
 	return env.Error.Code
 }
 
+// poolWarmCount reads the warmCount off a gateway admin-pool GET body so a
+// test can confirm a scale mutation an MCP tool made landed (or, on the
+// §25.2 preview path, did not land) in the gateway's own store.
+func poolWarmCount(t *testing.T, ctx context.Context, gwBase, name string) int {
+	t.Helper()
+	code, body := gatewayAdminGET(t, ctx, gwBase, "/v1/admin/pools/"+name)
+	if code != http.StatusOK {
+		t.Fatalf("gateway pool %q not readable: status %d", name, code)
+	}
+	// warmCount is a JSON number; encoding/json decodes it into float64.
+	wc, _ := body["warmCount"].(float64)
+	return int(wc)
+}
+
 // TestMCPManagementPlatformToolDispatchE2E boots a gateway and a
 // lenny-ops pointed at it, then drives the platform-management tools
-// (pool CRUD and tenant lifecycle) through /mcp/management's tools/call
-// path and asserts each mutation is readable through the gateway admin
-// API, proving the tool call reached the gateway rather than 404-ing
-// against the local ops mux. It also confirms an ops-owned tool
-// (lenny_lock_acquire) still dispatches locally, so the dual-routing
-// predicate keeps ops-owned tools on the lenny-ops handler.
+// (pool CRUD, the operability scale path, and tenant lifecycle) through
+// /mcp/management's tools/call path and asserts each mutation is readable
+// through the gateway admin API, proving the tool call reached the gateway
+// rather than 404-ing against the local ops mux. It also confirms an
+// ops-owned tool (lenny_lock_acquire) still dispatches locally, so the
+// dual-routing predicate keeps ops-owned tools on the lenny-ops handler.
+//
+// The confirm-gated non-happy path is the §25.17 scale mutation
+// admin.set_pool_warm_count: invoked without confirm the gateway returns a
+// §25.2 dry-run preview (isError:false, _meta.lenny.dryRun) and does not
+// scale the pool, and only a confirm:true call lands the warm count. This
+// is the tool whose gateway endpoint enforces the §25.2 confirm gate; the
+// destructive DELETE tenant tool has no confirm precondition on its
+// gateway handler, so its dispatch is proven by the state transition
+// alone.
 //
 // spec: §25.12 (MCP Management Server — platform-management tools route
 // to the gateway admin API via GatewayClient; "an MCP-first agent can do
-// anything a REST caller can"; the destructive tenant delete requires
-// confirm).
+// anything a REST caller can"); §25.2 (dry-run/confirm preview);
+// §25.17 (the operability warm-count scale path).
 // diagnosis: a failure means a platform-management MCP tool invoked
 // through /mcp/management did not reach the gateway admin API. Either the
 // gateway-proxy dispatch routing did not forward the tool call to the
 // gateway, the propagated identity was dropped, the mutation did not land
-// in the gateway's store, or an ops-owned tool was misrouted to the
+// in the gateway's store, a confirm-less scale mutation applied without
+// its §25.2 preview gate, or an ops-owned tool was misrouted to the
 // gateway — any of which shows the §25.12 dual-routing model diverged
 // from the spec when driven end to end.
 func TestMCPManagementPlatformToolDispatchE2E(t *testing.T) {
@@ -189,6 +213,49 @@ func TestMCPManagementPlatformToolDispatchE2E(t *testing.T) {
 		t.Errorf("admin.update_pool gateway error code = %q, want ETAG_REQUIRED (the gateway's own PUT validation, proving gateway dispatch)", code)
 	}
 
+	// ---- scale without confirm: admin.set_pool_warm_count routes to PUT
+	// /v1/admin/pools/{name}/warm-count. The gateway warm-count handler
+	// enforces the §25.2 dry-run/confirm gate: without confirm:true it
+	// returns a 200 preview (dryRun:true) and does NOT scale the pool, which
+	// the invoker surfaces as isError:false with _meta.lenny.dryRun. The
+	// pool's warmCount must remain at its created value so a retried
+	// watchdog call cannot scale on an exploratory (confirm-less) invocation.
+	// This is the non-happy path the destructive scale mutation must gate on ----
+	rpc = callManagementTool(t, ctx, ops.BaseURL(), "admin.set_pool_warm_count", map[string]any{
+		"name":    poolName,
+		"minWarm": 3,
+	})
+	if rpc.Error != nil {
+		t.Fatalf("admin.set_pool_warm_count (no confirm) returned a transport error: %v", *rpc.Error)
+	}
+	if rpc.Result.IsError {
+		t.Fatalf("admin.set_pool_warm_count (no confirm) reported isError; a confirm-less scale must be a §25.2 preview, not a failure: %+v", rpc)
+	}
+	if dry, _ := rpc.Result.Meta["lenny.dryRun"].(bool); !dry {
+		t.Errorf("admin.set_pool_warm_count (no confirm) _meta.lenny.dryRun = %v, want true (the §25.2 confirm gate must return a preview)", rpc.Result.Meta["lenny.dryRun"])
+	}
+	if wc := poolWarmCount(t, ctx, gw.BaseURL(), poolName); wc != 1 {
+		t.Errorf("pool warmCount after confirm-less scale = %d, want 1 (a preview must not mutate the gateway store)", wc)
+	}
+
+	// ---- scale with confirm: the same tool with confirm:true applies the
+	// mutation, and the new warm count lands in the gateway store, proving an
+	// MCP-first agent can drive the §25.17 scale path a REST caller can ----
+	rpc = callManagementTool(t, ctx, ops.BaseURL(), "admin.set_pool_warm_count", map[string]any{
+		"name":    poolName,
+		"minWarm": 3,
+		"confirm": true,
+	})
+	if rpc.Error != nil || rpc.Result.IsError {
+		t.Fatalf("admin.set_pool_warm_count (confirm:true) reported an error: %+v", rpc)
+	}
+	if dry, _ := rpc.Result.Meta["lenny.dryRun"].(bool); dry {
+		t.Errorf("admin.set_pool_warm_count (confirm:true) _meta.lenny.dryRun = true, want a real mutation, not a preview")
+	}
+	if wc := poolWarmCount(t, ctx, gw.BaseURL(), poolName); wc != 3 {
+		t.Errorf("pool warmCount after confirmed scale = %d, want 3 (the confirmed scale mutation did not land in the gateway store)", wc)
+	}
+
 	// ---- tenant create: admin.create_tenant routes to POST /v1/admin/tenants ----
 	const tenantID = "mcp-created-tenant"
 	rpc = callManagementTool(t, ctx, ops.BaseURL(), "admin.create_tenant", map[string]any{
@@ -206,10 +273,12 @@ func TestMCPManagementPlatformToolDispatchE2E(t *testing.T) {
 	// /v1/admin/tenants/{id}, which initiates the §12.8 deletion lifecycle
 	// (the tenant transitions active -> disabling). The destructive tool
 	// reaching the gateway and landing the state transition proves the
-	// gateway-owned delete dispatched to the gateway admin API ----
+	// gateway-owned delete dispatched to the gateway admin API. The gateway
+	// DELETE handler carries no confirm precondition of its own (its input
+	// schema exposes only id), so the §25.2 confirm gate is exercised above
+	// on admin.set_pool_warm_count, whose gateway endpoint enforces it ----
 	rpc = callManagementTool(t, ctx, ops.BaseURL(), "admin.soft_delete_tenant", map[string]any{
-		"id":      tenantID,
-		"confirm": true,
+		"id": tenantID,
 	})
 	if rpc.Error != nil || rpc.Result.IsError {
 		t.Fatalf("admin.soft_delete_tenant reported an error: %+v", rpc)
