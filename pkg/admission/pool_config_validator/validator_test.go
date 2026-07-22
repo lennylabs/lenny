@@ -3,6 +3,7 @@
 package pool_config_validator_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -55,6 +56,9 @@ func warmPool(spec lennyv1.SandboxWarmPoolSpec) *lennyv1.SandboxWarmPool {
 func template(spec lennyv1.SandboxTemplateSpec) *lennyv1.SandboxTemplate {
 	return &lennyv1.SandboxTemplate{Spec: spec}
 }
+
+// int64ptr returns a pointer to v, for optional *int64 spec fields.
+func int64ptr(v int64) *int64 { return &v }
 
 // --- SandboxWarmPool invariants (§4.6.2 / §4.6.3) ---
 
@@ -229,9 +233,14 @@ func TestTemplate(t *testing.T) {
 			spec: lennyv1.SandboxTemplateSpec{RuntimeRef: "r"},
 		},
 		{
+			// A service pool carries no acknowledgment invariant at the CRD
+			// layer. Its grace period is set at the agent-pod floor
+			// (4*90 + 30 = 390s) so the separate grace-floor rule admits and
+			// this case isolates the acknowledgment-invariant absence.
 			name: "service mode carries no pool-config invariant",
 			spec: lennyv1.SandboxTemplateSpec{
 				RuntimeRef: "r", ExecutionMode: "service", MaxConcurrent: 4,
+				TerminationGracePeriodSeconds: int64ptr(graceFloor(4, 0)),
 			},
 		},
 		{
@@ -294,25 +303,48 @@ func TestTemplate(t *testing.T) {
 	}
 }
 
+// testMinStreamDrainSeconds and testAgentDefaultTerminationGraceSeconds
+// mirror the unexported package constants decideTerminationBudget uses
+// (minStreamDrainSeconds and agentDefaultTerminationGraceSeconds) so the
+// expected floors below derive from the same arithmetic the validator
+// computes rather than from pre-baked literals. The package tests are in
+// an external test package and cannot reference the unexported constants
+// directly. spec: §5.2 (stream-drain budget), §4.6.1 (agent default).
+const (
+	testMinStreamDrainSeconds            = 30
+	testAgentDefaultTerminationGraceSecs = 120
+)
+
+// graceFloor mirrors decideTerminationBudget's BarrierAck-free agent-pod
+// floor: maxConcurrent × max_tiered_checkpoint_cap + minStreamDrainSeconds.
+// The checkpointBarrierAckTimeoutSeconds term is deliberately absent; it
+// belongs to the gateway pod's grace period (§10.1), not the agent floor.
+// spec: §5.2, §10.1.
+func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
+	return int64(maxConcurrent)*pcv.MaxTieredCheckpointCapSeconds(workspaceBytes) + testMinStreamDrainSeconds
+}
+
 // spec: §5.2 line 516 (spec/05_runtime-registry-and-pool-model.md) — the
-// SandboxWarmPool admission webhook enforces the per-pod
+// SandboxWarmPool admission webhook enforces the agent-pod
 // `terminationGracePeriodSeconds` floor, fanning the per-slot checkpoint
 // cap across maxConcurrent slots for a service-mode pool
-// (`maxConcurrent × max_tiered_checkpoint_cap +
-// checkpointBarrierAckTimeoutSeconds + 30`) and using a multiplier of 1
-// for a session-mode pool, warning at >600s and
-// rejecting when maxTerminationGracePeriodSeconds is set and breached or
-// when the deployer's terminationGracePeriodSeconds falls below the
-// floor. spec: §10.1 lines 104-124 — the tier-cap table and the
-// BarrierAck floor (`checkpointBarrierAckTimeoutSeconds ≥ tier cap`).
+// (`maxConcurrent × max_tiered_checkpoint_cap + 30`) and using a
+// multiplier of 1 for a session-mode pool. The floor omits
+// checkpointBarrierAckTimeoutSeconds, the gateway-pod term. The webhook
+// evaluates the floor against the pool's effective grace period (the
+// declared value, else the §4.6.1 120s agent default), so an omitted
+// field whose default under-provisions is rejected fail-closed. It warns
+// at >600s and rejects when maxTerminationGracePeriodSeconds is set and
+// breached or when the effective grace period falls below the floor.
+// spec: §10.1 lines 104-124 — the tier-cap table and the BarrierAck
+// floor (`checkpointBarrierAckTimeoutSeconds ≥ tier cap`).
 func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	int64p := func(v int64) *int64 { return &v }
 
 	baseSpec := func() lennyv1.SandboxTemplateSpec {
 		// A service-mode pool fans the per-slot checkpoint cap across
-		// maxConcurrent slots, so the §10.1 / §5.2 line 516 termination
-		// budget floor applies with the maxConcurrent multiplier exactly as
-		// the former concurrent-workspace pool did.
+		// maxConcurrent slots, so the §5.2 / §10.1 agent-pod grace floor
+		// applies with the maxConcurrent multiplier.
 		return lennyv1.SandboxTemplateSpec{
 			RuntimeRef:    "r",
 			ExecutionMode: "service",
@@ -320,10 +352,11 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		}
 	}
 
-	t.Run("default conservative floor under 600s admits without warning", func(t *testing.T) {
-		// maxConcurrent=2, unset workspace size → 90s tier, unset ack → 90s,
-		// floor = 2*90 + 90 + 30 = 300s.
-		d := pcv.DecideTemplate(template(baseSpec()))
+	t.Run("declared grace at floor admits without warning", func(t *testing.T) {
+		// maxConcurrent=2, unset workspace → 90s tier, floor = 2*90 + 30 = 210s.
+		spec := baseSpec()
+		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, 0)) // 210s
+		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 		if len(d.Warnings) != 0 {
 			t.Fatalf("did not expect warnings: %v", d.Warnings)
@@ -331,62 +364,78 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	})
 
 	t.Run("floor above 600s emits warning but admits", func(t *testing.T) {
-		// maxConcurrent=8 → 8*90 + 90 + 30 = 840s > 600s.
+		// maxConcurrent=8 → floor = 8*90 + 30 = 750s > 600s. The declared
+		// grace must meet the floor for the pool to admit and warn.
 		spec := baseSpec()
 		spec.MaxConcurrent = 8
+		floor := graceFloor(8, 0) // 750s
+		spec.TerminationGracePeriodSeconds = int64p(floor)
 		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 		if len(d.Warnings) != 1 {
 			t.Fatalf("want one warning, got %v", d.Warnings)
 		}
-		if !strings.Contains(d.Warnings[0], "840s") || !strings.Contains(d.Warnings[0], "600s") {
+		if !strings.Contains(d.Warnings[0], fmt.Sprintf("%ds", floor)) || !strings.Contains(d.Warnings[0], "600s") {
 			t.Errorf("warning %q does not name the floor or the node-drain limit", d.Warnings[0])
 		}
 	})
 
 	t.Run("floor breaches maxTerminationGracePeriodSeconds → rejected", func(t *testing.T) {
+		// maxConcurrent=8 → floor = 750s > the 600s ceiling.
 		spec := baseSpec()
 		spec.MaxConcurrent = 8
 		spec.MaxTerminationGracePeriodSeconds = int64p(600)
 		d := pcv.DecideTemplate(template(spec))
 		assertRejected(t, d, "exceeds spec.maxTerminationGracePeriodSeconds (600s)")
+		if !d.BudgetExceeded {
+			t.Error("a ceiling-breach rejection must set BudgetExceeded so the counter increments")
+		}
 	})
 
-	t.Run("deployer terminationGracePeriodSeconds below floor → rejected", func(t *testing.T) {
-		// floor = 300s; deployer set 200s.
+	t.Run("declared grace below floor → rejected", func(t *testing.T) {
+		// floor = 210s; deployer set 200s.
 		spec := baseSpec()
 		spec.TerminationGracePeriodSeconds = int64p(200)
 		d := pcv.DecideTemplate(template(spec))
-		assertRejected(t, d, "below the §5.2 floor for this pool (300s")
+		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", graceFloor(2, 0)))
+		if !strings.Contains(d.Reason, "declared") {
+			t.Errorf("reason %q does not name the grace period as declared", d.Reason)
+		}
+		if !d.BudgetExceeded {
+			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
+		}
 	})
 
-	t.Run("deployer terminationGracePeriodSeconds at floor → admitted", func(t *testing.T) {
+	t.Run("declared grace at floor → admitted", func(t *testing.T) {
 		spec := baseSpec()
-		spec.TerminationGracePeriodSeconds = int64p(300)
+		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, 0)) // 210s
 		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 	})
 
 	t.Run("workspaceSizeLimitBytes selects correct tier — 100 MB → 30s", func(t *testing.T) {
-		// maxConcurrent=2, 100 MB → 30s tier, BUT BarrierAck default 90s
-		// >= 30s tier (OK). floor = 2*30 + 90 + 30 = 180s.
+		// maxConcurrent=2, 100 MB → 30s tier, floor = 2*30 + 30 = 90s.
+		ws := int64(100 * 1024 * 1024)
 		spec := baseSpec()
-		spec.WorkspaceSizeLimitBytes = int64p(100 * 1024 * 1024)
-		spec.TerminationGracePeriodSeconds = int64p(180)
+		spec.WorkspaceSizeLimitBytes = int64p(ws)
+		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, ws)) // 90s
 		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 	})
 
 	t.Run("workspaceSizeLimitBytes selects correct tier — 300 MB → 60s", func(t *testing.T) {
+		// maxConcurrent=2, 300 MB → 60s tier, floor = 2*60 + 30 = 150s.
+		ws := int64(300 * 1024 * 1024)
 		spec := baseSpec()
-		spec.WorkspaceSizeLimitBytes = int64p(300 * 1024 * 1024)
-		spec.TerminationGracePeriodSeconds = int64p(240) // 2*60 + 90 + 30
+		spec.WorkspaceSizeLimitBytes = int64p(ws)
+		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, ws)) // 150s
 		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 	})
 
 	t.Run("checkpointBarrierAckTimeoutSeconds below tier cap → rejected", func(t *testing.T) {
-		// 300 MB workspace → 60s tier; ack=30s → reject.
+		// 300 MB workspace → 60s tier; ack=30s → reject. This BarrierAck
+		// floor rule is independent of the grace floor and is unchanged.
 		spec := baseSpec()
 		spec.WorkspaceSizeLimitBytes = int64p(300 * 1024 * 1024)
 		spec.CheckpointBarrierAckTimeoutSeconds = int64p(30)
@@ -394,73 +443,115 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		assertRejected(t, d, "must be >= max_tiered_checkpoint_cap (60s)")
 	})
 
-	t.Run("explicit barrier ack overrides default", func(t *testing.T) {
-		// 30s tier (100 MB), ack=30s → floor = 2*30 + 30 + 30 = 120s.
+	t.Run("explicit checkpointBarrierAckTimeoutSeconds does not enter the grace floor", func(t *testing.T) {
+		// 100 MB → 30s tier, ack=30s (valid, ≥ tier cap). The floor is
+		// 2*30 + 30 = 90s and omits the ack term: a grace at 90s admits.
+		// Under the pre-fix BarrierAck-inclusive floor (2*30 + 30 + 30 =
+		// 120s) this 90s grace would have been rejected.
+		ws := int64(100 * 1024 * 1024)
 		spec := baseSpec()
-		spec.WorkspaceSizeLimitBytes = int64p(100 * 1024 * 1024)
+		spec.WorkspaceSizeLimitBytes = int64p(ws)
 		spec.CheckpointBarrierAckTimeoutSeconds = int64p(30)
-		spec.TerminationGracePeriodSeconds = int64p(120)
+		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, ws)) // 90s
 		d := pcv.DecideTemplate(template(spec))
 		assertAllowed(t, d)
 	})
 
-	// spec: §10.1 line 116 — the budget rule applies to EVERY
-	// SandboxTemplate write regardless of executionMode. A session-mode
-	// pool that allows a (default-tier 90s) workspace but declares a
-	// 1s grace period has a floor of 1*90 + 90 + 30 = 210s and must be
-	// rejected, not silently admitted to SIGKILL on drain.
-	t.Run("session-mode pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+	// The grace-floor rule applies to EVERY SandboxTemplate write
+	// regardless of executionMode. A session-mode pool that allows a
+	// default-tier (90s) workspace but declares a 1s grace period has a
+	// floor of 1*90 + 30 = 120s and must be rejected, not silently
+	// admitted to SIGKILL on drain. spec: §5.2, §10.1.
+	t.Run("session-mode pool below the floor → rejected", func(t *testing.T) {
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                    "r",
 			TerminationGracePeriodSeconds: int64p(1),
 		}))
-		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
+		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", graceFloor(1, 0)))
+		if !strings.Contains(d.Reason, "declared") {
+			t.Errorf("reason %q does not name the grace period as declared", d.Reason)
+		}
 		if !d.BudgetExceeded {
 			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
 		}
 	})
 
-	t.Run("session-mode pool at the floor → admitted (§10.1 line 116)", func(t *testing.T) {
-		// floor = 1*90 + 90 + 30 = 210s.
+	t.Run("session-mode pool at the floor → admitted", func(t *testing.T) {
+		// floor = 1*90 + 30 = 120s.
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                    "r",
-			TerminationGracePeriodSeconds: int64p(210),
+			TerminationGracePeriodSeconds: int64p(graceFloor(1, 0)),
 		}))
 		assertAllowed(t, d)
 	})
 
-	t.Run("session-mode pool with no grace period set → admitted (no comparison)", func(t *testing.T) {
-		// terminationGracePeriodSeconds unset means the deployer accepts
-		// the chart/§4.6.1 default; the webhook rejects only an explicit
-		// value below the floor.
+	t.Run("omitted grace, effective default below the floor → rejected", func(t *testing.T) {
+		// A multi-slot service pool (maxConcurrent=2) has floor 2*90 + 30
+		// = 210s. With the field omitted the effective grace period is the
+		// §4.6.1 120s agent default, which is below the floor. The pre-fix
+		// code guarded this comparison behind a non-nil field and admitted
+		// the pool; the fix rejects it fail-closed.
+		d := pcv.DecideTemplate(template(baseSpec()))
+		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", graceFloor(2, 0)))
+		if !strings.Contains(d.Reason, "the §4.6.1 default") {
+			t.Errorf("reason %q does not name the grace period as the §4.6.1 default", d.Reason)
+		}
+		if !strings.Contains(d.Reason, fmt.Sprintf("(%ds,", testAgentDefaultTerminationGraceSecs)) {
+			t.Errorf("reason %q does not name the 120s effective grace period", d.Reason)
+		}
+		if !d.BudgetExceeded {
+			t.Error("an omitted-field floor rejection must set BudgetExceeded so the counter increments")
+		}
+	})
+
+	t.Run("omitted grace, effective default equals the floor → admitted", func(t *testing.T) {
+		// A single-slot default-tier pool has floor 1*90 + 30 = 120s,
+		// which equals the §4.6.1 agent default, so the default pool
+		// admits without a declared value and emits no warning.
+		if got := graceFloor(1, 0); got != testAgentDefaultTerminationGraceSecs {
+			t.Fatalf("single-slot floor = %ds, want the %ds agent default", got, testAgentDefaultTerminationGraceSecs)
+		}
+		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{RuntimeRef: "r"}))
+		assertAllowed(t, d)
+		if len(d.Warnings) != 0 {
+			t.Fatalf("did not expect warnings: %v", d.Warnings)
+		}
+	})
+
+	t.Run("empty RuntimeRef-only pool → admitted at the default floor", func(t *testing.T) {
+		// The minimal schema-valid template (RuntimeRef only) collapses to
+		// a single slot; its 120s effective default equals the 120s floor.
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{RuntimeRef: "r"}))
 		assertAllowed(t, d)
 	})
 
-	t.Run("service pool with unit slot below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
+	t.Run("service pool with unit slot below the floor → rejected", func(t *testing.T) {
 		// A service pool with maxConcurrent 1 checkpoints a single
-		// workspace, so the multiplier is 1: floor = 1*90 + 90 + 30 = 210s.
+		// workspace, so the multiplier is 1: floor = 1*90 + 30 = 120s.
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                    "r",
 			ExecutionMode:                 "service",
 			MaxConcurrent:                 1,
 			TerminationGracePeriodSeconds: int64p(1),
 		}))
-		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
+		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", graceFloor(1, 0)))
 		if !d.BudgetExceeded {
 			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
 		}
 	})
 
-	t.Run("session pool below the floor → rejected (§10.1 line 116)", func(t *testing.T) {
-		// A session pool checkpoints a single workspace: multiplier 1,
-		// floor = 1*90 + 90 + 30 = 210s.
+	t.Run("declared grace one second below the floor → rejected", func(t *testing.T) {
+		// Single-slot default-tier floor is 120s; a declared 119s is one
+		// second short and must be rejected.
+		floor := graceFloor(1, 0)
 		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
 			RuntimeRef:                    "r",
-			ExecutionMode:                 "session",
-			TerminationGracePeriodSeconds: int64p(1),
+			TerminationGracePeriodSeconds: int64p(floor - 1),
 		}))
-		assertRejected(t, d, "below the §5.2 floor for this pool (210s")
+		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", floor))
+		if !strings.Contains(d.Reason, "declared") {
+			t.Errorf("reason %q does not name the grace period as declared", d.Reason)
+		}
 		if !d.BudgetExceeded {
 			t.Error("a grace-period-floor rejection must set BudgetExceeded so the counter increments")
 		}

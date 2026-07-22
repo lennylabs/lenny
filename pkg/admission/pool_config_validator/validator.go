@@ -13,16 +13,24 @@
 // invariants that are visible at the CRD layer — the relationships
 // between minWarm, maxWarm, bootstrap and schedule overrides on a
 // SandboxWarmPool, and the execution-mode acknowledgment and budget
-// rules on a SandboxTemplate. The §10.1 line 116 / §5.2 line 516 per-pod
+// rules on a SandboxTemplate. The §5.2 / §10.1 agent-pod
 // `terminationGracePeriodSeconds` floor
-// (`maxConcurrent × max_tiered_checkpoint_cap +
-// checkpointBarrierAckTimeoutSeconds + 30`) is enforced here against
-// `spec.workspaceSizeLimitBytes`, `spec.checkpointBarrierAckTimeoutSeconds`,
-// `spec.terminationGracePeriodSeconds`, and `spec.maxTerminationGracePeriodSeconds`
-// — see decideTerminationBudget. Per §10.1 line 116 the budget rule
-// applies to EVERY SandboxTemplate write regardless of execution mode;
-// only a service-mode pool fans the per-slot checkpoint cap across
-// `maxConcurrent` slots, so a session-mode pool uses a multiplier of 1.
+// (`maxConcurrent × max_tiered_checkpoint_cap + 30`) is enforced here
+// against `spec.workspaceSizeLimitBytes`,
+// `spec.terminationGracePeriodSeconds`, and
+// `spec.maxTerminationGracePeriodSeconds` — see decideTerminationBudget.
+// The floor omits `checkpointBarrierAckTimeoutSeconds`, which is the
+// gateway's wait for `CheckpointBarrierAck` and belongs to the gateway
+// pod's grace period (§10.1) rather than the agent pod the CRD field
+// renders onto; the webhook still vets that field against the
+// independent §10.1 BarrierAck floor. The floor is evaluated against the
+// pool's effective grace period (the declared value, else the §4.6.1
+// 120s agent default the podspec renders for an omitted field), so an
+// omitted field that under-provisions is rejected fail-closed. The
+// budget rule applies to EVERY SandboxTemplate write regardless of
+// execution mode; only a service-mode pool fans the per-slot checkpoint
+// cap across `maxConcurrent` slots, so a session-mode pool uses a
+// multiplier of 1.
 //
 // The decision logic is split from the webhook HTTP/JSON-AdmissionReview
 // transport so it can be unit-tested without the controller-runtime
@@ -129,15 +137,15 @@ type Decision struct {
 	// `maxTerminationGracePeriodSeconds` is set and breached.
 	Warnings []string
 
-	// BudgetExceeded marks a rejection caused by the §10.1 line 119
-	// tiered-cap + BarrierAck termination-budget inequality (the computed
-	// preStop floor exceeds the deployer's terminationGracePeriodSeconds
-	// or the maxTerminationGracePeriodSeconds ceiling). The webhook
-	// transport increments `lenny_pool_termination_budget_exceeded_total`
-	// (labeled by pool) on these rejections so the §16.1 line 129 counter
-	// surfaces budget-driven admission failures. Other rule-set-1
-	// rejections (warm-count budgets, execution-mode acknowledgments, the
-	// BarrierAck floor) leave it false.
+	// BudgetExceeded marks a rejection caused by the §5.2 / §10.1
+	// agent-pod grace-floor inequality (the computed preStop floor exceeds
+	// the pool's effective terminationGracePeriodSeconds or the
+	// maxTerminationGracePeriodSeconds ceiling). The webhook transport
+	// increments `lenny_pool_termination_budget_exceeded_total` (labeled
+	// by pool) on these rejections so the §16.1 line 129 counter surfaces
+	// budget-driven admission failures. Other rule-set-1 rejections
+	// (warm-count budgets, execution-mode acknowledgments, the BarrierAck
+	// floor) leave it false.
 	BudgetExceeded bool
 }
 
@@ -403,9 +411,9 @@ func decideScheduleWindow(index int, win lennyv1.ScheduleWindow, maxWarm int32) 
 //     explicit acknowledgment. See decideRecycleScrubProfile.
 //     spec: §5.2 (Kata/microvm scrub variant).
 //
-//   - The §10.1 / §5.2 per-pod terminationGracePeriodSeconds floor
-//     (`maxConcurrent × max_tiered_checkpoint_cap +
-//     checkpointBarrierAckTimeoutSeconds + 30`) is satisfied for every
+//   - The §5.2 / §10.1 agent-pod terminationGracePeriodSeconds floor
+//     (`maxConcurrent × max_tiered_checkpoint_cap + 30`, evaluated
+//     against the pool's effective grace period) is satisfied for every
 //     mode. A service-mode pool fans the per-slot checkpoint cap across
 //     `maxConcurrent` slots; every other mode uses a multiplier of 1. See
 //     decideTerminationBudget. spec: §5.2, §10.1.
@@ -434,14 +442,14 @@ func DecideTemplate(tpl *lennyv1.SandboxTemplate) Decision {
 		return d
 	}
 
-	// spec: §10.1 line 116 — the tiered-cap + BarrierAck termination
-	// budget rule applies to EVERY admission request that mutates a
-	// SandboxTemplate.spec, not only service-mode pools. A session-mode
-	// pool that allows a 512 MB workspace but declares a
-	// terminationGracePeriodSeconds below the 90s + 90s + 30s floor would
-	// be SIGKILL'd mid-checkpoint on drain exactly as a service-mode pool
-	// that fans the cap across its slots would; the rule is not subject to
-	// the executionMode the deployer happened to pick.
+	// spec: §5.2, §10.1 — the agent-pod grace-floor rule applies to EVERY
+	// admission request that mutates a SandboxTemplate.spec, not only
+	// service-mode pools. A session-mode pool that allows a 512 MB
+	// workspace but whose effective terminationGracePeriodSeconds is below
+	// the 90s + 30s floor would be SIGKILL'd mid-checkpoint on drain
+	// exactly as a service-mode pool that fans the cap across its slots
+	// would; the rule is not subject to the executionMode the deployer
+	// happened to pick.
 	return decideTerminationBudget(spec, effectiveMaxConcurrent(spec))
 }
 
@@ -582,8 +590,17 @@ const minStreamDrainSeconds = 30
 // MaxTerminationGracePeriodSeconds is set and breached.
 const nodeDrainWarnSeconds = 600
 
-// decideTerminationBudget enforces the §10.1 line 116 / §5.2 line 516
-// per-pod `terminationGracePeriodSeconds` floor. It runs for every
+// agentDefaultTerminationGraceSeconds is the §4.6.1 agent-pod
+// terminationGracePeriodSeconds default the podspec renders when the
+// SandboxWarmPool/SandboxTemplate field is omitted. The webhook uses it
+// as the effective grace period against which the §5.2 agent-pod floor
+// is evaluated for an omitted field, so an omitted field that
+// under-provisions is rejected fail-closed rather than silently
+// admitted. spec: §4.6.1 (warm-pool controller pod lifecycle).
+const agentDefaultTerminationGraceSeconds = 120
+
+// decideTerminationBudget enforces the §5.2 / §10.1 agent-pod
+// `terminationGracePeriodSeconds` floor. It runs for every
 // SandboxTemplate execution mode (DecideTemplate calls it after the
 // mode-specific acknowledgment checks); maxConcurrent is the slot
 // multiplier, which effectiveMaxConcurrent collapses to 1 for a
@@ -591,25 +608,36 @@ const nodeDrainWarnSeconds = 600
 // The webhook computes
 //
 //	floor = maxConcurrent * max_tiered_checkpoint_cap
-//	      + checkpointBarrierAckTimeoutSeconds
 //	      + minStreamDrainSeconds
 //
 // where `max_tiered_checkpoint_cap` is resolved from
-// `spec.workspaceSizeLimitBytes` via MaxTieredCheckpointCapSeconds and
-// `checkpointBarrierAckTimeoutSeconds` defaults to 90s when unset
-// (§10.1 line 122).
+// `spec.workspaceSizeLimitBytes` via MaxTieredCheckpointCapSeconds. The
+// floor omits `checkpointBarrierAckTimeoutSeconds`: that term is the
+// gateway's wall-clock wait for `CheckpointBarrierAck` from the pods it
+// coordinates and belongs to the gateway pod's grace period (§10.1),
+// which the agent pod's own preStop drain does not incur. For a
+// single-slot default-tier pool the floor is 1 * 90 + 30 = 120s, which
+// equals the §4.6.1 agent default, so the default pool admits without a
+// declared value.
+//
+// The floor is evaluated against the pool's effective grace period: the
+// declared `spec.terminationGracePeriodSeconds` when set, otherwise the
+// §4.6.1 agent default (agentDefaultTerminationGraceSeconds, 120s) the
+// podspec renders for an omitted field.
 //
 // Rejection rules:
-//   - When spec.terminationGracePeriodSeconds is set and below the floor,
-//     the configuration is rejected (the deployer's declared budget
-//     would SIGKILL pods mid-checkpoint).
+//   - When the effective grace period (declared value, else the §4.6.1
+//     default) is below the floor, the configuration is rejected (the
+//     budget would SIGKILL pods mid-checkpoint on drain). An omitted
+//     field is rejected fail-closed when its 120s default under-provisions.
 //   - When spec.maxTerminationGracePeriodSeconds is set and the floor
 //     exceeds it, the configuration is rejected (deployers opt into a
 //     hard ceiling per §5.2 line 516).
 //   - When checkpointBarrierAckTimeoutSeconds < max_tiered_checkpoint_cap,
 //     the configuration is rejected per §10.1 line 124 BarrierAck-floor
 //     rule (a BarrierAck below the tier cap would declare a legitimately
-//     slow uploader unresponsive).
+//     slow uploader unresponsive). This is an independent rule; the
+//     BarrierAck term does not enter the grace floor above.
 //
 // Advisory warnings (admit + emit warning, not reject):
 //   - When the computed floor exceeds nodeDrainWarnSeconds (600s) without
@@ -632,21 +660,35 @@ func decideTerminationBudget(spec lennyv1.SandboxTemplateSpec, maxConcurrent int
 			barrierAck, tierCap,
 		))
 	}
-	floor := int64(maxConcurrent)*tierCap + barrierAck + int64(minStreamDrainSeconds)
+	floor := int64(maxConcurrent)*tierCap + int64(minStreamDrainSeconds)
 	if spec.MaxTerminationGracePeriodSeconds != nil && floor > *spec.MaxTerminationGracePeriodSeconds {
 		return rejectBudget(fmt.Sprintf(
 			"computed terminationGracePeriodSeconds floor (%ds) exceeds spec.maxTerminationGracePeriodSeconds (%ds); "+
-				"reduce spec.maxConcurrent (%d), spec.workspaceSizeLimitBytes, or spec.checkpointBarrierAckTimeoutSeconds, "+
-				"or raise the hard ceiling",
+				"reduce spec.maxConcurrent (%d) or spec.workspaceSizeLimitBytes, or raise the hard ceiling",
 			floor, *spec.MaxTerminationGracePeriodSeconds, maxConcurrent,
 		))
 	}
-	if spec.TerminationGracePeriodSeconds != nil && *spec.TerminationGracePeriodSeconds < floor {
+	// Evaluate the floor against the pool's effective grace period: the
+	// declared field value when set, otherwise the §4.6.1 agent default
+	// the podspec renders. Guarding the comparison behind a non-nil field
+	// would leave an omitted field unvetted, so an omitted field whose
+	// effective default under-provisions is rejected fail-closed.
+	effGrace := int64(agentDefaultTerminationGraceSeconds)
+	graceDefaulted := true
+	if spec.TerminationGracePeriodSeconds != nil && *spec.TerminationGracePeriodSeconds > 0 {
+		effGrace = *spec.TerminationGracePeriodSeconds
+		graceDefaulted = false
+	}
+	if effGrace < floor {
+		graceSource := "declared"
+		if graceDefaulted {
+			graceSource = "the §4.6.1 default"
+		}
 		return rejectBudget(fmt.Sprintf(
-			"spec.terminationGracePeriodSeconds (%ds) is below the §5.2 floor for this pool (%ds = %d x %d tier cap + "+
-				"%d ack + %d drain); raise spec.terminationGracePeriodSeconds or reduce spec.maxConcurrent / "+
-				"spec.workspaceSizeLimitBytes",
-			*spec.TerminationGracePeriodSeconds, floor, maxConcurrent, tierCap, barrierAck, minStreamDrainSeconds,
+			"the pool's effective terminationGracePeriodSeconds (%ds, %s) is below the §5.2 agent-pod floor for this "+
+				"pool (%ds = %d x %d tier cap + %d drain); set spec.terminationGracePeriodSeconds at or above the floor, "+
+				"or reduce spec.maxConcurrent / spec.workspaceSizeLimitBytes",
+			effGrace, graceSource, floor, maxConcurrent, tierCap, minStreamDrainSeconds,
 		))
 	}
 	if floor > nodeDrainWarnSeconds {
