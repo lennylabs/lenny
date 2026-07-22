@@ -70,6 +70,15 @@ var (
 	// tierDocsTimeout caps the docs tier. Override:
 	// LENNY_TEST_DOCS_TIMEOUT.
 	tierDocsTimeout = tierTimeout("LENNY_TEST_DOCS_TIMEOUT", 60*time.Second)
+
+	// tierConformanceReferenceCatalogTimeout caps the reference-catalog
+	// conformance subset (tests/tier10_conformance, "conformance" build
+	// tag). The stub-only run is a few seconds; when
+	// LENNY_REFERENCE_IMAGE_REGISTRY is set it additionally pulls and
+	// runs nine container images, so the budget sits well above the
+	// stub-only wall-clock with room for image pulls. Override:
+	// LENNY_TEST_CONFORMANCE_REFERENCE_CATALOG_TIMEOUT.
+	tierConformanceReferenceCatalogTimeout = tierTimeout("LENNY_TEST_CONFORMANCE_REFERENCE_CATALOG_TIMEOUT", 900*time.Second)
 )
 
 // tierTimeout resolves a per-tier go-test budget. It returns the

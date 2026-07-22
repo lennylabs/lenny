@@ -974,40 +974,48 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	}
 	// "reference-catalog" is the nightly/weekly/pre-release subset for
 	// the §26 first-party reference runtimes (claude-code, gemini-cli,
-	// codex, and the rest). Those runtimes are a Phase 17a deliverable;
-	// until cmd/runtimes/<name> exists for them the subset has nothing
-	// to exercise. It expands, like bundled-runtimes, only over the
-	// reference-catalog runtimes whose package is present on disk.
-	referenceCatalog := []string{
-		"claude-code", "gemini-cli", "codex", "cursor-cli", "chat",
-		"langgraph", "mastra", "openai-assistants", "crewai",
-	}
-	expandReferenceCatalog := func() []string {
-		built := []string{}
-		for _, name := range referenceCatalog {
-			if _, err := os.Stat(filepath.Join(root, "cmd", "runtimes", name)); err == nil {
-				built = append(built, name)
+	// codex, and the rest). Those runtimes ship as OCI images from
+	// github.com/lennylabs/runtime-templates and never live under
+	// cmd/runtimes/<name> in this repository, so — unlike
+	// "bundled-runtimes" — there is no local binary for this subset to
+	// build and run. It is handled entirely by
+	// runReferenceCatalogConformance below, which delegates to the
+	// tests/tier10_conformance Go test package; see that function's
+	// doc comment for why.
+	var referenceCatalogResult *tierResult
+	remaining := []string{}
+	for _, sub := range subsets {
+		if sub == "reference-catalog" {
+			status, detail, tr := runReferenceCatalogConformance()
+			if status != "pass" {
+				return status, detail, tr
 			}
+			referenceCatalogResult = tr
+			continue
 		}
-		return built
+		remaining = append(remaining, sub)
 	}
+	subsets = remaining
+
 	expanded := []string{}
 	for _, sub := range subsets {
 		switch sub {
 		case "bundled-runtimes", "bundled":
 			expanded = append(expanded, expandBundled()...)
-		case "reference-catalog":
-			expanded = append(expanded, expandReferenceCatalog()...)
 		default:
 			expanded = append(expanded, sub)
 		}
 	}
 	subsets = expanded
 	if len(subsets) == 0 {
+		if referenceCatalogResult != nil {
+			// The only requested subset was "reference-catalog" and it
+			// already passed above.
+			return "pass", "", referenceCatalogResult
+		}
 		// Every requested subset resolved to a runtime set that is not
-		// yet built — the §26 reference catalog is a Phase 17a item.
-		return "skip", "no conformance runtimes built for the requested subsets " +
-			"(the §26 reference-catalog runtimes are a Phase 17a deliverable)", nil
+		// yet built.
+		return "skip", "no conformance runtimes built for the requested subsets", nil
 	}
 
 	binCompliance := filepath.Join(tmpBase, "lenny-compliance")
@@ -1019,6 +1027,15 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 
 	results := []string{}
 	tr := &tierResult{}
+	if referenceCatalogResult != nil {
+		// Merge the reference-catalog subset's already-passed result
+		// in with the binary-driven subsets requested alongside it.
+		tr.Total += referenceCatalogResult.Total
+		tr.Passed += referenceCatalogResult.Passed
+		tr.Failed += referenceCatalogResult.Failed
+		tr.Skipped += referenceCatalogResult.Skipped
+		tr.Failures = append(tr.Failures, referenceCatalogResult.Failures...)
+	}
 	for _, sub := range subsets {
 		rb, ok := available[sub]
 		if !ok {
@@ -1053,6 +1070,55 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 		results = append(results, strings.TrimSpace(string(out)))
 	}
 	return "pass", strings.Join(results, "\n\n"), tr
+}
+
+// runReferenceCatalogConformance runs the tests/tier10_conformance Go
+// test package (built under the `conformance` tag) against the §26
+// reference-runtime catalog. The nine catalog runtimes (claude-code,
+// gemini-cli, codex, cursor-cli, chat, langgraph, mastra,
+// openai-assistants, crewai) ship as first-party OCI images from
+// github.com/lennylabs/runtime-templates and never live under
+// cmd/runtimes/<name> in this repository, so runConformanceTier's
+// build-a-local-binary path (used for "basic"/"standard"/"full" and
+// "bundled-runtimes") has nothing to build for them.
+//
+// TestReferenceCatalogNightly validates the catalog manifest against
+// spec §26.1; TestCodingAgentReferenceRuntimesFullBattery and
+// TestFrameworkReferenceRuntimesFullBattery drive every catalog
+// runtime through its declared Full battery unconditionally, via the
+// streaming-echo stub adapter, and additionally against the real
+// published image when LENNY_REFERENCE_IMAGE_REGISTRY is configured.
+// Running these is what keeps the "run conformance on every nightly"
+// requirement (TESTING.md §12.10) executing real checks for the
+// reference-catalog subset instead of reporting "skip" with nothing
+// exercised.
+//
+// spec: 26 line 8 ("CI fails the release if conformance tests for the
+// declared level regress")
+func runReferenceCatalogConformance() (string, string, *tierResult) {
+	// The full module import path (rather than "./tests/...") keeps
+	// this resolvable regardless of the caller's working directory:
+	// the lenny-compliance binary runs `lenny-test` from the repo
+	// root, but this function is also exercised directly by
+	// cmd/lenny-test's own unit tests, whose working directory is the
+	// cmd/lenny-test package directory.
+	result, runErr := runGoTestJSON(
+		"-count=1",
+		fmt.Sprintf("-timeout=%s", tierConformanceReferenceCatalogTimeout),
+		"-tags=conformance",
+		"-run", "^(TestReferenceCatalogNightly|TestCodingAgentReferenceRuntimesFullBattery|TestFrameworkReferenceRuntimesFullBattery)$",
+		"github.com/lennylabs/lenny/tests/tier10_conformance/...",
+	)
+	if runErr != nil && result.Failed == 0 {
+		return "fail", fmt.Sprintf("reference-catalog conformance suite failed: %v\n%s", runErr, result.RawOut), result
+	}
+	if result.Failed > 0 {
+		return "fail", summarizeFailures(result), result
+	}
+	if result.Total == 0 {
+		return "fail", "reference-catalog conformance subset resolved to zero executed tests", result
+	}
+	return "pass", "", result
 }
 
 // runDocsTier runs the tier-11 documentation checks. No build tag —
