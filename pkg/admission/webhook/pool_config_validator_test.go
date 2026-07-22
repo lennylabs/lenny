@@ -338,11 +338,13 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 
 	t.Run("admitted template does not increment the counter", func(t *testing.T) {
 		spy := &budgetCounterSpy{}
+		// Single-slot pool at the reconciled floor 1×90 + 30 = 120s,
+		// derived from graceFloor so it tracks the timing constants.
 		tpl := lennyv1.SandboxTemplate{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
 			Spec: lennyv1.SandboxTemplateSpec{
 				RuntimeRef:                    "r",
-				TerminationGracePeriodSeconds: int64p(210),
+				TerminationGracePeriodSeconds: int64p(graceFloor(1, 0)),
 			},
 		}
 		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
