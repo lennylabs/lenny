@@ -122,6 +122,18 @@ tests:
           path: spec.integrationLevel
           value: full
 
+  # spec: §26.7 line 340 — chat declares limits.maxUploadSize: 10MB (file
+  # attachments only; no archive uploads), distinct from the §26.2 shared
+  # coding-agent 500 MB cap.
+  - it: stamps limits.maxUploadSizeBytes at 10 MB on chat per §26.7 line 340
+    documentSelector:
+      path: metadata.name
+      value: chat
+    asserts:
+      - equal:
+          path: spec.limits.maxUploadSizeBytes
+          value: 10485760
+
   # spec: §26.7 lines 342-345 — chat declares setupCommandPolicy.mode:
   # none (no setup commands supported) and setupPolicy.timeoutSeconds: 0,
   # reflecting the §26.7 lead's statement that the runtime has no shell.

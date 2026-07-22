@@ -204,7 +204,11 @@ var referenceRuntimes = []ReferenceRuntime{
 			Injection:   &injectionCaps{Supported: true, Modes: []string{"immediate"}},
 		},
 		CredentialCapabilities: &credentialCapabilities{HotRotation: true, ProxyDialect: []string{"anthropic", "openai", "google"}},
-		Labels:                 referenceLabels(""),
+		// spec: §26.7 line 340 — maxUploadSize: 10MB (file attachments
+		// only; no archive uploads), distinct from the §26.2 shared
+		// coding-agent 500 MB cap.
+		Limits: &runtimeLimits{MaxUploadSizeBytes: 10 * 1024 * 1024},
+		Labels: referenceLabels(""),
 	},
 	{
 		Name:             "langgraph",

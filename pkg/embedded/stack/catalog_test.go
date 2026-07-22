@@ -157,6 +157,45 @@ func TestChatRuntimeInjectionImmediateOnly(t *testing.T) {
 	}
 }
 
+// TestChatRuntimeMaxUploadSize asserts the chat reference runtime's
+// limits.maxUploadSizeBytes registers as 10 MB (10485760 bytes),
+// distinct from the 500 MB (524288000 bytes) the §26.2 shared
+// coding-agent block declares. spec: §26.7 line 340 ("maxUploadSize:
+// 10MB # file attachments only; no archive uploads").
+//
+// diagnosis: a failure means the chat entry's Limits block is missing
+// or carries a value other than 10485760, so the registered chat
+// manifest would either omit the §26.7 upload cap entirely (falling
+// back to the platform default, which is unbounded per
+// runtimestore.Limits) or advertise the coding-agent 500 MB cap
+// instead of the chat-specific 10 MB cap.
+func TestChatRuntimeMaxUploadSize(t *testing.T) {
+	rts := ReferenceRuntimes()
+	var chat *ReferenceRuntime
+	for i, rt := range rts {
+		if rt.Name == "chat" {
+			chat = &rts[i]
+			break
+		}
+	}
+	if chat == nil {
+		t.Fatal("reference catalog is missing the chat runtime")
+	}
+	if chat.Limits == nil {
+		t.Fatal("chat runtime has no limits block; want maxUploadSizeBytes: 10485760")
+	}
+	const wantBytes = 10 * 1024 * 1024
+	if chat.Limits.MaxUploadSizeBytes != wantBytes {
+		t.Errorf("chat limits.maxUploadSizeBytes = %d, want %d (10 MB)", chat.Limits.MaxUploadSizeBytes, wantBytes)
+	}
+	// The chat cap must be the runtime's own 10 MB figure, not a copy of
+	// the §26.2 shared coding-agent 500 MB cap.
+	const codingAgentBytes = 524288000
+	if chat.Limits.MaxUploadSizeBytes == codingAgentBytes {
+		t.Errorf("chat limits.maxUploadSizeBytes = %d matches the coding-agent 500 MB cap, want the chat-specific 10 MB cap", chat.Limits.MaxUploadSizeBytes)
+	}
+}
+
 func TestReferenceRuntimesReturnsCopy(t *testing.T) {
 	first := ReferenceRuntimes()
 	first[0].Name = "mutated"
