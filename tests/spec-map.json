@@ -3936,13 +3936,14 @@
       "title": "openai-assistants",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery"
+        "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery",
+        "tests/tier5_e2e_kind/framework_runtime_openai_assistants_test.go::TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls"
       ],
       "packages": [
         "cmd/runtimes/openai-assistants"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for OpenAI Assistants API. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the openai-assistants name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
+      "notes": "Reference runtime for OpenAI Assistants API. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the openai-assistants name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls pins the §26.10 bootstrap contract (adapter creates a Thread on OpenAI with the runtimeOptions assistant ID at session start, appends to the thread and starts a Run on each message, streams the run's deltas as a response part, and maps an Assistants tool call — code_interpreter or file_search — onto a §15.1 tool_use event reflecting Lenny's tool_call envelope) via sessiondriver, and is currently a non-blocking skip: the openai-assistants reference runtime (github.com/lennylabs/runtime-openai-assistants) is not vendored in this repo, cmd/runtimes/openai-assistants does not exist, and no in-repo runtime adapter performs the Thread/Run bootstrap sequence or the tool-call mapping yet. Unskip once a runnable openai-assistants image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture assistant configured with at least one tool (code_interpreter or file_search) is available under tests/testdata."
     },
     "26.11": {
       "title": "crewai",
