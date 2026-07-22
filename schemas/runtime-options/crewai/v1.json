@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/runtime-options/crewai/v1.json",
+  "title": "crewai runtimeOptions v1",
+  "description": "Validates CreateSessionRequest.runtimeOptions for the crewai runtime. See spec/14_workspace-plan-schema.md and spec/26_reference-runtime-catalog.md §26.11.",
+  "type": "object",
+  "properties": {
+    "crewModule": {
+      "type": "string",
+      "description": "Python dotted path to the exported Crew object"
+    },
+    "process": {
+      "type": "string",
+      "enum": ["sequential", "hierarchical"],
+      "default": "sequential"
+    },
+    "verbose": {
+      "type": "boolean",
+      "default": false
+    },
+    "configSchema": {
+      "type": "object",
+      "description": "Runtime-specific config forwarded to the Crew at kickoff"
+    }
+  },
+  "required": ["crewModule"],
+  "additionalProperties": false
+}

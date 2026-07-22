@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.lenny.dev/runtime-options/openai-assistants/v1.json",
+  "title": "openai-assistants runtimeOptions v1",
+  "description": "Validates CreateSessionRequest.runtimeOptions for the openai-assistants runtime. See spec/14_workspace-plan-schema.md and spec/26_reference-runtime-catalog.md §26.10.",
+  "type": "object",
+  "properties": {
+    "assistantId": {
+      "type": "string",
+      "description": "OpenAI Assistants API assistant ID (asst_...)"
+    },
+    "model": {
+      "type": "string",
+      "description": "Optional model override; defaults to the assistant's configured model"
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2
+    },
+    "parallelToolCalls": {
+      "type": "boolean",
+      "default": true
+    },
+    "responseFormat": {
+      "type": "string",
+      "enum": ["text", "json_object", "json_schema"],
+      "default": "text"
+    }
+  },
+  "required": ["assistantId"],
+  "additionalProperties": false
+}

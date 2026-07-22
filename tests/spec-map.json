@@ -2091,7 +2091,9 @@
         "tests/tier3_contract/workspaceplan/sources_test.go::TestParserRejectsClientResolvedCommitSha",
         "tests/tier3_contract/workspaceplan/sources_test.go::TestParserSkipsUnknownSourceType",
         "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_test.go::TestLanggraphRuntimeOptionsSchema",
-        "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_test.go::TestMastraRuntimeOptionsSchema"
+        "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_test.go::TestMastraRuntimeOptionsSchema",
+        "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_openai_assistants_crewai_test.go::TestOpenAIAssistantsRuntimeOptionsSchema",
+        "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_openai_assistants_crewai_test.go::TestCrewAIRuntimeOptionsSchema"
       ],
       "packages": [
         "pkg/workspaceplan"
@@ -2101,7 +2103,9 @@
         "schemas/examples/workspaceplan.minimal.json",
         "schemas/examples/workspaceplan.full.json",
         "schemas/runtime-options/langgraph/v1.json",
-        "schemas/runtime-options/mastra/v1.json"
+        "schemas/runtime-options/mastra/v1.json",
+        "schemas/runtime-options/openai-assistants/v1.json",
+        "schemas/runtime-options/crewai/v1.json"
       ],
       "blocked_until_phase": "1"
     },
@@ -3940,13 +3944,17 @@
         "tests/tier5_e2e_kind/framework_runtime_openai_assistants_test.go::TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls",
         "tests/tier11_docs/openai_assistants_sandbox_boundary_test.go::TestSpecOpenAIAssistantsCodeInterpreterBoundaryStated",
         "tests/tier11_docs/openai_assistants_sandbox_boundary_test.go::TestRuntimeAuthorGuideCatalogDisclosesCodeInterpreterBoundary",
-        "charts/lenny/tests/reference-runtimes_test.yaml"
+        "charts/lenny/tests/reference-runtimes_test.yaml",
+        "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_openai_assistants_crewai_test.go::TestOpenAIAssistantsRuntimeOptionsSchema"
       ],
       "packages": [
         "cmd/runtimes/openai-assistants"
       ],
+      "schemas": [
+        "schemas/runtime-options/openai-assistants/v1.json"
+      ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for OpenAI Assistants API. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the openai-assistants name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls pins the §26.10 bootstrap contract (adapter creates a Thread on OpenAI with the runtimeOptions assistant ID at session start, appends to the thread and starts a Run on each message, streams the run's deltas as a response part, and maps an Assistants tool call — code_interpreter or file_search — onto a §15.1 tool_use event reflecting Lenny's tool_call envelope) via sessiondriver, and is currently a non-blocking skip: the openai-assistants reference runtime (github.com/lennylabs/runtime-openai-assistants) is not vendored in this repo, cmd/runtimes/openai-assistants does not exist, and no in-repo runtime adapter performs the Thread/Run bootstrap sequence or the tool-call mapping yet. Unskip once a runnable openai-assistants image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture assistant configured with at least one tool (code_interpreter or file_search) is available under tests/testdata. TestSpecOpenAIAssistantsCodeInterpreterBoundaryStated and TestRuntimeAuthorGuideCatalogDisclosesCodeInterpreterBoundary (tier-11, unskipped, run today) pin the §26.10 out-of-sandbox boundary: the first guards the spec's own boundary sentence in the §26.10 section body, the second guards that the operator-facing reference-runtime catalog table in docs/runtime-author-guide/index.md discloses the same boundary against the openai-assistants row itself. The tier-3 contract half of this gap (asserting a live code_interpreter tool call is passed through unmodified with no synthesized sandbox provenance) remains blocked on the same openai-assistants adapter and fake Assistants API stub as the bootstrap-contract skip above; it is not yet buildable."
+      "notes": "Reference runtime for OpenAI Assistants API. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the openai-assistants name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. TestOpenAIAssistantsRuntimeSessionCreatesThreadRunAndMapsToolCalls pins the §26.10 bootstrap contract (adapter creates a Thread on OpenAI with the runtimeOptions assistant ID at session start, appends to the thread and starts a Run on each message, streams the run's deltas as a response part, and maps an Assistants tool call — code_interpreter or file_search — onto a §15.1 tool_use event reflecting Lenny's tool_call envelope) via sessiondriver, and is currently a non-blocking skip: the openai-assistants reference runtime (github.com/lennylabs/runtime-openai-assistants) is not vendored in this repo, cmd/runtimes/openai-assistants does not exist, and no in-repo runtime adapter performs the Thread/Run bootstrap sequence or the tool-call mapping yet. Unskip once a runnable openai-assistants image or an equivalent in-repo adapter exists and is registered with a warm pool, and a fixture assistant configured with at least one tool (code_interpreter or file_search) is available under tests/testdata. TestSpecOpenAIAssistantsCodeInterpreterBoundaryStated and TestRuntimeAuthorGuideCatalogDisclosesCodeInterpreterBoundary (tier-11, unskipped, run today) pin the §26.10 out-of-sandbox boundary: the first guards the spec's own boundary sentence in the §26.10 section body, the second guards that the operator-facing reference-runtime catalog table in docs/runtime-author-guide/index.md discloses the same boundary against the openai-assistants row itself. The tier-3 contract half of this gap (asserting a live code_interpreter tool call is passed through unmodified with no synthesized sandbox provenance) remains blocked on the same openai-assistants adapter and fake Assistants API stub as the bootstrap-contract skip above; it is not yet buildable. TestOpenAIAssistantsRuntimeOptionsSchema (tier-3, unskipped, run today) pins the on-disk schemas/runtime-options/openai-assistants/v1.json (the document published at the runtimeOptionsSchema $ref URL, transcribed from the canonical schema body §14 lines 194-206 inlines) against the §26.10 rename from openai-agents to openai-assistants, the required assistantId, the temperature bounds, and the responseFormat enum; it is independent of the bootstrap-contract and code_interpreter-boundary skips above."
     },
     "26.11": {
       "title": "crewai",
@@ -3954,13 +3962,17 @@
       "tests": [
         "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery",
         "tests/tier4_integration/framework_runtime_crewai_delegation_test.go::TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth",
-        "charts/lenny/tests/reference-runtimes_test.yaml"
+        "charts/lenny/tests/reference-runtimes_test.yaml",
+        "tests/tier3_contract/runtimeoptions_schema/runtimeoptions_schema_openai_assistants_crewai_test.go::TestCrewAIRuntimeOptionsSchema"
       ],
       "packages": [
         "cmd/runtimes/crewai"
       ],
+      "schemas": [
+        "schemas/runtime-options/crewai/v1.json"
+      ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for CrewAI. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the crewai name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth pins the §26.11 delegation contract (a crew's Task.delegate call translates to a lenny/delegate_task invocation whose child session lands on the delegationPolicyRef-selected specialist pool, and a delegation beyond the crew's delegationLease.maxDepth is rejected with the documented §8 depth-exceeded error) via the real cmd/lenny-gateway binary, and is currently a non-blocking skip for the same reason as the langgraph/mastra/openai-assistants bootstrap-contract skips: the crewai reference runtime (github.com/lennylabs/runtime-crewai) is not vendored in this repo, cmd/runtimes/crewai does not exist, the reference catalog entry carries no delegationPolicyRef, and no in-repo runtime or stub crew performs the Task.delegate -> lenny/delegate_task translation yet. Unskip once a runnable crewai image or an in-repo stand-in adapter implementing that translation exists, together with a crewai-default DelegationPolicy fixture and a specialist child pool."
+      "notes": "Reference runtime for CrewAI. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the crewai name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth pins the §26.11 delegation contract (a crew's Task.delegate call translates to a lenny/delegate_task invocation whose child session lands on the delegationPolicyRef-selected specialist pool, and a delegation beyond the crew's delegationLease.maxDepth is rejected with the documented §8 depth-exceeded error) via the real cmd/lenny-gateway binary, and is currently a non-blocking skip for the same reason as the langgraph/mastra/openai-assistants bootstrap-contract skips: the crewai reference runtime (github.com/lennylabs/runtime-crewai) is not vendored in this repo, cmd/runtimes/crewai does not exist, the reference catalog entry carries no delegationPolicyRef, and no in-repo runtime or stub crew performs the Task.delegate -> lenny/delegate_task translation yet. Unskip once a runnable crewai image or an in-repo stand-in adapter implementing that translation exists, together with a crewai-default DelegationPolicy fixture and a specialist child pool. TestCrewAIRuntimeOptionsSchema (tier-3, unskipped, run today) pins the on-disk schemas/runtime-options/crewai/v1.json (the document published at the runtimeOptionsSchema $ref URL, transcribed from the canonical schema body §14 lines 286-297 inlines) against the required crewModule and the process enum; it is independent of the delegation-contract skip above."
     },
     "27": {
       "title": "Web Playground",
