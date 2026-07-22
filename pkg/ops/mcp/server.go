@@ -407,12 +407,14 @@ func capabilitiesFromParams(params json.RawMessage) Capabilities {
 			ReadOnly       bool   `json:"readOnly"`
 			NonDestructive bool   `json:"nonDestructive"`
 			Scope          string `json:"scope"`
+			TenantScoped   bool   `json:"tenantScoped"`
 		} `json:"capabilities"`
 		ClientInfo struct {
 			Capabilities struct {
 				ReadOnly       bool   `json:"readOnly"`
 				NonDestructive bool   `json:"nonDestructive"`
 				Scope          string `json:"scope"`
+				TenantScoped   bool   `json:"tenantScoped"`
 			} `json:"capabilities"`
 		} `json:"clientInfo"`
 	}
@@ -423,11 +425,17 @@ func capabilitiesFromParams(params json.RawMessage) Capabilities {
 		ReadOnly:       p.Capabilities.ReadOnly,
 		NonDestructive: p.Capabilities.NonDestructive,
 		Scope:          p.Capabilities.Scope,
+		TenantScoped:   p.Capabilities.TenantScoped,
 	}
 	// §25.12 declares capabilities under clientInfo.capabilities during
 	// the initialize handshake; honor that form too.
-	if ci := p.ClientInfo.Capabilities; ci.ReadOnly || ci.NonDestructive || ci.Scope != "" {
-		caps = Capabilities{ReadOnly: ci.ReadOnly, NonDestructive: ci.NonDestructive, Scope: ci.Scope}
+	if ci := p.ClientInfo.Capabilities; ci.ReadOnly || ci.NonDestructive || ci.Scope != "" || ci.TenantScoped {
+		caps = Capabilities{
+			ReadOnly:       ci.ReadOnly,
+			NonDestructive: ci.NonDestructive,
+			Scope:          ci.Scope,
+			TenantScoped:   ci.TenantScoped,
+		}
 	}
 	return caps
 }

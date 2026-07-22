@@ -257,7 +257,6 @@ func TestMCPToolsCallScopeForbidden(t *testing.T) {
 // call is issued; this must hold for the authenticated JWT claim, not
 // only the header fallback the other tests in this file use.
 func TestMCPToolsCallHonorsSpaceSeparatedJWTScopeClaim(t *testing.T) {
-	t.Skip("the MCP management server does not yet bridge the authenticated JWT scope claim into the tools/call scope-enforcement layer, and the invoker drops the Authorization header on the internal REST replay, so a real end-to-end JWT scope check cannot pass yet (spec §25.12 Security Model, layer 2 and layer 3, and Headers and Correlation)")
 	srv, signer := opsServerWithAuth(t)
 	// RFC 9068: "the scope claim is a space-separated string of scope
 	// values (not an array)." Two values are granted; a lock-acquire
@@ -677,32 +676,28 @@ func scopeDomain(desc map[string]any) string {
 }
 
 // TestMCPCapabilityNegotiationMatrix verifies the §25.12 Capability
-// Negotiation table: each capability declaration filters the tools/list
-// inventory to the spec-defined effect, and declarations combine.
-//
-// The assertions are deliberately robust to the one open spec ambiguity
-// (which domains outside the operability enumeration belong to the
-// `scope: "admin"` view): they assert membership of tools that are
-// unambiguously operability (health, drift) or unambiguously platform-
-// management (tenant, pool) under any reading, and do not pin the
-// classification of the domains the spec leaves unenumerated. Even so,
-// every row here fails against the current server: `scope: "operability"`
-// applies no domain filter (returns the whole inventory), `scope: "admin"`
-// short-circuits to an empty list (inverted from the spec, which returns
-// the platform-management tools), and `tenantScoped` is not modeled at
-// all (silently ignored, so platform-admin-only tools leak through).
+// Negotiation table over the real tools/list wire: each capability
+// declaration filters the tools/list inventory to the spec-defined
+// effect, and declarations combine. §25.12 classifies a tool as
+// operability or platform-management by its x-lenny-scope domain prefix
+// against the operability-domain set, and the two categories partition
+// the full inventory: scope:operability keeps only operability-domain
+// tools, scope:admin keeps the complement, and tenantScoped drops every
+// platform-admin-only tool. This runs the classification through the
+// production opsserver /mcp/management path (capabilitiesFromParams
+// JSON-RPC parsing, FilterForList, and response serialization) rather
+// than the struct-level registry test.
 //
 // spec: 25.12 (capability negotiation — capability/filter-effect table)
 // diagnosis: A §25.12 tools/list capability declaration did not curate
 // the inventory to the table's effect. scope:operability must return
 // only operability tools, scope:admin must return the platform-management
-// tools (not an empty list), and tenantScoped must drop tools whose
-// endpoints a tenant-admin caller cannot reach (platform-admin-only
-// tools). Capability filtering is a display convenience; a wrong filter
-// gives an agent a misleading tool inventory.
+// tools (a non-empty inventory, not the inverted empty list), and
+// tenantScoped must drop tools whose endpoints a tenant-admin caller
+// cannot reach (platform-admin-only tools). Capability filtering is a
+// display convenience; a wrong filter gives an agent a misleading tool
+// inventory.
 func TestMCPCapabilityNegotiationMatrix(t *testing.T) {
-	t.Skip("§25.12 scope:operability/scope:admin tool classification is not defined precisely enough to implement without a spec decision (the operability enumeration and the platform-management parenthetical do not partition the ~30 remaining admin-API domains), and tenantScoped is unmodeled; this test pins the reading-robust invariants until that decision lands")
-
 	srv := opsServer(t)
 
 	// The full inventory (no capability declaration) spans both the
@@ -728,27 +723,38 @@ func TestMCPCapabilityNegotiationMatrix(t *testing.T) {
 		}
 	})
 
-	t.Run("scope operability returns operability tools and drops platform-management tools", func(t *testing.T) {
+	t.Run("scope operability keeps operability-domain tools and drops platform-management tools", func(t *testing.T) {
 		tools := listToolsWithCaps(t, srv, map[string]any{"scope": "operability"})
 		if len(tools) == 0 {
 			t.Fatal("scope:operability returned an empty inventory")
 		}
-		var sawHealth bool
+		var sawHealth, sawDrift bool
 		for _, d := range tools {
 			switch scopeDomain(d) {
-			case "health", "drift":
+			case "health":
 				sawHealth = true
+			case "drift":
+				sawDrift = true
 			case "tenant", "pool":
 				t.Errorf("scope:operability kept the platform-management tool %v (domain %q)", d["name"], scopeDomain(d))
 			}
 		}
+		// health and drift are operability-domain tools even though the
+		// health tool is gateway-owned; both must survive the operability
+		// filter (the pre-fix server applied no domain filter and returned
+		// the whole inventory, so this row is a genuine regression guard).
 		if !sawHealth {
-			t.Error("scope:operability dropped the operability health/drift tools")
+			t.Error("scope:operability dropped the operability health tools")
+		}
+		if !sawDrift {
+			t.Error("scope:operability dropped the operability drift tools")
 		}
 	})
 
-	t.Run("scope admin returns platform-management tools and drops operability tools", func(t *testing.T) {
+	t.Run("scope admin returns the platform-management inventory and drops operability tools", func(t *testing.T) {
 		tools := listToolsWithCaps(t, srv, map[string]any{"scope": "admin"})
+		// §25.12: scope:admin returns the platform-management tools, not the
+		// inverted empty list the pre-fix short-circuit produced.
 		if len(tools) == 0 {
 			t.Fatal("scope:admin returned an empty inventory; §25.12 returns the platform-management tools")
 		}

@@ -3795,6 +3795,7 @@
         "tests/tier0_static/change_graph_ops_selection_test.go::TestChangeGraphMCPPackageSelectsContractAndSecurityTiers",
         "pkg/gateway/externalapi/openapi/completeness_test.go::TestOperabilityResponsesCarrySchemas",
         "tests/tier8_chaos/mcp_management_gateway_outage_test.go::TestMCPManagementGatewayOwnedToolDuringGatewayOutage",
+        "tests/tier9_security/mcp_management_proxy_403_test.go::TestMCPManagementGatewayProxyReEmitsForbiddenVerbatim_spec_25_12",
         "tests/tier0_static/spec_map_operability_packages_test.go::TestSpecMapExceptionsDoesNotDeferShippedMCPManagementServer"
       ],
       "packages": [

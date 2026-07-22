@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	opsevents "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/opsidem"
 	"github.com/lennylabs/lenny/pkg/ops/probe"
@@ -274,6 +275,17 @@ type Options struct {
 	// binary always supplies it.
 	Auth *AuthConfig
 
+	// Gateway, when non-nil, is the §25.12 identity-forwarding gateway
+	// proxy the ManagementMCPAdapter routes gateway-owned tool calls to. A
+	// nil value (dev / single-process / no-gateway posture) leaves every
+	// gateway-owned tool reporting ENDPOINT_UNAVAILABLE; ops-owned tools
+	// still dispatch locally. cmd/lenny-ops reuses the same GatewayClient
+	// it builds for the config/drift/events fan-out.
+	//
+	// spec: §25.12 (ManagementMCPAdapter dual routing; the gateway-owned
+	// tools proxy to the Gateway admin API via GatewayClient).
+	Gateway *gateway.Client
+
 	// Idempotency, when non-nil, wraps every mutating (POST/PUT)
 	// operability route in the §25.4 idempotency middleware backed by this
 	// store. Records are keyed by (Idempotency-Key, caller_id); the
@@ -434,9 +446,21 @@ func New(opts Options) *Server {
 	// §25.12: the MCP management server exposes the §25 operability
 	// surface as MCP tools. It is built last so it can route to the
 	// services registered above.
-	s.mcp = mcp.NewServer(s.mcpInvoker())
-	s.mux.Handle("/mcp/management", s.mcp)
-	s.mux.Handle("/mcp/management/", s.mcp)
+	s.mcp = mcp.NewServer(s.mcpInvoker(opsOwnedToolNames(), opts.Gateway))
+	// §25.12 Security Model layers 2 and 3: the mounted MCP server sits
+	// behind the scope-bridge and caller-identity middleware so the
+	// MCP-boundary scope gate reads the authenticated JWT scope claim and
+	// the gateway proxy forwards the real caller's identity. allowDevHeaders
+	// gates the dev-mode identity-header fallback: it mirrors the auth
+	// configuration's AllowDevHeaders when authenticated, and defaults true
+	// in the no-AuthConfig dev posture where the surface is unauthenticated.
+	allowDevHeaders := true
+	if opts.Auth != nil {
+		allowDevHeaders = opts.Auth.Options.AllowDevHeaders
+	}
+	bridgedMCP := newMCPBridge(s.mcp, allowDevHeaders)
+	s.mux.Handle("/mcp/management", bridgedMCP)
+	s.mux.Handle("/mcp/management/", bridgedMCP)
 	// §25.4 idempotency sits closest to the mux, inside the auth wrapper,
 	// so it reads caller_id from the principal the auth middleware
 	// attaches. Probe paths are GET, so the middleware passes them through

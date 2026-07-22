@@ -163,7 +163,12 @@ func (w *opsWiring) buildHTTPSurface() {
 		Production:           *w.f.production,
 		DiagnosticsAudit:     buildDiagnosticsAudit(*w.f.diagnosticsAuditRate, w.auditRecorder),
 		Auth:                 authCfg,
-		Idempotency:          w.idemStore,
+		// §25.12: route gateway-owned MCP management tools through the same
+		// GatewayClient built for the config/drift/events fan-out. A nil
+		// gwClient (single-process degraded mode) leaves gateway-owned tools
+		// reporting ENDPOINT_UNAVAILABLE.
+		Gateway:     w.gwClient,
+		Idempotency: w.idemStore,
 		// §25.4 ops.idempotency.{keyTTLSeconds,longRunningKeyTTLSeconds}: a
 		// zero value keeps the opsidem built-in (24h/7d). F-25.4.9.
 		IdempotencyStandardTTL:    time.Duration(*w.f.idempotencyKeyTTL) * time.Second,

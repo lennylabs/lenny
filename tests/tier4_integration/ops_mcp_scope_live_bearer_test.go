@@ -130,21 +130,26 @@ func rpcCallToolsCall(t *testing.T, baseURL, bearer, toolName string, args map[s
 
 // spec: §25.1 lines 89-94 ("Scopes are enforced in three places: ...
 // 2. MCP tool invocation — /mcp/management tools/call checks the scope
-// before dispatch." "A request for a tool not permitted by any scope
-// returns 403 SCOPE_FORBIDDEN with a response body listing the caller's
-// active scopes.")
+// before dispatch.") and §25.12 ("A caller whose scope doesn't match
+// receives 403 SCOPE_FORBIDDEN from the MCP adapter before any REST call
+// is issued.").
 //
 // diagnosis: a failure here means the deployed cmd/lenny-ops binary's
-// §25.1 scope gate does not actually enforce a real Bearer JWT's RFC
-// 9068 `scope` claim on an MCP tools/call invocation. Every existing
-// scope-rejection test injects the claim in-process (a mock Principal or
-// the X-Lenny-Scope test header) rather than through a verified
-// Authorization: Bearer token, so none of them would catch a regression
-// in the OIDC auth middleware -> Principal.Scopes -> MCP-replay wiring
-// this test exercises end to end: a narrowly-scoped, genuinely signed
-// and verified token invoking a tool outside its scope must be rejected
-// before the underlying admin handler runs, and the rejection must name
-// both the tool's required scope and the caller's actual active scope.
+// §25.12 MCP-boundary scope gate does not enforce a real Bearer JWT's RFC
+// 9068 `scope` claim before dispatch. The gateway-owned
+// admin.set_pool_warm_count is proxied to the gateway rather than
+// replayed locally, so the scope claim must be caught at the pre-dispatch
+// MCP-boundary gate: a narrowly-scoped, genuinely signed and verified
+// token invoking a tool outside its scope must be rejected with a
+// JSON-RPC -32001/SCOPE_FORBIDDEN error before any gateway call is issued.
+// A regression that let the call through to dispatch, or that surfaced the
+// denial only as a downstream REST-replay error envelope, would break the
+// §25.12 guarantee that the scope claim gates the MCP boundary. Every
+// existing scope-rejection test injects the claim in-process (a mock
+// Principal or the X-Lenny-Scope test header) rather than through a
+// verified Authorization: Bearer token bridged onto the MCP context, so
+// none of them would catch a regression in the OIDC auth middleware ->
+// Principal.Scopes -> MCP-boundary bridge this test exercises end to end.
 func TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E(t *testing.T) {
 	opsprocess.SkipUnlessAvailable(t)
 
@@ -189,53 +194,38 @@ func TestOpsMCPToolsCallScopeGateRejectsLiveBearerE2E(t *testing.T) {
 
 	// admin.set_pool_warm_count declares x-lenny-scope tools:pool:write
 	// (pkg/ops/mcp/generated_tools.go): the §25.17 pool-scale tool this
-	// finding's suggested test names. The bearer above carries only
-	// tools:health:read, so the tools/call scope gate must reject it
-	// before the mapped PUT /v1/admin/pools/{name}/warm-count replay
-	// runs.
+	// finding's suggested test names. It is gateway-owned (absent from
+	// RouteSchemas(), proxied to PUT /v1/admin/pools/{name}/warm-count),
+	// so it is not replayed locally. The bearer above carries only
+	// tools:health:read, so the §25.12 MCP-boundary scope gate must reject
+	// it with a pre-dispatch JSON-RPC error before any gateway call is
+	// issued.
 	env := rpcCallToolsCall(t, base, bearer, "admin.set_pool_warm_count",
 		map[string]any{"name": "tier4-scope-probe-pool"})
 
-	if env["error"] != nil {
-		t.Fatalf("tools/call returned a JSON-RPC error instead of a tool result: %v", env["error"])
+	// §25.12: the scope mismatch is caught at the MCP boundary before
+	// dispatch, so the response is a JSON-RPC -32001 error rather than a
+	// tool result carrying a downstream REST-replay error envelope.
+	if env["result"] != nil {
+		t.Fatalf("tools/call returned a tool result instead of a pre-dispatch JSON-RPC error: %v", env["result"])
 	}
-	result, _ := env["result"].(map[string]any)
-	if result == nil {
-		t.Fatalf("tools/call response carries no result object: %v", env)
+	rpcErr, ok := env["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("tools/call carries no JSON-RPC error object: %v", env)
 	}
-	if isErr, _ := result["isError"].(bool); !isErr {
-		t.Fatalf("result.isError = %v, want true (scope-forbidden tool call); result=%v", result["isError"], result)
+	if code, _ := rpcErr["code"].(float64); code != -32001 {
+		t.Errorf("error.code = %v, want -32001 SCOPE_FORBIDDEN", rpcErr["code"])
 	}
-	content, _ := result["content"].([]any)
-	if len(content) == 0 {
-		t.Fatalf("result.content is empty; result=%v", result)
+	data, _ := rpcErr["data"].(map[string]any)
+	if data["code"] != "SCOPE_FORBIDDEN" {
+		t.Errorf("data.code = %v, want SCOPE_FORBIDDEN", data["code"])
 	}
-	first, _ := content[0].(map[string]any)
-	text, _ := first["text"].(string)
-	if text == "" {
-		t.Fatalf("result.content[0].text is empty; result=%v", result)
+	if got := data["requiredScope"]; got != "tools:pool:write" {
+		t.Errorf("data.requiredScope = %v, want tools:pool:write", got)
 	}
-
-	// text carries the replayed REST call's §25.2 canonical error
-	// envelope (pkg/ops/opsserver/scope_enforce.go writeOpsScopeForbidden):
-	// {"error":{"code":"SCOPE_FORBIDDEN","details":{"requiredScope":...,
-	// "activeScope":...}}}.
-	var errEnvelope struct {
-		Error struct {
-			Code    string         `json:"code"`
-			Details map[string]any `json:"details"`
-		} `json:"error"`
-	}
-	if err := json.Unmarshal([]byte(text), &errEnvelope); err != nil {
-		t.Fatalf("decode replayed REST error envelope from content[0].text: %v; text=%s", err, text)
-	}
-	if errEnvelope.Error.Code != "SCOPE_FORBIDDEN" {
-		t.Errorf("error.code = %q, want SCOPE_FORBIDDEN; text=%s", errEnvelope.Error.Code, text)
-	}
-	if got := errEnvelope.Error.Details["requiredScope"]; got != "tools:pool:write" {
-		t.Errorf("error.details.requiredScope = %v, want tools:pool:write; text=%s", got, text)
-	}
-	if got := errEnvelope.Error.Details["activeScope"]; got != "tools:health:read" {
-		t.Errorf("error.details.activeScope = %v, want tools:health:read (the caller's active scopes); text=%s", got, text)
+	// The gate reports the caller's active JWT scope claim (the space-
+	// separated Raw value the verifier parsed off the Bearer token).
+	if got := data["activeScope"]; got != "tools:health:read" {
+		t.Errorf("data.activeScope = %v, want tools:health:read (the caller's active JWT scope claim)", got)
 	}
 }
