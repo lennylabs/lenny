@@ -203,6 +203,35 @@ tests:
           path: spec.credentialCapabilities.proxyDialect
           content: cursor
 
+  # spec: §26.2 line 51 — coding-agent runtimes use deliveryMode: proxy
+  # by default. deliveryMode itself is a per-CredentialPool property
+  # (§4.9), not a Runtime field, so the renderable precondition for that
+  # default is credentialCapabilities.proxyDialect: admission rejects
+  # binding a deliveryMode: proxy pool to a runtime whose proxyDialect
+  # does not include the pool's dialect (§4.9 line 1500), and §5.1 line
+  # 76 reserves an empty proxyDialect for direct-mode-only runtimes. A
+  # coding-agent entry that regresses to an empty proxyDialect could no
+  # longer default to proxy delivery. gemini-cli and codex are the two
+  # coding-agent runtimes not already covered by the claude-code (line
+  # 184) and cursor-cli (line 197) cases above.
+  - it: stamps google proxyDialect on gemini-cli per §26.4 line 252
+    documentSelector:
+      path: metadata.name
+      value: gemini-cli
+    asserts:
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: google
+
+  - it: stamps openai proxyDialect on codex per §26.5 line 274
+    documentSelector:
+      path: metadata.name
+      value: codex
+    asserts:
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: openai
+
   # spec: §26.9 line 410 — mastra proxyDialect: [anthropic, openai, google].
   - it: stamps anthropic/openai/google proxyDialect on mastra per §26.9 line 410
     documentSelector:

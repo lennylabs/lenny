@@ -3812,7 +3812,8 @@
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
         "tests/tier5_e2e_kind/runtime_publish_journey_test.go::TestRuntimePublishJourney",
-        "tests/tier10_conformance/reference_battery_test.go::TestImageDeploymentConformance"
+        "tests/tier10_conformance/reference_battery_test.go::TestImageDeploymentConformance",
+        "charts/lenny/tests/reference-runtimes_test.yaml"
       ],
       "packages": [
         "cmd/runtimes/"
