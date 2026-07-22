@@ -122,6 +122,125 @@ func TestValidateSpecMapTestFiles(t *testing.T) {
 	expectPass(t, r)
 }
 
+// specMapTestFuncsFixture builds a temp repo root with the given test
+// files written verbatim (so callers control which func declarations
+// each file carries), a spec-map.json whose sections list the given
+// test references, and a pending file with the given lines. It returns
+// the validateSpecMapTestFuncs result.
+func specMapTestFuncsFixture(t *testing.T, sections map[string][]string, files map[string]string, pendingLines []string) checkResult {
+	t.Helper()
+	root := t.TempDir()
+	for rel, body := range files {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", full, err)
+		}
+	}
+	doc := map[string]any{"version": 1, "sections": map[string]any{}}
+	secs := doc["sections"].(map[string]any)
+	for name, tests := range sections {
+		secs[name] = map[string]any{"tests": tests}
+	}
+	specMapPath := filepath.Join(root, "spec-map.json")
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatalf("marshal spec-map: %v", err)
+	}
+	if err := os.WriteFile(specMapPath, raw, 0o644); err != nil {
+		t.Fatalf("write spec-map: %v", err)
+	}
+	pendingFile := filepath.Join(root, "spec-map-pending.txt")
+	body := ""
+	for _, l := range pendingLines {
+		body += l + "\n"
+	}
+	if err := os.WriteFile(pendingFile, []byte(body), 0o644); err != nil {
+		t.Fatalf("write pending: %v", err)
+	}
+	return validateSpecMapTestFuncs(specMapPath, pendingFile, root)
+}
+
+// TestValidateSpecMapTestFuncs pins the spec-map test-function
+// resolution gate: a `path::TestName` reference must name a top-level
+// test function that exists in the referenced file. It is the guard
+// that catches a rename which repoints or drops a mapped test function
+// but leaves the file in place, so validateSpecMapTestFiles (which only
+// stats the file) stays green while the map rots. The concrete drift
+// that motivated the check renamed a tier-4 interactive-iteration test
+// and left both section 7.1 and 7.2 pointing at the gone symbol.
+//
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// the tests ... that encode it"). A reference that names a nonexistent
+// function misdirects a maintainer reading the map exactly as a
+// reference to a nonexistent file does.
+func TestValidateSpecMapTestFuncs(t *testing.T) {
+	withFunc := "package p\n\nfunc TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {}\n"
+
+	// A reference that names a function present in the file passes.
+	r := specMapTestFuncsFixture(t,
+		map[string][]string{"7.1": {"tests/tier4/it_test.go::TestInteractiveIterationInterruptThenResumeAndDeliver"}},
+		map[string]string{"tests/tier4/it_test.go": withFunc}, nil)
+	expectPass(t, r)
+
+	// The pre-fix reference names a function the file no longer declares
+	// (renamed away): the gate fails and names the dangling reference.
+	// This is the case that would have caught the proposal-0055 rename.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/it_test.go::TestInteractiveIterationInterruptThenQueuedMessage"}},
+		map[string]string{"tests/tier4/it_test.go": withFunc}, nil)
+	expectFail(t, r, "7.2", "tests/tier4/it_test.go::TestInteractiveIterationInterruptThenQueuedMessage")
+
+	// A precise `path::TestName` pending waiver suppresses only that one
+	// dangling reference.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/it_test.go::TestGone"}},
+		map[string]string{"tests/tier4/it_test.go": withFunc},
+		[]string{"tests/tier4/it_test.go::TestGone"})
+	expectPass(t, r)
+
+	// A whole-file pending waiver (path with the ::TestName stripped)
+	// exempts every function in that file.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/it_test.go::TestGone"}},
+		map[string]string{"tests/tier4/it_test.go": withFunc},
+		[]string{"tests/tier4/it_test.go"})
+	expectPass(t, r)
+
+	// A missing file is validateSpecMapTestFiles' finding, not this
+	// gate's; the func check does not double-report it.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/absent_test.go::TestGone"}},
+		nil, nil)
+	expectPass(t, r)
+
+	// A function that exists only in a sibling file in the same
+	// directory does not satisfy a reference that names this file: the
+	// map points at a specific file and the pointer must be accurate.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/a_test.go::TestElsewhere"}},
+		map[string]string{
+			"tests/tier4/a_test.go": "package p\n",
+			"tests/tier4/b_test.go": "package p\n\nfunc TestElsewhere(t *testing.T) {}\n",
+		}, nil)
+	expectFail(t, r, "tests/tier4/a_test.go::TestElsewhere")
+
+	// A method with a matching name (`func (r T) TestX(`) is not a
+	// top-level test function and does not satisfy the reference.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/m_test.go::TestMethod"}},
+		map[string]string{"tests/tier4/m_test.go": "package p\n\nfunc (r rec) TestMethod() {}\n"}, nil)
+	expectFail(t, r, "tests/tier4/m_test.go::TestMethod")
+
+	// An entry without a `::TestName` selector is out of scope here.
+	r = specMapTestFuncsFixture(t,
+		map[string][]string{"7.2": {"tests/tier4/it_test.go"}},
+		map[string]string{"tests/tier4/it_test.go": withFunc}, nil)
+	expectPass(t, r)
+}
+
 // TestHasNotImplementedSkipAfter pins the §17.9 skip-prefix
 // allowlist. The validate-diagnosis subcommand treats a test as
 // exempt from the // spec: / // diagnosis: annotation requirement
