@@ -218,6 +218,75 @@ func TestCreatePoolStandardIsolationWithOptInAllowed(t *testing.T) {
 	}
 }
 
+// TestCreatePoolStandardIsolationOptInAppliesToChatRuntime_spec_5_3
+// verifies the §5.3 `allowStandardIsolation` opt-in gate applies to a pool
+// backed by a `chat`-type runtime exactly as it does to any other runtime,
+// with no admission carve-out for the shell-less, no-user-code-execution
+// runtime the §26.7 reference catalog entry documents. §5.3 states the
+// opt-in requirement without qualifying it by runtime: "Deployers must
+// explicitly opt in to `runc` via a pool configuration flag
+// (`allowStandardIsolation: true`)." The gate itself
+// (validatePoolForStore in pools.go) checks only the pool's
+// IsolationProfile and AllowStandardIsolation fields; it never resolves
+// or inspects the referenced runtime, so a `chat` runtime pool and a
+// shell-running coding-agent runtime pool are rejected and admitted
+// identically. This test drives both runtime kinds through the same
+// standard-isolation opt-in gate to pin that uniform enforcement.
+//
+// spec: §5.3 ("Deployers must explicitly opt in to `runc` via a pool
+// configuration flag (`allowStandardIsolation: true`).")
+func TestCreatePoolStandardIsolationOptInAppliesToChatRuntime_spec_5_3(t *testing.T) {
+	cases := []struct {
+		name        string
+		runtimeName string
+		runtimeType runtimestore.RuntimeType
+	}{
+		{name: "chat-runtime", runtimeName: "chat", runtimeType: runtimestore.TypeAgent},
+		{name: "shell-running-coding-agent-runtime", runtimeName: "claude-code", runtimeType: runtimestore.TypeAgent},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router, store, runtimes, _ := newPoolAdmin(t)
+			_ = runtimes.Create(context.Background(), runtimestore.Runtime{
+				Name: tc.runtimeName,
+				Type: tc.runtimeType,
+			})
+
+			// Without the opt-in: rejected, regardless of runtime kind.
+			poolName := tc.runtimeName + "-runc-pool"
+			rr := poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+				Name:             poolName,
+				RuntimeRef:       tc.runtimeName,
+				IsolationProfile: "standard",
+			})
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("%s pool, standard isolation without allowStandardIsolation: got %d, want 400; "+
+					"§5.3 requires the opt-in unconditionally, with no runtime-specific admission bypass; body=%s",
+					tc.runtimeName, rr.Code, rr.Body.String())
+			}
+
+			// With the opt-in: admitted, regardless of runtime kind.
+			rr = poolReq(t, router.Handler(), http.MethodPost, "/v1/admin/pools", admin.PoolPayload{
+				Name:                   poolName,
+				RuntimeRef:             tc.runtimeName,
+				IsolationProfile:       "standard",
+				AllowStandardIsolation: true,
+			})
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("%s pool, standard isolation with allowStandardIsolation: got %d, want 201; body=%s",
+					tc.runtimeName, rr.Code, rr.Body.String())
+			}
+			row, _ := store.Get(context.Background(), poolName)
+			if row.IsolationProfile != isolation.ProfileStandard {
+				t.Errorf("%s pool isolationProfile = %q, want standard", tc.runtimeName, row.IsolationProfile)
+			}
+			if !row.AllowStandardIsolation {
+				t.Errorf("%s pool allowStandardIsolation = false after an opt-in create; want true", tc.runtimeName)
+			}
+		})
+	}
+}
+
 func TestListPoolsFilterByRuntime(t *testing.T) {
 	router, store, _, _ := newPoolAdmin(t)
 	_ = store.Create(context.Background(), poolstore.Pool{Name: "a", RuntimeRef: "echo", IsolationProfile: isolation.ProfileSandboxed})
