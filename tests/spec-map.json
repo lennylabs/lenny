@@ -3835,42 +3835,50 @@
     "26.3": {
       "title": "claude-code",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+      ],
       "packages": [
         "cmd/runtimes/claude-code"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for Anthropic Claude Code. Ships behind the runtime catalog. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for Anthropic Claude Code. Ships behind the runtime catalog. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the claude-code name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
     },
     "26.4": {
       "title": "gemini-cli",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+      ],
       "packages": [
         "cmd/runtimes/gemini-cli"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for Google Gemini CLI. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for Google Gemini CLI. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the gemini-cli name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
     },
     "26.5": {
       "title": "codex",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+      ],
       "packages": [
         "cmd/runtimes/codex"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for OpenAI Codex. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for OpenAI Codex. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the codex name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
     },
     "26.6": {
       "title": "cursor-cli",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier10_conformance/reference_coding_agents_test.go::TestCodingAgentReferenceRuntimesFullBattery"
+      ],
       "packages": [
         "cmd/runtimes/cursor-cli"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for Cursor CLI. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for Cursor CLI. Conformance harness validates the integration level once the binary ships. Pending the binary, the tier-10 test drives the reference Full-level stub adapter through the §15.4.6 Full battery under the cursor-cli name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
     },
     "26.7": {
       "title": "chat",
