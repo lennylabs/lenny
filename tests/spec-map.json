@@ -3887,12 +3887,14 @@
     "26.7": {
       "title": "chat",
       "spec_file": "spec/26_reference-runtime-catalog.md",
-      "tests": [],
+      "tests": [
+        "tests/tier5_e2e_kind/chat_runtime_session_test.go::TestChatRuntimeSessionStreamsResponse"
+      ],
       "packages": [
         "cmd/runtimes/chat"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for the bundled chat agent. Conformance harness validates the integration level once the binary ships."
+      "notes": "Reference runtime for the bundled chat agent. Conformance harness validates the integration level once the binary ships. TestChatRuntimeSessionStreamsResponse pins the §26.7 bootstrap contract (session message round-trips through the LLM proxy and streams a response part back) via sessiondriver, and is currently a non-blocking skip: the chat reference runtime (github.com/lennylabs/runtime-chat) is not vendored in this repo and no in-repo runtime adapter performs a real provider-dialect LLM-proxy call from inside a live pod session yet. Unskip once a runnable chat image or an equivalent in-repo adapter exists and is registered with a warm pool."
     },
     "26.8": {
       "title": "langgraph",
