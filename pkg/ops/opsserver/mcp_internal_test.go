@@ -187,6 +187,68 @@ func TestOpsInvokerGatewayDryRunPreviewSurfaced_spec_25_12(t *testing.T) {
 	}
 }
 
+// TestOpsInvokerGatewayGetToolAppendsQueryString confirms the §25.12
+// gateway proxy carries a GET tool's non-path arguments as the request
+// query string: buildToolRequest encodes the unconsumed arguments and
+// invokeGateway appends "?"+query to the proxied path, so the gateway
+// admin API sees the filter the caller supplied. A GET gateway-owned tool
+// whose query was dropped would reach the gateway unfiltered and return a
+// different result set than the caller asked for.
+//
+// spec: §25.12 (a gateway-owned tool proxies to the gateway admin API via
+// GatewayClient; a GET tool's arguments map to the request query string).
+func TestOpsInvokerGatewayGetToolAppendsQueryString_spec_25_12(t *testing.T) {
+	var gotMethod, gotPath, gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod, gotPath, gotQuery = r.Method, r.URL.Path, r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"events":[]}`))
+	}))
+	defer srv.Close()
+
+	inv := &opsInvoker{opsOwned: opsOwnedToolNames(), gateway: gatewayClientTo(t, srv.URL)}
+	tool := mcp.Tool{Name: "admin.list_audit_events", Method: http.MethodGet, Path: "/v1/admin/audit"}
+	res, err := inv.invokeGateway(context.Background(), tool, json.RawMessage(`{"actor":"alice"}`))
+	if err != nil {
+		t.Fatalf("invokeGateway returned an error for a GET tool with a query argument: %v", err)
+	}
+	if res.Status != http.StatusOK {
+		t.Errorf("ToolResult.Status = %d, want 200", res.Status)
+	}
+	if gotMethod != http.MethodGet || gotPath != "/v1/admin/audit" {
+		t.Errorf("gateway saw %s %s, want GET /v1/admin/audit", gotMethod, gotPath)
+	}
+	if gotQuery != "actor=alice" {
+		t.Errorf("gateway saw query %q, want actor=alice appended from the GET arguments", gotQuery)
+	}
+}
+
+// TestOpsInvokerGatewayMalformedArgsReturnsError confirms invokeGateway
+// surfaces a buildToolRequest failure: arguments that are not valid JSON
+// cannot be translated into a request, so the proxy returns the error
+// rather than dispatching a malformed call to the gateway. The gateway
+// must never be reached with a half-built request.
+//
+// spec: §25.12 (a gateway-owned tool proxies its mapped admin-API call; an
+// untranslatable request is an error rather than a silent dispatch).
+func TestOpsInvokerGatewayMalformedArgsReturnsError_spec_25_12(t *testing.T) {
+	reached := false
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		reached = true
+	}))
+	defer srv.Close()
+
+	inv := &opsInvoker{opsOwned: opsOwnedToolNames(), gateway: gatewayClientTo(t, srv.URL)}
+	tool := mcp.Tool{Name: "admin.create_pool", Method: http.MethodPost, Path: "/v1/admin/pools"}
+	_, err := inv.invokeGateway(context.Background(), tool, json.RawMessage(`{not valid json`))
+	if err == nil {
+		t.Fatal("invokeGateway returned a nil error for unparseable arguments, want the buildToolRequest error surfaced")
+	}
+	if reached {
+		t.Error("the gateway was dispatched a request built from unparseable arguments; the error must short-circuit before ProxyAdminCall")
+	}
+}
+
 // readAll drains an http.Request body for assertion.
 func readAll(r *http.Request) ([]byte, error) {
 	defer r.Body.Close()
