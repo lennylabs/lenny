@@ -279,6 +279,51 @@ tests:
           path: spec.credentialCapabilities.proxyDialect
           content: openai
 
+  # spec: §26.8 lines 375-381 — langgraph declares integrationLevel: full,
+  # supportedProviders including azure_openai, credentialCapabilities.
+  # proxyDialect: [anthropic, openai, google], and the v1
+  # runtimeOptionsSchema URL. Without a dedicated case selecting this
+  # entry, a regression to the langgraph fields still passes the
+  # aggregate hasDocuments count check.
+  - it: registers langgraph as a Full-level agent with azure_openai per §26.8
+    documentSelector:
+      path: metadata.name
+      value: langgraph
+    asserts:
+      - equal:
+          path: spec.integrationLevel
+          value: full
+      - contains:
+          path: spec.supportedProviders
+          content: azure_openai
+
+  # spec: §26.8 line 380 — langgraph proxyDialect: [anthropic, openai, google].
+  - it: stamps anthropic/openai/google proxyDialect on langgraph per §26.8 line 380
+    documentSelector:
+      path: metadata.name
+      value: langgraph
+    asserts:
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: anthropic
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: openai
+      - contains:
+          path: spec.credentialCapabilities.proxyDialect
+          content: google
+
+  # spec: §26.8 line 377 — the langgraph runtimeOptionsSchema already in
+  # §14 resolves to the v1 URL the chart stamps as runtimeOptionsSchemaRef.
+  - it: stamps runtimeOptionsSchemaRef on langgraph per §26.8 line 377
+    documentSelector:
+      path: metadata.name
+      value: langgraph
+    asserts:
+      - equal:
+          path: spec.runtimeOptionsSchemaRef
+          value: https://schemas.lenny.dev/runtime-options/langgraph/v1.json
+
   # spec: §26.9 line 410 — mastra proxyDialect: [anthropic, openai, google].
   - it: stamps anthropic/openai/google proxyDialect on mastra per §26.9 line 410
     documentSelector:
