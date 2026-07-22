@@ -133,4 +133,10 @@ import (
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/slow_loris_protection"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/streaming_reconnect_backoff"
 	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/timeout_propagation"
+
+	// §11.1 concurrency-and-rate-before-policy ordering on the built-in
+	// OpenAI-dialect single-shot create-and-start path: an over-limit create
+	// is denied at the concurrency gate before the admission-rate gate or the
+	// policy chain, so it reserves no rate or token budget.
+	_ "github.com/lennylabs/lenny/tests/tier7a_load_local/scenarios/singleshot_admission_ordering"
 )
