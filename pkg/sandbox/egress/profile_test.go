@@ -30,6 +30,32 @@ func TestDefaultIsRestricted_spec_13_2(t *testing.T) {
 	}
 }
 
+// TestUnrestrictedEgressProfileAcceptedForCodingAgentOptIn_spec_26_2 pins
+// §26.2's coding-agent-runtime opt-in citation against the canonical §13.2
+// egress-profile enum this package implements.
+//
+// spec: §26.2 (spec/26_reference-runtime-catalog.md line 49): "Coding-agent
+// runtimes default to `egressProfile: restricted` ([§6.1]): HTTPS to the
+// operator-configured allowlist (package registries, container registries,
+// LLM provider domains, the operator's Git hosts). Unrestricted egress is
+// explicitly supported but MUST be opted into per pool via `egressProfile:
+// unrestricted` — the operator accepts the risk."
+func TestUnrestrictedEgressProfileAcceptedForCodingAgentOptIn_spec_26_2(t *testing.T) {
+	t.Skip("spec self-contradiction: §26.2 requires a pool to opt a coding-agent " +
+		"runtime into broader egress via `egressProfile: unrestricted`, but the " +
+		"canonical §13.2 enum this package implements (restricted, provider-direct, " +
+		"internet — also the literal set named in the pool-config-validator rejection " +
+		"message) has no `unrestricted` member, so there is no profile value to accept " +
+		"or reject a session against. Whether §26.2 should say `internet` instead, or " +
+		"the enum should gain an `unrestricted` member (and, either way, whether the " +
+		"restricted profile's HTTPS-allowlist-to-registries description matches the " +
+		"gateway+DNS-only restricted policy §13.2 actually defines) needs a spec " +
+		"decision, tracked separately in TEST-GAPS.md.")
+	if !egress.IsValid("unrestricted") {
+		t.Errorf("IsValid(%q) = false, want true per §26.2's coding-agent per-pool opt-in citation", "unrestricted")
+	}
+}
+
 func TestRequiresSandboxedIsolation_spec_13_2(t *testing.T) {
 	cases := map[egress.Profile]bool{
 		egress.ProfileRestricted:     false,
