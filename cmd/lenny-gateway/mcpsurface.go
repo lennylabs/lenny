@@ -236,7 +236,14 @@ func (w *gatewayWiring) buildMCPSurface(
 		// availability check through the same session server that owns the
 		// §4.9 engine, so lenny/delegate_task rejects an exhausted pool with
 		// CREDENTIAL_POOL_EXHAUSTED before allocating a warm pod.
-		CredAvailability:           sessionSrv,
+		CredAvailability: sessionSrv,
+		// spec: §8.2 lines 93-97 — materialize the admitted StateCreated
+		// child synchronously within lenny/delegate_task: claim its warm
+		// pod, assign the credential lease, stream the stamped
+		// WorkspacePlan, launch, and transition it to running so the
+		// returned handle is a running child the parent can interact with.
+		// Wired to the same *sessionserver.Server that owns the §4.9 engine.
+		ChildMaterializer:          sessionSrv,
 		Executor:                   w.exec,
 		DeadlockTracker:            deadlockTracker,
 		Deadlocks:                  deadlockManager,

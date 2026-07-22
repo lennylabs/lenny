@@ -309,6 +309,25 @@ type CredentialAvailabilityChecker interface {
 	CheckDelegationCredentialAvailability(ctx context.Context, q sessionserver.DelegationCredentialQuery) error
 }
 
+// ChildMaterializer runs the §8.2 delegation steps that follow admission for a
+// delegated child that Service.Delegate committed in session.StateCreated with
+// a stamped WorkspacePlan and no PodAssignment: it claims the warm pod, assigns
+// the credential lease, streams the stamped WorkspacePlan through the §6.3
+// binder, launches, and transitions the child to running. It returns the
+// child's post-materialization state so the delegate handler builds the
+// taskHandle from the live transitioned state rather than the pre-materialization
+// StateCreated snapshot, and it fails closed on any failure, returning the same
+// typed credential sentinels the §8.3 pre-check maps so the handler surfaces the
+// canonical MCP tool codes. *sessionserver.Server implements it via
+// MaterializeDelegatedChild (modeled on the CredentialAvailabilityChecker
+// precedent above, so mcptools depends on the interface rather than importing
+// the concrete server and creating a cycle).
+//
+// spec: §8.2 lines 93-97
+type ChildMaterializer interface {
+	MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error)
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
@@ -341,6 +360,17 @@ type Deps struct {
 	// in-process gateway and the mcptools unit suite leave it nil).
 	// Production wires *sessionserver.Server. spec: §8.3 line 470; §4.9.
 	CredAvailability CredentialAvailabilityChecker
+
+	// ChildMaterializer runs the §8.2 steps after admission for the
+	// StateCreated child lenny/delegate_task commits: claim the warm pod,
+	// assign the credential lease, stream the workspace, launch, and
+	// transition the child to running so the returned handle is a running
+	// child the parent can interact with. When set, the delegate handler
+	// drives the admitted child through it before delivering task input.
+	// Optional — a nil materializer leaves the child in StateCreated (the
+	// minimal in-process gateway and the mcptools unit suite leave it nil).
+	// Production wires *sessionserver.Server. spec: §8.2 lines 93-97.
+	ChildMaterializer ChildMaterializer
 
 	// Executor routes messages to runtimes.
 	Executor executor.Executor
@@ -920,11 +950,13 @@ type taskHandle struct {
 	// admitted child session.
 	ChildSessionID string `json:"childSessionId"`
 
-	// State is the child's §8.8 task state at admission. v1 returns
-	// `created` (the §7 session create state) because §8.2 step 7 (pod
-	// allocation + workspace materialization) is unbuilt; once the
-	// allocation flow lands, the state will be `submitted` or `running`
-	// per §8.8.
+	// State is the child's §8.8 task state at response time. The child is
+	// materialized synchronously within delegate_task (§8.2: pod allocation,
+	// workspace materialization, and launch), so the field carries the
+	// post-materialization state that ChildMaterializer.Materialize returns,
+	// which reads `running` once the child launches. When no materializer is
+	// wired (the minimal in-process gateway), the field falls back to the
+	// pre-materialization `created` snapshot.
 	State string `json:"state"`
 
 	// RuntimeRef echoes the resolved §5.1 runtime so the caller can

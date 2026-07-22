@@ -149,9 +149,7 @@ func TestDelegationDepthExceededRejectsChainBeyondCeiling(t *testing.T) {
 	// first.
 	root := c.runningSession()
 	child1 := c.delegateChild(root, "echo-mid")
-	c.startSession(child1)
 	child2 := c.delegateChild(child1, "echo-leaf")
-	c.startSession(child2)
 
 	rpc := c.callTool("lenny/delegate_task",
 		`{"parentSessionId":"`+child2+`","target":"echo-toodeep"}`)
@@ -201,7 +199,6 @@ func TestDelegationBudgetExhaustedRejectsWidenedFanOutSlice(t *testing.T) {
 	if err := json.Unmarshal([]byte(text), &granted); err != nil || granted.ChildSessionID == "" {
 		t.Fatalf("delegate_task result is not a childSessionId JSON object: %v (%q)", err, text)
 	}
-	c.startSession(granted.ChildSessionID)
 
 	// child1 (granted maxChildrenTotal=1) tries to hand its own child
 	// a wider fan-out ceiling of 5. §8.2: a child may only tighten,
