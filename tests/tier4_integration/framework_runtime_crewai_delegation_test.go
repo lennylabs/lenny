@@ -98,3 +98,77 @@ func TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth(t *testing.T) {
 		t.Fatalf("error code = %q, want DELEGATION_DEPTH_EXCEEDED: %v", got, env)
 	}
 }
+
+// spec: §26.11 ("`runtimeOptionsSchema` ... `process` (`sequential` |
+// `hierarchical`) ..." "The child session runs on a pool selected by
+// the `delegationPolicyRef` — typically a specialist runtime (e.g.,
+// `langgraph` for a research sub-agent, `claude-code` for a coding
+// sub-agent).")
+//
+// diagnosis: once unskipped, a failure here means a hierarchical-process
+// crew's delegationPolicyRef either did not route a research subtask to
+// the langgraph-style specialist pool, did not route a coding subtask
+// to the claude-code-style specialist pool, or the hierarchical process
+// variant otherwise failed to translate Task.delegate calls the same
+// way the already-covered sequential process does.
+func TestCrewAIHierarchicalProcessRoutesSubtasksToDelegationPolicySelectedPools(t *testing.T) {
+	// Builds on the same blocker as TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth
+	// above: the crewai reference runtime (github.com/lennylabs/runtime-crewai)
+	// is not vendored in this repo, cmd/runtimes/crewai does not exist,
+	// and no in-repo runtime or stub crew performs the CrewAI
+	// Task.delegate -> lenny/delegate_task translation for either the
+	// sequential or the hierarchical process today. This test extends
+	// that sibling's coverage to the hierarchical process variant and
+	// to per-subtask specialist-pool routing under a single
+	// delegationPolicyRef with more than one specialist pool. Unskip
+	// once a runnable crewai image or an in-repo stand-in adapter
+	// implementing the Task.delegate mapping exists for the
+	// hierarchical process, together with a delegationPolicyRef fixture
+	// that routes a research subtask and a coding subtask to distinct
+	// pools.
+	t.Skip("no runnable crewai reference-runtime image or in-repo stub crew implementing the §26.11 hierarchical-process Task.delegate -> lenny/delegate_task translation exists yet")
+
+	gw := gateway.StartWith(t, "--dev-mode", "--delegation-default-max-depth=2")
+	c := mcpClient{t: t, base: gw.BaseURL()}
+
+	// A hierarchical-process crewai orchestrator session delegates two
+	// specialist subtasks. The stub crew's Task.delegate calls are
+	// expected to surface as lenny/delegate_task invocations whose
+	// children land on the delegationPolicyRef-selected pool for each
+	// subtask kind: a research subtask on the langgraph-style pool, a
+	// coding subtask on the claude-code-style pool.
+	root := c.runningSession()
+	research := c.delegateChild(root, "crewai-research-specialist")
+	coding := c.delegateChild(root, "crewai-coding-specialist")
+
+	code, body := c.rest(http.MethodGet, "/v1/sessions/"+root+"/tree", nil)
+	if code != http.StatusOK {
+		t.Fatalf("GET /v1/sessions/%s/tree: status %d (%v)", root, code, body)
+	}
+	treeRoot, _ := body["root"].(map[string]any)
+	children, _ := treeRoot["children"].([]any)
+	if len(children) != 2 {
+		t.Fatalf("hierarchical crew delegation tree root children = %d, want 2: %v", len(children), children)
+	}
+
+	wantPool := map[string]string{
+		research: "crewai-research-specialist",
+		coding:   "crewai-coding-specialist",
+	}
+	seen := map[string]bool{}
+	for _, raw := range children {
+		child, _ := raw.(map[string]any)
+		taskID, _ := child["taskId"].(string)
+		want, ok := wantPool[taskID]
+		if !ok {
+			t.Fatalf("unexpected child taskId %q in hierarchical crew tree: %v", taskID, children)
+		}
+		if got, _ := child["runtimeRef"].(string); got != want {
+			t.Errorf("child %q runtimeRef = %q, want the delegationPolicyRef-selected pool %q", taskID, got, want)
+		}
+		seen[taskID] = true
+	}
+	if !seen[research] || !seen[coding] {
+		t.Fatalf("hierarchical crew tree did not contain both delegated subtasks: research=%v coding=%v (%v)", seen[research], seen[coding], children)
+	}
+}
