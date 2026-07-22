@@ -222,7 +222,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **severity:** High
 
 ### C-14 — Interactive suspended-session atomic resume-and-deliver — §7 (path 6)
-- **status:** assigned:proposal-A (2026-07-18, after C-01 landed). Held back until C-01's pod/resume work landed to avoid pod-claim/resume conflicts; now unblocked. Continues proposal-A's session-resume lane and stays clear of proposal-B's §4.4/§4.6 eviction trigger (C-22, in prestop/controller) and proposal-C's §8.3.
+- **status:** claimed:proposal-A@2026-07-22T19:08:32Z (was assigned:proposal-A; C-01 landed so the pod/resume lane is clear)
 - **assigned:** proposal-A
 - **findings:** T-JRN.1
 - **root spec gap:** §07 path 6 requires that an `immediate` message to a suspended session whose pod is still held atomically resume and deliver with `status: delivered`, but the code falls back to queueing (`status: queued`), leaving the session suspended.
