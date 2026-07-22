@@ -196,6 +196,60 @@ func TestChatRuntimeMaxUploadSize(t *testing.T) {
 	}
 }
 
+// TestChatRuntimeSupportedProvidersAndProxyDialect asserts the chat
+// reference runtime's supportedProviders and
+// credentialCapabilities.proxyDialect slices register exactly the three
+// providers/dialects the manifest declares: anthropic_direct,
+// openai_direct, and gcp_vertex_gemini, paired with the anthropic,
+// openai, and google LLM-proxy dialects. spec: §26.7 lines 331-337
+// ("supportedProviders: - anthropic_direct - openai_direct -
+// gcp_vertex_gemini" / "credentialCapabilities: hotRotation: true
+// proxyDialect: [anthropic, openai, google]").
+//
+// diagnosis: a failure means the chat entry's SupportedProviders or
+// CredentialCapabilities.ProxyDialect slice dropped, reordered, or
+// substituted a provider/dialect, so the registered chat manifest would
+// advertise a provider combination the runtime does not actually cover
+// (or omit one it does), even though nothing else in this suite checks
+// the manifest-level provider/dialect pairing declared for chat.
+func TestChatRuntimeSupportedProvidersAndProxyDialect(t *testing.T) {
+	rts := ReferenceRuntimes()
+	var chat *ReferenceRuntime
+	for i, rt := range rts {
+		if rt.Name == "chat" {
+			chat = &rts[i]
+			break
+		}
+	}
+	if chat == nil {
+		t.Fatal("reference catalog is missing the chat runtime")
+	}
+
+	wantProviders := []string{"anthropic_direct", "openai_direct", "gcp_vertex_gemini"}
+	if len(chat.SupportedProviders) != len(wantProviders) {
+		t.Fatalf("chat supportedProviders = %v, want %v", chat.SupportedProviders, wantProviders)
+	}
+	for i, p := range wantProviders {
+		if chat.SupportedProviders[i] != p {
+			t.Errorf("chat supportedProviders = %v, want %v", chat.SupportedProviders, wantProviders)
+		}
+	}
+
+	if chat.CredentialCapabilities == nil {
+		t.Fatal("chat runtime has no credentialCapabilities block; want proxyDialect: [anthropic, openai, google]")
+	}
+	wantDialects := []string{"anthropic", "openai", "google"}
+	gotDialects := chat.CredentialCapabilities.ProxyDialect
+	if len(gotDialects) != len(wantDialects) {
+		t.Fatalf("chat credentialCapabilities.proxyDialect = %v, want %v", gotDialects, wantDialects)
+	}
+	for i, d := range wantDialects {
+		if gotDialects[i] != d {
+			t.Errorf("chat credentialCapabilities.proxyDialect = %v, want %v", gotDialects, wantDialects)
+		}
+	}
+}
+
 func TestReferenceRuntimesReturnsCopy(t *testing.T) {
 	first := ReferenceRuntimes()
 	first[0].Name = "mutated"
