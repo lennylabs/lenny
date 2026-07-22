@@ -25,24 +25,22 @@ import (
 
 // spec: §7.1 (spec/07_session-lifecycle.md:45) "18. Client ↔ Gateway:
 // Full interactive session (prompts, responses, tool use, interrupts,
-// elicitation, credential rotation on RATE_LIMITED)"; §7.2 lines 313-331
-// (message-delivery path precedence, in particular path 6: "Target
-// session is `suspended` → message is buffered in the session inbox
-// ... a coordinating replica that cannot drive [the pod-held
-// resume-and-deliver] buffers and returns `queued`, which §7.2
-// sanctions" per pkg/gateway/sessionserver/messages.go and the pinned
-// pkg/gateway/session/messagerouting unit case
-// path6_suspended_immediate_still_buffers). The atomic
-// `delivery:"immediate"` pod-held resume-and-deliver itself is tracked
-// separately (still unimplemented pending the §4.7 pod-adapter
-// readiness signal) and is out of scope here.
+// elicitation, credential rotation on RATE_LIMITED)"; §7.2 path 6
+// (lines 326-330), in particular line 327: a `delivery:"immediate"`
+// message whose target session is `suspended` and whose pod is still
+// held atomically resumes the session (`suspended → running`) and
+// delivers the message to the runtime, returning a `delivered` receipt.
+// On the single coordinating replica the in-process echo executor is
+// always ready, so the fourth prompt resumes-and-delivers, produces a
+// fourth echo exchange, and returns the session to `running`.
 //
 // diagnosis: a failure means the real gateway binary does not sustain a
 // multi-prompt developer session, does not record every delivered
 // prompt/response pair to the transcript in order, does not suspend on
-// interrupt, or no longer buffers (rather than silently drops or
-// wrongly delivers) a message sent to a suspended session.
-func TestInteractiveIterationInterruptThenQueuedMessage(t *testing.T) {
+// interrupt, or does not atomically resume-and-deliver a
+// `delivery:"immediate"` message sent to a suspended, pod-held session
+// (returning `delivered` and returning the session to `running`).
+func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
 	// A real Redis backs the §7.2 inbox/DLQ coordinator (see
 	// pkg/gateway/sessionserver/messages.go and
 	// cmd/lenny-gateway/stores.go buildSessionMessaging): without it,
@@ -161,46 +159,54 @@ func TestInteractiveIterationInterruptThenQueuedMessage(t *testing.T) {
 		t.Fatalf("state after interrupt: %v, want suspended", interrupted["state"])
 	}
 
-	// ---- a fourth prompt sent to the now-suspended session is
-	// buffered rather than delivered or dropped: §7.2 line 313-331
-	// path 6. The pod-held atomic resume-and-deliver branch of the
-	// same path is unimplemented (tracked separately), so a
-	// coordinating replica falls back to buffering even with
-	// delivery:"immediate" per the pinned messagerouting unit
-	// behavior; the session stays suspended and produces no executor
-	// output for this message. ----
-	code, queued := sendMessage("fourth prompt", "immediate")
+	// ---- a fourth prompt with delivery:"immediate" sent to the now
+	// suspended, pod-held session atomically resumes the session
+	// (suspended → running) and delivers the message to the runtime:
+	// §7.2 path 6 line 327. The receipt is delivered with a non-empty
+	// deliveredAt, the echo executor produces a fourth exchange, and
+	// the session returns to running. ----
+	code, delivered := sendMessage("fourth prompt", "immediate")
 	if code != http.StatusOK {
-		t.Fatalf("fourth prompt: status %d (%v)", code, queued)
+		t.Fatalf("fourth prompt: status %d (%v)", code, delivered)
 	}
-	receipt, _ := queued["deliveryReceipt"].(map[string]any)
-	if receipt["status"] != "queued" {
-		t.Fatalf("fourth prompt: deliveryReceipt.status = %v, want queued", receipt["status"])
+	receipt, _ := delivered["deliveryReceipt"].(map[string]any)
+	if receipt["status"] != "delivered" {
+		t.Fatalf("fourth prompt: deliveryReceipt.status = %v, want delivered", receipt["status"])
 	}
-	if out, _ := queued["output"].([]any); len(out) != 0 {
-		t.Errorf("fourth prompt: buffered message must not produce executor output, got %v", out)
+	if da, _ := receipt["deliveredAt"].(string); da == "" {
+		t.Errorf("fourth prompt: deliveryReceipt.deliveredAt is empty, want a timestamp on the delivered receipt")
+	}
+	out, _ := delivered["output"].([]any)
+	if len(out) == 0 {
+		t.Fatalf("fourth prompt: resumed-and-delivered message produced no executor output")
+	}
+	fourthEcho, _ := out[0].(map[string]any)
+	fourthText, _ := fourthEcho["text"].(string)
+	if !strings.Contains(fourthText, "fourth prompt") {
+		t.Errorf("fourth prompt: echo output %q missing the prompt text", fourthText)
 	}
 
-	code, afterQueue := do(http.MethodGet, "/v1/sessions/"+sid, "", nil)
+	code, afterDeliver := do(http.MethodGet, "/v1/sessions/"+sid, "", nil)
 	if code != http.StatusOK {
-		t.Fatalf("get session after queued message: %d", code)
+		t.Fatalf("get session after resume-and-deliver: %d", code)
 	}
-	if afterQueue["state"] != "suspended" {
-		t.Errorf("state after buffered message: %v, want still suspended", afterQueue["state"])
+	if afterDeliver["state"] != "running" {
+		t.Errorf("state after resume-and-deliver: %v, want running", afterDeliver["state"])
 	}
 
-	// ---- the transcript records exactly the three delivered
-	// exchanges, in order; the buffered fourth prompt is not among
-	// them because it was never delivered to the executor ----
+	// ---- the transcript records exactly the four delivered
+	// exchanges, in order; the fourth prompt is among them because the
+	// resume-and-deliver delivered it to the executor ----
 	code, transcript := do(http.MethodGet, "/v1/sessions/"+sid+"/transcript", "", nil)
 	if code != http.StatusOK {
 		t.Fatalf("transcript: %d", code)
 	}
 	items, _ := transcript["items"].([]any)
-	if len(items) != 6 {
-		t.Fatalf("transcript entries = %d, want 6 (3 prompts + 3 responses)", len(items))
+	exchanges := append(append([]string{}, prompts...), "fourth prompt")
+	if len(items) != 2*len(exchanges) {
+		t.Fatalf("transcript entries = %d, want %d (4 prompts + 4 responses)", len(items), 2*len(exchanges))
 	}
-	for i, p := range prompts {
+	for i, p := range exchanges {
 		userEntry, _ := items[2*i].(map[string]any)
 		if userEntry["role"] != "user" {
 			t.Errorf("entry %d role = %v, want user", 2*i, userEntry["role"])
@@ -216,12 +222,6 @@ func TestInteractiveIterationInterruptThenQueuedMessage(t *testing.T) {
 		content, _ := assistantEntry["content"].(string)
 		if !strings.Contains(content, wantSeq) {
 			t.Errorf("entry %d content = %q, missing %q", 2*i+1, content, wantSeq)
-		}
-	}
-	for _, item := range items {
-		entry, _ := item.(map[string]any)
-		if strings.Contains(fmt.Sprint(entry["content"]), "fourth prompt") {
-			t.Errorf("transcript must not record the buffered fourth prompt: %v", entry)
 		}
 	}
 
