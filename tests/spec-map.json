@@ -3949,13 +3949,14 @@
       "title": "crewai",
       "spec_file": "spec/26_reference-runtime-catalog.md",
       "tests": [
-        "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery"
+        "tests/tier10_conformance/reference_framework_agents_test.go::TestFrameworkReferenceRuntimesFullBattery",
+        "tests/tier4_integration/framework_runtime_crewai_delegation_test.go::TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth"
       ],
       "packages": [
         "cmd/runtimes/crewai"
       ],
       "blocked_until_phase": "11",
-      "notes": "Reference runtime for CrewAI. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the crewai name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it."
+      "notes": "Reference runtime for CrewAI. Conformance harness validates the integration level once the binary ships. TestFrameworkReferenceRuntimesFullBattery drives the reference Full-level stub adapter through the §15.4.6 Full battery under the crewai name and, when LENNY_REFERENCE_IMAGE_REGISTRY is set, pulls the catalog-declared image and runs the same battery against it. TestCrewAIRuntimeTranslatesTaskDelegateAndEnforcesMaxDepth pins the §26.11 delegation contract (a crew's Task.delegate call translates to a lenny/delegate_task invocation whose child session lands on the delegationPolicyRef-selected specialist pool, and a delegation beyond the crew's delegationLease.maxDepth is rejected with the documented §8 depth-exceeded error) via the real cmd/lenny-gateway binary, and is currently a non-blocking skip for the same reason as the langgraph/mastra/openai-assistants bootstrap-contract skips: the crewai reference runtime (github.com/lennylabs/runtime-crewai) is not vendored in this repo, cmd/runtimes/crewai does not exist, the reference catalog entry carries no delegationPolicyRef, and no in-repo runtime or stub crew performs the Task.delegate -> lenny/delegate_task translation yet. Unskip once a runnable crewai image or an in-repo stand-in adapter implementing that translation exists, together with a crewai-default DelegationPolicy fixture and a specialist child pool."
     },
     "27": {
       "title": "Web Playground",
