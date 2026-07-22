@@ -234,7 +234,7 @@ func sseRecords(t *testing.T, svc *opsevents.Service) [][]byte {
 	req = req.WithContext(cctx)
 	rec := httptest.NewRecorder()
 
-	svc.HandleStream(rec, req)
+	svc.HandleStream(rec, platformAdminReq(req))
 
 	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("SSE Content-Type = %q, want text/event-stream", ct)
@@ -255,7 +255,7 @@ func pollRecords(t *testing.T, svc *opsevents.Service) [][]byte {
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)
 	rec := httptest.NewRecorder()
 
-	svc.HandlePoll(rec, req)
+	svc.HandlePoll(rec, platformAdminReq(req))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll status = %d, want 200; body=%s", rec.Code, rec.Body.String())

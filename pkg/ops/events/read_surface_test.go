@@ -36,12 +36,12 @@ func TestCursor_RoundTrip_spec_25_5_2666(t *testing.T) {
 		if strings.Contains(enc, ":") {
 			t.Errorf("cursor must be opaque (base64), got %q", enc)
 		}
-		gotKind, gotKey, err := decodeCursor(enc)
+		got, err := decodeCursor(enc)
 		if err != nil {
 			t.Fatalf("decodeCursor(%q): %v", enc, err)
 		}
-		if gotKind != c.kind || gotKey != c.key {
-			t.Errorf("round-trip = (%q,%q), want (%q,%q)", gotKind, gotKey, c.kind, c.key)
+		if got.Kind != c.kind || got.EventKey != c.key {
+			t.Errorf("round-trip = (%q,%q), want (%q,%q)", got.Kind, got.EventKey, c.kind, c.key)
 		}
 	}
 }
@@ -50,15 +50,15 @@ func TestCursor_RoundTrip_spec_25_5_2666(t *testing.T) {
 // a malformed cursor is rejected so HandlePoll returns
 // INVALID_EVENT_FILTER.
 func TestCursor_EmptyAndMalformed_spec_25_5_2795(t *testing.T) {
-	if k, p, err := decodeCursor(""); err != nil || k != "" || p != "" {
-		t.Errorf("empty cursor: (%q,%q,%v)", k, p, err)
+	if c, err := decodeCursor(""); err != nil || c != (eventCursor{}) {
+		t.Errorf("empty cursor: (%+v,%v)", c, err)
 	}
-	if _, _, err := decodeCursor("!!!not-base64!!!"); err == nil {
+	if _, err := decodeCursor("!!!not-base64!!!"); err == nil {
 		t.Error("malformed base64 cursor should error")
 	}
 	// base64 of a string with no source-kind prefix is rejected.
 	noPrefix := base64.RawURLEncoding.EncodeToString([]byte("no-colon-here"))
-	if _, _, err := decodeCursor(noPrefix); err == nil {
+	if _, err := decodeCursor(noPrefix); err == nil {
 		t.Error("cursor without source-kind prefix should error")
 	}
 }
@@ -145,7 +145,7 @@ func TestPoll_InvalidFilter_spec_25_5_2795(t *testing.T) {
 		"/v1/admin/events?since=not-a-timestamp",
 	} {
 		rec := httptest.NewRecorder()
-		s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, target, nil))
+		s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, target, nil)))
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: status %d, want 400", target, rec.Code)
 		}
@@ -225,6 +225,15 @@ func TestPoll_GapDetectedAcrossSourceTransitionDuringRedisOutage_spec_25_2_261(t
 		Now:          ts,
 		SourceHealth: StaticSourceHealth{Redis: false, Gateway: true},
 	})
+	// A gateway source is wired, so the Redis outage genuinely falls back to
+	// the gateway-buffer fan-out rather than resolving to the dual-outage case.
+	// The replicas retain a window that starts after the cursor below, which is
+	// what makes that cursor unhonourable: the events it references aged out of
+	// every replica's ring. An empty fan-out window would say nothing about the
+	// cursor and is not a gap.
+	s.SetGatewayBufferSource(&fakeGatewaySource{pages: [][]gwevents.BufferedEvent{{
+		{ID: 1, Event: evt("gw-a:1700000000000000000:1", "dev.lenny.alert_fired")},
+	}}})
 	s.Publish(context.Background(), gwevents.OperationalEvent{Type: "alert_fired"})
 
 	// A cursor produced by the Redis stream, carrying an eventKey this
@@ -293,7 +302,7 @@ func TestStream_InvalidFilter_spec_25_5_2795(t *testing.T) {
 	s := New(Options{Capacity: 16, Now: ts})
 	w := flushRec{httptest.NewRecorder()}
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream?severity=mauve", nil)
-	s.HandleStream(w, req)
+	s.HandleStream(w, platformAdminReq(req))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status %d, want 400", w.Code)
 	}
@@ -304,7 +313,7 @@ func TestStream_InvalidFilter_spec_25_5_2795(t *testing.T) {
 func poll(t *testing.T, s *Service, target string) EventPage {
 	t.Helper()
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, target, nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, target, nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("poll %s: status %d (%s)", target, rec.Code, rec.Body.String())
 	}
@@ -334,7 +343,7 @@ func runStreamBody(s *Service, target string, hdr http.Header) string {
 	}
 	ctx, cancel := context.WithCancel(req.Context())
 	go func() { time.Sleep(20 * time.Millisecond); cancel() }()
-	s.HandleStream(r, req.WithContext(ctx))
+	s.HandleStream(r, platformAdminReq(req.WithContext(ctx)))
 	return r.Body.String()
 }
 

@@ -557,19 +557,16 @@ tests:
               fieldRef:
                 fieldPath: metadata.namespace
 
-  # spec: charts/lenny/templates/ops-deployment.yaml header comment — the
-  # lenny-ops binary reads LENNY_POSTGRES_DSN/LENNY_REDIS_URL
-  # (cmd/lenny-ops/flags.go), but unlike controller-deployment.yaml
-  # (postgres.dsn) and gateway-deployment.yaml (postgres.dsn, redis.url)
-  # this Deployment renders no values path that sets them. Setting
-  # postgres.dsn and redis.url does not add either env var here, even
-  # though the same values populate the lenny-datastore-conn Secret that
-  # the controller and gateway Deployments read from.
-  - it: renders no LENNY_POSTGRES_DSN or LENNY_REDIS_URL env even when postgres.dsn and redis.url are set
+  # spec: §25.5 cold-start — with redis.url empty (the §17.4 in-memory dev
+  # posture) the read side runs on lenny-ops's own per-replica buffer, so
+  # the Deployment wires no Redis env and only the two downward-API vars
+  # render. Postgres (postgres.dsn) is never wired on lenny-ops even when
+  # set, unlike controller-deployment.yaml and gateway-deployment.yaml;
+  # audit, backup, and upgrade state degrade gracefully when Postgres is
+  # absent (§25.4).
+  - it: wires no Redis or Postgres env when redis.url is empty (§25.5 cold-start)
     set:
       postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
-      redis.provider: external
-      redis.url: "rediss://:pw@redis-master:6379"
     documentSelector:
       path: kind
       value: Deployment
@@ -593,6 +590,130 @@ tests:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+
+  # spec: §25.5 lines 2558-2602 — the read side consumes the platform-scoped
+  # ops:events:stream from the same redis.provider=external / redis.url the
+  # gateway and controller use. The connection URL comes from the
+  # lenny-datastore-conn Secret so no secret material lands in the pod spec.
+  # Postgres stays unwired on lenny-ops even with postgres.dsn set.
+  - it: wires LENNY_REDIS_URL from the datastore Secret for the external topology
+    set:
+      postgres.dsn: "postgres://lenny:lenny@db.svc:5432/lenny?sslmode=disable"
+      redis.provider: external
+      redis.url: "rediss://:pw@redis-master:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_POSTGRES_DSN
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-url
+
+  # spec: §12.4 lines 260-264 / §25.5 — the Cluster topology is one of the
+  # §17.3 permitted self-managed backends, so lenny-ops must reach the §25.5
+  # ops:events:stream on it too. Without the cluster env lenny-ops wires no
+  # Redis at all and serves polling and SSE from this replica's in-memory
+  # buffer, losing the cross-replica view with no degradation envelope saying
+  # so. The seed addresses are not secret and render as plain env, matching
+  # the gateway Deployment.
+  - it: wires the Redis Cluster seed nodes when redis.provider=cluster
+    set:
+      redis.provider: cluster
+      redis.cluster.addrs: "r0:6379,r1:6379,r2:6379"
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_CLUSTER_ADDRS
+            value: "r0:6379,r1:6379,r2:6379"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+
+  # spec: §17.9.3 lines 1402-1409 / §12.4 — the Sentinel topology wires the
+  # discovery env (addresses and master are plain env) plus the data AUTH
+  # password from the datastore Secret, and requests TLS so §12.4 AUTH+TLS
+  # holds. The external LENNY_REDIS_URL is absent on this path.
+  - it: wires the Redis Sentinel env when redis.provider=sentinel
+    set:
+      redis.provider: sentinel
+      redis.sentinels: ["s0:26379", "s1:26379"]
+      redis.sentinelMaster: lenny-master
+      redis.password: sentinel-data-pw
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_URL
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_ADDRS
+            value: "s0:26379,s1:26379"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_SENTINEL_MASTER
+            value: "lenny-master"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_TLS
+            value: "true"
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_REDIS_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: lenny-datastore-conn
+                key: redis-password
+
+  # spec: §12.4 — Redis AUTH and TLS are mandatory, so the lenny-ops
+  # startup invariant rejects a plaintext no-password Redis. A dev install
+  # acknowledges its insecure dev Redis with --redis-allow-insecure; a
+  # stock (non-dev) render must not emit the flag.
+  - it: emits --redis-allow-insecure only under global.devMode
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.devMode: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
+
+  - it: omits --redis-allow-insecure when global.devMode is false
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      global.devMode: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --redis-allow-insecure
 
   # spec: §25.4 line 903 / §25.5 line 2598 / §17.8.4 — F-17.8.1. The base
   # values render the Tier 1 self-monitor cadence (10s) and the Tier 1

@@ -27,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
@@ -415,6 +416,7 @@ type gatewayWiringFields struct {
 	rotatingVerifier   *jwt.RotatingVerifier
 	runtimes           runtimestore.Store
 	saTokenVerifier    leasecontrol.TokenVerifier
+	saUserVerifier     serviceidentity.SATokenAuthenticator
 	scatterRouter      *storerouter.SingleShardRouter
 	secretProber       admin.SecretAccessProber
 	sessionLogs        sessionlogstore.Store

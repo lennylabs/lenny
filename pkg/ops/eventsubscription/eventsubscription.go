@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -234,6 +235,73 @@ const (
 	DeliveryPending   = "pending"
 )
 
+// CursorKindPK labels the deliveries continuation cursor as a keyset over
+// the delivery record's primary key. The §25.5 deliveries endpoint walks
+// rows newest-first (ORDER BY id DESC), so the cursor is the id of the
+// last row on the previous page. spec: §25.5 (deliveries keyset
+// pagination).
+const CursorKindPK = "pk"
+
+// Pagination is the deliveries keyset-pagination metadata a Store returns
+// alongside a page of Delivery rows. It is the package-local counterpart
+// of the canonical §25.2 pagination envelope; the opsserver handler,
+// which imports both this package and pkg/ops/events, assembles the wire
+// envelope from it. Keeping the metadata local here avoids an
+// events -> eventsubscription -> events import cycle, since pkg/ops/events
+// already imports this package. spec: §25.5 (deliveries keyset
+// pagination, gap on aged-out cursor), §25.2 (canonical pagination
+// envelope).
+type Pagination struct {
+	// Cursor is the continuation token for the next page: the primary key
+	// of the last row on this page, empty when HasMore is false.
+	Cursor string
+	// HasMore reports that at least one older delivery remains beyond this
+	// page.
+	HasMore bool
+	// CursorKind is always CursorKindPK for the deliveries endpoint.
+	CursorKind string
+	// GapDetected reports that the supplied cursor can no longer be
+	// honored because the delivery it referenced (and rows below it) aged
+	// out under the retention purge. spec: §25.5 (gap on aged-out cursor).
+	GapDetected bool
+	// OldestAvailableCursor pairs with GapDetected: the primary key of the
+	// oldest retained delivery, so the caller can resume from the
+	// retention floor rather than silently miss purged rows.
+	OldestAvailableCursor string
+	// GapReason names why the cursor could not be honored, so a caller can
+	// tell an aged-out continuation token from one it never held.
+	GapReason string
+	// SuggestedAction is the canonical §25.2 recovery hint, "resync" on a
+	// gap. Without it a caller receiving a gap has no documented next step.
+	SuggestedAction string
+}
+
+// The canonical §25.2 gap fields the deliveries endpoint reports when a
+// supplied cursor cannot be honored. spec: §25.2 (gapDetected, gapReason,
+// oldestAvailableCursor, suggestedAction), §25.5 (gap on aged-out cursor).
+const (
+	// GapReasonAgedOut is the reason for a cursor whose delivery, and the
+	// rows below it, were removed by the retention purge.
+	GapReasonAgedOut = "cursor aged out under the delivery retention purge"
+	// GapReasonUnresolvable is the reason for a cursor that does not decode
+	// to a delivery position at all.
+	GapReasonUnresolvable = "cursor could not be resolved to a delivery position"
+	// SuggestedActionResync is the §25.2 recovery hint carried on every gap.
+	SuggestedActionResync = "resync"
+)
+
+// MarkGap fills the canonical §25.2 gap envelope: the flag, the reason, the
+// oldest retained cursor to resume from, and the resync hint. Every code path
+// that reports an un-honorable deliveries cursor goes through it so the four
+// fields never drift apart. spec: §25.2 (gap envelope), §25.5 (gap on aged-out
+// cursor).
+func (p *Pagination) MarkGap(reason, oldestAvailableCursor string) {
+	p.GapDetected = true
+	p.GapReason = reason
+	p.OldestAvailableCursor = oldestAvailableCursor
+	p.SuggestedAction = SuggestedActionResync
+}
+
 // Store persists §25.5 webhook subscriptions and their delivery rows.
 // The production Postgres backend lives in
 // pkg/ops/eventsubscription/pgstore; the in-memory MemoryStore in this
@@ -245,7 +313,13 @@ type Store interface {
 	Update(ctx context.Context, id string, mutate func(*Record) error) (Record, error)
 	Delete(ctx context.Context, id string) (Record, error)
 	RecordDelivery(ctx context.Context, d Delivery) (Delivery, error)
-	ListDeliveries(ctx context.Context, subID string, limit int) ([]Delivery, error)
+	// ListDeliveries returns a page of delivery-tracking rows for subID,
+	// newest-first, keyset-paginated over the primary key. An empty cursor
+	// returns the newest page; a non-empty cursor returns the rows older
+	// than it. The returned Pagination carries the continuation cursor,
+	// whether more rows remain, and the gap metadata when the cursor has
+	// aged out. spec: §25.5 (deliveries keyset pagination).
+	ListDeliveries(ctx context.Context, subID string, cursor string, limit int) ([]Delivery, Pagination, error)
 	// DeleteExpired removes delivery-tracking rows whose expires_at is at
 	// or before before, deleting at most limit rows so a single sweep does
 	// not hold a long lock, and returns the number deleted. The §25.5
@@ -640,15 +714,18 @@ func (s *Service) fireSecret(subID, secret string, generation int64) {
 	}
 }
 
-// ListDeliveries returns the recent delivery attempts for a
-// subscription, newest-first, bounded by limit (default 100, max 1000).
-// spec: §25.5 line 2569.
-func (s *Service) ListDeliveries(ctx context.Context, id string, limit int, caller Caller) ([]Delivery, error) {
+// ListDeliveries returns a page of recent delivery attempts for a
+// subscription, newest-first, keyset-paginated over the delivery primary
+// key. An empty cursor returns the newest page; the returned Pagination
+// carries the continuation cursor and the gap metadata for an aged-out
+// cursor. limit defaults to 100 and is clamped to 1000. spec: §25.5
+// (deliveries keyset pagination).
+func (s *Service) ListDeliveries(ctx context.Context, id string, cursor string, limit int, caller Caller) ([]Delivery, Pagination, error) {
 	if s == nil || s.Store == nil {
-		return nil, storeUnavailable()
+		return nil, Pagination{}, storeUnavailable()
 	}
 	if id == "" {
-		return nil, &Error{Code: ErrCodeNotFound, Message: "id is required"}
+		return nil, Pagination{}, &Error{Code: ErrCodeNotFound, Message: "id is required"}
 	}
 	if limit <= 0 {
 		limit = 100
@@ -661,12 +738,12 @@ func (s *Service) ListDeliveries(ctx context.Context, id string, limit int, call
 	// tenant's delivery history. spec: §25.4, §25.5 (tenant isolation).
 	rec, err := s.Store.Get(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, Pagination{}, err
 	}
 	if !canAccess(caller, rec) {
-		return nil, notFound(id)
+		return nil, Pagination{}, notFound(id)
 	}
-	return s.Store.ListDeliveries(ctx, id, limit)
+	return s.Store.ListDeliveries(ctx, id, cursor, limit)
 }
 
 func (s *Service) validateURL(ctx context.Context, raw string) error {
@@ -847,22 +924,103 @@ func (m *MemoryStore) RecordDelivery(_ context.Context, d Delivery) (Delivery, e
 	return d, nil
 }
 
-// ListDeliveries returns up to limit recent deliveries for subID,
-// newest-first.
-func (m *MemoryStore) ListDeliveries(_ context.Context, subID string, limit int) ([]Delivery, error) {
+// ListDeliveries returns a keyset page of deliveries for subID,
+// newest-first, mirroring the pgstore keyset over the primary key. An
+// empty cursor returns the newest page; a non-empty cursor returns rows
+// with a smaller id. A malformed or aged-out cursor (older than the
+// oldest retained delivery) returns a gap rather than a silently empty
+// page. spec: §25.5 (deliveries keyset pagination, gap on aged-out
+// cursor).
+func (m *MemoryStore) ListDeliveries(_ context.Context, subID string, cursor string, limit int) ([]Delivery, Pagination, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	var cursorID int64
+	haveCursor := false
+	if cursor != "" {
+		n, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil {
+			return nil, m.deliveriesGapLocked(subID), nil
+		}
+		cursorID = n
+		haveCursor = true
+	}
+
+	// The delivery slice is appended in monotonically increasing id order,
+	// so iterating from the tail yields newest-first. Fetch one past limit
+	// to decide HasMore.
 	var out []Delivery
 	for i := len(m.deliveries) - 1; i >= 0; i-- {
-		if m.deliveries[i].SubscriptionID != subID {
+		d := m.deliveries[i]
+		if d.SubscriptionID != subID {
 			continue
 		}
-		out = append(out, m.deliveries[i])
-		if len(out) >= limit {
+		if haveCursor && d.ID >= cursorID {
+			continue
+		}
+		out = append(out, d)
+		if len(out) > limit {
 			break
 		}
 	}
-	return out, nil
+
+	page := Pagination{CursorKind: CursorKindPK}
+	if len(out) > limit {
+		out = out[:limit]
+		page.HasMore = true
+		page.Cursor = strconv.FormatInt(out[len(out)-1].ID, 10)
+	}
+	// Honorability is a property of the cursor's own row rather than of the
+	// page size: the retention purge expires a delivered row at the shorter
+	// retention while a failed row with a smaller id survives, so a purged
+	// cursor commonly still returns a full page whose rows skip everything
+	// purged in between. Mirrors the pgstore check. spec: §25.5 (gap on
+	// aged-out cursor).
+	if haveCursor && !m.deliveryExistsLocked(subID, cursorID) {
+		if oldest, ok := m.oldestDeliveryIDLocked(subID); ok {
+			page.MarkGap(GapReasonAgedOut, strconv.FormatInt(oldest, 10))
+		}
+	}
+	return out, page, nil
+}
+
+// deliveryExistsLocked reports whether subID still retains the delivery row
+// with id. The caller must hold m.mu. spec: §25.5 (gap on aged-out cursor).
+func (m *MemoryStore) deliveryExistsLocked(subID string, id int64) bool {
+	for _, d := range m.deliveries {
+		if d.SubscriptionID == subID && d.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// oldestDeliveryIDLocked returns the smallest retained delivery id for
+// subID. The caller must hold m.mu. spec: §25.5 (gap on aged-out cursor).
+func (m *MemoryStore) oldestDeliveryIDLocked(subID string) (int64, bool) {
+	var oldest int64
+	found := false
+	for _, d := range m.deliveries {
+		if d.SubscriptionID != subID {
+			continue
+		}
+		if !found || d.ID < oldest {
+			oldest = d.ID
+			found = true
+		}
+	}
+	return oldest, found
+}
+
+// deliveriesGapLocked builds the gap pagination for a cursor that cannot
+// be honored, pointing the caller at the oldest retained delivery. The
+// caller must hold m.mu. spec: §25.5 (gap on aged-out cursor).
+func (m *MemoryStore) deliveriesGapLocked(subID string) Pagination {
+	p := Pagination{CursorKind: CursorKindPK}
+	if oldest, ok := m.oldestDeliveryIDLocked(subID); ok {
+		p.MarkGap(GapReasonUnresolvable, strconv.FormatInt(oldest, 10))
+	}
+	return p
 }
 
 // DeleteExpired removes delivery rows whose ExpiresAt is at or before

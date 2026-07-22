@@ -4089,6 +4089,16 @@ spec:
             # objectStorage.{bucket,region,accountUrl} values feed the
             # cloud adapters; provider=minio uses the minio.* block.
             - --object-storage-provider=minio
+            # §25.4 "Calling the Gateway": lenny-ops calls the admin API as
+            # a regular authenticated client under a dedicated service
+            # account holding platform-admin, through the standard RBAC.
+            # It presents the projected ServiceAccount token mounted by the
+            # ops Deployment for the lenny-gateway audience, which the
+            # gateway validates with a Kubernetes TokenReview and maps onto
+            # the platform-admin role. The §25.5 Redis-down gateway-buffer
+            # fan-out reads GET /v1/admin/events/buffer under this grant.
+            - --admin-sa-token-audience=lenny-gateway
+            - --platform-admin-service-accounts=system:serviceaccount:default:lenny-ops-sa
             # §9.2 platform-wide elicitation content-integrity floor.
             # The admin API's GET endpoint reports the effective mode
             # as max(floor, tenantStored); a PUT below the floor is
@@ -4689,6 +4699,11 @@ spec:
             - --gateway-token-refresh-before-expiry=300s
             - --gateway-token-min-ttl=600s
             - --production=false
+            # §12.4 requires Redis AUTH and TLS; a dev install backed by a
+            # plaintext no-password Redis would otherwise fail the lenny-ops
+            # startup invariant (cmd/lenny-ops/deps_setup.go). Dev mode
+            # acknowledges the insecure dev Redis, matching the gateway.
+            - --redis-allow-insecure
             # §25.10 line 3809 / line 3824 — drift detection knobs.
             # F-25.10.7, F-25.10.9.
             - --drift-snapshot-stale-warning-days=7

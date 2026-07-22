@@ -224,6 +224,8 @@ type gatewayFlags struct {
 	spiffeTrustDomain                             *string
 	interceptorNamespaces                         *string
 	saTokenAudience                               *string
+	adminSATokenAudience                          *string
+	platformAdminServiceAccounts                  *string
 	llmProxyAddr                                  *string
 	llmProxyPublicURL                             *string
 	llmSemanticCache                              *bool
@@ -905,6 +907,10 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§10.3 NET-060 SPIFFE trust domain (global.spiffeTrustDomain). When set together with --adapter-ca, the §8.6 GatewayControl listener validates each inbound pod certificate's spiffe://<trust-domain>/agent/{pool}/{pod} URI SAN at TLS handshake and rejects a foreign trust domain, a non-agent identity, or a revoked certificate with no gRPC response (logged pod_identity_mismatch). Empty disables SPIFFE peer validation (local development only).")
 	f.interceptorNamespaces = flag.String("interceptor-namespaces", os.Getenv("LENNY_INTERCEPTOR_NAMESPACES"),
 		"§10.3 NET-063 comma-separated gateway.interceptorNamespaces allowlist. When --spiffe-trust-domain is set and a §4.8 external interceptor endpoint resolves to an in-cluster Service (a .svc host), the gateway validates the interceptor certificate's spiffe://<trust-domain>/interceptor/{namespace}/{pod} URI SAN on every outbound handshake and rejects the connection unless {namespace} is in this list, the trust domain matches, and the certificate is not on the §10.3 deny list. The endpoint host is pinned as tls.Config.ServerName so a co-located non-interceptor pod's certificate fails DNS-SAN verification. Empty accepts any namespace in the trust domain.")
+	f.adminSATokenAudience = flag.String("admin-sa-token-audience", envOr("LENNY_ADMIN_SA_TOKEN_AUDIENCE", "lenny-gateway"),
+		"§25.4 audience of the projected ServiceAccount token a platform service account presents to the admin API. §25.4 has lenny-ops call the admin API as a regular authenticated client using a dedicated service account with the platform-admin role; the credential it presents is the projected token the chart mounts, which the gateway validates with a Kubernetes TokenReview bound to this audience. Empty disables admin-API service-account authentication, leaving the admin API reachable by Lenny-minted bearers only.")
+	f.platformAdminServiceAccounts = flag.String("platform-admin-service-accounts", os.Getenv("LENNY_PLATFORM_ADMIN_SERVICE_ACCOUNTS"),
+		"§25.4 comma-separated fully-qualified ServiceAccount usernames (system:serviceaccount:<namespace>:<name>) granted the §10.2 platform-admin role on the admin API. The chart lists lenny-ops-sa here so the §25.5 Redis-down gateway-buffer fan-out reaches the buffer endpoint. An account absent from this list is not admitted, whatever token it presents; empty grants no service account anything.")
 	f.saTokenAudience = flag.String("sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
 		"§10.3 line 334 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
 	f.llmProxyAddr = flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),

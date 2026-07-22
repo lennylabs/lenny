@@ -72,7 +72,7 @@ func TestWebhookWorkerDoesNotRedeliverDeliveryFailureToFailingSubscription(t *te
 
 	w := newWorker(t, WebhookWorkerConfig{
 		Events:        source,
-		Subscriptions: staticSubs{{ID: subID, CallbackURL: "https://h", Secret: []byte("s")}},
+		Subscriptions: staticSubs{{ID: subID, CallbackURL: "https://h", Secret: []byte("s"), TenantFilter: "*"}},
 		Transport:     sink,
 		TrackingMode:  webhookdelivery.TrackingFull,
 		EmitFailure: func(sID, eventID string) {

@@ -10,9 +10,58 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+
 	"github.com/lennylabs/lenny/pkg/events"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
+	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
+
+// emptyRedisStream is a wired but empty §25.5 Redis read source. Wiring it is
+// what makes a healthy source-health signal resolve to the Redis stream: with
+// no client wired the read surface has no cross-replica source at all and
+// reports the local-buffer degradation instead.
+type emptyRedisStream struct{}
+
+func (emptyRedisStream) XRangeN(ctx context.Context, _, _, _ string, _ int64) *redis.XMessageSliceCmd {
+	return redis.NewXMessageSliceCmd(ctx)
+}
+
+func (emptyRedisStream) XRevRangeN(ctx context.Context, _, _, _ string, _ int64) *redis.XMessageSliceCmd {
+	return redis.NewXMessageSliceCmd(ctx)
+}
+
+func (emptyRedisStream) TailClient() (opsstream.RedisTailClient, error) {
+	return idleTail{}, nil
+}
+
+// idleTail parks its blocking read until the connection's context is done, the
+// way an XREAD BLOCK 0 on an idle stream does.
+type idleTail struct{}
+
+func (idleTail) XRead(ctx context.Context, _ *redis.XReadArgs) *redis.XStreamSliceCmd {
+	<-ctx.Done()
+	cmd := redis.NewXStreamSliceCmd(ctx)
+	cmd.SetErr(ctx.Err())
+	return cmd
+}
+
+func (idleTail) Close() error { return nil }
+
+// stubGatewaySource is a wired §25.5 gateway-buffer fall-back source whose one
+// replica serves the query and holds no gateway-originated events. Wiring it is
+// what makes a Redis outage the case-1 gateway-buffer fall-back: with no source
+// wired the read surface resolves to the case-4 dual outage, because
+// gateway-originated events then have nowhere to fetch from.
+//
+// It serves a replica rather than none. A fan-out that discovers no replica at
+// all is itself the dual-outage case, so a no-replica stub would exercise case
+// 4 instead of the case-1 path these tests pin.
+type stubGatewaySource struct{}
+
+func (stubGatewaySource) FanOutGet(context.Context, string) ([]gateway.ReplicaResult, error) {
+	return []gateway.ReplicaResult{{Endpoint: "gw-a", Body: json.RawMessage(`{"events":[]}`)}}, nil
+}
 
 // publishOne records one lenny-ops-originated event into the service buffer.
 func publishOne(s *opsstream.Service, typ string) {
@@ -29,10 +78,11 @@ func TestHandlePoll_RedisDown_AttachesDegradation_spec_25_5(t *testing.T) {
 		Now:          fixedNow,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
 	})
+	s.SetGatewayBufferSource(stubGatewaySource{})
 	publishOne(s, "dev.lenny.alert_fired")
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200", rec.Code)
@@ -68,7 +118,7 @@ func TestHandlePoll_DualOutage_503_spec_25_5(t *testing.T) {
 	publishOne(s, "dev.lenny.escalation_created")
 
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d, want 503", rec.Code)
@@ -86,10 +136,11 @@ func TestHandlePoll_RedisUp_NoDegradation_spec_25_5(t *testing.T) {
 			Capacity:     16,
 			Now:          fixedNow,
 			SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: gw},
+			RedisClient:  emptyRedisStream{},
 		})
 		publishOne(s, "dev.lenny.alert_fired")
 		rec := httptest.NewRecorder()
-		s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+		s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 		if rec.Code != http.StatusOK {
 			t.Fatalf("gateway=%v: status=%d, want 200", gw, rec.Code)
 		}
@@ -106,10 +157,10 @@ func TestHandlePoll_RedisUp_NoDegradation_spec_25_5(t *testing.T) {
 // A nil SourceHealth preserves the pre-degradation behavior: no envelope,
 // no 503.
 func TestHandlePoll_NilHealth_NoDegradation(t *testing.T) {
-	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow, RedisClient: emptyRedisStream{}})
 	publishOne(s, "dev.lenny.alert_fired")
 	rec := httptest.NewRecorder()
-	s.HandlePoll(rec, httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil))
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status=%d, want 200", rec.Code)
 	}
@@ -139,7 +190,7 @@ func TestHandleStream_DualOutage_DegradationComment_spec_25_5(t *testing.T) {
 	ctx, cancel := context.WithCancel(req.Context())
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req.WithContext(ctx))
+		s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 		close(done)
 	}()
 	// The backlog (degradation comment + the ops event) is written
@@ -172,13 +223,14 @@ func TestHandleStream_RedisDown_DegradationComment_spec_25_5(t *testing.T) {
 		Now:          fixedNow,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: false, Gateway: true},
 	})
+	s.SetGatewayBufferSource(stubGatewaySource{})
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
 	rec := newStreamingRecorder()
 	ctx, cancel := context.WithCancel(req.Context())
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req.WithContext(ctx))
+		s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 		close(done)
 	}()
 	cancel()
@@ -197,13 +249,14 @@ func TestHandleStream_Healthy_NoComment_spec_25_5(t *testing.T) {
 		Capacity:     16,
 		Now:          fixedNow,
 		SourceHealth: opsstream.StaticSourceHealth{Redis: true, Gateway: true},
+		RedisClient:  emptyRedisStream{},
 	})
 	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
 	rec := newStreamingRecorder()
 	ctx, cancel := context.WithCancel(req.Context())
 	done := make(chan struct{})
 	go func() {
-		s.HandleStream(rec, req.WithContext(ctx))
+		s.HandleStream(rec, platformAdminReq(req.WithContext(ctx)))
 		close(done)
 	}()
 	cancel()
@@ -223,5 +276,45 @@ func TestStaticSourceHealth(t *testing.T) {
 	var zero opsstream.StaticSourceHealth
 	if zero.RedisAvailable() || zero.GatewayAvailable() {
 		t.Errorf("zero StaticSourceHealth should report both sources down")
+	}
+}
+
+// spec: §25.5 lines 2768-2780 (the degradation matrix keys on the two source-
+// health signals and enumerates Redis-reachable as the healthy, envelope-free
+// state) — a replica with no Redis client wired is healthy, not degraded. Its
+// poll response carries no degradation envelope and its SSE connection emits no
+// :degradation comment, so the three-case matrix stays the whole matrix.
+func TestReadSurface_NoRedisWired_ServesHealthyWithNoDegradationEnvelope_spec_25_5(t *testing.T) {
+	s := opsstream.New(opsstream.Options{Capacity: 16, Now: fixedNow})
+	publishOne(s, "dev.lenny.alert_fired")
+
+	rec := httptest.NewRecorder()
+	s.HandlePoll(rec, platformAdminReq(httptest.NewRequest(http.MethodGet, "/v1/admin/events", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d, want 200: the surface still serves this replica's own events", rec.Code)
+	}
+	var page opsstream.EventPage
+	if err := json.Unmarshal(rec.Body.Bytes(), &page); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if page.Degradation != nil {
+		t.Errorf("poll carried a degradation envelope (%+v) on a healthy replica with no Redis client wired; §25.5 classifies that state healthy", page.Degradation)
+	}
+	if len(page.Items) != 1 {
+		t.Errorf("page served %d item(s), want the one locally published event", len(page.Items))
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/events/stream", nil)
+	sink := newStreamingRecorder()
+	ctx, cancel := context.WithCancel(req.Context())
+	done := make(chan struct{})
+	go func() {
+		s.HandleStream(sink, platformAdminReq(req.WithContext(ctx)))
+		close(done)
+	}()
+	cancel()
+	<-done
+	if strings.Contains(sink.Body.String(), ":degradation") {
+		t.Errorf("the stream emitted a :degradation comment on a healthy replica with no Redis client wired: %q", sink.Body.String())
 	}
 }

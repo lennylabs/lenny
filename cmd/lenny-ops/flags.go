@@ -31,6 +31,7 @@ type opsFlags struct {
 	postgresDSN                      *string
 	redisURL                         *string
 	redisSentinelAddrs               *string
+	redisClusterAddrs                *string
 	redisSentinelMaster              *string
 	redisPassword                    *string
 	redisSentinelPassword            *string
@@ -163,6 +164,11 @@ func (f *opsFlags) registerCoreFlags() {
 		"Comma-separated list of §12.8 Redis Sentinel host:port pairs. When set with "+
 			"--redis-sentinel-master, lenny-ops discovers the master via Sentinel and follows "+
 			"automatic failover. Mutually exclusive with --redis-url.")
+	f.redisClusterAddrs = flag.String("redis-cluster-addrs", os.Getenv("LENNY_REDIS_CLUSTER_ADDRS"),
+		"Comma-separated list of §12.4 Redis Cluster seed nodes (host:port). When set, "+
+			"lenny-ops reaches the §25.5 ops:events:stream through a cluster client. Mutually "+
+			"exclusive with --redis-url and --redis-sentinel-addrs. Override via "+
+			"LENNY_REDIS_CLUSTER_ADDRS.")
 	f.redisSentinelMaster = flag.String("redis-sentinel-master", os.Getenv("LENNY_REDIS_SENTINEL_MASTER"),
 		"§12.8 Redis Sentinel monitored master name (e.g., lenny-master). Required when "+
 			"--redis-sentinel-addrs is set.")

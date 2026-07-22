@@ -85,29 +85,47 @@ func (s *Service) streamState() (actualSource string, deg *conventions.Degradati
 		// normally.
 		return sourceRedisStream, nil, false
 	case gatewayUp:
-		// Case 1 — Redis unreachable, gateway up: fall back to the gateway
-		// event buffer. EVENT_STREAM_DEGRADED, HTTP 200, served as response
-		// metadata (not an HTTP error).
-		return sourceGatewayBuffer, &conventions.Degradation{
-			Level:         conventions.DegradationDegraded,
-			PrimarySource: sourceRedisStream,
-			ActualSource:  sourceGatewayBuffer,
-			FallbackPath:  []string{sourceRedisStream, sourceGatewayBuffer},
-			Warnings:      []string{"serving from the gateway event buffer; the Redis ops:events:stream is unreachable, so history is limited to the buffer window"},
-		}, false
+		return gatewayFallbackState()
 	default:
 		// Case 4 — Redis AND gateway unreachable: only this replica's
 		// local ring buffer (lenny-ops-originated events) is observable.
 		// Gateway-originated events have nowhere to land.
-		return sourceOpsLocalBuffer, &conventions.Degradation{
-			Level:             conventions.DegradationFailed,
-			PrimarySource:     sourceRedisStream,
-			ActualSource:      sourceOpsLocalBuffer,
-			FallbackPath:      []string{sourceRedisStream, sourceGatewayBuffer, sourceOpsLocalBuffer},
-			UnavailableFields: []string{"gateway-events"},
-			Warnings:          []string{"both the Redis stream and the gateway buffer are unreachable; serving lenny-ops-originated events only"},
-		}, true
+		return dualOutageState()
 	}
+}
+
+// gatewayFallbackState returns the §25.5 case-1 classification: Redis is
+// unreachable and the gateway event buffer serves in its place, reported as
+// EVENT_STREAM_DEGRADED response metadata on an HTTP 200 rather than as an
+// HTTP error. It is reached both from the health matrix and from a request
+// whose Redis read failed inside the source-health refresh window, which is
+// served from the same fall-back and must carry the same label. spec: §25.5
+// lines 2768-2780 (Redis-down gateway-buffer fall-back).
+func gatewayFallbackState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
+	return sourceGatewayBuffer, &conventions.Degradation{
+		Level:         conventions.DegradationDegraded,
+		PrimarySource: sourceRedisStream,
+		ActualSource:  sourceGatewayBuffer,
+		FallbackPath:  []string{sourceRedisStream, sourceGatewayBuffer},
+		Warnings:      []string{"serving from the gateway event buffer; the Redis ops:events:stream is unreachable, so history is limited to the buffer window"},
+	}, false
+}
+
+// dualOutageState returns the §25.5 case-4 classification: the local ring is
+// the only observable source and gateway-originated events are unavailable.
+// It is reached both from the health matrix (Redis and gateway both
+// unreachable) and from source selection, where a Redis-down classification
+// with no gateway source wired resolves to the same data path and must carry
+// the same label. spec: §25.5 lines 2768-2780 (dual-outage case).
+func dualOutageState() (actualSource string, deg *conventions.Degradation, dualDown bool) {
+	return sourceOpsLocalBuffer, &conventions.Degradation{
+		Level:             conventions.DegradationFailed,
+		PrimarySource:     sourceRedisStream,
+		ActualSource:      sourceOpsLocalBuffer,
+		FallbackPath:      []string{sourceRedisStream, sourceGatewayBuffer, sourceOpsLocalBuffer},
+		UnavailableFields: []string{"gateway-events"},
+		Warnings:          []string{"both the Redis stream and the gateway buffer are unreachable; serving lenny-ops-originated events only"},
+	}, true
 }
 
 // writeStreamUnavailable writes the §25.5 503 EVENT_STREAM_UNAVAILABLE
@@ -121,15 +139,14 @@ func writeStreamUnavailable(w http.ResponseWriter) {
 		"both the Redis ops:events:stream and the gateway event buffer are unreachable")
 }
 
-// writeSSEDegradation writes the §25.5 :degradation SSE comment line so a
-// connected stream consumer learns it is receiving a degraded view (the
-// gateway-buffer fall-back, or the lenny-ops-local-buffer during a dual
-// outage) before the events arrive. The payload mirrors the canonical
-// degradation envelope's actualSource / unavailableFields fields. spec:
-// §25.5 line 2779 (":degradation {...}" comment).
-func writeSSEDegradation(w http.ResponseWriter, deg *conventions.Degradation) {
+// degradationComment renders the §25.5 :degradation SSE comment line for deg
+// and reports whether there is one to write. A healthy classification renders
+// no line, which is how the caller distinguishes a degraded stint that repeats
+// the envelope on its poll cadence from a healthy source that carries none.
+// spec: §25.5 line 2691 (periodic :degradation comment line).
+func degradationComment(deg *conventions.Degradation) (string, bool) {
 	if deg == nil {
-		return
+		return "", false
 	}
 	payload := map[string]any{"actualSource": deg.ActualSource}
 	if len(deg.UnavailableFields) > 0 {
@@ -137,7 +154,7 @@ func writeSSEDegradation(w http.ResponseWriter, deg *conventions.Degradation) {
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		return
+		return "", false
 	}
-	fmt.Fprintf(w, ":degradation %s\n", body)
+	return fmt.Sprintf(":degradation %s\n", body), true
 }

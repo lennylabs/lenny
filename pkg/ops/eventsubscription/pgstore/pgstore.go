@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -164,16 +165,38 @@ func (s *Store) RecordDelivery(ctx context.Context, d eventsubscription.Delivery
 	return d, nil
 }
 
-// ListDeliveries returns up to limit recent deliveries for subID,
-// newest-first by id.
-func (s *Store) ListDeliveries(ctx context.Context, subID string, limit int) ([]eventsubscription.Delivery, error) {
+// ListDeliveries returns a keyset page of deliveries for subID,
+// newest-first by id. An empty cursor returns the newest page; a
+// non-empty cursor is the primary key of the previous page's last row and
+// returns the rows with a smaller id. The query fetches limit+1 rows to
+// decide HasMore. A malformed cursor, or one whose row has aged out below
+// the oldest retained delivery, returns a gap (GapDetected with
+// OldestAvailableCursor) rather than a silently empty page, so the caller
+// resyncs from the retention floor. spec: §25.5 (deliveries keyset
+// pagination, gap on aged-out cursor).
+func (s *Store) ListDeliveries(ctx context.Context, subID string, cursor string, limit int) ([]eventsubscription.Delivery, eventsubscription.Pagination, error) {
+	var cursorID int64
+	haveCursor := false
+	if cursor != "" {
+		n, err := strconv.ParseInt(cursor, 10, 64)
+		if err != nil {
+			// A malformed cursor cannot be honored; report the gap toward the
+			// oldest retained delivery rather than a silently empty page.
+			return s.deliveriesGap(ctx, subID)
+		}
+		cursorID = n
+		haveCursor = true
+	}
+
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, subscription_id, event_id, event_type, status, attempts,
 			last_attempt_at, last_error, created_at, expires_at
-		 FROM ops_event_deliveries WHERE subscription_id = $1 ORDER BY id DESC LIMIT $2`,
-		subID, limit)
+		 FROM ops_event_deliveries
+		 WHERE subscription_id = $1 AND ($2 = '' OR id < $2::bigint)
+		 ORDER BY id DESC LIMIT $3`,
+		subID, cursor, limit+1)
 	if err != nil {
-		return nil, err
+		return nil, eventsubscription.Pagination{}, err
 	}
 	defer rows.Close()
 	var out []eventsubscription.Delivery
@@ -185,7 +208,7 @@ func (s *Store) ListDeliveries(ctx context.Context, subID string, limit int) ([]
 		)
 		if err := rows.Scan(&d.ID, &d.SubscriptionID, &d.EventID, &d.EventType, &d.Status,
 			&d.Attempts, &lastAttempt, &lastErr, &d.CreatedAt, &d.ExpiresAt); err != nil {
-			return nil, err
+			return nil, eventsubscription.Pagination{}, err
 		}
 		if lastAttempt != nil {
 			d.LastAttemptAt = *lastAttempt
@@ -195,7 +218,89 @@ func (s *Store) ListDeliveries(ctx context.Context, subID string, limit int) ([]
 		}
 		out = append(out, d)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, eventsubscription.Pagination{}, err
+	}
+
+	page := eventsubscription.Pagination{CursorKind: eventsubscription.CursorKindPK}
+	if len(out) > limit {
+		out = out[:limit]
+		page.HasMore = true
+		page.Cursor = strconv.FormatInt(out[len(out)-1].ID, 10)
+	}
+	// Whether the cursor can still be honored is a property of the cursor's
+	// own row, independent of how many rows the continuation query returned.
+	// Delivery expiry is not monotonic in the primary key: a successful
+	// delivery expires at the shorter retention while a failed one with a
+	// smaller id survives under the longer failures-only retention, so
+	// DeleteExpired punches holes anywhere in the id range. A cursor whose
+	// row was purged therefore commonly returns a full page whose rows skip
+	// everything purged between it and the page, which is the silent loss
+	// the gap envelope exists to report. spec: §25.5 (gap on aged-out
+	// cursor).
+	if haveCursor {
+		if err := s.markGapIfCursorPurged(ctx, subID, cursorID, &page); err != nil {
+			return nil, eventsubscription.Pagination{}, err
+		}
+	}
+	return out, page, nil
+}
+
+// markGapIfCursorPurged marks page with the §25.5 aged-out gap envelope when
+// the delivery the cursor names is no longer retained for subID, pointing the
+// caller at the oldest retained delivery. spec: §25.5 (gap on aged-out
+// cursor).
+func (s *Store) markGapIfCursorPurged(ctx context.Context, subID string, cursorID int64, page *eventsubscription.Pagination) error {
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM ops_event_deliveries WHERE subscription_id = $1 AND id = $2)`,
+		subID, cursorID).Scan(&exists); err != nil {
+		return fmt.Errorf("resolve deliveries cursor %d for %s: %w", cursorID, subID, err)
+	}
+	if exists {
+		return nil
+	}
+	oldest, ok, err := s.oldestDeliveryID(ctx, subID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		// Nothing is retained for the subscription at all, so there is no
+		// recovery cursor to publish and no rows the caller could be missing.
+		return nil
+	}
+	page.MarkGap(eventsubscription.GapReasonAgedOut, strconv.FormatInt(oldest, 10))
+	return nil
+}
+
+// oldestDeliveryID returns the smallest retained delivery id for subID,
+// or ok=false when the subscription has no retained deliveries. spec:
+// §25.5 (gap on aged-out cursor).
+func (s *Store) oldestDeliveryID(ctx context.Context, subID string) (int64, bool, error) {
+	var id *int64
+	if err := s.pool.QueryRow(ctx,
+		`SELECT MIN(id) FROM ops_event_deliveries WHERE subscription_id = $1`, subID).Scan(&id); err != nil {
+		return 0, false, fmt.Errorf("oldest delivery id for %s: %w", subID, err)
+	}
+	if id == nil {
+		return 0, false, nil
+	}
+	return *id, true, nil
+}
+
+// deliveriesGap builds the gap pagination for a cursor that cannot be
+// honored, pointing the caller at the oldest retained delivery. spec:
+// §25.5 (gap on aged-out cursor).
+func (s *Store) deliveriesGap(ctx context.Context, subID string) ([]eventsubscription.Delivery, eventsubscription.Pagination, error) {
+	page := eventsubscription.Pagination{CursorKind: eventsubscription.CursorKindPK}
+	oldest, ok, err := s.oldestDeliveryID(ctx, subID)
+	if err != nil {
+		return nil, eventsubscription.Pagination{}, err
+	}
+	if ok {
+		page.MarkGap(eventsubscription.GapReasonUnresolvable, strconv.FormatInt(oldest, 10))
+	}
+	return nil, page, nil
 }
 
 // DeleteExpired removes up to limit delivery rows whose expires_at is at
