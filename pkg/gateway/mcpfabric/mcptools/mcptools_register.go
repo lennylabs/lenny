@@ -17,6 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
+	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
@@ -24,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
@@ -2589,6 +2592,24 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			}
 			return mcp.ToolResult{}, err
 		}
+		// spec: §8.2 lines 93-97 — materialize the admitted StateCreated
+		// child (claim the warm pod, assign the credential lease, stream the
+		// stamped WorkspacePlan, launch, and transition to running) so the
+		// returned handle is a running child the parent can interact with and
+		// the subsequent Executor.Send reaches a bound session. childState
+		// defaults to the pre-materialization StateCreated snapshot so a nil
+		// materializer (the minimal in-process gateway) falls through
+		// unchanged, mirroring the CredAvailability seam's nil guard; when the
+		// materializer is wired the returned post-materialization state
+		// overwrites it and the handle reads running.
+		childState := res.Child.State
+		if deps.ChildMaterializer != nil {
+			st, mErr := deps.ChildMaterializer.Materialize(ctx, tenant, res.Child.ID)
+			if mErr != nil {
+				return mcp.ToolResult{}, materializeToolError(mErr, targetRef, res.Child.ID)
+			}
+			childState = st
+		}
 		// Deliver the (possibly interceptor-modified) task input to
 		// the child as its first message.
 		if taskInput != "" && deps.Executor != nil {
@@ -2601,7 +2622,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		}
 		handle := taskHandle{
 			ChildSessionID: res.Child.ID,
-			State:          string(res.Child.State),
+			State:          string(childState),
 			RuntimeRef:     res.Child.RuntimeRef,
 			Depth:          res.Depth,
 		}
@@ -2611,4 +2632,64 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		}
 		return textResult(string(body)), nil
 	})
+}
+
+// materializeToolError maps a ChildMaterializer.Materialize failure to the
+// canonical MCP tool error the delegating parent observes. The materialization
+// composes the same create-and-start engine the top-level session-start path
+// runs, so it returns the same typed credential sentinels, and this switch
+// reuses the §8.3 pre-check's sentinel-to-code mapping so REST and MCP surfaces
+// report the same (category, retryable) pair. The child fails closed: the
+// engine has already released the claimed pod (rollbackClaim before launch,
+// rollbackBinding on a post-launch persist failure) before the sentinel
+// surfaces here.
+//
+// A post-pod-claim credential-assignment race (podsession.CredentialAssignmentError)
+// and a pre-claim pool exhaustion (credrouter.ErrNoCredentialAvailable) both map
+// to CREDENTIAL_POOL_EXHAUSTED, matching the top-level create path and the §8.3
+// assignment-race clause. A user-only policy with no registered credential maps
+// to USER_CREDENTIAL_NOT_FOUND, a still-warming pool to RUNTIME_UNAVAILABLE, and
+// a Token Service outage to TOKEN_SERVICE_UNAVAILABLE. Any other failure falls
+// through as-is, which the dispatch surfaces as INTERNAL_ERROR.
+//
+// spec: §8.2 lines 93-97 (delegated-child materialization); §8.3 line 470
+// (post-claim assignment race -> CREDENTIAL_POOL_EXHAUSTED); §15.2.1 (shared
+// error taxonomy).
+func materializeToolError(err error, childRuntime, childID string) error {
+	details := map[string]any{"childRuntime": childRuntime, "childSessionId": childID}
+	var credAssign *podsession.CredentialAssignmentError
+	var warming *podsession.PoolWarmingError
+	switch {
+	case errors.As(err, &credAssign), errors.Is(err, credrouter.ErrNoCredentialAvailable):
+		// spec: §8.3 line 470 / §4.9 line 1220 -- a post-pod-claim lease
+		// assignment race (the loser of concurrent delegations that each
+		// passed the point-in-time pre-check) and a pre-claim empty
+		// intersection both surface the canonical CREDENTIAL_POOL_EXHAUSTED
+		// (POLICY / 503, retryable). The engine has already released the
+		// loser's pod, so no warm pod leaks.
+		return mcp.NewToolError("CREDENTIAL_POOL_EXHAUSTED",
+			"credential pool exhausted: no assignable credential for the delegated child at materialization time",
+			details)
+	case errors.Is(err, credrouter.ErrUserCredentialNotFound):
+		// spec: §4.9 line 1364 / §15.1 line 993 -- a user-only policy with no
+		// pre-registered credential for the user and provider, the same
+		// condition the §8.3 pre-check maps to USER_CREDENTIAL_NOT_FOUND
+		// (PERMANENT / 404).
+		return mcp.NewToolError("USER_CREDENTIAL_NOT_FOUND",
+			"no pre-registered credential found for the delegated child's user and provider; "+
+				"register one via POST /v1/credentials or configure pool fallback",
+			details)
+	case errors.As(err, &warming):
+		// spec: §5.2 lines 602-625 -- the child's warm pool is still warming
+		// toward idle, the same "Pool Not Ready" condition session start maps
+		// to RUNTIME_UNAVAILABLE (TRANSIENT / 503, retryable).
+		return mcp.NewToolError("RUNTIME_UNAVAILABLE", warming.Error(), details)
+	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
+		// spec: §4.3 line 214 -- the Token Service could not mint the child's
+		// credential lease, surfaced as TOKEN_SERVICE_UNAVAILABLE (UPSTREAM /
+		// 503, retryable), matching the session-start path.
+		return mcp.NewToolError("TOKEN_SERVICE_UNAVAILABLE", err.Error(), details)
+	default:
+		return err
+	}
 }
