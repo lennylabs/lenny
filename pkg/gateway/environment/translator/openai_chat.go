@@ -12,10 +12,12 @@
 package translator
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -123,8 +125,9 @@ type OpenAIChatHandler struct {
 	store          sessionstore.Store
 	exec           executor.Executor
 	clock          func() time.Time
-	idFn           func() string
 	defaultRuntime string
+	binder         SingleShotBinder
+	releaseTimeout time.Duration
 }
 
 // OpenAIChatOptions configures OpenAIChatHandler.
@@ -141,6 +144,20 @@ type OpenAIChatOptions struct {
 	// not map to a registered runtime. Empty defaults to `echo` so
 	// the in-memory gateway round-trips against the EchoExecutor.
 	DefaultRuntime string
+
+	// SingleShotBinder runs the shared create-and-start service that
+	// claims a warm pod, launches the runtime, and registers the pod
+	// binding for each request. Pass nil to fall back to the no-op
+	// binder that persists a running row through store without claiming
+	// a pod (the §17.4 in-memory mode and the in-process unit tests).
+	// spec: §15 built-in adapter single-shot compute model.
+	SingleShotBinder SingleShotBinder
+
+	// ReleaseTimeout bounds the detached context the deferred pod release
+	// runs under. Zero defaults to defaultSingleShotReleaseTimeout.
+	// Operator-tunable so a deployment can widen or narrow the drain
+	// window that survives a request-context timeout or client disconnect.
+	ReleaseTimeout time.Duration
 }
 
 // NewOpenAIChatHandler returns a configured handler.
@@ -157,12 +174,21 @@ func NewOpenAIChatHandler(store sessionstore.Store, exec executor.Executor, opts
 	if rt == "" {
 		rt = "echo"
 	}
+	binder := opts.SingleShotBinder
+	if binder == nil {
+		binder = newNoopSingleShotBinder(store, idFn, clock)
+	}
+	releaseTimeout := opts.ReleaseTimeout
+	if releaseTimeout <= 0 {
+		releaseTimeout = defaultSingleShotReleaseTimeout
+	}
 	return &OpenAIChatHandler{
 		store:          store,
 		exec:           exec,
 		clock:          clock,
-		idFn:           idFn,
 		defaultRuntime: rt,
+		binder:         binder,
+		releaseTimeout: releaseTimeout,
 	}
 }
 
@@ -204,23 +230,35 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		runtimeRef = h.defaultRuntime
 	}
 	now := h.clock()
-	sessionID := h.idFn()
 
-	row := sessionstore.Session{
-		ID:          sessionID,
+	// Claim a warm pod, launch the runtime, and register the binding
+	// through the shared §15.2.1 create-and-start service (the injected
+	// binder), returning the session id for the dispatch. Against the
+	// §17.4 in-memory wiring the no-op binder persists the row without
+	// claiming a pod, so the one code path serves both.
+	// spec: §15 built-in adapter single-shot compute model; §7.1 atomicity.
+	sessionID, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
 		TenantID:    tenantID,
 		UserID:      req.User,
 		RuntimeRef:  runtimeRef,
 		Environment: envScope,
-		State:       session.StateRunning,
-		CreatedAt:   now,
-		UpdatedAt:   now,
-	}
-	if err := h.store.Create(r.Context(), row); err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
-			fmt.Sprintf("session create failed: %v", err))
+	})
+	if err != nil {
+		writeSingleShotError(w, err)
 		return
 	}
+
+	// Release the claimed pod and its §4.9 lease on every exit path,
+	// recording the §6.2 terminal disposition. disp starts failed and
+	// flips to completed only after a successful dispatch and completion
+	// update, so a dispatch error or request-context timeout records a
+	// failed disposition. The release runs on a context detached from the
+	// request context and bounded by a fresh timeout so the pod drain and
+	// lease release survive a request-context timeout or client disconnect,
+	// where r.Context() is already cancelled.
+	// spec: §15 built-in adapter single-shot compute model; §6.2 release.
+	disp := executor.DispositionFailed
+	defer releaseSingleShot(r.Context(), h.exec, h.releaseTimeout, sessionID, &disp)
 
 	// Translate the OpenAI messages array into executor messages.
 	// System/user/assistant roles round-trip unchanged.
@@ -247,10 +285,7 @@ func (h *OpenAIChatHandler) handleCreateCompletion(w http.ResponseWriter, r *htt
 		s.State = session.StateCompleted
 		return nil
 	})
-	if err := h.exec.Close(r.Context(), sessionID); err != nil && !errors.Is(err, executor.ErrUnsupported) {
-		// Non-fatal; log via gateway in production.
-		_ = err
-	}
+	disp = executor.DispositionCompleted
 
 	if req.Stream {
 		writeOpenAIStream(w, sessionID, runtimeRef, now, out)
@@ -377,16 +412,82 @@ func buildOpenAIResponse(sessionID, model string, now time.Time, out []executor.
 	}
 }
 
-// writeOpenAIError emits the OpenAI-compatible error envelope.
+// writeOpenAIError emits the OpenAI-compatible error envelope with no
+// machine-readable code and no Retry-After header.
 func writeOpenAIError(w http.ResponseWriter, status int, typ, message string) {
+	writeOpenAIErrorWithCode(w, status, typ, "", message, 0)
+}
+
+// writeOpenAIErrorWithCode emits the OpenAI-compatible error envelope,
+// setting the machine-readable `error.code` field and, when
+// retryAfterSeconds is positive, a Retry-After header. The built-in
+// single-shot adapters map a *SingleShotError into this envelope so the
+// carried code (SESSION_CREATION_FAILED, CREDENTIAL_POOL_EXHAUSTED, or an
+// admission-gate code) and the retryable claim-exhaustion Retry-After reach
+// the client, which the plain writeOpenAIError does not carry.
+// spec: §15 built-in adapter single-shot compute model; §7.1 atomicity.
+func writeOpenAIErrorWithCode(w http.ResponseWriter, status int, typ, code, message string, retryAfterSeconds int) {
 	w.Header().Set("Content-Type", "application/json")
+	if retryAfterSeconds > 0 {
+		w.Header().Set("Retry-After", strconv.Itoa(retryAfterSeconds))
+	}
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(OpenAIError{
 		Error: OpenAIErrorBody{
 			Type:    typ,
 			Message: message,
+			Code:    code,
 		},
 	})
+}
+
+// writeSingleShotError maps a binder failure into the adapter's native
+// error envelope. A *SingleShotError carries the sessionserver-classified
+// HTTP status, error code, and (for the retryable pool-claim exhaustion
+// case) Retry-After seconds; any other failure is an opaque 500
+// server_error. The adapter fails closed rather than dispatching.
+// spec: §15 built-in adapter single-shot compute model; §7.1 atomicity; §4.9.
+func writeSingleShotError(w http.ResponseWriter, err error) {
+	var sse *SingleShotError
+	if errors.As(err, &sse) {
+		writeOpenAIErrorWithCode(w, sse.HTTPStatus, openAIErrorType(sse.HTTPStatus),
+			sse.Code, sse.Message, sse.RetryAfterSeconds)
+		return
+	}
+	writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+		fmt.Sprintf("single-shot bind failed: %v", err))
+}
+
+// openAIErrorType maps an HTTP status onto the OpenAI error envelope's
+// `type` discriminator: 429 is a rate-limit error, any 5xx is a server
+// error, and everything else is treated as an invalid-request error.
+func openAIErrorType(status int) string {
+	switch {
+	case status == http.StatusTooManyRequests:
+		return "rate_limit_error"
+	case status >= http.StatusInternalServerError:
+		return "server_error"
+	default:
+		return "invalid_request_error"
+	}
+}
+
+// releaseSingleShot releases the single-shot pod and its §4.9 lease on a
+// context detached from the request context, so the pod drain and lease
+// release complete even when the request context is already cancelled (a
+// request-context timeout or client disconnect). disp is read at defer time
+// so it reflects the terminal disposition the handler set (completed on a
+// successful turn, failed on a dispatch error or timeout). An ErrUnsupported
+// release (the in-memory EchoExecutor, which is not a SessionReleaser) is
+// tolerated.
+// spec: §6.2 release; §15 built-in adapter single-shot compute model.
+func releaseSingleShot(reqCtx context.Context, exec executor.Executor, timeout time.Duration, sessionID string, disp *executor.Disposition) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(reqCtx), timeout)
+	defer cancel()
+	if err := executor.ReleaseSession(ctx, exec, sessionID, *disp); err != nil && !errors.Is(err, executor.ErrUnsupported) {
+		// Non-fatal; the gateway logs release failures in production.
+		_ = err
+	}
 }
 
 // resolveTenant reads the X-Lenny-Tenant-ID dev header, defaulting

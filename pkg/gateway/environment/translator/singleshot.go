@@ -11,6 +11,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
+// defaultSingleShotReleaseTimeout bounds the detached context the deferred
+// single-shot pod release runs under. The release runs after the request
+// context is cancelled (client disconnect or request-context timeout), so it
+// carries its own timeout rather than inheriting the request deadline. It is
+// operator-tunable through the adapter options' ReleaseTimeout field.
+//
+// spec: §6.2 release; §15 built-in adapter single-shot compute model.
+const defaultSingleShotReleaseTimeout = 30 * time.Second
+
 // SingleShotBinder runs the shared session create-and-start service for
 // one built-in-adapter request: it applies the admission gates, claims a
 // warm pod, launches the runtime, and registers the pod binding, returning

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -186,6 +187,156 @@ func TestOpenAIChatDisabledWhenExecutorMissing(t *testing.T) {
 	})
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("no executor: got %d, want 503", rr.Code)
+	}
+}
+
+// stubSingleShotBinder is a translator.SingleShotBinder that returns a
+// fixed session id, or a fixed error, without claiming a pod. It fabricates
+// the binder failure the adapter maps into its native error envelope so the
+// tier-1 mapping can be exercised in-process.
+type stubSingleShotBinder struct {
+	id  string
+	err error
+}
+
+func (b stubSingleShotBinder) BindSingleShot(_ context.Context, _ translator.SingleShotSpec) (string, error) {
+	if b.err != nil {
+		return "", b.err
+	}
+	return b.id, nil
+}
+
+// recordingStore wraps a sessionstore.Store and captures the State of the
+// first row passed to Create, so a test can observe the state the no-op
+// binder persisted (running) before the handler updates it to completed.
+type recordingStore struct {
+	sessionstore.Store
+	createdState session.State
+	created      bool
+}
+
+func (s *recordingStore) Create(ctx context.Context, sess sessionstore.Session) error {
+	if !s.created {
+		s.createdState = sess.State
+		s.created = true
+	}
+	return s.Store.Create(ctx, sess)
+}
+
+// TestOpenAIChatSingleShotBinderErrorEnvelope pins the binder-error-to-envelope
+// mapping: a retryable pool-claim exhaustion surfaces its status, error.code,
+// and a Retry-After header; a non-retryable credential-pool exhaustion surfaces
+// its code with no Retry-After header; an admission-gate rejection surfaces the
+// gate's own status and code; and any non-typed failure falls back to a
+// 500 server_error with no code. The adapter fails closed without dispatching.
+// spec: §15 (retryable claim failure mapping); §7.1; §4.9.
+func TestOpenAIChatSingleShotBinderErrorEnvelope(t *testing.T) {
+	cases := []struct {
+		name           string
+		err            error
+		wantStatus     int
+		wantCode       string
+		wantType       string
+		wantRetryAfter string
+	}{
+		{
+			name:           "pool_claim_exhaustion_retryable",
+			err:            &translator.SingleShotError{HTTPStatus: 503, Code: "SESSION_CREATION_FAILED", Message: "pool exhausted", RetryAfterSeconds: 7, Retryable: true},
+			wantStatus:     http.StatusServiceUnavailable,
+			wantCode:       "SESSION_CREATION_FAILED",
+			wantType:       "server_error",
+			wantRetryAfter: "7",
+		},
+		{
+			name:           "credential_pool_exhaustion_no_retry_after",
+			err:            &translator.SingleShotError{HTTPStatus: 503, Code: "CREDENTIAL_POOL_EXHAUSTED", Message: "no credential", RetryAfterSeconds: 0},
+			wantStatus:     http.StatusServiceUnavailable,
+			wantCode:       "CREDENTIAL_POOL_EXHAUSTED",
+			wantType:       "server_error",
+			wantRetryAfter: "",
+		},
+		{
+			name:           "admission_gate_rejection",
+			err:            &translator.SingleShotError{HTTPStatus: 403, Code: "ENVIRONMENT_ADMISSION_DENIED", Message: "denied"},
+			wantStatus:     http.StatusForbidden,
+			wantCode:       "ENVIRONMENT_ADMISSION_DENIED",
+			wantType:       "invalid_request_error",
+			wantRetryAfter: "",
+		},
+		{
+			name:           "opaque_failure_falls_back_to_server_error",
+			err:            errors.New("boom"),
+			wantStatus:     http.StatusInternalServerError,
+			wantCode:       "",
+			wantType:       "server_error",
+			wantRetryAfter: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			store := memstore.New()
+			h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
+				SingleShotBinder: stubSingleShotBinder{err: tc.err},
+			})
+			rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
+				Model:    "echo",
+				Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "x"}},
+			})
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status: got %d, want %d, body=%s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			var env translator.OpenAIError
+			if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if env.Error.Code != tc.wantCode {
+				t.Errorf("error.code: got %q, want %q", env.Error.Code, tc.wantCode)
+			}
+			if env.Error.Type != tc.wantType {
+				t.Errorf("error.type: got %q, want %q", env.Error.Type, tc.wantType)
+			}
+			if got := rr.Header().Get("Retry-After"); got != tc.wantRetryAfter {
+				t.Errorf("Retry-After: got %q, want %q", got, tc.wantRetryAfter)
+			}
+		})
+	}
+}
+
+// TestOpenAIChatNoopBinderEchoFallback pins the S3 default no-op binder: a
+// handler constructed with no injected SingleShotBinder persists a running
+// row through its own store (replicating the inline store.Create the handler
+// performed before the single-shot path existed) and round-trips the echo
+// response on the one code path, so the in-memory §17.4 behavior is unchanged.
+// spec: §17.4; §15.
+func TestOpenAIChatNoopBinderEchoFallback(t *testing.T) {
+	store := &recordingStore{Store: memstore.New()}
+	h := translator.NewOpenAIChatHandler(store, executor.NewEchoExecutor(), translator.OpenAIChatOptions{
+		Clock:  func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc: func() string { return "sess_noop_1" },
+	})
+	rr := openaiPost(t, h.Handler(), translator.OpenAIChatCompletionsRequest{
+		Model:    "echo",
+		Messages: []translator.OpenAIChatMessage{{Role: "user", Content: "hello"}},
+	})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var resp translator.OpenAIChatCompletionsResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if !strings.Contains(resp.Choices[0].Message.Content, "hello") {
+		t.Errorf("echo content: %q", resp.Choices[0].Message.Content)
+	}
+	// The no-op binder created the row as running before the handler's
+	// completion update flipped it to completed.
+	if store.createdState != session.StateRunning {
+		t.Errorf("no-op binder created state: got %q, want running", store.createdState)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_noop_1")
+	if err != nil {
+		t.Fatalf("session not persisted by no-op binder: %v", err)
+	}
+	if row.State != session.StateCompleted {
+		t.Errorf("final session state: got %q, want completed", row.State)
 	}
 }
 
