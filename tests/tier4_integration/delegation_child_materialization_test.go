@@ -350,13 +350,15 @@ func materializeServer(
 }
 
 // materializeDelegateCall invokes lenny/delegate_task against the child runtime
-// target with an independent credential mode (which skips the cross-environment
-// inherit path) and the given task input. It returns the decoded JSON-RPC
-// response.
-func materializeDelegateCall(t *testing.T, srv *mcp.Server, target, taskInput string) map[string]any {
+// target under the given credential-propagation mode with the given task input.
+// It returns the decoded JSON-RPC response. The materialization-to-running case
+// drives credentialPropagation: inherit, under which the child draws its lease
+// from the parent's origin pool, so the §8.2 inherit resolution runs end to end
+// through claim-and-start rather than the independent self-origin mint path.
+func materializeDelegateCall(t *testing.T, srv *mcp.Server, target, propagation, taskInput string) map[string]any {
 	t.Helper()
 	args := `{"parentSessionId":"sess_parent","target":"` + target +
-		`","poolRef":"pool-b","credentialPropagation":"independent",` +
+		`","poolRef":"pool-b","credentialPropagation":"` + propagation + `",` +
 		`"task":{"input":[{"type":"text","inline":"` + taskInput + `"}]}}`
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/delegate_task","arguments":` + args + `}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
@@ -417,7 +419,7 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 		&materializeRespondingRuntime{out: make(chan []byte, 8)},
 	)
 
-	resp := materializeDelegateCall(t, srv, matOKRuntime, "do work")
+	resp := materializeDelegateCall(t, srv, matOKRuntime, "inherit", "do work")
 	handle := materializeHandle(t, resp)
 
 	// The child materialized to running, and the handle is the parent-facing
@@ -444,9 +446,20 @@ func TestDelegateTaskMaterializesChildToRunning_spec_8_2(t *testing.T) {
 	if row.PodAssignment == "" {
 		t.Error("child row has no PodAssignment; the materialization claimed no warm pod")
 	}
-	// The credential lease was assigned to the child during the launch.
+	// spec: §8.3 lines 472, 488 — the inherit hop threads the parent as the
+	// child's credential origin, so the inherit resolution (not the
+	// independent self-origin mint) ran through claim-and-start. An
+	// independent child would carry its own id here.
+	if row.CredentialOriginSessionID != "sess_parent" {
+		t.Errorf("child CredentialOriginSessionID = %q, want sess_parent (the inherit hop draws from the parent's origin pool)",
+			row.CredentialOriginSessionID)
+	}
+	// The credential lease was assigned to the child during the launch,
+	// constrained to the origin∩child provider intersection (spec/08 §8.3
+	// line 470): the parent runtime and the child runtime both support
+	// anthropic_direct, so the inherit child draws from poolAnthropic.
 	if pools := assigner.assignedPools(); len(pools) != 1 || pools[0] != poolAnthropic {
-		t.Errorf("assigned pools = %v, want [%s] (the child drew its lease at materialization)", pools, poolAnthropic)
+		t.Errorf("assigned pools = %v, want [%s] (the inherit child drew its lease from the origin∩child pool at materialization)", pools, poolAnthropic)
 	}
 
 	// registerBinding published the child's bind so the executor resolves it:
@@ -484,7 +497,7 @@ func TestDelegateTaskMaterializationAssignmentRaceFailsClosed_spec_8_3(t *testin
 		&materializeRespondingRuntime{out: make(chan []byte, 8)},
 	)
 
-	resp := materializeDelegateCall(t, srv, matRaceRuntime, "do work")
+	resp := materializeDelegateCall(t, srv, matRaceRuntime, "independent", "do work")
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("an assignment-race materialization must be a tool error: %+v", resp)
@@ -539,7 +552,7 @@ func TestDelegateTaskMaterializationPoolWarmingMapsRuntimeUnavailable_spec_8_2(t
 		&materializeRespondingRuntime{out: make(chan []byte, 8)},
 	)
 
-	resp := materializeDelegateCall(t, srv, matWarmingRuntime, "do work")
+	resp := materializeDelegateCall(t, srv, matWarmingRuntime, "independent", "do work")
 	result, _ := resp["result"].(map[string]any)
 	if result["isError"] != true {
 		t.Fatalf("a still-warming pool must reject the materialization: %+v", resp)
