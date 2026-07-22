@@ -302,7 +302,7 @@ func TestOpenAIChatSingleShotBinderErrorEnvelope(t *testing.T) {
 	}
 }
 
-// TestOpenAIChatNoopBinderEchoFallback pins the S3 default no-op binder: a
+// TestOpenAIChatNoopBinderEchoFallback pins the default no-op binder: a
 // handler constructed with no injected SingleShotBinder persists a running
 // row through its own store (replicating the inline store.Create the handler
 // performed before the single-shot path existed) and round-trips the echo
