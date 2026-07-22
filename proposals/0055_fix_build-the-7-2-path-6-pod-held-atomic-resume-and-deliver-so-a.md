@@ -123,8 +123,12 @@ case messagerouting.ActionResumeAndDeliver:
 	if err := s.resumeHeldPod(r.Context(), tenantID, row.ID); err != nil {
 		// Resume did not happen: leave the row suspended and buffer the
 		// message. bufferIncomingMessages yields the `queued` receipt the
-		// ActionBufferInbox case produces.
-		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryInternal))
+		// ActionBufferInbox case produces. The §16.3 taxonomy defines only
+		// TRANSIENT, PERMANENT, POLICY, and UPSTREAM; a resume fault (a
+		// store.Update write failure or a lost suspended-guard race) is
+		// recoverable and never touched the pod, so TRANSIENT is its bucket,
+		// matching the create-path store-write convention.
+		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
 		dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
 		if berr != nil {
 			outcome.status = session.DeliveryStatusError
