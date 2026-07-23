@@ -72,6 +72,31 @@ func TestServiceCall_PassthroughAndError_spec_15_2_3(t *testing.T) {
 	}
 }
 
+// TestServiceCall_NonEnvelopeBodyFallback verifies that a non-2xx response
+// whose body is not a §15.1 error envelope (an unrouted path returns the
+// router's plain-text 404) is projected to a synthetic INTERNAL_ERROR
+// ServiceError carrying the raw body and the transport status, rather than
+// panicking or returning an empty code. This pins the decode-fallback branch
+// the envelope-shaped error paths never reach. spec: §15.2.1 rule 3 line 1384
+// (shared error envelope).
+func TestServiceCall_NonEnvelopeBodyFallback(t *testing.T) {
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
+
+	_, svcErr := srv.ServiceCall(context.Background(), "acme", http.MethodGet, "/no/such/route", nil, "", nil)
+	if svcErr == nil {
+		t.Fatal("ServiceCall(unrouted) expected a ServiceError")
+	}
+	if svcErr.Code != "INTERNAL_ERROR" || svcErr.Category != "INTERNAL" {
+		t.Fatalf("fallback error = %s/%s, want INTERNAL_ERROR/INTERNAL", svcErr.Code, svcErr.Category)
+	}
+	if svcErr.HTTPStatus != http.StatusNotFound {
+		t.Fatalf("fallback status = %d, want the transport 404", svcErr.HTTPStatus)
+	}
+	if svcErr.Message == "" {
+		t.Fatal("fallback error carries no message; want the raw non-envelope body")
+	}
+}
+
 // TestListArtifacts_spec_15_2_3 verifies GET /v1/sessions/{id}/artifacts
 // lists only live catalog rows, 404s a missing session, and returns an
 // empty envelope when no catalog is wired. spec: §15.1 line 598; F-15.2.3.
