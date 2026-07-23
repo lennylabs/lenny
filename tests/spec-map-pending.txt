@@ -1,14 +1,19 @@
 # SPDX-License-Identifier: MIT
 #
-# Spec-map `tests[]` file references that the spec-map test-file
-# existence check (lenny-test validate-maps) tolerates even though the
-# file is not present on disk. An entry is either committed ahead of
-# the change that adds the file, or a known stale reference awaiting
-# repair under a separately tracked finding.
+# Spec-map `tests[]` references that lenny-test validate-maps tolerates
+# even though the reference does not fully resolve. An entry is either
+# committed ahead of the change that adds it, or a known stale reference
+# awaiting repair under a separately tracked finding.
 #
-# Format: one repo-relative path per line, matching the spec-map
-# `tests[]` entry exactly with any trailing `::TestName` selector
-# removed. `#` starts a comment.
+# Two forms, matching the two checks:
+#   - A bare repo-relative path (trailing `::TestName` removed) waives
+#     the test-file existence check when the file is not on disk, and
+#     waives the test-function check for every function in that file.
+#   - A full `path::TestName` line waives only the test-function check
+#     for that one reference: the file exists but the named function
+#     does not (a rename or removal left the map pointing at a gone
+#     symbol). A new dangling reference in the same file is still caught.
+# `#` starts a comment.
 #
 # Drop an entry once the matching file ships or the reference is
 # corrected. A section listed in tests/spec-map-exceptions.yaml is
@@ -19,3 +24,28 @@
 # fixture cleanup). Tracked for repair separately; not this file's to
 # fix.
 tests/tier4_integration/concurrent_stateless_test.go
+
+# Stale `::TestName` selectors that point at a renamed or removed test
+# function while the file itself still exists. Surfaced when the
+# test-function resolution check landed; each is a pre-existing spec-map
+# drift outside the change that added the check. Tracked for repair
+# under TEST-GAPS finding T-MAP-1; drop each line as its section is
+# repointed at the current function name.
+pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchAdmitsWhenSandboxClaimed
+pkg/admission/sandboxclaim_guard/guard_test.go::TestPatchRejectsWhenSandboxNotClaimed
+pkg/api/v1/session/session_test.go::TestValidateInterruptAdmitsRunningOnly
+pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeConcurrentModeReducesBothTerms
+pkg/controller/poolscaling/strategy/strategy_test.go::TestComputeTaskModeReducesSteady
+pkg/gateway/runtime/poolstore/poolstore_test.go::TestValidateConcurrentConfig
+pkg/sandbox/state/state_test.go::TestAllStatesIncludePhase1Additions
+tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointDiscardedWhenMinIOUploadFails
+tests/tier4_integration/checkpoint_minio_atomicity_test.go::TestCheckpointWritesMetadataOnlyAfterMinIOUpload
+tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres
+tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudBillingExport
+tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudCSI
+tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudKMS
+tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudOIDC
+tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudObservability
+tests/tier6_e2e_cloud/scaffolds_test.go::TestCloudSecretStore
+tests/tier6_e2e_cloud/scaffolds_test.go::TestMultiAZMinIO
+tests/tier8_chaos/event_stream_recovery_test.go::TestOpsEventStreamRepeatsTheDegradationEnvelopeWhileRedisIsDown

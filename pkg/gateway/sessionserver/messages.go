@@ -240,8 +240,12 @@ type MessageResponse struct {
 // The minimal gateway elides:
 //   - the §7.2 inter-replica `ForwardMessage` gRPC,
 //   - the §7.2 inbox + DLQ persistence (F-7.2.4),
-//   - the §7.2 delivery: immediate atomic resume-and-deliver path,
 //   - cross-replica coordinator routing.
+//
+// A `delivery: "immediate"` message to a `suspended`, pod-held session
+// takes the §7.2 path-6 atomic resume-and-deliver on the coordinating
+// replica (deliverMessageBatch): it resumes suspended → running and
+// delivers, failing closed to `queued` inbox buffering on failure.
 //
 // Per-slot routing for §5.2 concurrent-workspace pods is internal: the
 // client never supplies a slotId, the gateway derives the bound slot from
@@ -509,13 +513,17 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 	// above; "the first matching path wins". A synchronous in-process
 	// executor is `ready_for_input` by construction, so a `running`
 	// target without a concurrent `input_required` takes path 2 (direct
-	// delivery); the input_required / suspended / recovering targets
-	// buffer in the inbox or DLQ. The pod-adapter `ready_for_input`
+	// delivery); the input_required / recovering targets buffer in the
+	// inbox or DLQ. A `delivery: "immediate"` message to a `suspended`,
+	// pod-held session takes path 6: the coordinating replica atomically
+	// resumes the session (suspended → running via resumeHeldPod) and
+	// delivers the message, returning `delivered`, and fails closed to
+	// inbox buffering (`queued`) on a resume or delivery failure so the
+	// message is never dropped (line 330). The pod-adapter `ready_for_input`
 	// signal that distinguishes path 2 from path 5 (runtime-busy), the
-	// path-4 in-flight-tool interrupt, the path-6 pod-held
-	// resume-and-deliver, the cross-replica `ForwardMessage`, and the
-	// concurrent-workspace per-slot inbox are gated on the pod-adapter
-	// readiness model and §5.2 concurrent-workspace build-out; a
+	// path-4 in-flight-tool interrupt, the cross-replica `ForwardMessage`,
+	// and the concurrent-workspace per-slot inbox are gated on the
+	// pod-adapter readiness model and §5.2 concurrent-workspace build-out; a
 	// coordinating replica that cannot drive them buffers and returns
 	// `queued`, which §7.2 sanctions. F-7.2.5.
 	outcome := deliveryOutcome{status: session.DeliveryStatusDelivered}
@@ -547,73 +555,78 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 				map[string]any{"reason": err.Error()})
 			return deliveryOutcome{}, false
 		}
-		out := o.Parts
-		// respAnnotations carries the §15.4.1 envelope-level degradation
-		// annotations (schema_version_ahead, blob_ref_unresolvable) the
-		// executor, as a live consumer, surfaced while ingesting the
-		// runtime's response. They are published on the session event stream
-		// so an SSE subscriber is informed of potential response
-		// incompleteness.
-		respAnnotations := o.Annotations
+		out, ok := s.recordDeliveredResponse(w, r, tenantID, row, msgs, o)
+		if !ok {
+			return deliveryOutcome{}, false
+		}
+		outcome.out = out
+		outcome.status = session.DeliveryStatusDelivered
 
-		// §4.8 PostAgentOutput: run the chain over the agent's output
-		// parts before delivering the response to the client. A
-		// REJECT blocks delivery (and writes the §16.7 audit row); a
-		// MODIFY rewrites the parts that are transcribed, published,
-		// and returned. spec: §4.8 line 1054.
-		if s.interceptors != nil && len(out) > 0 {
-			modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
-			if rejected {
-				return deliveryOutcome{}, false
+	case messagerouting.ActionResumeAndDeliver:
+		// spec: §7.2 path 6 pod-held branch (lines 326-327) — atomically
+		// resume the suspended session and deliver. resumeHeldPod
+		// transitions suspended → running reusing any already-bound pod,
+		// guarding a still-suspended row inside its store.Update mutator so
+		// the check and the write are atomic (every `suspended` row is
+		// pod-held while the §6.2 release sweep is unbuilt). Fail closed to
+		// inbox buffering (`queued`) on a resume or delivery failure so the
+		// message is never dropped (line 330).
+		if err := s.resumeHeldPod(r.Context(), tenantID, row.ID); err != nil {
+			// Resume did not happen: leave the row suspended and buffer the
+			// message. bufferIncomingMessages yields the `queued` receipt
+			// the ActionBufferInbox case produces (line 330: the message is
+			// not silently dropped).
+			//
+			// spec: §16.3 error taxonomy — the taxonomy defines only
+			// TRANSIENT, PERMANENT, POLICY, and UPSTREAM. A resume fault is
+			// either the resumeHeldPod store.Update write failing or its
+			// suspended-guard rejecting a lost terminal-transition race;
+			// neither contacted the pod/executor (not UPSTREAM) nor was
+			// denied by the policy engine (not POLICY). The `queued`
+			// fallback preserves the message and the inbox drains on the
+			// next ready_for_input, so the fault is recoverable and TRANSIENT
+			// is the correct bucket, matching the create-path convention that
+			// tags a store-write failure TRANSIENT (create.go persist-failure
+			// path).
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryTransient))
+			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
+			if berr != nil {
+				outcome.status = session.DeliveryStatusError
+				outcome.reason = session.DeliveryReasonInboxUnavailable
+				break
 			}
-			out = modified
-		}
-
-		// Record the §15.1 transcript: inbound messages followed by
-		// the runtime's text response parts. Best-effort — a
-		// transcript write failure does not fail the message delivery.
-		if s.transcripts != nil {
-			entries := make([]transcriptstore.Entry, 0, len(msgs)+len(out))
-			now := s.clock()
-			for _, m := range msgs {
-				entries = append(entries, transcriptstore.Entry{
-					Role: m.Role, Content: m.Content, Timestamp: now,
-				})
+			outcome.status = session.DeliveryStatusQueued
+			outcome.queueDepth = depth
+			if dropped {
+				outcome.status = session.DeliveryStatusDropped
+				outcome.reason = session.DeliveryReasonInboxOverflow
 			}
-			for _, p := range out {
-				if p.Type == "text" {
-					entries = append(entries, transcriptstore.Entry{
-						Role: "assistant", Content: p.Text, Timestamp: now,
-					})
-				}
+			break
+		}
+		// The session is running. Deliver to the runtime; on a delivery
+		// failure buffer to the inbox (`queued`) while leaving the session
+		// running (its inbox drains on the next ready_for_input) rather than
+		// returning a 500, so the message is preserved (line 330).
+		o, err := s.executor.Send(r.Context(), row.ID, msgs)
+		if err != nil {
+			tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryUpstream))
+			dropped, depth, berr := s.bufferIncomingMessages(r.Context(), row, req.Messages, deliverIdx, bufferTargetInbox, 0)
+			if berr != nil {
+				outcome.status = session.DeliveryStatusError
+				outcome.reason = session.DeliveryReasonInboxUnavailable
+				break
 			}
-			_ = s.transcripts.Append(r.Context(), tenantID, row.ID, entries...)
+			outcome.status = session.DeliveryStatusQueued
+			outcome.queueDepth = depth
+			if dropped {
+				outcome.status = session.DeliveryStatusDropped
+				outcome.reason = session.DeliveryReasonInboxOverflow
+			}
+			break
 		}
-
-		// Publish the §15.1 session events so SSE subscribers observe
-		// the message + response live.
-		for _, m := range msgs {
-			s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
-				"role": m.Role, "content": m.Content,
-			})
-		}
-		for _, p := range out {
-			s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
-				"type": p.Type, "text": p.Text, "ref": p.Ref,
-			})
-			// spec: §6.3 line 356, §16.1 line 15 — the first
-			// agent-streamed `response` event observed on this session
-			// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
-			// only the first event per session triggers the histogram.
-			s.recordTTFTOnce(row, "response")
-		}
-		// spec: §15.4.1 lines 1501, 1577 — when the gateway forward-read
-		// a response part it did not fully understand (a schemaVersion
-		// ahead of its known max, or an unresolvable ref), it surfaces
-		// the degradation annotation so the subscriber is informed the
-		// response may be incomplete rather than silently dropping it.
-		if len(respAnnotations) > 0 {
-			s.publishEvent(row.TenantID, row.ID, "response_degraded", respAnnotations)
+		out, ok := s.recordDeliveredResponse(w, r, tenantID, row, msgs, o)
+		if !ok {
+			return deliveryOutcome{}, false
 		}
 		outcome.out = out
 		outcome.status = session.DeliveryStatusDelivered
@@ -675,6 +688,89 @@ func (s *Server) deliverMessageBatch(w http.ResponseWriter, r *http.Request, spa
 		return deliveryOutcome{}, false
 	}
 	return outcome, true
+}
+
+// recordDeliveredResponse records and publishes a delivered executor response:
+// it runs the §4.8 PostAgentOutput chain over the output parts, appends the
+// inbound messages and text response parts to the §15.1 transcript, publishes
+// the `message_delivered` / `response` / `response_degraded` session events,
+// and records the §6.3 TTFT signal on the first `response` event. It returns
+// the (possibly PostAgentOutput-modified) parts and ok=true on success. A
+// PostAgentOutput REJECT writes the §16.7 error envelope to w and returns
+// ok=false so the caller ends the request. This is the shared response-recording
+// body reused by the direct-delivery (ActionDeliver) and the §7.2 path-6
+// resume-and-deliver (ActionResumeAndDeliver) cases so the two do not duplicate
+// it. spec: §4.8 line 1054, §15.1, §15.4.1, §6.3 line 356, §7.2 path 6.
+func (s *Server) recordDeliveredResponse(w http.ResponseWriter, r *http.Request, tenantID string, row sessionstore.Session, msgs []executor.Message, o executor.Response) ([]executor.MessagePart, bool) {
+	out := o.Parts
+	// respAnnotations carries the §15.4.1 envelope-level degradation
+	// annotations (schema_version_ahead, blob_ref_unresolvable) the
+	// executor, as a live consumer, surfaced while ingesting the
+	// runtime's response. They are published on the session event stream
+	// so an SSE subscriber is informed of potential response
+	// incompleteness.
+	respAnnotations := o.Annotations
+
+	// §4.8 PostAgentOutput: run the chain over the agent's output
+	// parts before delivering the response to the client. A
+	// REJECT blocks delivery (and writes the §16.7 audit row); a
+	// MODIFY rewrites the parts that are transcribed, published,
+	// and returned. spec: §4.8 line 1054.
+	if s.interceptors != nil && len(out) > 0 {
+		modified, rejected := s.runPostAgentOutput(r.Context(), w, tenantID, row.ID, out)
+		if rejected {
+			return nil, false
+		}
+		out = modified
+	}
+
+	// Record the §15.1 transcript: inbound messages followed by
+	// the runtime's text response parts. Best-effort — a
+	// transcript write failure does not fail the message delivery.
+	if s.transcripts != nil {
+		entries := make([]transcriptstore.Entry, 0, len(msgs)+len(out))
+		now := s.clock()
+		for _, m := range msgs {
+			entries = append(entries, transcriptstore.Entry{
+				Role: m.Role, Content: m.Content, Timestamp: now,
+			})
+		}
+		for _, p := range out {
+			if p.Type == "text" {
+				entries = append(entries, transcriptstore.Entry{
+					Role: "assistant", Content: p.Text, Timestamp: now,
+				})
+			}
+		}
+		_ = s.transcripts.Append(r.Context(), tenantID, row.ID, entries...)
+	}
+
+	// Publish the §15.1 session events so SSE subscribers observe
+	// the message + response live.
+	for _, m := range msgs {
+		s.publishEvent(row.TenantID, row.ID, "message_delivered", map[string]any{
+			"role": m.Role, "content": m.Content,
+		})
+	}
+	for _, p := range out {
+		s.publishEvent(row.TenantID, row.ID, "response", map[string]any{
+			"type": p.Type, "text": p.Text, "ref": p.Ref,
+		})
+		// spec: §6.3 line 356, §16.1 line 15 — the first
+		// agent-streamed `response` event observed on this session
+		// is the §6.3 TTFT signal. recordTTFTOnce LoadOrStores so
+		// only the first event per session triggers the histogram.
+		s.recordTTFTOnce(row, "response")
+	}
+	// spec: §15.4.1 lines 1501, 1577 — when the gateway forward-read
+	// a response part it did not fully understand (a schemaVersion
+	// ahead of its known max, or an unresolvable ref), it surfaces
+	// the degradation annotation so the subscriber is informed the
+	// response may be incomplete rather than silently dropping it.
+	if len(respAnnotations) > 0 {
+		s.publishEvent(row.TenantID, row.ID, "response_degraded", respAnnotations)
+	}
+	return out, true
 }
 
 // writeDeliveryReceipt renders the §15.4 synchronous delivery_receipt:

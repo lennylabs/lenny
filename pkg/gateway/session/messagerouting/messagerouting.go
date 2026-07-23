@@ -48,7 +48,9 @@ const (
 	// ActionBufferInbox buffers the message in the session inbox for
 	// FIFO redelivery when the runtime next reaches `ready_for_input`
 	// (§7.2 path 3 input_required, path 5 runtime-busy, and the
-	// pod-held suspended case of path 6). The receipt is `queued`.
+	// non-immediate suspended case of path 6: a suspended target without
+	// `delivery: "immediate"` remains buffered per line 330). The receipt
+	// is `queued`.
 	ActionBufferInbox
 
 	// ActionBufferDLQ buffers the message in the dead-letter queue
@@ -68,6 +70,15 @@ const (
 	// client): the gateway returns TARGET_NOT_READY so the client
 	// retries after the session starts.
 	ActionRejectNotReady
+
+	// ActionResumeAndDeliver drives the §7.2 path-6 pod-held resume-and-deliver:
+	// a `delivery: "immediate"` message to a `suspended` session whose pod is
+	// still held atomically resumes the session (`suspended → running`) and
+	// delivers the message to the runtime, returning `delivered`. The caller
+	// (the coordinating replica) performs the resume and the delivery and fails
+	// closed to inbox buffering (`queued`) when it cannot, per line 330.
+	// spec: §7.2 path 6 (lines 326-330).
+	ActionResumeAndDeliver
 )
 
 // Decision is the routing outcome for one non-reply message. Path is
@@ -118,22 +129,27 @@ func isPreRunning(s session.State) bool {
 //     inter-session DLQ, queued (line 339).
 //   - input_required (path 3) → inbox, queued. Path 3 wins over the
 //     `delivery: "immediate"` escalation (path 4) per line 319.
-//   - Suspended (path 6) → inbox, queued. The `delivery: "immediate"`
-//     pod-held resume-and-deliver and the podless `resume_pending`
-//     transition are coordinator/pod-adapter behaviours; a coordinating
-//     replica that cannot drive them buffers and returns queued, which
-//     the spec sanctions ("messages without `delivery: immediate`
-//     remain buffered").
+//   - Suspended (path 6) → a `delivery: "immediate"` message selects
+//     ActionResumeAndDeliver, delivered: the caller (the coordinating
+//     replica) atomically resumes the pod-held session and delivers,
+//     failing closed to inbox buffering (queued) when the pod is not held
+//     or the resume/delivery fails (line 330). A suspended target without
+//     `immediate` selects inbox, queued (line 330: "messages without
+//     `delivery: immediate` remain buffered").
 //   - Running, not input_required (path 2) → deliver now. The path-5
 //     runtime-busy buffering and the path-4 in-flight-tool interrupt
 //     require the adapter `ready_for_input` signal; a synchronous
 //     in-process executor is ready by construction, so this collapses
 //     to direct delivery.
 //
-// immediate is the `delivery: "immediate"` flag; it is accepted for
-// completeness (it selects path 4 over path 2 when the adapter exposes
-// an in-flight-tool signal) and does not change the destination for the
-// conditions a synchronous executor exposes.
+// immediate is the `delivery: "immediate"` flag. For a suspended target
+// it selects ActionResumeAndDeliver (path 6): the caller resumes the
+// pod-held session and delivers, returning delivered. For a running
+// target it selects path 4 over path 2 when the adapter exposes an
+// in-flight-tool signal, and otherwise does not change the destination
+// for the conditions a synchronous executor exposes.
+//
+// spec: §7.2 path 6 (lines 326-330).
 func Classify(state session.State, inputRequired, immediate bool, src Source) Decision {
 	switch {
 	case session.IsTerminal(state):
@@ -150,6 +166,14 @@ func Classify(state session.State, inputRequired, immediate bool, src Source) De
 	case state == session.StateInputRequired || inputRequired:
 		return Decision{Path: 3, Action: ActionBufferInbox, Status: session.DeliveryStatusQueued}
 	case state == session.StateSuspended:
+		// §7.2 path 6. A `delivery: "immediate"` message atomically resumes a
+		// pod-held suspended session and delivers it (ActionResumeAndDeliver,
+		// `delivered`); the caller fails closed to inbox buffering when the pod
+		// is not held or the resume/delivery fails, per line 330. A suspended
+		// target without `immediate` remains buffered (line 330).
+		if immediate {
+			return Decision{Path: 6, Action: ActionResumeAndDeliver, Status: session.DeliveryStatusDelivered}
+		}
 		return Decision{Path: 6, Action: ActionBufferInbox, Status: session.DeliveryStatusQueued}
 	default:
 		// Running (or any other admitted non-blocked state): deliver now.
