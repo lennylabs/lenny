@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"crypto/x509"
@@ -53,8 +54,16 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	auditSink := w.auditSink
 
 	// ----- OpenAI Chat + Open Responses translators -----
-	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now})
-	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{Clock: clockinject.Now})
+	// Both built-in OpenAI-dialect adapters bind each single-shot request
+	// through the shared §15.2.1 create-and-start service so a warm pod is
+	// claimed, launched, and registered before the turn dispatches. The
+	// binder always runs the same service; on the §17.4 in-memory EchoExecutor
+	// wiring (podBinder == nil) the create-and-start composition no-ops the
+	// claim and just persists the row, so the echo path is unchanged.
+	// spec: §15 built-in adapter single-shot compute model.
+	singleShotBinder := sessionSingleShotBinder{srv: sessionSrv}
+	openaiHandler := translator.NewOpenAIChatHandler(w.sessions, w.exec, translator.OpenAIChatOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder})
+	responsesHandler := translator.NewOpenResponsesHandler(w.sessions, w.exec, translator.OpenResponsesOptions{Clock: clockinject.Now, SingleShotBinder: singleShotBinder})
 
 	// ----- §4.9 end-user credential registry -----
 	// The Postgres-backed store envelope-encrypts the §12.9 T4 secret
@@ -217,4 +226,63 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 	w.credentialRekeyJob = credentialRekeyJob
 	w.connectorOAuth = connectorOAuth
 	w.connectorStateStore = connectorStateStore
+}
+
+// sessionSingleShotBinder adapts *sessionserver.Server to the
+// translator.SingleShotBinder consumer interface so the two built-in
+// OpenAI-dialect adapters run the shared create-and-start service for each
+// single-shot request. It lives in cmd/lenny-gateway because that is the one
+// package that imports both translator and sessionserver, so the consumer
+// interface can bind to the sessionserver implementor without the import
+// cycle a direct sessionserver → translator dependency would create
+// (sessionserver already imports translator).
+//
+// spec: §15 built-in adapter single-shot compute model; §15.2.1 rule 1.
+type sessionSingleShotBinder struct {
+	srv *sessionserver.Server
+}
+
+// BindSingleShot maps the adapter-resolved single-shot spec into a
+// sessionserver create-and-start request, runs it through the shared
+// CreateAndStartService (which applies the §15.2.1 admission gates, claims a
+// warm pod, launches the runtime, and registers the pod binding), and returns
+// the created session id. A typed sessionserver.ServiceError (a warm-pod or
+// slot claim exhaustion, a §4.9 credential pre-check miss, or an
+// admission-gate rejection) is mapped into a *translator.SingleShotError
+// carrying the HTTP status, error code, retryability, and the Retry-After
+// seconds the adapter re-emits verbatim in its native error envelope. The
+// Retry-After seconds are zero for the CREDENTIAL_POOL_EXHAUSTED case, which
+// sets no header.
+//
+// spec: §15 built-in adapter single-shot compute model; §7.1 create-and-start
+// atomicity; §4.9 CREDENTIAL_POOL_EXHAUSTED.
+func (b sessionSingleShotBinder) BindSingleShot(ctx context.Context, spec translator.SingleShotSpec) (string, error) {
+	resp, serr := b.srv.CreateAndStartService(ctx, spec.TenantID, sessionserver.CreateSessionRequest{
+		RuntimeRef:  spec.RuntimeRef,
+		UserID:      spec.UserID,
+		Environment: spec.Environment,
+	})
+	if serr != nil {
+		return "", singleShotErrorFrom(serr)
+	}
+	return resp.ID, nil
+}
+
+// singleShotErrorFrom maps a sessionserver.ServiceError into the
+// translator.SingleShotError the adapter re-emits in its native error
+// envelope, copying the HTTP status, error code, message, retryability, and
+// the Retry-After seconds verbatim. The Retry-After seconds are zero for a
+// rejection that sets no header (the §4.9 CREDENTIAL_POOL_EXHAUSTED pre-claim
+// miss), so the adapter omits the header for that case.
+//
+// spec: §15 built-in adapter single-shot compute model; §7.1 create-and-start
+// atomicity; §4.9 CREDENTIAL_POOL_EXHAUSTED.
+func singleShotErrorFrom(serr *sessionserver.ServiceError) *translator.SingleShotError {
+	return &translator.SingleShotError{
+		HTTPStatus:        serr.HTTPStatus,
+		Code:              serr.Code,
+		Message:           serr.Message,
+		RetryAfterSeconds: serr.RetryAfterSeconds,
+		Retryable:         serr.Retryable,
+	}
 }

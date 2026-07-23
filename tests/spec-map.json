@@ -2255,6 +2255,7 @@
         "tests/tier2_component/stores/usagestore_test.go",
         "tests/tier2_component/translators/openai_chat_translator_test.go",
         "tests/tier2_component/translators/openai_responses_translator_test.go",
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentIsValidOpenAPI31",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestSessionDomainDocumentedPathsHaveLiveHandlers",

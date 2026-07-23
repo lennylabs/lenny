@@ -582,6 +582,29 @@ The `SessionEventKind` enum above is **closed** — the gateway will never dispa
 
 **`type: mcp` runtime dedicated endpoints:** Each enabled `type: mcp` runtime gets a dedicated MCP endpoint at `/mcp/runtimes/{runtime-name}`. Standard MCP capability negotiation. Not aggregated. An implicit session record is created per connection for audit and billing. Discovery: `GET /v1/runtimes` and `list_runtimes` return the `mcpEndpoint` field on the `AuthorizedRuntime` schema ([Shared Adapter Types](#shared-adapter-types)) for `type: mcp` runtimes; a `mcp-capabilities` `publishedMetadata` entry ([Section 5.1](05_runtime-registry-and-pool-model.md#publishedmetadata-field)) carries the tools preview and is fetched via `GET /v1/runtimes/{name}/meta/{key}`.
 
+**Built-in adapter single-shot compute model.** A built-in adapter request
+that dispatches a Lenny runtime turn (`OpenAICompletionsAdapter`,
+`OpenResponsesAdapter`) runs an implicit single-shot session that claims a
+warm pod, dispatches the turn, and releases the pod within one HTTP call.
+The implicit session runs through the same [Section 15.2.1](#1521-restmcp-consistency-contract)
+shared session-creation service as `POST /v1/sessions/start`, so the active-user,
+quota, concurrency, admission-rate, policy-chain, and environment-admission gates
+apply identically. The claim follows the [Section 7.1](07_session-lifecycle.md#71-normal-flow)
+step-3 credential-availability pre-check and step-4 warm-pod claim atomicity,
+and both roll back with no leaked pod or credential lease. A warm-pod or slot
+claim, prepare, or launch failure returns a retryable `503 SESSION_CREATION_FAILED`
+with a `Retry-After` header, and a credential-availability pre-check miss returns
+`503 CREDENTIAL_POOL_EXHAUSTED` (POLICY) with no pod claimed and no `Retry-After`
+header, each mapped into the adapter's native error envelope. On success,
+completion, dispatch failure, or request timeout, the pod and its
+[Section 4.9](04_system-components.md#49-credential-leasing-service) lease are
+released synchronously, recording the completed or failed
+[Section 6.2](06_warm-pod-model.md#62-pod-state-machine) terminal disposition,
+before the response returns. `OpenResponsesAdapter` continuation
+(`previous_response_id`) re-claims a fresh pod per request and does not retain a
+pod bind across calls.
+An implicit session record is created per request for audit and billing.
+
 ### 15.1 REST API
 
 The REST API covers all non-interactive operations. It is the primary integration point for CI/CD pipelines, admin dashboards, CLIs, and clients in any language.

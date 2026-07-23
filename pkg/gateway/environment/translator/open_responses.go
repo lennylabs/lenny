@@ -163,8 +163,9 @@ type OpenResponsesHandler struct {
 	store          sessionstore.Store
 	exec           executor.Executor
 	clock          func() time.Time
-	idFn           func() string
 	defaultRuntime string
+	binder         SingleShotBinder
+	releaseTimeout time.Duration
 }
 
 // OpenResponsesOptions configures the handler.
@@ -172,6 +173,18 @@ type OpenResponsesOptions struct {
 	Clock          func() time.Time
 	IDFunc         func() string
 	DefaultRuntime string
+
+	// SingleShotBinder runs the shared create-and-start service that
+	// claims a warm pod, launches the runtime, and registers the pod
+	// binding for each request. Pass nil to fall back to the no-op binder
+	// (the §17.4 in-memory mode and the in-process unit tests).
+	// spec: §15 built-in adapter single-shot compute model.
+	SingleShotBinder SingleShotBinder
+
+	// ReleaseTimeout bounds the detached context the deferred pod release
+	// runs under. Zero defaults to defaultSingleShotReleaseTimeout.
+	// Operator-tunable.
+	ReleaseTimeout time.Duration
 }
 
 // NewOpenResponsesHandler returns a configured handler.
@@ -188,12 +201,21 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 	if rt == "" {
 		rt = "echo"
 	}
+	binder := opts.SingleShotBinder
+	if binder == nil {
+		binder = newNoopSingleShotBinder(store, idFn, clock)
+	}
+	releaseTimeout := opts.ReleaseTimeout
+	if releaseTimeout <= 0 {
+		releaseTimeout = defaultSingleShotReleaseTimeout
+	}
 	return &OpenResponsesHandler{
 		store:          store,
 		exec:           exec,
 		clock:          clock,
-		idFn:           idFn,
 		defaultRuntime: rt,
+		binder:         binder,
+		releaseTimeout: releaseTimeout,
 	}
 }
 
@@ -235,24 +257,34 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		runtimeRef = h.defaultRuntime
 	}
 	now := h.clock()
-	sessionID := h.idFn()
 
-	row := sessionstore.Session{
-		ID:              sessionID,
-		TenantID:        tenantID,
-		UserID:          req.User,
-		RuntimeRef:      runtimeRef,
-		Environment:     envScope,
-		State:           session.StateRunning,
-		ParentSessionID: req.PreviousResponseID, // lineage pointer per §7.1 derive copy semantics
-		CreatedAt:       now,
-		UpdatedAt:       now,
-	}
-	if err := h.store.Create(r.Context(), row); err != nil {
-		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
-			fmt.Sprintf("session create failed: %v", err))
+	// Claim a warm pod, launch the runtime, and register the binding
+	// through the shared §15.2.1 create-and-start service. The single-shot
+	// path does not thread previous_response_id into the row's
+	// ParentSessionID: the create-and-start reuse surface carries no parent
+	// field and setting it would trip the §8.2/§8.6 delegated-child lease
+	// semantics, so continuation re-claims a fresh pod per request and the
+	// stored ParentSessionID stays empty (GET echoes empty).
+	// spec: §15 built-in adapter single-shot compute model; §8.2 delegated-child lease; §7.1 atomicity.
+	sessionID, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
+		TenantID:    tenantID,
+		UserID:      req.User,
+		RuntimeRef:  runtimeRef,
+		Environment: envScope,
+	})
+	if err != nil {
+		writeSingleShotError(w, err)
 		return
 	}
+
+	// Release the claimed pod and its §4.9 lease on every exit path,
+	// recording the §6.2 terminal disposition on a detached, timeout-bounded
+	// context so the drain survives a request-context timeout or client
+	// disconnect. disp flips to completed only after a successful dispatch
+	// and completion update.
+	// spec: §15 built-in adapter single-shot compute model; §6.2 release.
+	disp := executor.DispositionFailed
+	defer releaseSingleShot(r.Context(), h.exec, h.releaseTimeout, sessionID, &disp)
 
 	msgs, err := normalizeInput(req.Input)
 	if err != nil {
@@ -272,9 +304,7 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		s.State = session.StateCompleted
 		return nil
 	})
-	if err := h.exec.Close(r.Context(), sessionID); err != nil && !errors.Is(err, executor.ErrUnsupported) {
-		_ = err
-	}
+	disp = executor.DispositionCompleted
 
 	if req.Stream {
 		writeOpenResponsesStream(w, sessionID, req.PreviousResponseID, now, out)
