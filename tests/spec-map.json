@@ -4047,10 +4047,14 @@
         "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerCompletesConformantPKCEExchange",
         "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerRejectsMismatchedPKCEVerifier",
         "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerRejectsNonconformantIDToken",
+        "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerLoginRedirectsToDiscoveredProvider",
+        "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerCompletesRealPKCEExchange",
+        "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerRejectsBadSignature",
         "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster"
       ],
       "packages": [
-        "pkg/gateway/mcpfabric/playground"
+        "pkg/gateway/mcpfabric/playground",
+        "tests/tier2_component/playground"
       ],
       "blocked_until_phase": "5",
       "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints."

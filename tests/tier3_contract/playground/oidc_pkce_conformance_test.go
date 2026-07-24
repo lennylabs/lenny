@@ -313,12 +313,13 @@ func TestOIDCExchangerRejectsNonconformantIDToken(t *testing.T) {
 // published JWKS, verifies the token's RS256 signature against the key
 // named by the token's `kid`, and checks `iss`, `aud`, `exp`, and (when
 // present) `nbf`. This is the check §27.3.1 requires the gateway to
-// perform; the production gateway does not yet wire a concrete
-// IDTokenValidator (playground.HTTPOIDCConfig.IDTokenValidator has no
-// production call site — see the accompanying discovered-issue note),
-// so the test supplies the reference implementation the interface was
-// built to accept, exercising the same signature/iss/aud/exp contract a
-// production JWKS verifier would enforce.
+// perform. It is an independent hand-rolled implementation from the
+// production validator (pkg/gateway/mcpfabric/playground/
+// oidcdiscovery.go's newJWKSIDTokenValidator, wired at
+// cmd/lenny-gateway/httpsurface.go via
+// playground.NewDiscoveredHTTPOIDCExchanger) so this suite pins the
+// wire contract §27.3.1 requires rather than duplicating the
+// production validator's own logic against itself.
 func newRS256Validator(t *testing.T, jwksURL, expectedIssuer, expectedAudience string) func(context.Context, string) (map[string]any, error) {
 	t.Helper()
 	return func(ctx context.Context, idToken string) (map[string]any, error) {

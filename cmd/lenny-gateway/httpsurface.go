@@ -113,6 +113,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	playgroundBearerTTL := f.playgroundBearerTTL
 	playgroundGatewayHost := f.playgroundGatewayHost
 	playgroundOIDCSessionTTL := f.playgroundOIDCSessionTTL
+	oidcIssuerURL := f.oidcIssuerURL
+	oidcClientID := f.oidcClientID
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions", sessionSrv.Handler())
 	mux.Handle("/v1/sessions/", sessionSrv.Handler())
@@ -444,6 +446,23 @@ func (w *gatewayWiring) buildHTTPSurface(
 			// F-27.6.9.
 			log.Printf("lenny-gateway: §27.6 playground SessionStore is in-memory (no --redis-url): bearer revocations are not durable across gateway restarts and do not propagate across replicas; production deployments MUST set --redis-url")
 		}
+		// §27.3.1 the login/callback endpoints require a configured
+		// OIDCExchanger in authMode=oidc: GET /playground/auth/login
+		// redirects the browser to "the configured OIDC provider's
+		// authorization endpoint", which the gateway discovers from
+		// the same --oidc-issuer-url §10.3 already validates as a
+		// fatal-outside-dev-mode startup requirement (buildStartupGates
+		// runs before buildHTTPSurface). Discovery failure is fatal
+		// here rather than left to degrade every /playground/auth/login
+		// request to 503 LENNY_PLAYGROUND_OIDC_UNAVAILABLE.
+		var pgOIDC playground.OIDCExchanger
+		if pgCfg.AuthMode == playground.AuthModeOIDC {
+			exchanger, err := playground.NewDiscoveredHTTPOIDCExchanger(context.Background(), *oidcIssuerURL, *oidcClientID, nil)
+			if err != nil {
+				log.Fatalf("lenny-gateway: §27.3.1 playground OIDC discovery against %s: %v", *oidcIssuerURL, err)
+			}
+			pgOIDC = exchanger
+		}
 		pg := playground.New(pgCfg, playground.Options{
 			// spec: §10.2 line 225 — Sign goes through the breaker so
 			// KMS outages convert to retryable KMS_SIGNING_UNAVAILABLE;
@@ -453,6 +472,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 			Verifier: w.kmsBackedSigner,
 			Tenants:  playgroundTenantRegistry{store: w.tenants},
 			Sessions: pgSessions,
+			OIDC:     pgOIDC,
 			Metrics:  pgMetrics,
 		}).WithAuditEmitter(playgroundAuditEmitter{sink: auditSink})
 		// spec: §27.6 lines 200-201 — wire the playground idle/duration caps
