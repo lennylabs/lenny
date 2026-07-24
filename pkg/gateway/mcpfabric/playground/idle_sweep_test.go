@@ -102,6 +102,63 @@ func TestRedisIdleSessionsScansRecords_spec_27_6_201(t *testing.T) {
 	}
 }
 
+// TestRevokeSessionAdminRevokeThroughRedisPrimitive: the §27.6
+// admin-revocation entry point (Handler.RevokeSession called with
+// RevokeAdmin) drives the same Redis-backed revocation primitive as
+// logout, user.invalidated, and idle timeout — a DEL on the
+// session-record key and a SET on the per-bearer pg:revoked:{jti} key
+// (§27.3.1 line 207) — and attributes the §27.8 counter to
+// admin_revoke. The other reasons each already have a
+// RedisSessionStore-backed test verifying the real keys
+// (TestRedisIdleSessionsScansRecords for idle enumeration,
+// TestRedisSessionStoreUserIndexAndRevoke_spec_11_4 for
+// user_invalidated); admin_revoke previously only had in-process
+// (MemorySessionStore) coverage.
+//
+// diagnosis: a failure means an admin-triggered RevokeSession call no
+// longer performs the real Redis DEL/SET pair the spec requires, or no
+// longer attributes the revocation to the admin_revoke reason.
+func TestRevokeSessionAdminRevokeThroughRedisPrimitive_spec_27_3_1_207(t *testing.T) {
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+	store := NewRedisSessionStore(client)
+	h, _, m := newRevokeHandler(t, store)
+	ctx := context.Background()
+
+	mustPut(t, store, "acme", "admin-sess", SessionRecord{
+		TenantID: "acme", UserID: "bob@acme.com", BearerJTIs: []string{"jti-admin-redis"},
+	})
+
+	// The session-record key exists and the revocation marker does not,
+	// before the admin revokes the session.
+	if n, err := client.Exists(ctx, sessionKey("acme", "admin-sess")).Result(); err != nil || n != 1 {
+		t.Fatalf("session-record key missing before revocation: n=%d err=%v", n, err)
+	}
+	if n, err := client.Exists(ctx, revokedKey("acme", "jti-admin-redis")).Result(); err != nil || n != 0 {
+		t.Fatalf("revocation marker present before revocation: n=%d err=%v", n, err)
+	}
+
+	if err := h.RevokeSession(ctx, "acme", "admin-sess", RevokeAdmin); err != nil {
+		t.Fatalf("RevokeSession(admin_revoke): %v", err)
+	}
+
+	// spec: §27.3.1 line 207 — "admin revocation ... drive[s] the same
+	// revocation path: DEL on the session-record key + SET on the
+	// per-bearer pg:revoked:{jti} key + PUBLISH".
+	if n, err := client.Exists(ctx, sessionKey("acme", "admin-sess")).Result(); err != nil || n != 0 {
+		t.Errorf("session-record key survived RevokeSession(admin_revoke): n=%d err=%v", n, err)
+	}
+	if n, err := client.Exists(ctx, revokedKey("acme", "jti-admin-redis")).Result(); err != nil || n != 1 {
+		t.Errorf("pg:revoked:{jti} key not set after RevokeSession(admin_revoke): n=%d err=%v", n, err)
+	}
+	// spec: §27.8 — lenny_playground_session_revocations_total's reason
+	// label includes admin_revoke.
+	if got := testutil.ToFloat64(m.revocations.WithLabelValues(string(RevokeAdmin))); got != 1 {
+		t.Errorf("revocations{reason=admin_revoke} = %v, want 1", got)
+	}
+}
+
 // TestSweepIdleSessionsRevokesIdleThroughPrimitive: the handler sweep
 // revokes idle records through the shared revocation primitive — the
 // record is deleted, every minted bearer lands on the deny list, and the

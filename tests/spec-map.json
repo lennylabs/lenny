@@ -4083,6 +4083,7 @@
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers",
+        "pkg/gateway/mcpfabric/playground/idle_sweep_test.go::TestRevokeSessionAdminRevokeThroughRedisPrimitive_spec_27_3_1_207",
         "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundIdleOverrideReclaimsSessionAtEffectiveCap",
         "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundHardDurationCapTerminatesSessionAtEffectiveCap"
       ],
