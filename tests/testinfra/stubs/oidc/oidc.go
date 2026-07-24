@@ -7,12 +7,22 @@
 // the same key signs every issued token and verifies every JWKS
 // lookup.
 //
+// The /authorize + /token pair enforces RFC 7636 PKCE: /authorize
+// records the code_challenge presented against the issued code, and
+// /token rejects the authorization_code grant when the presented
+// code_verifier does not hash (S256) to that challenge, or when the
+// code is unknown or already redeemed. The /token response carries
+// both access_token and id_token (the same RS256 JWT), with the
+// id_token's aud set from the request's client_id, so a caller can
+// drive a standards-conformant OIDC authorization-code exchange
+// end to end.
+//
 // Use this when a tier-2 component or tier-4 integration test needs
 // an authentication source without paying the cost of running a
 // real IdP container. Production-grade behavior (token rotation,
-// session management, real PKCE state) is intentionally absent;
-// see tests/testinfra/oidc-real/ for the heavier alternative once
-// that lands.
+// session management) is intentionally absent; see
+// tests/testinfra/oidc-real/ for the heavier alternative once that
+// lands.
 //
 // Usage:
 //
@@ -26,6 +36,7 @@
 package oidc
 
 import (
+	"crypto"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -37,6 +48,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -48,9 +60,35 @@ type Stub struct {
 	key    *rsa.PrivateKey
 	kid    string
 
-	mu     sync.Mutex
-	tokens map[string]bool // jti → not-yet-revoked
+	mu      sync.Mutex
+	tokens  map[string]bool        // jti → not-yet-revoked
+	pending map[string]pendingAuth // authorization code → PKCE/subject binding, deleted on redemption
 }
+
+// pendingAuth is the state /authorize binds to an issued authorization
+// code so /token can enforce PKCE and reproduce the requested subject.
+type pendingAuth struct {
+	challenge string
+	method    string
+	clientID  string
+	subject   string
+	tenantID  string
+	scope     string
+	bad       string
+}
+
+// Fault-injection modes for the "bad" /authorize query parameter. A
+// caller that wants to exercise a consumer's ID-token validation
+// failure path sets bad=<mode> on the authorization request; /token
+// then deliberately mis-mints the id_token it returns on redemption
+// of that code. Each mode corresponds to one of the §27.3.1
+// "signature, iss, aud, exp, nbf" checks a conformant consumer must
+// perform.
+const (
+	BadSignature = "bad_signature" // id_token signature does not verify
+	BadAudience  = "bad_audience"  // id_token aud does not match the requesting client_id
+	BadExpired   = "bad_expired"   // id_token exp is already in the past
+)
 
 // New starts the stub and registers a t.Cleanup that closes it.
 func New(t testing.TB) *Stub {
@@ -60,9 +98,10 @@ func New(t testing.TB) *Stub {
 		t.Fatalf("oidc stub: generate key: %v", err)
 	}
 	s := &Stub{
-		key:    key,
-		kid:    "oidc-stub-1",
-		tokens: make(map[string]bool),
+		key:     key,
+		kid:     "oidc-stub-1",
+		tokens:  make(map[string]bool),
+		pending: make(map[string]pendingAuth),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/.well-known/openid-configuration", s.handleDiscovery)
@@ -118,7 +157,12 @@ func (s *Stub) MintToken(opts MintOptions) string {
 	pb, _ := json.Marshal(payload)
 	hp := base64.RawURLEncoding.EncodeToString(hb) + "." + base64.RawURLEncoding.EncodeToString(pb)
 	sum := sha256.Sum256([]byte(hp))
-	sig, _ := rsa.SignPKCS1v15(nil, s.key, 0, sum[:])
+	// crypto.SHA256 (not the zero Hash) so the signature carries the
+	// standard PKCS#1 v1.5 DigestInfo prefix RFC 7518 RS256 and every
+	// conformant JWKS-based verifier expects; a caller that verifies
+	// with crypto.rsa.VerifyPKCS1v15(pub, crypto.SHA256, ...) — the
+	// standard construction, not a stub-specific one — must succeed.
+	sig, _ := rsa.SignPKCS1v15(nil, s.key, crypto.SHA256, sum[:])
 	return hp + "." + base64.RawURLEncoding.EncodeToString(sig)
 }
 
@@ -193,6 +237,19 @@ func (s *Stub) handleAuthorize(w http.ResponseWriter, r *http.Request) {
 	if code == "" {
 		code = "stub-code-" + randomID()
 	}
+	// Bind the PKCE challenge (and any test-supplied subject override)
+	// to the issued code so /token can enforce RFC 7636 on redemption.
+	s.mu.Lock()
+	s.pending[code] = pendingAuth{
+		challenge: q.Get("code_challenge"),
+		method:    q.Get("code_challenge_method"),
+		clientID:  q.Get("client_id"),
+		subject:   q.Get("sub"),
+		tenantID:  q.Get("tenant_id"),
+		scope:     q.Get("scope"),
+		bad:       q.Get("bad"),
+	}
+	s.mu.Unlock()
 	http.Redirect(w, r, fmt.Sprintf("%s?code=%s&state=%s", redirect, code, state), http.StatusFound)
 }
 
@@ -201,27 +258,114 @@ func (s *Stub) handleToken(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	sub := r.Form.Get("sub")
-	if sub == "" {
-		sub = "alice@acme.com"
+	code := r.Form.Get("code")
+	s.mu.Lock()
+	pa, known := s.pending[code]
+	if known {
+		// RFC 6749 §4.1.2: an authorization code is single-use.
+		delete(s.pending, code)
 	}
-	tenant := r.Form.Get("tenant_id")
-	if tenant == "" {
-		tenant = "acme"
+	s.mu.Unlock()
+
+	if r.Form.Get("grant_type") == "authorization_code" {
+		if !known {
+			writeTokenError(w, "invalid_grant", "unknown or already-redeemed authorization code")
+			return
+		}
+		if pa.challenge != "" {
+			if pa.method != "" && pa.method != "S256" {
+				writeTokenError(w, "invalid_request", "unsupported code_challenge_method")
+				return
+			}
+			verifier := r.Form.Get("code_verifier")
+			if verifier == "" || ChallengeS256(verifier) != pa.challenge {
+				writeTokenError(w, "invalid_grant", "code_verifier does not hash to the code_challenge presented at /authorize")
+				return
+			}
+		}
 	}
-	scope := r.Form.Get("scope")
-	tok := s.MintToken(MintOptions{
-		Subject:  sub,
-		TenantID: tenant,
-		Scope:    scope,
-	})
+
+	sub := firstNonEmpty(r.Form.Get("sub"), pa.subject, "alice@acme.com")
+	tenant := firstNonEmpty(r.Form.Get("tenant_id"), pa.tenantID, "acme")
+	scope := firstNonEmpty(r.Form.Get("scope"), pa.scope, "")
+	aud := firstNonEmpty(r.Form.Get("client_id"), pa.clientID)
+	mintOpts := MintOptions{Subject: sub, TenantID: tenant, Scope: scope, Audience: aud}
+	if pa.bad == BadAudience {
+		// A provider that returns an id_token minted for a different
+		// client than the one that requested it (audience confusion).
+		mintOpts.Audience = "malicious-client.example"
+	}
+	if pa.bad == BadExpired {
+		mintOpts.Lifetime = -time.Hour
+	}
+	tok := s.MintToken(mintOpts)
+	idToken := tok
+	if pa.bad == BadSignature {
+		idToken = corruptSignature(idToken)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"access_token": tok,
-		"token_type":   "Bearer",
-		"expires_in":   3600,
-		"scope":        scope,
+		// The stub does not distinguish an access token from an ID
+		// token: both are the same RS256 JWT carrying the standard
+		// Lenny claims, which is sufficient for a caller validating
+		// the id_token per RFC 7636 / OIDC Core §3.1.3.3, except when
+		// a "bad" fault-injection mode deliberately mis-mints one of
+		// them.
+		"id_token":   idToken,
+		"token_type": "Bearer",
+		"expires_in": 3600,
+		"scope":      scope,
 	})
+}
+
+// corruptSignature flips one byte of a compact JWT's signature segment
+// so the token fails signature verification while remaining a
+// well-formed 3-segment JWT (the header and payload, and therefore
+// the claims a careless validator might read without verifying the
+// signature first, are untouched).
+func corruptSignature(token string) string {
+	dot := strings.LastIndexByte(token, '.')
+	if dot < 0 || dot == len(token)-1 {
+		return token
+	}
+	sigPart := token[dot+1:]
+	sig, err := base64.RawURLEncoding.DecodeString(sigPart)
+	if err != nil || len(sig) == 0 {
+		return token
+	}
+	sig[0] ^= 0xFF
+	return token[:dot+1] + base64.RawURLEncoding.EncodeToString(sig)
+}
+
+// writeTokenError writes an RFC 6749 §5.2 token-error-response body.
+func writeTokenError(w http.ResponseWriter, code, description string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusBadRequest)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"error":             code,
+		"error_description": description,
+	})
+}
+
+// firstNonEmpty returns the first non-empty string among vals, or "".
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// ChallengeS256 derives the RFC 7636 S256 code_challenge from a
+// code_verifier: base64url(SHA-256(ASCII(verifier))) without padding.
+// Exported so a caller driving the stub through a real
+// authorization-code-with-PKCE flow can compute the challenge to send
+// to /authorize without duplicating the derivation.
+func ChallengeS256(verifier string) string {
+	sum := sha256.Sum256([]byte(verifier))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
 }
 
 func randomID() string {

@@ -4036,6 +4036,10 @@
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
+        "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerAuthorizationRequestCarriesPKCEAndEchoesState",
+        "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerCompletesConformantPKCEExchange",
+        "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerRejectsMismatchedPKCEVerifier",
+        "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerRejectsNonconformantIDToken",
         "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster"
       ],
       "packages": [
