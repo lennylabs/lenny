@@ -4091,14 +4091,15 @@
       "title": "Web Playground — Metrics",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161"
+        "pkg/observability/metrics/catalog_test.go::TestMetricCatalogIsCompleteAgainstSpec161",
+        "pkg/gateway/mcpfabric/playground/metrics_catalog_test.go::TestMetricCatalogMatchesSpec278"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
         "pkg/observability/metrics"
       ],
       "blocked_until_phase": "5",
-      "notes": "Playground-specific metric names are part of the typed catalog and are covered by the catalog completeness check."
+      "notes": "The catalog completeness check's spec161Metrics allowlist has no lenny_playground_* entries and asserts nothing about this table; TestMetricCatalogMatchesSpec278 registers the real §27.8 catalog against a fresh registry and pins each metric's name, Prometheus type, label set, and (for the revocation-propagation histogram) bucket boundaries. It currently skips: NewMetrics fails §16.1.1 snake_case validation on the lenny_playground_page_views_total \"authMode\" label before any §27.8 metric registers, the same root cause already tracked in BUILD-GAPS.md §16.1 Metrics Finding 8 and already causing the §27.6 tier-5/tier-9 live-cluster playground tests to be skipped."
     },
     "27.9": {
       "title": "Web Playground — Security Considerations",
