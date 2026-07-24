@@ -722,6 +722,62 @@ func TestConfigJSONCarriesDevBanner(t *testing.T) {
 	}
 }
 
+// TestConfigJSONCarriesAPIKeyBanner pins the §27.9 apiKey-mode warning
+// banner: "the playground UI renders a persistent, server-sourced
+// yellow banner "API KEY MODE — paste only operator-issued tokens" ...
+// The banner text is emitted by the gateway (not the embedded bundle),
+// so swapping or patching the asset bundle does not suppress it."
+// apiKey mode's paste form is the phishing surface the same subsection
+// flags ("apiKey mode ships a bearer-token paste form as its primary
+// UX ... a well-known phishing vector"), so the persistent warning is
+// the one user-visible mitigation and must not silently regress. The
+// test also confirms the banner text is absent from the static
+// bundle assets (app.js, index.html) so it cannot originate there;
+// only the gateway-served config.json carries it, matching "not the
+// embedded bundle". A live bundle-swap leg belongs at tier5 once the
+// chart overlay needed to exercise playground.enabled=true in a real
+// cluster is available.
+// spec: §27.9 (security considerations — apiKey-mode warning banner).
+func TestConfigJSONCarriesAPIKeyBanner(t *testing.T) {
+	const wantBanner = "API KEY MODE — paste only operator-issued tokens"
+
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey}, Options{
+		Signer: devSigner(),
+	})
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/config.json")
+	if err != nil {
+		t.Fatalf("GET config.json: %v", err)
+	}
+	defer resp.Body.Close()
+	var cfg uiConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		t.Fatalf("decode config.json: %v", err)
+	}
+	if cfg.Banner != wantBanner || cfg.BannerSeverity != "warning" {
+		t.Fatalf("apiKey banner not server-sourced: %+v", cfg)
+	}
+
+	// The banner must not be recoverable from (or removable via) the
+	// static bundle: it is not baked into app.js or index.html.
+	for _, asset := range []string{"app.js", "index.html"} {
+		aresp, err := http.Get(srv.URL + "/playground/" + asset)
+		if err != nil {
+			t.Fatalf("GET %s: %v", asset, err)
+		}
+		buf := new(strings.Builder)
+		if _, err := io.Copy(buf, aresp.Body); err != nil {
+			t.Fatalf("read %s: %v", asset, err)
+		}
+		aresp.Body.Close()
+		if strings.Contains(buf.String(), wantBanner) {
+			t.Fatalf("%s embeds the apiKey banner text directly; it must come from config.json only", asset)
+		}
+	}
+}
+
 func TestOIDCLoginRedirectsAndSetsStateCookie(t *testing.T) {
 	oidc := &fakeOIDC{}
 	h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{

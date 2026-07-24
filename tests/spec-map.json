@@ -4119,6 +4119,7 @@
       "spec_file": "spec/27_web-playground.md",
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesAPIKeyBanner",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
       ],
@@ -4126,7 +4127,7 @@
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface."
+      "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface. The apiKey-mode warning banner is pinned as server-sourced (config.json only, absent from the static bundle) at the component level; the tier5 live-bundle-swap leg is blocked on the same §16.1 metrics-label crash-loop tracked against T-27.2.2."
     }
   }
 }
