@@ -149,6 +149,15 @@ func (m *Metrics) wsConnectOutcome(outcome string) {
 	m.wsConnect.WithLabelValues(outcome).Inc()
 }
 
+// WSConnectOutcome is the exported §27.8 hook the gateway's MCP
+// WebSocket accept path drives (via mcp.Server.SetWebSocketMetrics)
+// once it determines a connection on /mcp/v1/ws carries a
+// origin=playground bearer, so lenny_playground_ws_connect_total{outcome}
+// counts every WebSocket connection the playground opens, both on a
+// successful upgrade and on a failed one. Nil-safe.
+// spec: §27.8.
+func (m *Metrics) WSConnectOutcome(outcome string) { m.wsConnectOutcome(outcome) }
+
 // revocation increments lenny_playground_session_revocations_total
 // for the supplied §27.8 reason.
 func (m *Metrics) revocation(reason string) {

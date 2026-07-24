@@ -501,6 +501,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 			}
 			return mcp.WSPrincipal{Tenant: p.TenantID, JTI: p.JTI, Origin: p.Origin}, true
 		}, pg, 0)
+		// §27.8 — record lenny_playground_ws_connect_total{outcome} for
+		// every /mcp/v1/ws connection whose principal carries the
+		// origin=playground claim (the same extractor wired above),
+		// counting both a successful upgrade and a failed one.
+		mcpSrv.SetWebSocketMetrics(pgMetrics.WSConnectOutcome)
 		// §11.4 / §27.6 line 204 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.

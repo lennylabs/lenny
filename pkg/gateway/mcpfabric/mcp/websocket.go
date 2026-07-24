@@ -82,11 +82,17 @@ type RevocationChecker interface {
 	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
 }
 
-// wsAuthConfig is the §27.5.4 WebSocket revocation-watch wiring.
+// wsAuthConfig is the §27.5.4 WebSocket revocation-watch wiring, plus the
+// §27.8 ws-connect-outcome metrics hook that keys off the same principal
+// extractor.
 type wsAuthConfig struct {
 	principal    func(*http.Request) (WSPrincipal, bool)
 	revocations  RevocationChecker
 	pollInterval time.Duration
+	// metrics records lenny_playground_ws_connect_total{outcome} for a
+	// connection whose principal carries the origin=playground claim. A
+	// nil metrics leaves ws-connect-outcome recording off. spec: §27.8.
+	metrics func(outcome string)
 }
 
 // SetWebSocketAuth installs the §27.5.4 revocation watch. extract derives
@@ -96,10 +102,27 @@ type wsAuthConfig struct {
 // origin=playground bearer, the WebSocket transport polls rev every
 // pollInterval and closes the connection with code 4401 once the bearer
 // is revoked. A non-positive pollInterval selects the package default.
-// Passing a nil extract or rev leaves the watch off. spec: §27.3.1 line
-// 167; §27.5.4.
+// Passing a nil extract or rev leaves the watch off. Fields are assigned
+// individually (rather than replacing s.wsAuth wholesale) so a metrics
+// recorder installed via SetWebSocketMetrics, in either call order,
+// survives. spec: §27.3.1 line 167; §27.5.4.
 func (s *Server) SetWebSocketAuth(extract func(*http.Request) (WSPrincipal, bool), rev RevocationChecker, pollInterval time.Duration) {
-	s.wsAuth = wsAuthConfig{principal: extract, revocations: rev, pollInterval: pollInterval}
+	s.wsAuth.principal = extract
+	s.wsAuth.revocations = rev
+	s.wsAuth.pollInterval = pollInterval
+}
+
+// SetWebSocketMetrics installs the §27.8 lenny_playground_ws_connect_total
+// recorder. record is called with "success" once a WebSocket upgrade on
+// /mcp/v1/ws completes and with "failure" when the upgrade itself fails,
+// but only for a connection whose principal carries the §27.3
+// origin=playground claim — the metric's documented scope is connections
+// "opened from the playground". The connection principal is read through
+// the same extractor SetWebSocketAuth installs, so recording stays off
+// until that extractor is also wired. A nil record leaves recording off.
+// spec: §27.8.
+func (s *Server) SetWebSocketMetrics(record func(outcome string)) {
+	s.wsAuth.metrics = record
 }
 
 // WebSocketHandler returns the http.Handler that serves the §4.1
@@ -118,6 +141,13 @@ func (s *Server) WebSocketHandler() http.Handler {
 }
 
 func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	// §27.8 — resolve the origin=playground scope once, ahead of the
+	// upgrade, so both the failure branch below (Accept returns an error)
+	// and the success branch record lenny_playground_ws_connect_total
+	// against the same determination playgroundEgress makes later for
+	// frame redaction.
+	isPlayground := s.playgroundEgress(r)
+
 	// §4.1 — Accept the upgrade with no Origin-list restriction; the
 	// gateway expects upstream middleware (auth, CSP) to bound which
 	// callers reach this handler. CompressionMode is disabled because
@@ -138,8 +168,10 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Subprotocols:       []string{wsSubprotocol},
 	})
 	if err != nil {
+		s.recordWSConnectOutcome(isPlayground, "failure")
 		return
 	}
+	s.recordWSConnectOutcome(isPlayground, "success")
 	conn.SetReadLimit(wsMaxMessageBytes)
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
@@ -160,7 +192,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// payloads. A non-playground MCP client (a headless agent) is never
 	// redacted so it still receives the raw tool results it needs.
 	// F-27.9.1.
-	redactEgress := s.playgroundEgress(r)
+	redactEgress := isPlayground
 
 	// §15.2 line 1331 / §27.5 R2 — an attach_session tools/call upgrades to a
 	// long-lived server push of the session event stream over this socket
@@ -241,6 +273,20 @@ func (s *Server) playgroundEgress(r *http.Request) bool {
 	}
 	p, ok := s.wsAuth.principal(r)
 	return ok && p.Origin == playgroundOriginClaim
+}
+
+// recordWSConnectOutcome increments the §27.8
+// lenny_playground_ws_connect_total{outcome} counter for a playground-
+// origin connection. It is a no-op for a non-playground-origin
+// connection (matching the metric's documented scope: connections
+// "opened from the playground") and a no-op when no recorder is wired
+// (SetWebSocketMetrics not called, e.g. a deployment without the
+// playground). spec: §27.8.
+func (s *Server) recordWSConnectOutcome(isPlayground bool, outcome string) {
+	if !isPlayground || s.wsAuth.metrics == nil {
+		return
+	}
+	s.wsAuth.metrics(outcome)
 }
 
 // startRevocationWatch spawns the §27.5.4 revocation poller for an

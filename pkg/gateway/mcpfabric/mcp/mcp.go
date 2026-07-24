@@ -225,9 +225,11 @@ type Server struct {
 	// wsAuth carries the §27.5.4 WebSocket revocation watch wiring: the
 	// per-connection principal extractor and the playground revocation
 	// checker that together close a revoked origin=playground bearer
-	// mid-stream with WebSocket code 4401. A zero value leaves the watch
-	// off, so a non-playground MCP WebSocket client serves frames without
-	// it. spec: §27.3.1 line 167; §27.5.4.
+	// mid-stream with WebSocket code 4401. It also carries the §27.8
+	// ws-connect-outcome metrics recorder, keyed off the same principal
+	// extractor. A zero value leaves the watch and the metric off, so a
+	// non-playground MCP WebSocket client serves frames without either.
+	// spec: §27.3.1 line 167; §27.5.4; §27.8.
 	wsAuth wsAuthConfig
 	// attach carries the §15.2 Streamable HTTP SSE channel wiring. A zero
 	// value (Events == nil) leaves attach streaming off, so an
