@@ -14,7 +14,9 @@ import (
 
 // docMeta is the minimal projection of a rendered manifest the assertions
 // below key on: the kind, the metadata name, the metadata annotations,
-// and the Service spec.type/nodePort for the gateway NodePort check.
+// the Service spec.type/nodePort for the gateway NodePort check, and the
+// Deployment pod template's container args for the gateway playground-flag
+// check.
 type docMeta struct {
 	APIVersion string `json:"apiVersion"`
 	Kind       string `json:"kind"`
@@ -31,6 +33,14 @@ type docMeta struct {
 			Name     string `json:"name"`
 			NodePort int    `json:"nodePort"`
 		} `json:"ports"`
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					Name string   `json:"name"`
+					Args []string `json:"args"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"` // Deployment.spec.template
 	} `json:"spec"`
 }
 
@@ -178,4 +188,43 @@ func TestEmbeddedManifestsExcludeHooksAndCertManager_spec_17_4(t *testing.T) {
 			t.Errorf("embedded manifests carry a %s/%s object on cert-manager API group %s", d.Kind, d.Metadata.Name, d.APIVersion)
 		}
 	}
+}
+
+// TestEmbeddedGatewayEnablesPlaygroundDevMode pins the §27.2 Embedded Mode
+// default: `lenny up` renders the gateway Deployment with the playground
+// turned on in dev auth mode, rather than inheriting the chart's
+// disabled/oidc production defaults. A failure means Embedded Mode brings
+// up a gateway with no reachable /playground route, so a new operator
+// following the local quick-start finds no playground to explore.
+//
+// spec: §27.2 (web playground placement and gating).
+func TestEmbeddedGatewayEnablesPlaygroundDevMode_spec_27_2(t *testing.T) {
+	for _, d := range decodeEmbedded(t) {
+		if d.Kind != "Deployment" || d.Metadata.Name != "lenny-gateway" {
+			continue
+		}
+		for _, c := range d.Spec.Template.Spec.Containers {
+			if c.Name != "gateway" {
+				continue
+			}
+			var enabled, devMode bool
+			for _, a := range c.Args {
+				if a == "--playground-enabled" {
+					enabled = true
+				}
+				if a == "--playground-auth-mode=dev" {
+					devMode = true
+				}
+			}
+			if !enabled {
+				t.Errorf("gateway container args = %v; want --playground-enabled so `lenny up` sets playground.enabled=true", c.Args)
+			}
+			if !devMode {
+				t.Errorf("gateway container args = %v; want --playground-auth-mode=dev so `lenny up` sets playground.authMode=dev", c.Args)
+			}
+			return
+		}
+		t.Fatal("lenny-gateway Deployment has no gateway container")
+	}
+	t.Fatal("embedded manifests missing the lenny-gateway Deployment")
 }

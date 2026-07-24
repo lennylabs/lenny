@@ -4121,6 +4121,16 @@ spec:
             # no-password Redis would otherwise fail the gateway startup
             # invariant. Dev mode acknowledges the insecure dev Redis.
             - --redis-allow-insecure
+            - --playground-enabled
+            - --playground-auth-mode=dev
+            - --playground-dev-tenant-id=default
+            - --playground-allowed-runtimes=*
+            - --playground-max-session-minutes=30
+            - --playground-max-idle-time-seconds=300
+            - --playground-oidc-session-ttl-seconds=3600
+            - --playground-bearer-ttl-seconds=900
+            
+            - --playground-session-labels=origin=playground,
             - --memory-max-per-user=10000
             - --memory-record-count-interval=60s
           env:

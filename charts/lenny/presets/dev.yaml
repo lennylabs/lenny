@@ -192,6 +192,16 @@ gateway:
       cpu: "1"
       memory: 512Mi
 
+# Turn the §27 web playground on in dev auth mode. §27.2 states that
+# `lenny up` (Embedded Mode) sets playground.enabled=true and
+# playground.authMode=dev, overriding the chart's disabled/oidc production
+# defaults (values.yaml: playground.enabled=false, playground.authMode=oidc).
+# devTenantId is left at the chart default ("default"), which matches the
+# built-in `default` tenant Embedded Mode auto-provisions. spec: §27.2.
+playground:
+  enabled: true
+  authMode: dev
+
 # lenny-ops is mandatory: the chart hard-fails on any attempt to disable
 # it, so the dev profile keeps it enabled with a single replica and its
 # image bundled in the embedded import set. The chart renders the
