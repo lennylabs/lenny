@@ -4033,7 +4033,8 @@
         "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
-        "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial"
+        "tests/tier3_contract/playground/playground_test.go::TestOIDCModeRejectsBearerMaterial",
+        "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
