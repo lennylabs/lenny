@@ -85,7 +85,14 @@ func (h *Handler) handleToken(w http.ResponseWriter, r *http.Request) {
 // prevent bearer-to-bearer reissuance.
 func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") != "" {
-		h.rejectWrongMaterial(w, "bearer")
+		// spec: §27.3.1 "details.presentedMaterial ∈ {cookie, bearer, both}" —
+		// a co-presented cookie alongside the rejected bearer must be
+		// reported as "both", mirroring mintAPIKey's symmetric check below.
+		presented := "bearer"
+		if _, err := r.Cookie(sessionCookie); err == nil {
+			presented = "both"
+		}
+		h.rejectWrongMaterial(w, presented)
 		return
 	}
 	id, ok := parseSessionCookie(r)

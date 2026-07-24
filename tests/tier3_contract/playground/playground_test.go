@@ -360,6 +360,133 @@ func TestOIDCModeRejectsBearerMaterial(t *testing.T) {
 	}
 }
 
+// spec: 27.3.1 (apiKey mode rejects a cookie-only request, echoing presentedMaterial=cookie)
+// diagnosis: A cookie-only request to POST /v1/playground/token in
+//
+//	apiKey mode was not rejected with LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL
+//	and details.presentedMaterial=cookie. The apiKey admission gate no
+//	longer rejects the cookie credential in this mode; inspect
+//	mintAPIKey in pkg/gateway/mcpfabric/playground.
+func TestAPIKeyModeRejectsCookieOnlyMaterial(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeAPIKey)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/playground/token", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(&http.Cookie{Name: "lenny_playground_session", Value: "opaque-session-id"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/playground/token: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.StatusCode, raw)
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Error.Code != "LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL" {
+		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL", env.Error.Code)
+	}
+	if env.Error.Details["configuredAuthMode"] != "apiKey" {
+		t.Fatalf("details.configuredAuthMode = %v, want apiKey", env.Error.Details["configuredAuthMode"])
+	}
+	if env.Error.Details["presentedMaterial"] != "cookie" {
+		t.Fatalf("details.presentedMaterial = %v, want cookie", env.Error.Details["presentedMaterial"])
+	}
+}
+
+// spec: 27.3.1 (the WRONG_AUTH_MATERIAL envelope reports presentedMaterial=both when a cookie and a bearer are presented together, oidc mode)
+// diagnosis: A request carrying both the lenny_playground_session
+//
+//	cookie and an Authorization: Bearer header in oidc mode reported
+//	details.presentedMaterial=bearer instead of both. The oidc
+//	admission gate must inspect the cookie before labeling the
+//	rejection; inspect mintOIDC in pkg/gateway/mcpfabric/playground.
+func TestOIDCModeReportsBothWhenCookieAndBearerPresented(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeOIDC)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/playground/token", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer pasted-token")
+	req.AddCookie(&http.Cookie{Name: "lenny_playground_session", Value: "opaque-session-id"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/playground/token: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", resp.StatusCode, raw)
+	}
+	var env struct {
+		Error struct {
+			Code    string         `json:"code"`
+			Details map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	_ = json.Unmarshal(raw, &env)
+	if env.Error.Code != "LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL" {
+		t.Fatalf("error code = %q, want LENNY_PLAYGROUND_WRONG_AUTH_MATERIAL", env.Error.Code)
+	}
+	if env.Error.Details["presentedMaterial"] != "both" {
+		t.Fatalf("details.presentedMaterial = %v, want both", env.Error.Details["presentedMaterial"])
+	}
+}
+
+// spec: 27.3.1 (dev mode ignores any presented cookie or bearer material and mints)
+// diagnosis: A dev-mode mint carrying a stray Authorization: Bearer
+//
+//	header and a lenny_playground_session cookie was rejected, or the
+//	stray material otherwise gated the mint, instead of minting 200.
+//	Dev mode must never gate on caller material; inspect mintDev in
+//	pkg/gateway/mcpfabric/playground.
+func TestDevModeIgnoresPresentedMaterial(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeDev)
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/v1/playground/token", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer stray-token")
+	req.AddCookie(&http.Cookie{Name: "lenny_playground_session", Value: "stray-session-id"})
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/playground/token: %v", err)
+	}
+	raw, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("dev mint with stray material status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+	var body struct {
+		BearerToken string `json:"bearerToken"`
+	}
+	if err := json.Unmarshal(raw, &body); err != nil {
+		t.Fatalf("decode mint body: %v", err)
+	}
+	if body.BearerToken == "" {
+		t.Fatalf("dev mint body missing bearerToken")
+	}
+}
+
 // spec: 27.7 (the playground CSP and security headers are applied to /playground/*)
 // diagnosis: A /playground/* response lacked the §27.7
 //
