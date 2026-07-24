@@ -451,11 +451,37 @@ func (h *Handler) revokedMarkerTTL(rec SessionRecord) time.Duration {
 // handleAuthError serves GET /playground/auth/error: it renders the
 // embedded error page so the SPA can surface an OIDC failure code to
 // the user. The page itself is part of the SPA bundle.
+//
+// spec: §27.3.1 ("the HTTP status column records the status emitted
+// on the final response to the browser (the redirect itself is a
+// 302, and the error page renders with the status below once
+// followed)") — the Tenant-claim rejection codes (OIDC callback)
+// table pins TENANT_CLAIM_MISSING and TENANT_CLAIM_INVALID_FORMAT to
+// 401 and TENANT_NOT_FOUND to 403; any other error code (a non-tenant-
+// claim callback failure such as a state mismatch) falls back to 200,
+// which the spec leaves unassigned.
 func (h *Handler) handleAuthError(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(errorPageHTML(r.URL.Query().Get("error")))
+	code := r.URL.Query().Get("error")
+	w.WriteHeader(authErrorPageStatus(code))
+	_, _ = w.Write(errorPageHTML(code))
+}
+
+// authErrorPageStatus maps a playground auth-error redirect code to
+// the HTTP status the §27.3.1 Tenant-claim rejection codes (OIDC
+// callback) table pins for the final /playground/auth/error response.
+// Codes outside that table are not assigned a status by the spec and
+// render 200.
+func authErrorPageStatus(code string) int {
+	switch code {
+	case errTenantClaimMissing, errTenantClaimInvalidFormat:
+		return http.StatusUnauthorized
+	case errTenantNotFound:
+		return http.StatusForbidden
+	default:
+		return http.StatusOK
+	}
 }
 
 // redirectAuthError clears the OIDC state cookie and redirects the

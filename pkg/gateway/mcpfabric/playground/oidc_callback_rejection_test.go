@@ -228,3 +228,91 @@ func TestOIDCCallbackTenantClaimRejectionsRedirectToErrorPage(t *testing.T) {
 		})
 	}
 }
+
+// TestPlaygroundAuthErrorPageStatusMatchesTenantClaimTable follows the
+// §27.3.1 OIDC-callback redirect all the way to the playground error
+// page for each of the three tenant-claim rejection codes and asserts
+// the final response status matches the Tenant-claim rejection codes
+// (OIDC callback) table: TENANT_CLAIM_MISSING and
+// TENANT_CLAIM_INVALID_FORMAT are 401, TENANT_NOT_FOUND is 403.
+//
+// spec: §27.3.1 ("the HTTP status column records the status emitted on
+// the final response to the browser (the redirect itself is a 302, and
+// the error page renders with the status below once followed)")
+func TestPlaygroundAuthErrorPageStatusMatchesTenantClaimTable(t *testing.T) {
+	cases := []struct {
+		name       string
+		oidc       *fakeOIDC
+		tenants    TenantRegistry
+		wantCode   string
+		wantStatus int
+	}{
+		{
+			name:       "empty tenant_id claim",
+			oidc:       &fakeOIDC{exchangeErr: &OIDCError{Code: errTenantClaimMissing, Detail: "ID token lacks the tenant_id claim"}},
+			tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
+			wantCode:   "tenant_claim_missing",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "malformed tenant_id claim",
+			oidc:       &fakeOIDC{exchangeErr: &OIDCError{Code: errTenantClaimInvalidFormat, Detail: "tenant_id claim fails the format regex"}},
+			tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
+			wantCode:   "tenant_claim_invalid_format",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "well-formed but unregistered tenant_id",
+			oidc:       &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "ghost"}},
+			tenants:    fakeTenants{registered: map[string]bool{"acme": true}},
+			wantCode:   "tenant_not_found",
+			wantStatus: http.StatusForbidden,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := New(Config{Enabled: true, AuthMode: AuthModeOIDC}, Options{
+				Signer:   devSigner(),
+				Sessions: NewMemorySessionStore(),
+				OIDC:     tc.oidc,
+				Tenants:  tc.tenants,
+			})
+			srv := httptest.NewServer(h.PlaygroundRoutes())
+			defer srv.Close()
+			client := noRedirectClient()
+
+			stateCookie, cv := startOIDCLogin(t, h, srv, client)
+
+			req, err := http.NewRequest(http.MethodGet, srv.URL+"/playground/auth/callback?code=auth-code&state="+cv.State, nil)
+			if err != nil {
+				t.Fatalf("build callback request: %v", err)
+			}
+			req.AddCookie(stateCookie)
+			callbackResp, err := client.Do(req)
+			if err != nil {
+				t.Fatalf("GET callback: %v", err)
+			}
+			_ = callbackResp.Body.Close()
+			if callbackResp.StatusCode != http.StatusFound {
+				t.Fatalf("callback status = %d, want 302", callbackResp.StatusCode)
+			}
+			loc := callbackResp.Header.Get("Location")
+			wantLocation := "/playground/auth/error?error=" + tc.wantCode
+			if loc != wantLocation {
+				t.Fatalf("Location = %q, want %q", loc, wantLocation)
+			}
+
+			// Follow the redirect as a browser would on the next
+			// navigation, and assert the final response status the
+			// spec's rejection-codes table pins for this code.
+			errResp, err := http.Get(srv.URL + loc)
+			if err != nil {
+				t.Fatalf("GET error page: %v", err)
+			}
+			defer func() { _ = errResp.Body.Close() }()
+			if errResp.StatusCode != tc.wantStatus {
+				t.Fatalf("error page status for %s = %d, want %d", tc.wantCode, errResp.StatusCode, tc.wantStatus)
+			}
+		})
+	}
+}

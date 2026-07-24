@@ -4036,6 +4036,7 @@
         "pkg/gateway/mcpfabric/playground/oidc_callback_rejection_test.go::TestOIDCCallbackExpiredStateRedirectsToErrorPage",
         "pkg/gateway/mcpfabric/playground/oidc_callback_rejection_test.go::TestOIDCCallbackExchangeFailureRedirectsToErrorPage",
         "pkg/gateway/mcpfabric/playground/oidc_callback_rejection_test.go::TestOIDCCallbackTenantClaimRejectionsRedirectToErrorPage",
+        "pkg/gateway/mcpfabric/playground/oidc_callback_rejection_test.go::TestPlaygroundAuthErrorPageStatusMatchesTenantClaimTable",
         "tests/tier3_contract/playground/playground_test.go::TestDevModeMintReturnsBearer",
         "tests/tier3_contract/playground/playground_test.go::TestMintedJWTCarriesPlaygroundOrigin",
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCapabilitySubjectToken",
