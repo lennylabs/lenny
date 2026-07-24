@@ -4123,7 +4123,8 @@
         "pkg/gateway/mcpfabric/playground/metrics_increment_test.go::TestWSConnectOutcomeIncrementsWSConnectTotal_spec_27_8",
         "pkg/gateway/mcpfabric/playground/metrics_increment_test.go::TestRevocationPropagationHistogramRecordsOnRuntimePath_spec_27_8",
         "pkg/gateway/mcpfabric/mcp/websocket_metrics_test.go::TestWebSocketAcceptPathRecordsPlaygroundWSConnectOutcome_spec_27_8",
-        "pkg/gateway/mcpfabric/mcp/websocket_metrics_test.go::TestWebSocketAcceptPathSkipsWSConnectOutcomeForNonPlayground_spec_27_8"
+        "pkg/gateway/mcpfabric/mcp/websocket_metrics_test.go::TestWebSocketAcceptPathSkipsWSConnectOutcomeForNonPlayground_spec_27_8",
+        "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackageSelectsUnitTier"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",

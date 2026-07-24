@@ -558,6 +558,9 @@
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
       "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
     },
+    "pkg/gateway/mcpfabric/playground": {
+      "unit": ["pkg/gateway/mcpfabric/playground/..."]
+    },
     "pkg/ops/auditrate": {
       "unit": ["pkg/ops/auditrate/..."],
       "component": ["tests/tier2_component/opsaudit/diagnostics_audit_durable_test.go"]
