@@ -4100,13 +4100,14 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestStaticAssetCacheHeaders",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
-        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP"
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP",
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint."
+      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint. TestPlaygroundResponsesCarryExactSpecCSP parses the header into directive-source-list pairs and pins the full §27.7 directive set byte-exact, rejecting any missing or extra directive."
     },
     "27.8": {
       "title": "Web Playground — Metrics",

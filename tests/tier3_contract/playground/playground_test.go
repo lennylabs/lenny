@@ -515,6 +515,93 @@ func TestPlaygroundResponsesCarryCSP(t *testing.T) {
 	}
 }
 
+// spec: 27.7 (the exact §27.7 CSP directive-source-list set, byte-exact
+// against the spec block): "Content-Security-Policy: default-src
+// 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+// connect-src 'self' wss://<gateway-host>; img-src 'self' data:;
+// object-src 'none'; media-src 'none'; frame-ancestors 'none';
+// base-uri 'self'; form-action 'self'"
+// diagnosis: The parsed CSP directive set on a /playground/* response
+// does not match the §27.7 block exactly (a directive is missing, an
+// extra directive is present, or a directive's source list differs).
+// The gateway's contentSecurityPolicy() build drifted from the spec
+// block; reconcile the directive list there.
+func TestPlaygroundResponsesCarryExactSpecCSP(t *testing.T) {
+	h := newPlayground(t, playground.AuthModeDev)
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/")
+	if err != nil {
+		t.Fatalf("GET /playground/: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got := parseCSP(t, resp.Header.Get("Content-Security-Policy"))
+
+	// The spec block substitutes the real gateway host for
+	// <gateway-host>; newPlayground does not configure a
+	// GatewayHost, so connect-src carries only 'self'.
+	want := map[string]string{
+		"default-src":     "'self'",
+		"script-src":      "'self'",
+		"style-src":       "'self' 'unsafe-inline'",
+		"connect-src":     "'self'",
+		"img-src":         "'self' data:",
+		"object-src":      "'none'",
+		"media-src":       "'none'",
+		"frame-ancestors": "'none'",
+		"base-uri":        "'self'",
+		"form-action":     "'self'",
+	}
+
+	for directive, sources := range want {
+		gotSources, ok := got[directive]
+		if !ok {
+			t.Fatalf("CSP missing directive %q; got %v", directive, got)
+		}
+		if gotSources != sources {
+			t.Fatalf("CSP directive %q source list = %q, want %q", directive, gotSources, sources)
+		}
+	}
+	for directive := range got {
+		if _, ok := want[directive]; !ok {
+			t.Fatalf("CSP has extra directive %q not in the §27.7 spec block: %v", directive, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Fatalf("CSP has %d directives, want %d: got %v", len(got), len(want), got)
+	}
+}
+
+// parseCSP parses a Content-Security-Policy header value into a map
+// of directive name to its source-list string, trimming whitespace
+// introduced by "; " separators.
+func parseCSP(t *testing.T, header string) map[string]string {
+	t.Helper()
+	if header == "" {
+		t.Fatalf("Content-Security-Policy header is empty")
+	}
+	directives := make(map[string]string)
+	for _, part := range strings.Split(header, ";") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		fields := strings.SplitN(part, " ", 2)
+		name := fields[0]
+		sources := ""
+		if len(fields) == 2 {
+			sources = fields[1]
+		}
+		if _, dup := directives[name]; dup {
+			t.Fatalf("CSP header repeats directive %q: %q", name, header)
+		}
+		directives[name] = sources
+	}
+	return directives
+}
+
 // spec: 27.5 (the gatekeeper endpoints exist only in their applicable mode)
 // diagnosis: GET /playground/auth/login was reachable in a non-oidc
 //

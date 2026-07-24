@@ -595,6 +595,11 @@ func TestOIDCModeRejectsBearerOnTokenEndpoint(t *testing.T) {
 	}
 }
 
+// spec: §27.7 (the CSP applied to /playground/*): "default-src 'self';
+// script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src
+// 'self' wss://<gateway-host>; img-src 'self' data:; object-src
+// 'none'; media-src 'none'; frame-ancestors 'none'; base-uri 'self';
+// form-action 'self'"
 func TestSecurityHeadersAndCSP(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme", GatewayHost: "gw.example.com"}, Options{
 		Signer:  devSigner(),
@@ -616,8 +621,16 @@ func TestSecurityHeadersAndCSP(t *testing.T) {
 	}
 	csp := resp.Header.Get("Content-Security-Policy")
 	for _, want := range []string{
-		"default-src 'self'", "script-src 'self'", "object-src 'none'",
-		"media-src 'none'", "frame-ancestors 'none'", "wss://gw.example.com",
+		"default-src 'self'",
+		"script-src 'self'",
+		"style-src 'self' 'unsafe-inline'",
+		"connect-src 'self' wss://gw.example.com",
+		"img-src 'self' data:",
+		"object-src 'none'",
+		"media-src 'none'",
+		"frame-ancestors 'none'",
+		"base-uri 'self'",
+		"form-action 'self'",
 	} {
 		if !strings.Contains(csp, want) {
 			t.Fatalf("CSP %q is missing directive %q", csp, want)
