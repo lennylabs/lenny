@@ -3994,12 +3994,15 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go",
-        "tests/tier3_contract/playground/playground_test.go"
+        "tests/tier3_contract/playground/playground_test.go",
+        "tests/tier5_e2e_kind/playground_test.go::TestPlaygroundDevModeJourneyOnLiveCluster",
+        "tests/tier9_security/playground_test.go::TestPlaygroundSecurityPostureOnLiveCluster"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
       ],
-      "blocked_until_phase": "5"
+      "blocked_until_phase": "5",
+      "notes": "The tier-5/tier-9 live-cluster tests are currently t.Skip'd: playground.enabled=true crash-loops the live gateway because pkg/gateway/mcpfabric/playground/metrics.go registers the lenny_playground_page_views_total counter with the non-snake_case label \"authMode\", which pkg/observability/metrics's §16.1.1 validator rejects at startup (fatal). §27.8's own metrics table also names that label \"authMode\", so the fix needs a spec/code reconciliation, not a code-only change; see BUILD-GAPS.md §16.1 Metrics Finding 8."
     },
     "27.2": {
       "title": "Web Playground — Placement and Gating",
