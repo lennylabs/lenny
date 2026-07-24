@@ -4077,7 +4077,9 @@
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStoreRevocationKeyIsolation",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestLogoutRevokesSessionBearer",
-        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers"
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokedBearerCheckSurvivesAcrossHandlers",
+        "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundIdleOverrideReclaimsSessionAtEffectiveCap",
+        "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundHardDurationCapTerminatesSessionAtEffectiveCap"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
