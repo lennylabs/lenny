@@ -4007,13 +4007,15 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
-        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules"
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules",
+        "tests/tier4_integration/playground_disabled_test.go::TestPlaygroundDisabledReturns404OnAllRoutes_spec_27_2"
       ],
       "packages": [
-        "pkg/gateway/mcpfabric/playground"
+        "pkg/gateway/mcpfabric/playground",
+        "cmd/lenny-gateway"
       ],
       "blocked_until_phase": "5",
-      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds."
+      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds. The tier-4 test drives the real cmd/lenny-gateway binary with playground.enabled left at its default (false) and asserts GET /playground/, GET /playground/app.js, and POST /v1/playground/token all 404 because the routes are never mounted."
     },
     "27.3": {
       "title": "Web Playground — Authentication",
