@@ -10,6 +10,7 @@ on:
     branches: [main]
   push:
     branches-ignore: [main]
+  workflow_call:        # invoked by nightly.yml to re-run the PR suite
 
 concurrency:
   group: pr-${{ github.ref }}

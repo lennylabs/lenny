@@ -9,6 +9,7 @@ on:
   schedule:
     - cron: '0 6 * * 0'    # 06:00 UTC every Sunday
   workflow_dispatch:
+  workflow_call:           # invoked by pre-release.yml to re-run the weekly suite
 
 concurrency:
   group: weekly

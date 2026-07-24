@@ -4,11 +4,11 @@ Lenny's CI is documented in [`../../TESTING.md`](../../TESTING.md) §20. This di
 
 | Workflow | Trigger | Purpose |
 |:---------|:--------|:--------|
-| `pr.yml` | `pull_request`, `push` to feature branches | PR gate. Tiers 0–4 plus critical-path higher tiers. Target < 15 minutes. |
+| `pr.yml` | `pull_request`, `push` to feature branches, `workflow_call` (from `nightly.yml`) | PR gate. Tiers 0–4 plus critical-path higher tiers. Target < 15 minutes. |
 | `dco.yml` | `pull_request` | Verifies every PR commit carries a DCO `Signed-off-by` trailer. |
 | `secret-scan.yml` | `pull_request`, `push` to feature branches | Runs gitleaks over the introduced commits; fails on a positive hit. |
-| `nightly.yml` | `schedule` daily 05:00 UTC, `workflow_dispatch` | Full e2e Kind, rotated cloud subset, security, path-specific load. Target < 2 hours. |
-| `weekly.yml` | `schedule` Sundays 06:00 UTC, `workflow_dispatch` | All three providers in `cloud-small` shape. Full-system load. Target < 4 hours. |
+| `nightly.yml` | `schedule` daily 05:00 UTC, `workflow_dispatch`, `workflow_call` (from `weekly.yml`) | Full e2e Kind, rotated cloud subset, security, path-specific load. Target < 2 hours. |
+| `weekly.yml` | `schedule` Sundays 06:00 UTC, `workflow_dispatch`, `workflow_call` (from `pre-release.yml`) | All three providers in `cloud-small` shape. Full-system load. Target < 4 hours. |
 | `pre-release.yml` | `workflow_dispatch` (tag input) | All three providers × both shapes. Full chaos. Pen-test driver. SLO baseline diff. Target < 8 hours. |
 | `release.yml` | `push` of a `v*` tag | Release-time supply chain: multi-arch image build, cosign signing, CycloneDX SBOM attestation, signed Helm chart, GitHub release, krew-index PR. |
 | `sdk-publish.yml` | `push` of a `v*` tag | Publishes the runtime-author SDKs: `runtime-sdk-go` (Go proxy), `lenny-runtime` (PyPI Trusted Publishing), `@lennylabs/runtime-sdk` (npm provenance). |

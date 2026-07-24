@@ -10,6 +10,7 @@ on:
   schedule:
     - cron: '0 5 * * *'    # 05:00 UTC daily
   workflow_dispatch:        # manual trigger
+  workflow_call:             # invoked by weekly.yml to re-run the nightly suite
 
 concurrency:
   group: nightly
