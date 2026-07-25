@@ -67,7 +67,6 @@ func (c *slotDrainCheckpointer) completions(sessionID string) int {
 // deadlock here) and no target is acked at barrier.go's ack point with a
 // checkpoint that coalesced away.
 func TestDrainAdmitsEveryOccupiedSlot_spec_5_2(t *testing.T) {
-	const podAddr = "10.0.0.7"
 	sessions := []string{"slot-a", "slot-b", "slot-c"}
 	cp := newSlotDrainCheckpointer(len(sessions))
 	disp := newFakeDispatcher()
@@ -78,7 +77,6 @@ func TestDrainAdmitsEveryOccupiedSlot_spec_5_2(t *testing.T) {
 			TenantID:               "acme",
 			SessionID:              s,
 			CoordinationGeneration: 1,
-			PodAddr:                podAddr,
 		})
 	}
 	c := New(&fakeLister{targets: targets, source: SourcePostgres},

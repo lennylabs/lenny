@@ -55,8 +55,8 @@ const (
 )
 
 // Target is one session in the barrier-target set: a session this
-// replica coordinates, addressed by its pod for the CheckpointBarrier
-// RPC.
+// replica coordinates, reached over the live adapter connection the
+// replica already holds for the CheckpointBarrier RPC.
 type Target struct {
 	TenantID  string
 	SessionID string
@@ -65,9 +65,6 @@ type Target struct {
 	// not match its last fenced value (§10.1 line 165 false-positive
 	// handling), so a stale value is safe.
 	CoordinationGeneration int64
-	// PodAddr is the adapter dial target the Dispatcher routes to.
-	// Opaque to this package.
-	PodAddr string
 }
 
 // Ack mirrors the §10.1 CheckpointBarrierAck the adapter returns: the
@@ -80,10 +77,10 @@ type Ack struct {
 }
 
 // Dispatcher sends one CheckpointBarrier to a target's pod and returns
-// the adapter's ack. Production wires a per-pod adapter dialer behind
-// it; a FailedPrecondition error from a generation-stale pod is
-// surfaced as ErrGenerationStale so Dispatch can record it without
-// aborting the drain.
+// the adapter's ack. Production routes over the live in-replica adapter
+// connection the coordinator already holds; a FailedPrecondition error
+// from a generation-stale pod is surfaced as ErrGenerationStale so
+// Dispatch can record it without aborting the drain.
 type Dispatcher interface {
 	Send(ctx context.Context, t Target, barrierID string) (Ack, error)
 }
