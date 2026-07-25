@@ -3,31 +3,40 @@
 // SPDX-License-Identifier: MIT
 
 // Tier-4 integration coverage for the §10.1 coordination_generation
-// split-brain fence across two gateway replicas. Two coordination Sweepers
-// (two replica ids) share a real Redis lease store and a shared session store,
-// and a real in-process §4.7 adapter models the still-running pod. The test
-// drives a coordinator handoff — the coordinating replica's Redis lease lapses,
-// the survivor's Sweeper adopts the orphan, bumps coordination_generation, and
-// re-fences the pod — then asserts the previous coordinator's next
-// session-mutating RPC is rejected by the pod's generation fence once the
+// split-brain fence across two gateway replicas. The survivor replica runs a
+// real coordination Sweeper; the crashed coordinator (replica-1) is modeled
+// directly through its lease and binding rather than a second Sweeper. Both
+// replicas share a real Redis lease store and the shared session store backed
+// by the production Postgres pgstore, so the coordination_generation the fence
+// turns on is exercised over the same Postgres CAS production uses, and a real
+// in-process §4.7 adapter models the still-running pod. The test drives a
+// coordinator handoff — the coordinating replica's Redis lease lapses, the
+// survivor's Sweeper adopts the orphan, bumps coordination_generation over
+// Postgres, and re-fences the pod — then asserts the previous coordinator's
+// next session-mutating RPC is rejected by the pod's generation fence once the
 // generation advanced. This builds the two-replica coordination harness the
-// TEST-GAPS.md T-4.2.4 finding requires, modeling the two replicas as two
-// Sweepers over shared Redis rather than in-process fakes, so the fence is the
-// real adapter fence and the lease handoff is a real cross-replica Redis lease.
+// TEST-GAPS.md T-4.2.4 finding requires over shared Postgres and Redis rather
+// than in-process fakes, so the fence is the real adapter fence, the generation
+// bump is a real Postgres CAS, and the lease handoff is a real cross-replica
+// Redis lease.
 package tier4_integration_test
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/coordfixture"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // staticTenants is a coordination.TenantLister over a fixed slice.
@@ -50,11 +59,15 @@ func TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	leases := leasestore.New(rd.Client)
-	sessions := memstore.New()
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	sessions := sessionpg.New(pg.Pool)
 	ctx := context.Background()
 
 	const tenant = "acme"
-	const sessID = "split-brain"
+	seedTenant(t, pg, tenant)
+	sessID := uuid.NewString()
 	const ttl = 30 * time.Second
 
 	// The session is running with a persisted pod assignment, coordinated by

@@ -3,13 +3,14 @@
 // Package coordfixture provides a real in-process §4.7 adapter that models a
 // still-running pod, plus a coordination.Readopter that drives the genuine
 // §10.1 CoordinatorFence over it and a concurrency-safe
-// coordination.BindingRegistry. A two-replica coordination test wires two
-// Sweepers (two replica ids) over a shared lease store and session store and
-// uses this fixture so the cross-replica coordinator handoff exercises the
-// real generation fence — a stale coordinator's session-mutating RPC is
-// rejected by the pod rather than by an in-memory stub — which is what
-// distinguishes the integration and chaos coverage from the tier-1/tier-2
-// fakes.
+// coordination.BindingRegistry. A two-replica coordination test wires the
+// survivor as a real Sweeper and models the crashed coordinator directly
+// through its lease and binding, both over a shared Redis lease store and a
+// shared session store, and uses this fixture so the cross-replica coordinator
+// handoff exercises the real generation fence — a stale coordinator's
+// session-mutating RPC is rejected by the pod rather than by an in-memory stub
+// — which is what distinguishes the integration and chaos coverage from the
+// tier-1/tier-2 fakes.
 //
 // spec: §10.1 (coordinator handoff; CoordinatorFence generation fence; no
 // operational RPC before the fence acknowledges), §4.6.1 (coordinating

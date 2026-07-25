@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT
 
+//go:build load_local
+
 // Tier-7a local concurrency coverage for the §10.1 co-location invariant under
 // a concurrent coordinator handoff. Two replicas share an in-process
 // thread-safe lease store and session store, a real in-process §4.7 adapter

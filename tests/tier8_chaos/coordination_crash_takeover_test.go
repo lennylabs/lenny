@@ -3,9 +3,10 @@
 //go:build chaos
 
 // Tier-8 chaos coverage for the §10.1 coordinator failover under an injected
-// replica crash. Two replicas share a real Redis lease store and a shared
-// session store, and a real in-process §4.7 adapter models the still-running
-// pod. The crash is injected as a real Redis lease lapse: the coordinating
+// replica crash. Two replicas share a real Redis lease store and the shared
+// session store backed by the production Postgres pgstore, and a real
+// in-process §4.7 adapter models the still-running pod. The crash is injected
+// as a real Redis lease lapse: the coordinating
 // replica's lease is acquired with a short TTL and left to expire, so the
 // survivor's Sweeper observes a genuinely lapsed lease rather than an explicit
 // release. The suite asserts the survivor adopts the lapsed lease, re-adopts
@@ -21,17 +22,21 @@ package tier8_chaos_test
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/coordfixture"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
 // staticTenants is a coordination.TenantLister over a fixed slice.
@@ -68,10 +73,24 @@ func waitForLapse(t *testing.T, leases leasestore.LeaseStore, tenant, sessID str
 func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	leases := leasestore.New(rd.Client)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
 	ctx := context.Background()
-	const tenant = "acme"
+	// The session store is the production Postgres pgstore so the
+	// coordination_generation the failover fence turns on is exercised over the
+	// same Postgres CAS production uses, not an in-process fake.
+	newSessions := func() *sessionpg.Store { return sessionpg.New(pg.Pool) }
 
-	newSurvivor := func(sessions sessionstore.Store, bound *coordfixture.Bindings, readopter *coordfixture.FenceReadopter, opts func(*coordination.Options)) *coordination.Sweeper {
+	// Each subtest runs against its own tenant so the sweeper's per-tenant List
+	// sees only that subtest's running session over the shared Postgres.
+	freshTenant := func() string {
+		id := "t-" + uuid.NewString()
+		seedChaosTenant(t, pg, id)
+		return id
+	}
+
+	newSurvivor := func(tenantID string, sessions sessionstore.Store, bound *coordfixture.Bindings, readopter *coordfixture.FenceReadopter, opts func(*coordination.Options)) *coordination.Sweeper {
 		o := coordination.Options{
 			ReplicaID: "replica-2",
 			TTL:       30 * time.Second,
@@ -82,15 +101,16 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		if opts != nil {
 			opts(&o)
 		}
-		return coordination.NewSweeper(staticTenants{tenant}, sessions, leases, o)
+		return coordination.NewSweeper(staticTenants{tenantID}, sessions, leases, o)
 	}
 
 	// The survivor adopts a genuinely lapsed lease, re-adopts and re-fences the
 	// still-running pod, publishes the binding, holds the connection so an idle
 	// session stays coordinated, and fences a stale prior coordinator out.
 	t.Run("survivor adopts lapsed lease, re-fences, and fences out the stale coordinator", func(t *testing.T) {
-		const sessID = "crash-takeover"
-		sessions := memstore.New()
+		tenant := freshTenant()
+		sessID := uuid.NewString()
+		sessions := newSessions()
 		if err := sessions.Create(ctx, sessionstore.Session{
 			ID: sessID, TenantID: tenant, State: session.StateRunning,
 			PodAssignment: "pod-" + sessID, CoordinationGeneration: 1, CreatedAt: time.Unix(1, 0).UTC(),
@@ -111,7 +131,7 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 
 		bound := coordfixture.NewBindings()
 		readopter := &coordfixture.FenceReadopter{Pod: pod, Bindings: bound, Leases: leases, ReplicaID: "replica-2", TenantID: tenant}
-		sw := newSurvivor(sessions, bound, readopter, nil)
+		sw := newSurvivor(tenant, sessions, bound, readopter, nil)
 
 		if held, err := sw.Sweep(ctx); err != nil || held != 1 {
 			t.Fatalf("takeover Sweep: held=%d err=%v, want 1", held, err)
@@ -144,8 +164,9 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 	// released, so a subsequent sweep re-adopts and re-fences the pod before
 	// its hold-state timeout and serves over the fresh binding.
 	t.Run("dead held connection is evicted then re-adopted and re-fenced", func(t *testing.T) {
-		const sessID = "dead-conn"
-		sessions := memstore.New()
+		tenant := freshTenant()
+		sessID := uuid.NewString()
+		sessions := newSessions()
 		if err := sessions.Create(ctx, sessionstore.Session{
 			ID: sessID, TenantID: tenant, State: session.StateRunning,
 			PodAssignment: "pod-" + sessID, CoordinationGeneration: 1, CreatedAt: time.Unix(1, 0).UTC(),
@@ -158,7 +179,7 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		}
 		bound := coordfixture.NewBindings()
 		readopter := &coordfixture.FenceReadopter{Pod: pod, Bindings: bound, Leases: leases, ReplicaID: "replica-2", TenantID: tenant}
-		sw := newSurvivor(sessions, bound, readopter, nil)
+		sw := newSurvivor(tenant, sessions, bound, readopter, nil)
 
 		// First takeover establishes the serving binding at generation 2.
 		if _, err := sw.Sweep(ctx); err != nil {
@@ -205,8 +226,9 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 	// a per-session adoption backoff, so the fixed sweep does not re-adopt
 	// inside the window and the generation does not climb on every sweep.
 	t.Run("terminal fence failure relinquishes and backs off without climbing the generation", func(t *testing.T) {
-		const sessID = "fence-fails"
-		sessions := memstore.New()
+		tenant := freshTenant()
+		sessID := uuid.NewString()
+		sessions := newSessions()
 		if err := sessions.Create(ctx, sessionstore.Session{
 			ID: sessID, TenantID: tenant, State: session.StateRunning,
 			PodAssignment: "pod-" + sessID, CreatedAt: time.Unix(1, 0).UTC(),
@@ -225,7 +247,7 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		clock := func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return now }
 		advance := func(d time.Duration) { clockMu.Lock(); defer clockMu.Unlock(); now = now.Add(d) }
 
-		sw := newSurvivor(sessions, coordfixture.NewBindings(), readopter, func(o *coordination.Options) {
+		sw := newSurvivor(tenant, sessions, coordfixture.NewBindings(), readopter, func(o *coordination.Options) {
 			o.AdoptionBackoff = 10 * time.Second
 			o.Clock = clock
 		})
