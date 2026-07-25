@@ -16,6 +16,7 @@ import (
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/connectivity"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -56,6 +57,27 @@ func Dial(target string, opts ...grpc.DialOption) (*Client, error) {
 // Close releases the underlying gRPC connection.
 func (c *Client) Close() error {
 	return c.conn.Close()
+}
+
+// Alive reports whether the underlying gRPC channel to the pod's adapter is
+// not in a terminal or failed connectivity state. It is a cheap, non-blocking
+// read of the channel state: a channel in TransientFailure or Shutdown can no
+// longer reach the pod. The coordination sweep probes a bound session's held
+// channel before renewing its lease, so a dead held connection surfaces the
+// session's coordination lease for re-adoption instead of pinning it to a
+// replica that can no longer reach the pod. An Idle or Connecting channel (a
+// freshly published binding whose Attach content stream stays lazy until first
+// use) reports alive, so a healthy fresh binding is never evicted.
+//
+// spec: §10.1 (hold state on connection loss; the coordinating replica holds
+// the live connection), §4.6.1 (coordinating replica holds the lease).
+func (c *Client) Alive() bool {
+	switch c.conn.GetState() {
+	case connectivity.Shutdown, connectivity.TransientFailure:
+		return false
+	default:
+		return true
+	}
 }
 
 // NegotiateVersion performs the §4.7 / §15.5 handshake, advertising the

@@ -1,0 +1,267 @@
+// SPDX-License-Identifier: MIT
+
+package main
+
+import (
+	"context"
+	"errors"
+	"net"
+	"testing"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/test/bufconn"
+
+	"github.com/lennylabs/lenny/pkg/adapter"
+	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+)
+
+// dialSeamsAdapter opens a live *adapterclient.Client to an in-process adapter
+// over bufconn so ConnAlive and the re-adopt publish path exercise a real gRPC
+// channel.
+func dialSeamsAdapter(t *testing.T) *adapterclient.Client {
+	t.Helper()
+	lis := bufconn.Listen(1 << 20)
+	gs := adapter.NewGRPCServer(adapter.New("seams-test-build"))
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+	cl, err := adapterclient.Dial("passthrough:///bufnet",
+		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) {
+			return lis.DialContext(ctx)
+		}),
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatalf("dial adapter: %v", err)
+	}
+	t.Cleanup(func() { _ = cl.Close() })
+	return cl
+}
+
+// recordingEvicter is a streamEvicter that records the sessions whose cached
+// Attach stream the dead-connection eviction dropped.
+type recordingEvicter struct {
+	evicted []string
+}
+
+func (r *recordingEvicter) EvictStream(sessionID string) { r.evicted = append(r.evicted, sessionID) }
+
+// Send/Close satisfy executor.Executor so a *recordingEvicter can stand in for
+// w.exec; the coordination eviction only exercises EvictStream.
+func (r *recordingEvicter) Send(context.Context, string, []executor.Message) (executor.Response, error) {
+	return executor.Response{}, nil
+}
+
+func (r *recordingEvicter) Close(context.Context, string) error { return nil }
+
+// TestCoordinationBindingsBoundAndConnAlive pins the co-location predicates the
+// Sweeper reads: a session this replica binds over a live channel reports bound
+// and alive, so the Sweeper renews its lease rather than evicting it.
+//
+// spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
+// coordination lease)
+func TestCoordinationBindingsBoundAndConnAlive(t *testing.T) {
+	reg := podsession.NewRegistry()
+	b := coordinationBindings{w: &gatewayWiring{gatewayWiringFields: gatewayWiringFields{podRegistry: reg}}}
+
+	if b.Bound("s1") {
+		t.Fatal("Bound reported true for an unbound session")
+	}
+	if b.ConnAlive("s1") {
+		t.Fatal("ConnAlive reported true for an unbound session")
+	}
+
+	reg.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: dialSeamsAdapter(t)})
+	if !b.Bound("s1") {
+		t.Fatal("Bound reported false for a session this replica binds")
+	}
+	if !b.ConnAlive("s1") {
+		t.Fatal("ConnAlive reported false for a live held channel; the Sweeper would evict a healthy binding")
+	}
+}
+
+// TestCoordinationBindingsConnAliveDeadChannel pins the corrective predicate: a
+// bound session whose held channel has died reports not-alive, so the Sweeper
+// evicts the binding and releases the lease instead of pinning it to a replica
+// that can no longer reach the pod. A nil-registry adapter reports not-bound.
+//
+// spec: 10.1 (hold state on connection loss; TTL-lapse recovery), 4.6.1
+// (coordinating replica holds the lease)
+func TestCoordinationBindingsConnAliveDeadChannel(t *testing.T) {
+	reg := podsession.NewRegistry()
+	b := coordinationBindings{w: &gatewayWiring{gatewayWiringFields: gatewayWiringFields{podRegistry: reg}}}
+
+	dead := dialSeamsAdapter(t)
+	_ = dead.Close()
+	reg.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: dead})
+	if !b.Bound("s1") {
+		t.Fatal("Bound reported false for a session with a (dead) binding")
+	}
+	if b.ConnAlive("s1") {
+		t.Fatal("ConnAlive reported true for a shut-down held channel; the dead-connection lease would be renewed forever")
+	}
+
+	// A binding with no adapter reports not-alive (fail toward re-adoption).
+	reg.Put(&podsession.BindResult{SessionID: "s2", TenantID: "acme"})
+	if b.ConnAlive("s2") {
+		t.Fatal("ConnAlive reported true for a binding with no adapter")
+	}
+
+	// A nil registry (no bindings) reports neither bound nor alive.
+	nilB := coordinationBindings{w: &gatewayWiring{}}
+	if nilB.Bound("s1") || nilB.ConnAlive("s1") {
+		t.Fatal("nil registry reported a binding")
+	}
+}
+
+// TestCoordinationBindingsEvictBinding pins that a dead-connection eviction
+// drops both the registry entry and the executor's cached Attach stream in one
+// call. Dropping the cached stream is what lets a same-replica re-adopt serve
+// over the freshly published binding rather than the stale dead cached stream.
+//
+// spec: 4.7 (single content consumer per session / Attach content stream),
+// 10.1 (per-session coordination lease)
+func TestCoordinationBindingsEvictBinding(t *testing.T) {
+	reg := podsession.NewRegistry()
+	ev := &recordingEvicter{}
+	b := coordinationBindings{w: &gatewayWiring{gatewayWiringFields: gatewayWiringFields{podRegistry: reg, exec: ev}}}
+
+	reg.Put(&podsession.BindResult{SessionID: "s1", TenantID: "acme", Adapter: dialSeamsAdapter(t)})
+	b.EvictBinding("s1")
+
+	if _, ok := reg.Get("s1"); ok {
+		t.Fatal("EvictBinding left the registry entry in place")
+	}
+	if len(ev.evicted) != 1 || ev.evicted[0] != "s1" {
+		t.Fatalf("EvictBinding did not drop the executor's cached stream: evicted=%v", ev.evicted)
+	}
+}
+
+// fakeReadoptDialer resolves a fixed pod and returns a live adapter connection.
+type fakeReadoptDialer struct {
+	podIP        string
+	adapter      *adapterclient.Client
+	err          error
+	gotSandbox   string
+	dialAttempts int
+}
+
+func (d *fakeReadoptDialer) ReadoptConnect(_ context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, error) {
+	d.dialAttempts++
+	d.gotSandbox = sandboxName
+	if d.err != nil {
+		return nil, nil, d.err
+	}
+	return &lennyv1.Sandbox{Status: lennyv1.SandboxStatus{PodIP: d.podIP}}, d.adapter, nil
+}
+
+// fakeReadoptFencer records the fence call and returns a scripted outcome.
+type fakeReadoptFencer struct {
+	relinquished bool
+	err          error
+	gotSession   string
+}
+
+func (f *fakeReadoptFencer) Fence(_ context.Context, _ *adapterclient.Client, _, sessionID string) (bool, error) {
+	f.gotSession = sessionID
+	return f.relinquished, f.err
+}
+
+type fakeSandboxReader struct {
+	row sessionstore.Session
+	err error
+}
+
+func (r fakeSandboxReader) Get(_ context.Context, _, _ string) (sessionstore.Session, error) {
+	return r.row, r.err
+}
+
+type recordingPublisher struct{ published []*podsession.BindResult }
+
+func (p *recordingPublisher) Put(b *podsession.BindResult) { p.published = append(p.published, b) }
+
+// TestReadoptAndFencePublishesOnFenceAck pins the crash-takeover happy path:
+// the re-adopt dials the still-running pod from its persisted SandboxName,
+// fences it, and returns a publish callback that places the re-established
+// serving binding into the registry only after the fence acknowledges.
+//
+// spec: 10.1 (coordinator handoff re-adopts the still-running pod;
+// CoordinatorFence is the first RPC; no operational RPC before the fence
+// acknowledges), 4.6.1 (coordinating replica holds the lease)
+func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
+	adapterConn := dialSeamsAdapter(t)
+	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
+	fencer := &fakeReadoptFencer{}
+	pub := &recordingPublisher{}
+	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, "acme", "s1")
+	if err != nil {
+		t.Fatalf("readoptAndFence returned error on fence ack: %v", err)
+	}
+	if dialer.gotSandbox != "sbx-1" {
+		t.Fatalf("dialed sandbox %q, want the persisted PodAssignment sbx-1", dialer.gotSandbox)
+	}
+	if len(pub.published) != 0 {
+		t.Fatal("binding published before the Sweeper invoked the publish callback (violates the no-RPC-before-fence precondition)")
+	}
+	publish()
+	if len(pub.published) != 1 {
+		t.Fatalf("publish callback did not publish the binding: %d bindings", len(pub.published))
+	}
+	got := pub.published[0]
+	if got.SessionID != "s1" || got.TenantID != "acme" || got.SandboxName != "sbx-1" || got.PodIP != "10.0.0.7" || got.Adapter != adapterConn {
+		t.Fatalf("published binding = %+v, want the re-established serving binding for s1", got)
+	}
+}
+
+// TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure pins the corrective
+// failure path: when the fence relinquishes (terminal failure), the re-adopt
+// closes the dialed connection, publishes no binding, and returns the error, so
+// the Sweeper records an adoption backoff rather than leaving a serving binding
+// for a session whose fence never landed.
+//
+// spec: 10.1 (fence retry budget and relinquish-and-backoff; no binding on a
+// terminal fence failure), 4.6.1 (coordinating replica holds the lease)
+func TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure(t *testing.T) {
+	adapterConn := dialSeamsAdapter(t)
+	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
+	fencer := &fakeReadoptFencer{relinquished: true, err: errors.New("relinquished")}
+	pub := &recordingPublisher{}
+	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, "acme", "s1")
+	if err == nil {
+		t.Fatal("readoptAndFence returned nil error on a terminal fence failure")
+	}
+	if publish != nil {
+		t.Fatal("readoptAndFence returned a publish callback on a fence failure")
+	}
+	if len(pub.published) != 0 {
+		t.Fatal("a binding was published despite the fence failure")
+	}
+	if adapterConn.Alive() {
+		t.Fatal("the dialed connection was not closed after the fence failure")
+	}
+}
+
+// TestReadoptAndFenceReturnsErrorWhenSeamsUnwired pins the fail-closed guard:
+// with the re-adopt collaborators absent the Sweeper is told the re-adopt could
+// not run (so it publishes no binding it cannot back) rather than silently
+// succeeding.
+//
+// spec: 10.1 (coordinator handoff re-adopts the still-running pod), 4.6.1
+// (coordinating replica holds the lease)
+func TestReadoptAndFenceReturnsErrorWhenSeamsUnwired(t *testing.T) {
+	r := coordinationReadopter{w: &gatewayWiring{}}
+	publish, err := r.ReadoptAndFence(context.Background(), "acme", "s1", 3)
+	if err == nil {
+		t.Fatal("ReadoptAndFence returned nil error with no re-adopt seams wired")
+	}
+	if publish != nil {
+		t.Fatal("ReadoptAndFence returned a publish callback with no seams wired")
+	}
+}
