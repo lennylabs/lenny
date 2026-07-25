@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -137,6 +138,123 @@ func TestLifecycleChannelEmitsControlEvents_spec_4_7(t *testing.T) {
 	cancel()
 	if err := <-done; status.Code(err) != codes.Canceled && err != context.Canceled {
 		t.Errorf("LifecycleChannel returned %v, want context cancellation", err)
+	}
+}
+
+// spec: §4.7 (AdapterEvicting control event) — EmitAdapterEvicting enqueues
+// a distinct AdapterEvicting event carrying the session and, on a
+// concurrent pod, its slot id, so the coordinator can drive an eviction
+// checkpoint before the pod terminates. It is not the terminal
+// AdapterTerminating notification.
+func TestEmitAdapterEvicting_spec_4_7(t *testing.T) {
+	if eventAdapterEvicting == eventAdapterTerminating {
+		t.Fatal("AdapterEvicting and AdapterTerminating must be distinct events")
+	}
+	s := New("served")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := newFakeControlStream(ctx)
+	go func() { _ = s.LifecycleChannel(stream) }()
+	awaitRegistration(t, s)
+
+	// Concurrent-pod session: the session id and its slot id both travel,
+	// because a concurrent pod sets no pod-global session id for
+	// emitControlEvent to recover.
+	s.EmitAdapterEvicting("sess-co", "slot-a")
+	ev := recvEvent(t, stream)
+	if ev.Type != eventAdapterEvicting {
+		t.Errorf("event type = %q, want %q", ev.Type, eventAdapterEvicting)
+	}
+	if ev.SessionID != "sess-co" || ev.SlotID != "slot-a" {
+		t.Errorf("event = %+v, want session sess-co slot slot-a", ev)
+	}
+}
+
+// spec: §4.7 (AdapterEvicting field contract) — on the single-session base
+// pod (maxConcurrentSessions == 1) the slot id is absent, so the envelope
+// omits slotId entirely rather than carrying an empty string.
+func TestEmitAdapterEvictingOmitsEmptySlot_spec_4_7(t *testing.T) {
+	s := New("served")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	stream := newFakeControlStream(ctx)
+	go func() { _ = s.LifecycleChannel(stream) }()
+	awaitRegistration(t, s)
+
+	s.EmitAdapterEvicting("sess-base", "")
+	var raw []byte
+	select {
+	case resp := <-stream.sent:
+		raw = resp.GetEnvelopeJson()
+	case <-time.After(2 * time.Second):
+		t.Fatal("no control event received")
+	}
+	if strings.Contains(string(raw), "slotId") {
+		t.Errorf("base-pod AdapterEvicting envelope carries slotId: %s", raw)
+	}
+	var ev controlEvent
+	if err := json.Unmarshal(raw, &ev); err != nil {
+		t.Fatalf("decode control event: %v", err)
+	}
+	if ev.Type != eventAdapterEvicting || ev.SessionID != "sess-base" || ev.SlotID != "" {
+		t.Errorf("event = %+v, want AdapterEvicting for sess-base with no slot", ev)
+	}
+}
+
+// spec: §4.6.1 (agent-pod disruption protection), §4.7 (AdapterEvicting per
+// session), §6.4 (per-slot sessions) — liveBoundSessions enumerates the
+// sessions the eviction handler must checkpoint: the pod-global session on
+// a base pod (no slot) and each per-slot session on a concurrent pod (with
+// its slot id), and nothing on an idle pod.
+func TestLiveBoundSessions_spec_4_6_1(t *testing.T) {
+	// Idle pod: nothing to evict, so the handler emits nothing.
+	idle := New("served")
+	if got := idle.liveBoundSessions(); len(got) != 0 {
+		t.Errorf("idle pod bound sessions = %+v, want none", got)
+	}
+
+	// Base-mode pod: one session recorded in the pod-global session id,
+	// carried with no slot.
+	base := New("served")
+	base.mu.Lock()
+	base.sessionID = "sess-base"
+	base.mu.Unlock()
+	got := base.liveBoundSessions()
+	if len(got) != 1 || got[0].sessionID != "sess-base" || got[0].slotID != "" {
+		t.Errorf("base pod bound sessions = %+v, want one slotless sess-base", got)
+	}
+
+	// Concurrent-mode pod: only assigned slots are enumerated, each with
+	// its slot id; an idle slot is skipped.
+	conc := New("served")
+	conc.mu.Lock()
+	conc.slots = map[string]*slotState{
+		"slot-a": {sessionID: "sess-a"},
+		"slot-b": {sessionID: "sess-b"},
+		"slot-c": {},
+	}
+	conc.mu.Unlock()
+	bySlot := map[string]string{}
+	for _, b := range conc.liveBoundSessions() {
+		bySlot[b.slotID] = b.sessionID
+	}
+	if len(bySlot) != 2 || bySlot["slot-a"] != "sess-a" || bySlot["slot-b"] != "sess-b" {
+		t.Errorf("concurrent pod bound sessions = %+v, want slot-a/sess-a and slot-b/sess-b", bySlot)
+	}
+}
+
+// spec: §4.6.1 (agent-pod disruption protection), §4.4 (best-effort eviction
+// snapshot) — the evicting flag is false until the pod's own termination
+// handler engages, and set once it has, so the Checkpoint RPC takes the
+// best-effort snapshot only on a pod that is itself terminating.
+func TestEvictingFlag_spec_4_6_1(t *testing.T) {
+	s := New("served")
+	if s.isEvicting() {
+		t.Error("fresh Server reports evicting before its termination handler engaged")
+	}
+	s.setEvicting()
+	if !s.isEvicting() {
+		t.Error("setEvicting did not set the evicting flag")
 	}
 }
 

@@ -343,6 +343,59 @@ func (s *Server) emitFinalUsage(ctx context.Context, sessionID string) {
 	s.EmitFinalUsageReport(u)
 }
 
+// boundSession identifies one live session bound to this pod for the
+// eviction drive. slotID is empty on the single-session base pod
+// (maxConcurrentSessions == 1) and carries the §6.4 slot id on a
+// concurrent-workspace pod, matching the AdapterEvicting field contract.
+type boundSession struct {
+	sessionID string
+	slotID    string
+}
+
+// liveBoundSessions enumerates the sessions currently bound to this pod so
+// the kubelet-path SIGTERM handler can emit one AdapterEvicting per session
+// and wait for each session's coordinator-driven eviction checkpoint. A
+// base-mode pod records its one session in the pod-global sessionID with no
+// slot; a concurrent-workspace pod records each session on its own slot and
+// leaves the pod-global sessionID empty, so a slot entry carries the slot
+// id. The two are mutually exclusive in practice; enumerating both is
+// defensive. An idle pod returns nil, so the handler emits nothing and
+// tears down as before. spec: §4.6.1 (agent-pod disruption protection),
+// §4.7 (AdapterEvicting per session), §6.4 (per-slot sessions).
+func (s *Server) liveBoundSessions() []boundSession {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []boundSession
+	if s.sessionID != "" {
+		out = append(out, boundSession{sessionID: s.sessionID})
+	}
+	for slotID, st := range s.slots {
+		if st.sessionID != "" {
+			out = append(out, boundSession{sessionID: st.sessionID, slotID: slotID})
+		}
+	}
+	return out
+}
+
+// setEvicting records that this pod's own SIGTERM/eviction handler has
+// engaged. The kubelet-path handler calls it before emitting
+// AdapterEvicting so a concurrent Checkpoint RPC can take the best-effort
+// eviction snapshot when the runtime lifecycle connection has already
+// dropped. spec: §4.6.1 (agent-pod disruption protection).
+func (s *Server) setEvicting() {
+	s.evicting.Store(true)
+}
+
+// isEvicting reports whether this pod is itself terminating under the
+// kubelet SIGTERM. The Checkpoint RPC reads it as the sole gate for the
+// best-effort eviction snapshot; a still-running pod (including one driven
+// through the §10.1 gateway-drain barrier, which also carries
+// TriggerEviction) leaves it false and keeps the cooperative handshake
+// fail-closed. spec: §4.4 (best-effort eviction snapshot), §4.6.1.
+func (s *Server) isEvicting() bool {
+	return s.evicting.Load()
+}
+
 // checkSession confirms sessionID is the session currently assigned to
 // the pod.
 func (s *Server) checkSession(sessionID string) error {

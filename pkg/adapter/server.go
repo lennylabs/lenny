@@ -16,6 +16,7 @@ import (
 	"context"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
@@ -315,6 +316,19 @@ type Server struct {
 	// the held pod terminates, echoing that stream's checkpoint_id. See
 	// pkg/adapter/coordination.go.
 	barrier barrierGate
+
+	// evicting records that this pod's own SIGTERM/eviction handler has
+	// engaged, so a concurrent Checkpoint RPC on this pod can observe that
+	// the pod is terminating regardless. The kubelet-path handler sets it
+	// before emitting AdapterEvicting; the Checkpoint RPC reads it as the
+	// sole gate for the best-effort eviction snapshot (a checkpoint of a
+	// still-running pod, including a §10.1 gateway-drain barrier checkpoint
+	// that also carries TriggerEviction, keeps this flag false and fails
+	// closed on a dropped runtime handshake). It is an atomic.Bool so the
+	// handler write and the RPC-handler read are race-clean without taking
+	// mu. spec: §4.6.1 (agent-pod disruption protection), §4.4 (best-effort
+	// eviction snapshot).
+	evicting atomic.Bool
 
 	// controlMu guards controlSink.
 	controlMu sync.Mutex

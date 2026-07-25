@@ -42,6 +42,18 @@ const (
 	// CheckpointBarrier RPC. Fields: barrier_id, checkpoint_ref,
 	// quiesced_ms (mirrors the synchronous RPC return).
 	eventCheckpointBarrierAck = "CheckpointBarrierAck"
+	// eventAdapterEvicting is the adapter's request that the session's
+	// coordinating replica drive an eviction checkpoint before this pod
+	// terminates (kubelet-driven node drain, Eviction API, cluster
+	// upgrade, or direct delete). Unlike eventAdapterTerminating, which
+	// transitions the session terminal without a checkpoint, this event
+	// asks the coordinator to drive the Checkpoint RPC with the
+	// TriggerEviction trigger first; the pod terminates once that
+	// checkpoint settles or the deadline lapses. Fields: session_id, and
+	// slot_id on pods with maxConcurrentSessions > 1.
+	// spec: §4.7 (AdapterEvicting control event), §4.6.1 (agent-pod
+	// disruption protection).
+	eventAdapterEvicting = "AdapterEvicting"
 )
 
 // controlEventBuffer bounds the per-stream queue of pending control
@@ -56,12 +68,18 @@ const controlEventBuffer = 64
 // LifecycleChannelResponse comment). Fields absent for a given type are
 // omitted on the wire.
 type controlEvent struct {
-	Type      string        `json:"type"`
-	SessionID string        `json:"sessionId,omitempty"`
-	Provider  string        `json:"provider,omitempty"`
-	LeaseID   string        `json:"leaseId,omitempty"`
-	Reason    string        `json:"reason,omitempty"`
-	Usage     *controlUsage `json:"usage,omitempty"`
+	Type      string `json:"type"`
+	SessionID string `json:"sessionId,omitempty"`
+	// SlotID names the §6.4 concurrent-workspace slot the event pertains
+	// to. It is set only on pods with maxConcurrentSessions > 1 (where a
+	// single control stream fans events for several co-tenant sessions)
+	// and omitted on the single-session base pod, matching the
+	// AdapterEvicting field contract. spec: §4.7, §6.4.
+	SlotID   string        `json:"slotId,omitempty"`
+	Provider string        `json:"provider,omitempty"`
+	LeaseID  string        `json:"leaseId,omitempty"`
+	Reason   string        `json:"reason,omitempty"`
+	Usage    *controlUsage `json:"usage,omitempty"`
 	// CheckpointBarrierAck fields (§4.7 line 660). Only set on the
 	// eventCheckpointBarrierAck event; omitted otherwise.
 	BarrierID     string `json:"barrierId,omitempty"`
@@ -215,6 +233,24 @@ func (s *Server) EmitLeaseRejected(provider, leaseID, reason string) {
 // orphan-session reconciler (§10.1).
 func (s *Server) EmitAdapterTerminating(reason string) {
 	s.emitControlEvent(controlEvent{Type: eventAdapterTerminating, Reason: reason})
+}
+
+// EmitAdapterEvicting requests that the session's coordinating replica
+// drive an eviction checkpoint (TriggerEviction) before this pod
+// terminates. The kubelet-path SIGTERM handler emits one event per live
+// bound session, passing the session id explicitly (a concurrent-pool
+// session sets no pod-global s.sessionID, so emitControlEvent could not
+// recover it) and slotID on pods with maxConcurrentSessions > 1. Unlike
+// EmitAdapterTerminating, the adapter keeps serving the coordinator's
+// Checkpoint RPC until the driven checkpoint settles or the deadline
+// lapses. spec: §4.7 (AdapterEvicting control event), §4.6.1 (coordinator-
+// direct eviction drive).
+func (s *Server) EmitAdapterEvicting(sessionID, slotID string) {
+	s.emitControlEvent(controlEvent{
+		Type:      eventAdapterEvicting,
+		SessionID: sessionID,
+		SlotID:    slotID,
+	})
 }
 
 // EmitFinalUsageReport sends the §4.7 FINAL_USAGE_REPORT terminal event
