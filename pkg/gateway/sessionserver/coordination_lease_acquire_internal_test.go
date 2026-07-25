@@ -288,6 +288,36 @@ func TestReleaseCoordinationLease_DropsOwnLeaseHolderChecked(t *testing.T) {
 // spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
 // coordination lease)
 //
+// Regression for the hoisted-publish fix: publishBinding is the publish half
+// of registerBinding with no lease touch, so a caller that already holds the
+// lease (the early-commit paths hoist the acquire ahead of the running-commit)
+// can publish unconditionally without routing back through a self-renew
+// acquire. It must publish the binding and never call Acquire; against a
+// design that re-acquired before publishing, a transient leaseStore fault
+// would drop the publish while the row is already committed to running.
+func TestPublishBindingPublishesWithoutTouchingLease(t *testing.T) {
+	leases := newFakeLeaseStore()
+	srv, registry, store := leaseTestServer(t, leases, "replica-a")
+	seedRunningRow(t, store, "acme", "sess-pub")
+
+	srv.publishBinding(context.Background(), &podsession.BindResult{
+		SessionID:   "sess-pub",
+		TenantID:    "acme",
+		SandboxName: "sbx-1",
+	})
+	if _, ok := registry.Get("sess-pub"); !ok {
+		t.Fatal("publishBinding did not publish the binding into the registry")
+	}
+	if leases.acquires != 0 {
+		t.Fatalf("publishBinding touched the leaseStore, acquires=%d, want 0", leases.acquires)
+	}
+	// A nil result is a no-op and must not panic (service-mode claimless bind).
+	srv.publishBinding(context.Background(), nil)
+}
+
+// spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
+// coordination lease)
+//
 // In the dev / in-memory posture (no leaseStore wired) registerBinding
 // publishes the binding as before, so the executor still serves.
 func TestRegisterBinding_NoLeaseStorePublishes(t *testing.T) {

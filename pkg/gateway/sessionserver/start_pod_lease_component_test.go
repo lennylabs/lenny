@@ -5,6 +5,7 @@ package sessionserver_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sync"
 	"testing"
@@ -27,6 +28,15 @@ import (
 type componentLeaseStore struct {
 	mu      sync.Mutex
 	holders map[string]string
+	// acquires counts every Acquire call so a test can assert how many
+	// times the bind funnel touched the store.
+	acquires int
+	// failAcquireAfter, when > 0, makes every Acquire past the Nth return a
+	// transient (non-ErrHeld) error. Setting it to 1 lets the hoisted
+	// at-bind acquire succeed while the follow-on self-renew acquire fails,
+	// which reproduces a transient Redis blip between the hoisted acquire
+	// and the binding publish on the early-commit paths.
+	failAcquireAfter int
 }
 
 func newComponentLeaseStore() *componentLeaseStore {
@@ -38,6 +48,10 @@ func clk(tenantID, sessionID string) string { return tenantID + "/" + sessionID 
 func (f *componentLeaseStore) Acquire(_ context.Context, tenantID, sessionID, holder string, _ time.Duration) (leasestore.Lease, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.acquires++
+	if f.failAcquireAfter > 0 && f.acquires > f.failAcquireAfter {
+		return leasestore.Lease{}, errors.New("injected transient leaseStore fault")
+	}
 	k := clk(tenantID, sessionID)
 	if cur, ok := f.holders[k]; ok && cur != holder {
 		return leasestore.Lease{}, leasestore.ErrHeld
@@ -206,5 +220,57 @@ func TestTwoStepStartFailsClosedOnForeignLeaseHolder(t *testing.T) {
 	}
 	if got.Holder != "replica-b" {
 		t.Fatalf("lease holder = %q, want replica-b (unchanged)", got.Holder)
+	}
+}
+
+// spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
+// coordination lease)
+// diagnosis: a failure here means a single-call /start committed the row to
+// running holding the coordination lease but published no binding, so the
+// executor serves the session from an empty registry and the session is
+// permanently unservable while this replica renews the lease forever. That is
+// the lease-without-binding decoupling co-location removes.
+//
+// Regression for the hoisted-publish fix: the single-call /start acquires the
+// coordination lease ahead of the running-commit, so once the row is
+// committed the binding must publish unconditionally rather than through a
+// second self-renew acquire. A transient leaseStore fault on that follow-on
+// acquire must not drop the publish. failAcquireAfter=1 lets the hoisted
+// acquire succeed and fails any later acquire; against the pre-fix code, which
+// routed the already-held path back through registerBinding's acquire and
+// logged the error best-effort, the row commits to running but the registry
+// stays empty. The fix publishes directly, so the binding is present.
+func TestSingleCallStartPublishesBindingDespiteSelfRenewFault(t *testing.T) {
+	leases := newComponentLeaseStore()
+	leases.failAcquireAfter = 1
+	srv, registry := podBindServerWithLease(t, "sess-renew-blip", "replica-a", leases)
+
+	body, err := json.Marshal(sessionserver.CreateAndStartRequest{RuntimeRef: "echo", UserID: "alice@acme.com"})
+	if err != nil {
+		t.Fatalf("marshal create-and-start body: %v", err)
+	}
+	rr := postSessionStep(t, srv.Handler(), "/v1/sessions/start", body)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("single-call start: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+
+	var resp sessionserver.SessionResponse
+	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+	if resp.State != string(session.StateRunning) {
+		t.Errorf("state = %q, want running", resp.State)
+	}
+	// The binding is published even though the follow-on self-renew acquire
+	// faulted: a committed running row is never left without a binding.
+	if _, ok := registry.Get("sess-renew-blip"); !ok {
+		t.Fatal("single-call start committed to running but published no binding (lease-without-binding decoupling)")
+	}
+	// The lease is held by the binding replica, so lease and binding are
+	// co-located on the same replica.
+	got, gerr := leases.Get(context.Background(), "acme", "sess-renew-blip")
+	if gerr != nil {
+		t.Fatalf("coordination lease not held after bind: %v", gerr)
+	}
+	if got.Holder != "replica-a" {
+		t.Fatalf("lease holder = %q, want replica-a (the binding replica)", got.Holder)
 	}
 }

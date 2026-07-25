@@ -274,6 +274,69 @@ func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *tes
 	}
 }
 
+// spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
+// coordination lease).
+// diagnosis: the delegated-child materialize acquires the coordination lease
+// ahead of the running-commit, so once the child row is committed to running
+// the binding must publish unconditionally. A transient leaseStore fault on a
+// follow-on self-renew acquire must not skip the publish, or the child commits
+// to running holding the lease with no binding: the executor rejects it as
+// unbound, the child never serves, and this replica renews the orphaned lease
+// forever. That is the lease-without-binding decoupling co-location removes. A
+// failure here means the publish was gated on the redundant self-renew acquire
+// instead of running unconditionally once the lease is held.
+func TestMaterializeDelegatedChildPublishesBindingDespiteSelfRenewFault(t *testing.T) {
+	store := memstore.New()
+	seedDelegatedChild(t, store, "child-renew-blip", `{
+		"schemaVersion": 1,
+		"sources": [{"type":"inlineFile","path":"CHILD.md","content":"# delegated","mode":"0644"}]
+	}`)
+	cluster, dial, _ := materializeCluster(t)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, dial)
+	leases := newComponentLeaseStore()
+	// The hoisted at-bind acquire succeeds; any follow-on self-renew acquire
+	// faults transiently.
+	leases.failAcquireAfter = 1
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "unused" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		CoordinationLeaseStore:  leases,
+		ReplicaID:               "replica-a",
+	})
+
+	st, err := srv.MaterializeDelegatedChild(context.Background(), "acme", "child-renew-blip")
+	if err != nil {
+		t.Fatalf("MaterializeDelegatedChild: %v", err)
+	}
+	if st != session.StateRunning {
+		t.Errorf("returned state = %q, want running", st)
+	}
+	row, err := store.Get(context.Background(), "acme", "child-renew-blip")
+	if err != nil {
+		t.Fatalf("get child row: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("persisted child state = %q, want running", row.State)
+	}
+	// The binding is published even though the follow-on self-renew acquire
+	// faulted: a committed running child is never left without a binding.
+	if _, ok := registry.Get("child-renew-blip"); !ok {
+		t.Fatal("materialize committed the child to running but published no binding (lease-without-binding decoupling)")
+	}
+	// The lease is held by the binding replica.
+	got, gerr := leases.Get(context.Background(), "acme", "child-renew-blip")
+	if gerr != nil {
+		t.Fatalf("coordination lease not held after bind: %v", gerr)
+	}
+	if got.Holder != "replica-a" {
+		t.Fatalf("lease holder = %q, want replica-a (the binding replica)", got.Holder)
+	}
+}
+
 // spec: 8.2 (steps 5-9 delegated-child materialization).
 // diagnosis: materialization claims a pod and assigns a lease exactly once
 // against a freshly committed StateCreated child. Calling it on a row that is
