@@ -183,6 +183,21 @@ type recordingPublisher struct{ published []*podsession.BindResult }
 
 func (p *recordingPublisher) Put(b *podsession.BindResult) { p.published = append(p.published, b) }
 
+// releaseCall records one coordination-lease release the re-adopt issued.
+type releaseCall struct{ tenantID, sessionID, holder string }
+
+// recordingReleaser records the lease releases the re-adopt issues so a test
+// can assert a not-relinquished fence failure releases the still-held lease.
+type recordingReleaser struct {
+	released []releaseCall
+	err      error
+}
+
+func (r *recordingReleaser) Release(_ context.Context, tenantID, sessionID, holder string) error {
+	r.released = append(r.released, releaseCall{tenantID, sessionID, holder})
+	return r.err
+}
+
 // TestReadoptAndFencePublishesOnFenceAck pins the crash-takeover happy path:
 // the re-adopt dials the still-running pod from its persisted SandboxName,
 // fences it, and returns a publish callback that places the re-established
@@ -196,11 +211,15 @@ func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
 	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
 	fencer := &fakeReadoptFencer{}
 	pub := &recordingPublisher{}
+	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, "acme", "s1")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
 	if err != nil {
 		t.Fatalf("readoptAndFence returned error on fence ack: %v", err)
+	}
+	if len(rel.released) != 0 {
+		t.Fatalf("readoptAndFence released the lease on a successful fence: releases=%v", rel.released)
 	}
 	if dialer.gotSandbox != "sbx-1" {
 		t.Fatalf("dialed sandbox %q, want the persisted PodAssignment sbx-1", dialer.gotSandbox)
@@ -231,9 +250,10 @@ func TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure(t *testing.T) {
 	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
 	fencer := &fakeReadoptFencer{relinquished: true, err: errors.New("relinquished")}
 	pub := &recordingPublisher{}
+	rel := &recordingReleaser{}
 	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
-	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, "acme", "s1")
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
 	if err == nil {
 		t.Fatal("readoptAndFence returned nil error on a terminal fence failure")
 	}
@@ -245,6 +265,80 @@ func TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure(t *testing.T) {
 	}
 	if adapterConn.Alive() {
 		t.Fatal("the dialed connection was not closed after the fence failure")
+	}
+	// The Fencer relinquished (released the lease itself), so the re-adopt must
+	// not release it a second time.
+	if len(rel.released) != 0 {
+		t.Fatalf("re-adopt released the lease a relinquished fence already released: releases=%v", rel.released)
+	}
+}
+
+// TestReadoptAndFenceReleasesLeaseOnNonRelinquishFenceFailure pins the
+// corrective recovery path for a best-effort fence failure the Fencer did not
+// relinquish (a coordination_generation read error or a context cancellation
+// leaves the lease held). The re-adopt must release the still-held lease itself
+// so its lapse surfaces for a subsequent sweep to re-adopt the still-running
+// pod. Without the release the lease pins to a replica that never established
+// the serving binding, the next sweep renews it forever, and the
+// fenced-by-nothing pod self-terminates in its hold state at 120s. Pre-fix code
+// discarded the relinquished flag and treated this failure as an
+// already-relinquished terminal failure, so this test fails against it.
+//
+// spec: 10.1 (relinquish-and-backoff; hold state on connection loss), 4.6.1
+// (coordinating replica holds the lease)
+func TestReadoptAndFenceReleasesLeaseOnNonRelinquishFenceFailure(t *testing.T) {
+	adapterConn := dialSeamsAdapter(t)
+	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
+	fencer := &fakeReadoptFencer{relinquished: false, err: errors.New("read coordination_generation")}
+	pub := &recordingPublisher{}
+	rel := &recordingReleaser{}
+	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	if err == nil {
+		t.Fatal("readoptAndFence returned nil error on a non-relinquish fence failure")
+	}
+	if publish != nil {
+		t.Fatal("readoptAndFence returned a publish callback on a fence failure")
+	}
+	if len(pub.published) != 0 {
+		t.Fatal("a binding was published despite the fence failure")
+	}
+	if adapterConn.Alive() {
+		t.Fatal("the dialed connection was not closed after the fence failure")
+	}
+	if len(rel.released) != 1 {
+		t.Fatalf("the still-held lease was not released after a non-relinquish fence failure: releases=%d; the lease would pin to a replica that never bound and the pod would self-terminate in hold state", len(rel.released))
+	}
+	if got := rel.released[0]; got.tenantID != "acme" || got.sessionID != "s1" || got.holder != "replica-A" {
+		t.Fatalf("released lease = %+v, want acme/s1 held by replica-A", got)
+	}
+}
+
+// TestReadoptAndFenceSurfacesReleaseFailureOnNonRelinquishFence pins that when
+// the still-held lease cannot be released after a best-effort fence failure the
+// re-adopt surfaces the release fault to the Sweeper rather than swallowing it,
+// so the fail-closed lapse is not lost silently.
+//
+// spec: 10.1 (relinquish-and-backoff), 4.6.1 (coordinating replica holds the
+// lease)
+func TestReadoptAndFenceSurfacesReleaseFailureOnNonRelinquishFence(t *testing.T) {
+	adapterConn := dialSeamsAdapter(t)
+	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
+	fencer := &fakeReadoptFencer{relinquished: false, err: errors.New("read coordination_generation")}
+	pub := &recordingPublisher{}
+	rel := &recordingReleaser{err: errors.New("redis unavailable")}
+	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	if err == nil {
+		t.Fatal("readoptAndFence returned nil error when the lease release failed")
+	}
+	if publish != nil {
+		t.Fatal("readoptAndFence returned a publish callback on a fence failure")
+	}
+	if len(rel.released) != 1 {
+		t.Fatalf("the re-adopt did not attempt the lease release: releases=%d", len(rel.released))
 	}
 }
 
