@@ -4,6 +4,7 @@ package adapter
 
 import (
 	"context"
+	"errors"
 	"io"
 	"time"
 
@@ -157,6 +158,28 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	completeStatus, completeReason := "ok", ""
 	if s.Lifecycle != nil {
 		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
+			// spec: §4.4 (best-effort eviction snapshot), §4.6.1 — when this
+			// pod is itself terminating (its own SIGTERM/eviction handler has
+			// engaged, so isEvicting is set) and the cooperative quiesce
+			// handshake cannot complete because the runtime's lifecycle
+			// connection has already dropped, the exited runtime is no longer
+			// writing to the still-mounted /workspace emptyDir, so the adapter
+			// archives it best-effort as an ordinary workspace checkpoint
+			// rather than aborting to the minimal-state fallback and losing
+			// the workspace. The dropped-connection test is by the lifecycle
+			// package's connection-state sentinels, not a string match, so a
+			// deadline lapse or any other handshake failure still fails
+			// closed. The gate is the local evicting flag, not the trigger:
+			// the §10.1 gateway-drain barrier drive also carries
+			// TriggerEviction but runs against a still-running pod whose
+			// evicting flag stays false, so a transient drop there keeps
+			// failing closed. No CompleteCheckpoint is registered because the
+			// runtime is gone; the best-effort branch streams the workspace
+			// directly.
+			if s.isEvicting() && lifecycleConnectionDropped(rerr) {
+				_, serr := s.streamChunks(ctx, stream, start, trigger, roots)
+				return serr
+			}
 			return status.Errorf(codes.Internal, "checkpoint quiesce handshake: %v", rerr)
 		}
 		defer func() {
@@ -401,6 +424,20 @@ func grantExpired(grant *adapterv1.CheckpointGrant) bool {
 		return false
 	}
 	return time.Now().After(ts.AsTime())
+}
+
+// lifecycleConnectionDropped reports whether a RequestCheckpoint failure is
+// due to the runtime's lifecycle connection being closed or dropped, as
+// opposed to a deadline lapse, a cancelled context, or any other handshake
+// error. It classifies by the lifecycle package's connection-state sentinels
+// (errLifecycleClosed, errLifecycleNotConnected) rather than by matching the
+// error string, so the best-effort eviction snapshot fires only when the
+// runtime is genuinely gone and every other failure keeps failing closed.
+//
+// spec: §4.4 (best-effort eviction snapshot), §4.6.1 (agent-pod disruption
+// protection).
+func lifecycleConnectionDropped(err error) bool {
+	return errors.Is(err, errLifecycleClosed) || errors.Is(err, errLifecycleNotConnected)
 }
 
 // sleepCtx sleeps for d unless ctx is cancelled first.

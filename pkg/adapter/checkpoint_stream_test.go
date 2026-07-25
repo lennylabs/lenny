@@ -790,3 +790,125 @@ func TestCheckpointStreamReportsObjectStoreRejection_spec_4_4(t *testing.T) {
 		t.Errorf("failed error_code = %q, want SignatureDoesNotMatch", failed.GetErrorCode())
 	}
 }
+
+// evictionCheckpointServer seeds a Full-level adapter whose runtime lifecycle
+// connection is then dropped, so a Checkpoint RPC's cooperative quiesce
+// handshake fails with the lifecycle channel's connection-closed sentinel. It
+// returns the server (so the caller can set the evicting flag) and a connected
+// Checkpoint client. Closing the lifecycle after the handshake models the
+// default sidecar race: the hookless runtime container is SIGTERMed at t=0
+// while the adapter container keeps the /workspace emptyDir mounted.
+func evictionCheckpointServer(t *testing.T, transport adapter.CheckpointTransport) (*adapter.Server, adapterv1.AdapterClient) {
+	t.Helper()
+	s := adapter.New("ckpt-eviction")
+	s.WorkspaceRoot = t.TempDir()
+	s.StagingDir = t.TempDir()
+	s.CheckpointTransport = transport
+	if err := os.WriteFile(filepath.Join(s.WorkspaceRoot, "notes.txt"), []byte("live workspace state"), 0o644); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	// Complete the Full-level handshake, then drop the runtime connection so
+	// the next checkpoint_request cannot be answered.
+	_ = wireLifecycle(t, s)
+	if err := s.Lifecycle.Close(); err != nil {
+		t.Fatalf("drop lifecycle connection: %v", err)
+	}
+	client, _ := adapterClient(t, s)
+	return s, client
+}
+
+// TestEvictionSnapshotBestEffortOnDroppedHandshake_spec_4_4 pins the
+// best-effort eviction snapshot: when the pod is itself terminating (the
+// evicting flag is set) and the cooperative quiesce handshake cannot complete
+// because the runtime's lifecycle connection has dropped, the adapter archives
+// the still-mounted /workspace directly and closes with a Summary rather than
+// aborting the checkpoint. Against the pre-fix adapter, which returned
+// codes.Internal on any RequestCheckpoint failure, the drive observes a
+// gRPC error instead of a Summary and this test fails, so it pins the
+// corrected outcome rather than merely covering the changed lines.
+//
+// spec: §4.4 (best-effort eviction snapshot), §4.6.1 (agent-pod disruption
+// protection).
+func TestEvictionSnapshotBestEffortOnDroppedHandshake_spec_4_4(t *testing.T) {
+	transport := &recordingTransport{}
+	s, client := evictionCheckpointServer(t, transport)
+	s.MarkEvicting()
+
+	stream, err := client.Checkpoint(context.Background())
+	if err != nil {
+		t.Fatalf("open Checkpoint stream: %v", err)
+	}
+	if err := stream.Send(&adapterv1.CheckpointRequest{
+		Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+			CheckpointId:   "gw-ckpt-eviction",
+			Trigger:        adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION,
+			ChunkSizeBytes: 1 << 20,
+		}},
+	}); err != nil {
+		t.Fatalf("send start: %v", err)
+	}
+
+	summary, failed, probe := driveCheckpoint(t, stream, nil)
+	if failed != nil {
+		t.Fatalf("best-effort eviction snapshot failed unexpectedly: %+v", failed)
+	}
+	if summary == nil {
+		t.Fatal("expected a Summary: the terminating pod must archive /workspace best-effort rather than abort on the dropped handshake")
+	}
+	if probe == nil || probe.GetWorkspaceBytes() <= 0 {
+		t.Fatalf("expected a positive workspace probe, got %+v", probe)
+	}
+	if len(transport.allBodies()) == 0 {
+		t.Fatal("best-effort eviction snapshot uploaded no bytes; the /workspace archive was not streamed")
+	}
+}
+
+// TestEvictionSnapshotFailsClosedWhenPodNotTerminating_spec_4_4 pins the two
+// deny cells that share a dropped handshake but no terminating pod: a session
+// whose evicting flag is unset (a still-running pod driven through the §10.1
+// gateway-drain barrier with the eviction trigger, and a periodic checkpoint)
+// keeps failing closed with codes.Internal rather than silently downgrading to
+// a best-effort snapshot. The best-effort path is gated on the pod's own
+// termination, not on the trigger value the barrier drive shares.
+//
+// spec: §4.4 (best-effort eviction snapshot), §4.6.1 (agent-pod disruption
+// protection).
+func TestEvictionSnapshotFailsClosedWhenPodNotTerminating_spec_4_4(t *testing.T) {
+	cases := []struct {
+		name    string
+		trigger adapterv1.CheckpointTrigger
+	}{
+		{"barrier-drain-eviction-trigger", adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_EVICTION},
+		{"periodic", adapterv1.CheckpointTrigger_CHECKPOINT_TRIGGER_PERIODIC},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// The evicting flag stays unset: this pod is not itself terminating.
+			_, client := evictionCheckpointServer(t, &recordingTransport{})
+
+			stream, err := client.Checkpoint(context.Background())
+			if err != nil {
+				t.Fatalf("open Checkpoint stream: %v", err)
+			}
+			if err := stream.Send(&adapterv1.CheckpointRequest{
+				Msg: &adapterv1.CheckpointRequest_Start{Start: &adapterv1.CheckpointStart{
+					CheckpointId:   "gw-ckpt-notterminating",
+					Trigger:        tc.trigger,
+					ChunkSizeBytes: 1 << 20,
+				}},
+			}); err != nil {
+				t.Fatalf("send start: %v", err)
+			}
+
+			// The handler sends the size probe before the quiesce handshake, so
+			// the first frame is the probe and the second Recv carries the
+			// fail-closed status.
+			if _, rerr := stream.Recv(); rerr != nil {
+				t.Fatalf("expected the workspace probe before the handshake, got %v", rerr)
+			}
+			if _, rerr := stream.Recv(); status.Code(rerr) != codes.Internal {
+				t.Fatalf("code = %v, want Internal: a non-terminating pod must fail closed on a dropped handshake", status.Code(rerr))
+			}
+		})
+	}
+}
