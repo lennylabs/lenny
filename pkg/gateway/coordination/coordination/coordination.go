@@ -50,17 +50,27 @@ type Options struct {
 	// then falls back entirely to the in-memory lease cache. spec: §10.1
 	// line 165.
 	Mirror coordlease.Store
+	// InterReplicaAddress is this replica's dialable inter-replica address
+	// (POD_IP plus the inter-replica gRPC port). The sweep records it as
+	// the mirror row's coordinator_address alongside ReplicaID, so a
+	// cross-replica lease handoff overwrites both the coordinator identity
+	// and its dialable address and the §4.6.1 eviction-forward hop can dial
+	// the current coordinator. The composition root supplies it. Empty
+	// leaves coordinator_address unset (the mirror still records identity).
+	// spec: §4.6.1.
+	InterReplicaAddress string
 }
 
 // Sweeper renews the coordination leases for a gateway replica.
 type Sweeper struct {
-	tenants   TenantLister
-	sessions  sessionstore.Store
-	leases    leasestore.LeaseStore
-	mirror    coordlease.Store
-	replicaID string
-	ttl       time.Duration
-	interval  time.Duration
+	tenants             TenantLister
+	sessions            sessionstore.Store
+	leases              leasestore.LeaseStore
+	mirror              coordlease.Store
+	replicaID           string
+	interReplicaAddress string
+	ttl                 time.Duration
+	interval            time.Duration
 }
 
 // NewSweeper returns a Sweeper. Interval defaults to 15s and TTL to
@@ -75,13 +85,14 @@ func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases leases
 		ttl = 4 * interval
 	}
 	return &Sweeper{
-		tenants:   tenants,
-		sessions:  sessions,
-		leases:    leases,
-		mirror:    opts.Mirror,
-		replicaID: opts.ReplicaID,
-		ttl:       ttl,
-		interval:  interval,
+		tenants:             tenants,
+		sessions:            sessions,
+		leases:              leases,
+		mirror:              opts.Mirror,
+		replicaID:           opts.ReplicaID,
+		interReplicaAddress: opts.InterReplicaAddress,
+		ttl:                 ttl,
+		interval:            interval,
 	}
 }
 
@@ -176,10 +187,14 @@ func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string)
 }
 
 // upsertMirror records the §10.1 line 165 barrier-target row for a lease
-// this replica holds. Best-effort: a transient mirror error is logged but
-// does not fail the sweep — the next sweep cycle re-upserts, and the
-// barrier coordinator falls back to the in-memory lease cache when the
-// Postgres read fails anyway.
+// this replica holds. It stamps both the coordinator identity and this
+// replica's dialable inter-replica coordinator_address, so a cross-replica
+// handoff overwrites both and the §4.6.1 eviction-forward hop resolves a
+// routable target for the current coordinator. Best-effort: a transient
+// mirror error is logged but does not fail the sweep — the next sweep cycle
+// re-upserts, and the barrier coordinator falls back to the in-memory lease
+// cache when the Postgres read fails anyway.
+// spec: §10.1 line 165; §4.6.1.
 func (s *Sweeper) upsertMirror(ctx context.Context, tenantID, sessionID string, generation int64) {
 	if s.mirror == nil {
 		return
@@ -188,6 +203,7 @@ func (s *Sweeper) upsertMirror(ctx context.Context, tenantID, sessionID string, 
 		TenantID:               tenantID,
 		SessionID:              sessionID,
 		CoordinatorReplica:     s.replicaID,
+		CoordinatorAddress:     s.interReplicaAddress,
 		CoordinationGeneration: generation,
 	}); err != nil {
 		log.Printf("coordination: mirror upsert for session %s: %v", sessionID, err)

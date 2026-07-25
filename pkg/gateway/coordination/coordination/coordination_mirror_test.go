@@ -121,6 +121,75 @@ func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 — the sweep records this replica's dialable inter-replica
+// address as the mirror row's coordinator_address alongside its identity,
+// so the eviction-forward hop resolves a routable target for the current
+// coordinator.
+func TestSweepRecordsInterReplicaAddressInMirror_spec_4_6_1(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning})
+
+	mirror := coordlease.NewMemoryStore(nil)
+	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, newFakeLeases(), Options{
+		ReplicaID:           "rep-1",
+		InterReplicaAddress: "10.0.0.1:50054",
+		Mirror:              mirror,
+	})
+	if _, err := sw.Sweep(ctx); err != nil {
+		t.Fatalf("Sweep: %v", err)
+	}
+
+	got, found, err := mirror.GetBySession(ctx, "acme", "s1")
+	if err != nil || !found {
+		t.Fatalf("GetBySession: found=%v err=%v, want found, nil", found, err)
+	}
+	if got.CoordinatorReplica != "rep-1" {
+		t.Errorf("coordinator_replica = %q, want rep-1", got.CoordinatorReplica)
+	}
+	if got.CoordinatorAddress != "10.0.0.1:50054" {
+		t.Errorf("coordinator_address = %q, want 10.0.0.1:50054", got.CoordinatorAddress)
+	}
+}
+
+// spec: §4.6.1 — a cross-replica lease handoff overwrites both the
+// coordinator identity and its dialable address in the mirror, so the
+// eviction-forward hop dials the new holder rather than a stale predecessor.
+func TestSweepHandoffOverwritesMirrorAddress_spec_4_6_1(t *testing.T) {
+	ctx := context.Background()
+	sessions := memstore.New()
+	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning})
+
+	mirror := coordlease.NewMemoryStore(nil)
+	// rep-1 coordinates s1 first and records its own address.
+	rep1Leases := newFakeLeases()
+	sw1 := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, rep1Leases, Options{
+		ReplicaID: "rep-1", InterReplicaAddress: "10.0.0.1:50054", Mirror: mirror,
+	})
+	if _, err := sw1.Sweep(ctx); err != nil {
+		t.Fatalf("rep-1 Sweep: %v", err)
+	}
+
+	// The lease lapses and rep-2 acquires it on its own sweep, overwriting
+	// the mirror with its identity and address.
+	rep2Leases := newFakeLeases()
+	sw2 := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, rep2Leases, Options{
+		ReplicaID: "rep-2", InterReplicaAddress: "10.0.0.2:50054", Mirror: mirror,
+	})
+	if _, err := sw2.Sweep(ctx); err != nil {
+		t.Fatalf("rep-2 Sweep: %v", err)
+	}
+
+	got, found, err := mirror.GetBySession(ctx, "acme", "s1")
+	if err != nil || !found {
+		t.Fatalf("GetBySession: found=%v err=%v, want found, nil", found, err)
+	}
+	if got.CoordinatorReplica != "rep-2" || got.CoordinatorAddress != "10.0.0.2:50054" {
+		t.Errorf("mirror after handoff = (%q, %q), want (rep-2, 10.0.0.2:50054)",
+			got.CoordinatorReplica, got.CoordinatorAddress)
+	}
+}
+
 // spec: §10.1 line 165 — a session this replica cannot acquire (held by
 // another replica) is not mirrored under this replica's id.
 func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
