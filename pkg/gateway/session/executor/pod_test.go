@@ -118,6 +118,61 @@ func TestPodExecutorCloseUnboundSession(t *testing.T) {
 	}
 }
 
+// TestPodExecutorEvictStreamReopensOverAFreshBinding pins the co-located
+// coordination seam: after EvictStream drops a session's cached Attach stream,
+// the next Send must Attach over the currently published binding rather than
+// keep serving over the evicted stream. This is what lets a same-replica
+// re-adopt (which republishes a fresh BindResult after a dead-connection
+// eviction) actually reach the pod: streamFor consults e.streams before the
+// registry, so a stale cached stream would otherwise shadow the re-adopt. The
+// test would fail against code whose EvictStream did not delete the cached
+// stream, because the second Send would reuse the first adapter's stream and
+// the second adapter would never receive the envelope.
+// spec: 4.7 (single content consumer per session / Attach content stream), 4.6.1 (coordinating replica holds the lease)
+func TestPodExecutorEvictStreamReopensOverAFreshBinding(t *testing.T) {
+	first := newSlotCapturingAdapter()
+	firstCl := dialSlotCapturingAdapter(t, first)
+	reg := podsession.NewRegistry()
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: firstCl})
+
+	pe := executor.NewPodExecutor(reg, nil)
+	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+		{Role: "user", Content: "hello"},
+	}); err != nil {
+		t.Fatalf("first Send: %v", err)
+	}
+	if _, _, gotEnvelope := first.snapshot(); !gotEnvelope {
+		t.Fatal("first adapter never received the initial envelope")
+	}
+
+	// Evict the cached stream and republish the binding over a second adapter,
+	// mirroring a dead-connection eviction followed by a same-replica re-adopt.
+	pe.EvictStream("sess-pod")
+	second := newSlotCapturingAdapter()
+	secondCl := dialSlotCapturingAdapter(t, second)
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", Adapter: secondCl})
+
+	if _, err := pe.Send(context.Background(), "sess-pod", []executor.Message{
+		{Role: "user", Content: "again"},
+	}); err != nil {
+		t.Fatalf("Send after eviction: %v", err)
+	}
+	if _, _, gotEnvelope := second.snapshot(); !gotEnvelope {
+		t.Error("re-adopt binding never received an envelope; the evicted stream shadowed the fresh binding")
+	}
+}
+
+// TestPodExecutorEvictStreamOnAnUnstreamedSession confirms EvictStream is a
+// safe no-op for a session that never opened an Attach stream, matching the
+// teardown Release performs on an unbound session, so a sweep that evicts a
+// binding whose stream was never opened does not panic or error.
+// spec: 4.7 (single content consumer per session / Attach content stream), 4.6.1 (coordinating replica holds the lease)
+func TestPodExecutorEvictStreamOnAnUnstreamedSession(t *testing.T) {
+	pe := executor.NewPodExecutor(podsession.NewRegistry(), nil)
+	// No panic and no state to drop: the session was never streamed.
+	pe.EvictStream("sess-never-streamed")
+}
+
 // slotCapturingAdapter is a minimal AdapterServer that records the §6.4
 // slotId the gateway's PodExecutor stamped on the Attach binding frame and
 // on the message envelope it forwarded over the stream, so a test can
