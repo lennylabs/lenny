@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
@@ -216,6 +217,60 @@ func TestMaterializeDelegatedChildTransitionsToRunning_spec_8_2(t *testing.T) {
 	}
 	if string(got) != "# delegated" {
 		t.Errorf("materialized file = %q, want %q", got, "# delegated")
+	}
+}
+
+// spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
+// coordination lease).
+// diagnosis: the delegated-child materialize acquires the coordination lease
+// ahead of the running-commit, so a store.Update-to-running failure after that
+// acquire must release the coordination lease as well as the bound pod, or the
+// failed commit strands a held lease with no binding for a session that will
+// never serve. The child row stays in StateCreated (non-terminal), so a
+// stranded lease is durable: a peer Sweeper's priorHolder renew branch would
+// keep renewing it. A failure here means the lease holder and the binding
+// holder diverged, the exact decoupling co-location removes.
+func TestMaterializeDelegatedChildPersistFailureReleasesCoordinationLease(t *testing.T) {
+	base := memstore.New()
+	store := &updateFaultStore{Store: base}
+	seedDelegatedChild(t, store, "child-lease-persist", "")
+	cluster, dial, _ := materializeCluster(t)
+	registry := podsession.NewRegistry()
+	binder := podBindBinder(cluster, dial)
+	leases := newComponentLeaseStore()
+	srv := sessionserver.New(store, sessionserver.Options{
+		IDFunc:                  func() string { return "unused" },
+		DefaultIsolationProfile: isolation.ProfileSandboxed,
+		PodBinder:               binder,
+		PodRegistry:             registry,
+		AgentNamespace:          podTestNS,
+		CoordinationLeaseStore:  leases,
+		ReplicaID:               "replica-a",
+	})
+
+	// Fail the terminal transition-persist Update: the claim, the launch, and the
+	// at-bind coordination acquire all succeed, then the running-commit fails.
+	store.fail = true
+	_, err := srv.MaterializeDelegatedChild(context.Background(), "acme", "child-lease-persist")
+	if err == nil {
+		t.Fatal("MaterializeDelegatedChild = nil, want a transition-persist failure")
+	}
+	// The coordination lease acquired ahead of the running-commit was released:
+	// a failed commit leaves neither a binding nor a held lease.
+	if _, gerr := leases.Get(context.Background(), "acme", "child-lease-persist"); !errors.Is(gerr, leasestore.ErrNotFound) {
+		t.Fatalf("coordination lease still held after the failed running-commit (stranded lease with no binding): err=%v", gerr)
+	}
+	// No registry entry leaked either.
+	if registry.Len() != 0 {
+		t.Errorf("registry holds %d bindings, want 0", registry.Len())
+	}
+	store.fail = false
+	row, err := store.Get(context.Background(), "acme", "child-lease-persist")
+	if err != nil {
+		t.Fatalf("get child row: %v", err)
+	}
+	if row.State != session.StateCreated {
+		t.Errorf("child state = %q, want created (non-running after the failed transition)", row.State)
 	}
 }
 

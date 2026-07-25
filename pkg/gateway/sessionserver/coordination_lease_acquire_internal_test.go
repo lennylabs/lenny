@@ -234,6 +234,60 @@ func TestRegisterBinding_AcquiresThenPublishes(t *testing.T) {
 // spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
 // coordination lease)
 //
+// Regression for the running-commit rollback: releaseCoordinationLease is
+// the counterpart to the at-bind acquire, so a bind that acquires the
+// lease and then fails its running-commit can drop the just-acquired lease
+// and leave neither a binding nor a held lease. The helper is
+// holder-checked (a peer's lease is untouched) and no-ops when the
+// leaseStore or replicaID is unset. Against the pre-fix code, which had no
+// release counterpart, a failed running-commit stranded this replica's
+// lease with no binding.
+func TestReleaseCoordinationLease_DropsOwnLeaseHolderChecked(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("drops the lease this replica holds", func(t *testing.T) {
+		leases := newFakeLeaseStore()
+		srv, _, _ := leaseTestServer(t, leases, "replica-a")
+		if err := srv.acquireCoordinationLease(ctx, "acme", "sess-1"); err != nil {
+			t.Fatalf("acquire: %v", err)
+		}
+		srv.releaseCoordinationLease(ctx, "acme", "sess-1")
+		if _, err := leases.Get(ctx, "acme", "sess-1"); !errors.Is(err, leasestore.ErrNotFound) {
+			t.Fatalf("lease still held after release: err=%v", err)
+		}
+	})
+
+	t.Run("holder-checked: a peer's lease is untouched", func(t *testing.T) {
+		leases := newFakeLeaseStore()
+		if _, err := leases.Acquire(ctx, "acme", "sess-2", "replica-b", time.Minute); err != nil {
+			t.Fatalf("preset foreign holder: %v", err)
+		}
+		srv, _, _ := leaseTestServer(t, leases, "replica-a")
+		srv.releaseCoordinationLease(ctx, "acme", "sess-2")
+		got, err := leases.Get(ctx, "acme", "sess-2")
+		if err != nil {
+			t.Fatalf("foreign lease vanished on a holder-mismatched release: %v", err)
+		}
+		if got.Holder != "replica-b" {
+			t.Fatalf("lease holder = %q, want replica-b (unchanged)", got.Holder)
+		}
+	})
+
+	t.Run("disabled posture no-ops", func(t *testing.T) {
+		srv, _, _ := leaseTestServer(t, nil, "replica-a")
+		srv.releaseCoordinationLease(ctx, "acme", "sess-3") // nil leaseStore: must not panic
+		leases := newFakeLeaseStore()
+		srv2, _, _ := leaseTestServer(t, leases, "")
+		srv2.releaseCoordinationLease(ctx, "acme", "sess-3") // empty replicaID: must not touch the store
+		if len(leases.holders) != 0 {
+			t.Fatalf("empty replicaID must not touch the leaseStore, holders=%v", leases.holders)
+		}
+	})
+}
+
+// spec: 4.6.1 (coordinating replica holds the lease), 10.1 (per-session
+// coordination lease)
+//
 // In the dev / in-memory posture (no leaseStore wired) registerBinding
 // publishes the binding as before, so the executor still serves.
 func TestRegisterBinding_NoLeaseStorePublishes(t *testing.T) {

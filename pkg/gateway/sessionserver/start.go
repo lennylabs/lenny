@@ -866,7 +866,13 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		// spec: §7.1 line 28 — persistence failure after the bind must
 		// roll back the claimed pod so the gateway does not leak a pod
 		// or its credential lease past a "no session_id returned"
-		// failure.
+		// failure. spec: §4.6.1, §10.1 — the coordination lease was
+		// acquired above ahead of this commit, so release it too, or the
+		// failed commit strands a held lease with no binding and decouples
+		// the lease holder from the binding holder co-location unifies.
+		if bound != nil {
+			s.releaseCoordinationLease(r.Context(), row.TenantID, row.ID)
+		}
 		s.rollbackBinding(r.Context(), bound)
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
 		return level, "", false
@@ -1041,9 +1047,14 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 
 	// spec: §8.2 step 9 / §8.8 — transition the existing StateCreated row to
 	// running via store.Update (no second store.Create). A persist failure
-	// after a successful launch releases the bound pod and its assigned lease
-	// via rollbackBinding before registerBinding runs, so no pod, lease, or
-	// registry entry leaks past the failed write.
+	// after a successful launch releases the bound pod and its assigned
+	// credential lease via rollbackBinding before registerBinding runs, so no
+	// pod, credential lease, or registry entry leaks past the failed write.
+	// spec: §4.6.1, §10.1 — it also releases the coordination lease acquired
+	// above ahead of this commit; the child row stays in StateCreated
+	// (non-terminal), so without the release a peer Sweeper's priorHolder
+	// renew branch would keep renewing the orphaned lease for a session that
+	// will never serve, holding a lease with no binding.
 	updated, err := s.store.Update(ctx, tenantID, childID, func(rr *sessionstore.Session) error {
 		transitionStart(rr)
 		if claimed {
@@ -1061,6 +1072,9 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		return nil
 	})
 	if err != nil {
+		if bound != nil {
+			s.releaseCoordinationLease(ctx, tenantID, childID)
+		}
 		s.rollbackBinding(ctx, bound)
 		return "", fmt.Errorf("transition delegated child %s to running: %w", childID, err)
 	}
@@ -2861,6 +2875,38 @@ func (s *Server) acquireCoordinationLease(ctx context.Context, tenantID, session
 		return fmt.Errorf("acquire coordination lease for session %s: %w", sessionID, err)
 	}
 	return nil
+}
+
+// releaseCoordinationLease releases the §10.1 per-session coordination
+// lease this replica acquired at bind, so a running-commit that fails
+// after a successful at-bind acquire leaves neither a published binding
+// nor a held lease. It is the rollback counterpart to
+// acquireCoordinationLease and runs alongside rollbackBinding on the
+// early-commit paths (single-call /start store.Create, delegated-child
+// materialize store.Update): those paths acquire the lease ahead of the
+// running-commit, so a commit failure would otherwise strand a held lease
+// with no binding, decoupling the lease holder from the binding holder
+// that §4.6.1 co-location keeps unified. On the durable delegated-child
+// StateCreated row the strand is not self-healing (a peer Sweeper's
+// priorHolder-renew branch keeps renewing the orphaned lease), so the
+// explicit release is required rather than left to the 60s TTL.
+//
+// Release is holder-checked and Lua-atomic (leasestore.go), so it is a
+// no-op when this replica does not hold the lease. A nil leaseStore or an
+// empty replicaID (the in-memory / dev posture) makes it a no-op. The
+// release is best-effort: a Redis error at rollback is logged and
+// swallowed, because the 60s lease TTL surfaces the lease for re-adoption
+// even if the release write is lost.
+//
+// spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
+// coordination lease).
+func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, sessionID string) {
+	if s.leaseStore == nil || s.replicaID == "" {
+		return
+	}
+	if err := s.leaseStore.Release(ctx, tenantID, sessionID, s.replicaID); err != nil {
+		log.Printf("sessionserver: release coordination lease for session %s: %v", sessionID, err)
+	}
 }
 
 // publishWorkspaceWarnings emits one §14 `workspace_plan_warning`
