@@ -600,9 +600,15 @@ completion, dispatch failure, or request timeout, the pod and its
 [Section 4.9](04_system-components.md#49-credential-leasing-service) lease are
 released synchronously, recording the completed or failed
 [Section 6.2](06_warm-pod-model.md#62-pod-state-machine) terminal disposition,
-before the response returns. `OpenResponsesAdapter` continuation
-(`previous_response_id`) re-claims a fresh pod per request and does not retain a
-pod bind across calls.
+before the response returns. `OpenResponsesAdapter` continuation (`previous_response_id`) re-claims a fresh
+pod per request and does not retain a pod bind across calls. On a continuation
+the gateway resolves `previous_response_id` to its prior response and applies
+that response's prior conversation context ahead of the new input before
+dispatching it onto the freshly-claimed pod, so the runtime continues the
+conversation despite the fresh pod's empty runtime memory. The continuation
+lineage is persisted, so `GET /v1/responses/{id}` echoes the originating
+`previous_response_id`. An unknown or cross-tenant `previous_response_id` is
+rejected fail-closed as a native `404`, with no rehydration and no dispatch.
 An implicit session record is created per request for audit and billing.
 
 ### 15.1 REST API
