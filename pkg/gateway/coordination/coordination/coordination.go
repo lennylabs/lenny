@@ -32,6 +32,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
+// errHandoffSessionTerminal signals that the session became terminal between
+// the sweep's List snapshot and the atomic handoff bump, so the handoff is
+// refused rather than resurrecting a session no longer coordinated by anyone.
+// A terminal session is no longer coordinated by any replica, so its
+// coordination_generation must not advance on a would-be takeover.
+// spec: §10.1 (a terminal session is no longer coordinated by anyone).
+var errHandoffSessionTerminal = errors.New("coordination: session went terminal before the handoff bump")
+
 // TenantLister enumerates the tenants whose sessions are swept.
 type TenantLister interface {
 	ListTenants(ctx context.Context) ([]string, error)
@@ -363,23 +371,27 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 			if !bound && priorHolder != s.replicaID {
 				generation := s.RecordHandoff(ctx, tenantID, row.ID)
 				if generation == 0 {
-					// The generation bump failed transiently (the store write
-					// errored). §10.1 requires the new coordinator to fence the
-					// pod to the post-handoff generation, so a failed bump must
-					// restart the handoff from lease acquisition rather than
-					// drive CoordinatorFence at the baseline generation 0, which
-					// would record a generation below the pod's current fenced
-					// value and undermine the monotonic-generation split-brain
-					// guard. Release the just-acquired lease and skip the
-					// re-adopt: the next sweep re-observes the unheld lapsed
-					// lease and re-runs the full bump-then-fence takeover from a
-					// fresh handoff observation once the store recovers. Not
-					// self-holding the lease across sweeps is what keeps the
-					// takeover predicate (!bound && priorHolder != s.replicaID)
-					// able to fire again.
+					// The generation bump did not land: either the store write
+					// errored transiently, or the session raced to terminal
+					// between the List snapshot and the atomic bump so the
+					// handoff was refused (RecordHandoff). §10.1 requires the new
+					// coordinator to fence the pod to the post-handoff
+					// generation, so a failed bump must restart the handoff from
+					// lease acquisition rather than drive CoordinatorFence at the
+					// baseline generation 0, which would record a generation
+					// below the pod's current fenced value and undermine the
+					// monotonic-generation split-brain guard. Release the
+					// just-acquired lease and skip the re-adopt so a terminal
+					// session is never resurrected, and a transient failure
+					// re-observes the unheld lapsed lease on the next sweep and
+					// re-runs the full bump-then-fence takeover once the store
+					// recovers. Not self-holding the lease across sweeps is what
+					// keeps the takeover predicate (!bound && priorHolder !=
+					// s.replicaID) able to fire again.
 					// spec: §10.1 (CoordinatorFence to the post-handoff
-					// generation; a failed generation bump restarts the handoff
-					// from lease acquisition).
+					// generation; a failed or refused generation bump restarts
+					// the handoff from lease acquisition; a session that goes
+					// terminal during takeover is not resurrected).
 					if err := s.leases.Release(ctx, tenantID, row.ID, s.replicaID); err != nil {
 						log.Printf("coordination: release lease after failed generation bump for session %s: %v", row.ID, err)
 					}
@@ -435,13 +447,30 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 // re-adopt, so the next sweep re-observes the unheld lease and re-runs the
 // bump-then-fence takeover from a fresh handoff observation rather than
 // fencing the pod at the baseline generation 0.
-// spec: §4.2 line 156.
+//
+// The bump is refused under the same atomic read when the session has become
+// terminal since the sweep's List snapshot observed it running. A terminal
+// session is no longer coordinated by any replica, so a takeover that raced a
+// concurrent terminal transition must not bump the generation or re-adopt the
+// pod; the refusal returns 0 so the crash-takeover caller releases the
+// just-acquired lease and skips the re-adopt exactly as it does for a transient
+// error, and the next sweep short-circuits the now-terminal row.
+// spec: §4.2 line 156, §10.1 (a terminal session is no longer coordinated by
+// anyone; a session that goes terminal during takeover is not resurrected).
 func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string) int64 {
 	updated, err := s.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+		if session.IsTerminal(row.State) {
+			return errHandoffSessionTerminal
+		}
 		row.CoordinationGeneration++
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, errHandoffSessionTerminal) {
+			// Not an error condition: the session raced to terminal, so the
+			// handoff is correctly abandoned without resurrecting it.
+			return 0
+		}
 		log.Printf("coordination: bump coordination_generation for session %s: %v", sessionID, err)
 		return 0
 	}

@@ -295,6 +295,40 @@ func TestSweeperContract(t *testing.T) {
 		}
 	})
 
+	// spec: §10.1 (a terminal session is no longer coordinated by anyone; a
+	// session that goes terminal during takeover is not resurrected), §4.2
+	// line 156 — a session that races to terminal between the sweep's List
+	// snapshot and the atomic handoff bump must not have its
+	// coordination_generation advanced. RecordHandoff re-reads the row under
+	// the same atomic Update and refuses the bump on a terminal state, so the
+	// takeover is abandoned rather than resurrecting the session. Pre-guard
+	// code bumped unconditionally and would report generation 1 here.
+	t.Run("RecordHandoff refuses to bump a session that went terminal", func(t *testing.T) {
+		run := uniq(t)
+		sessions := memstore.New()
+		sessID := run + "-terminal-handoff"
+		// Seed running (the state the sweep's List would have observed), then
+		// transition it terminal before the handoff bump runs, modeling the
+		// concurrent terminal transition during a takeover.
+		seedSession(t, sessions, "acme", sessID, session.StateRunning)
+		if _, err := sessions.Update(ctx, "acme", sessID, func(row *sessionstore.Session) error {
+			row.State = session.StateCompleted
+			return nil
+		}); err != nil {
+			t.Fatalf("transition session terminal: %v", err)
+		}
+
+		sw := newSweeper(sessions, []string{"acme"}, "replica-B")
+		if gen := sw.RecordHandoff(ctx, "acme", sessID); gen != 0 {
+			t.Errorf("RecordHandoff on a terminal session returned generation %d, want 0 (bump refused)", gen)
+		}
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 0 {
+			t.Errorf("terminal session CoordinationGeneration = %d, want 0 (never bumped by a raced takeover)",
+				got.CoordinationGeneration)
+		}
+	})
+
 	// spec: §4.2 line 156, §10.1 (coordinator handoff re-adopts the
 	// still-running pod) — a fresh acquisition of a running-pod orphan by a
 	// replica that holds no binding for it is a crash takeover (the prior
