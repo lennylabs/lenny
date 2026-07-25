@@ -5,11 +5,13 @@
 // Tier-8 chaos coverage for the §10.1 coordinator failover under an injected
 // replica crash. Two replicas share a real Redis lease store and the shared
 // session store backed by the production Postgres pgstore, and a real
-// in-process §4.7 adapter models the still-running pod. The crash is injected
-// as a real Redis lease lapse: the coordinating
-// replica's lease is acquired with a short TTL and left to expire, so the
-// survivor's Sweeper observes a genuinely lapsed lease rather than an explicit
-// release. The suite asserts the survivor adopts the lapsed lease, re-adopts
+// in-process §4.7 adapter models the still-running pod. The coordinating replica
+// runs the production Sweeper: it binds the session and holds the real Redis
+// lease at generation 1 on a short TTL through its own sweep. The crash is
+// injected by stopping that replica and letting its short-TTL lease lapse in
+// real Redis, so the survivor's Sweeper observes a genuinely lapsed lease left
+// by a real peer coordinator rather than a directly written one. The suite
+// asserts the survivor adopts the lapsed lease, re-adopts
 // the pod fence-first, publishes the serving binding on the acknowledgement and
 // holds the connection so an idle taken-over session stays coordinated, that a
 // dead held connection is evicted and re-adopted and re-fenced before the pod's
@@ -118,22 +120,27 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 			t.Fatalf("seed: %v", err)
 		}
 		pod := coordfixture.StartPod(t, sessID)
+
+		// replica-1 is a real coordinating gateway replica whose Sweeper binds
+		// the session and holds the real Redis lease at generation 1 on a short
+		// TTL. Inject the crash by stopping it and letting the short-TTL lease
+		// lapse in real Redis, so the survivor observes a genuinely lapsed lease
+		// left by a real peer coordinator.
+		coordinator := coordfixture.NewReplica("replica-1", tenant, pod, sessions, leases, time.Second, sessID)
 		if _, err := pod.Fence(ctx, 1); err != nil {
 			t.Fatalf("replica-1 initial fence: %v", err)
 		}
-
-		// Inject the crash: replica-1 holds the lease on a short TTL and dies,
-		// so the lease lapses in real Redis.
-		if _, err := leases.Acquire(ctx, tenant, sessID, "replica-1", time.Second); err != nil {
-			t.Fatalf("replica-1 acquire: %v", err)
+		if _, err := coordinator.Sweeper.Sweep(ctx); err != nil {
+			t.Fatalf("replica-1 coordinating sweep: %v", err)
+		}
+		if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-1" {
+			t.Fatalf("replica-1 did not hold the lease before the crash: %+v err=%v", lease, err)
 		}
 		waitForLapse(t, leases, tenant, sessID)
 
-		bound := coordfixture.NewBindings()
-		readopter := &coordfixture.FenceReadopter{Pod: pod, Bindings: bound, Leases: leases, ReplicaID: "replica-2", TenantID: tenant}
-		sw := newSurvivor(tenant, sessions, bound, readopter, nil)
+		survivor := coordfixture.NewReplica("replica-2", tenant, pod, sessions, leases, 30*time.Second)
 
-		if held, err := sw.Sweep(ctx); err != nil || held != 1 {
+		if held, err := survivor.Sweeper.Sweep(ctx); err != nil || held != 1 {
 			t.Fatalf("takeover Sweep: held=%d err=%v, want 1", held, err)
 		}
 		got, _ := sessions.Get(ctx, tenant, sessID)
@@ -150,8 +157,8 @@ func TestCoordinatorFailoverCrashTakeover_spec_10_1(t *testing.T) {
 		// coordinated: the binding stays published and its channel alive
 		// without any request, so the pod does not re-enter hold state and
 		// self-terminate. spec: §10.1 (hold state on connection loss).
-		if !bound.Bound(sessID) || !bound.ConnAlive(sessID) {
-			t.Errorf("takeover did not hold the connection for the idle session (bound=%v alive=%v)", bound.Bound(sessID), bound.ConnAlive(sessID))
+		if !survivor.Bindings.Bound(sessID) || !survivor.Bindings.ConnAlive(sessID) {
+			t.Errorf("takeover did not hold the connection for the idle session (bound=%v alive=%v)", survivor.Bindings.Bound(sessID), survivor.Bindings.ConnAlive(sessID))
 		}
 		// The stale prior coordinator's RPC at the pre-handoff generation 1 is
 		// rejected now that the generation advanced to 2.

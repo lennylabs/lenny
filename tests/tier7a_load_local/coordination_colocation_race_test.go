@@ -6,11 +6,15 @@
 // a concurrent coordinator handoff. Two replicas share an in-process
 // thread-safe lease store and session store, a real in-process §4.7 adapter
 // models the still-running pod, and the survivor's Sweeper runs concurrently
-// with request-path probes and a terminal transition. The test asserts, under
-// -race, that the lease holder holds the binding it re-established at takeover,
-// that a request landing in the pre-publish window fails closed rather than
-// serving over an unpublished binding, and that a session going terminal during
-// takeover is not resurrected.
+// with request-path probes. A second session is seeded terminal with a pod
+// still assigned, so the survivor's takeover sweep enumerates it every pass but
+// its §10.1 terminal-skip gate must exclude it from adoption. The test asserts,
+// under -race, that the lease holder holds the binding it re-established at
+// takeover, that a request landing in the pre-publish window fails closed rather
+// than serving over an unpublished binding, and that the terminal session is
+// never re-adopted (its readopter is never called and its
+// coordination_generation is never bumped), so a terminal session is not
+// resurrected by the takeover.
 package tier7a_load_local_test
 
 import (
@@ -114,13 +118,19 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("seed live session: %v", err)
 	}
-	// A second running-pod session that goes terminal during the takeover; the
-	// survivor must not resurrect it.
+	// A second session that is already terminal yet still carries a pod
+	// assignment (a running pod whose lifecycle ended before this window). It is
+	// enumerated by every survivor sweep, but the §10.1 terminal-skip gate must
+	// exclude a terminal session from adoption so the survivor never resurrects
+	// it. Seeding it terminal (rather than forcing the readopter to relinquish)
+	// pins the gate directly: an adoptable predicate that wrongly admitted a
+	// terminal state would call the readopter and bump the generation, which the
+	// assertions below reject.
 	if err := sessions.Create(ctx, sessionstore.Session{
-		ID: terminating, TenantID: tenant, State: session.StateRunning,
+		ID: terminating, TenantID: tenant, State: session.StateCompleted,
 		PodAssignment: "pod-" + terminating, CreatedAt: time.Unix(1, 0).UTC(),
 	}); err != nil {
-		t.Fatalf("seed terminating session: %v", err)
+		t.Fatalf("seed terminal session: %v", err)
 	}
 
 	pod := coordfixture.StartPod(t, live)
@@ -133,11 +143,6 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 	bound2 := coordfixture.NewBindings()
 	readopter := &coordfixture.FenceReadopter{
 		Pod: pod, Bindings: bound2, Leases: leases, ReplicaID: "replica-2", TenantID: tenant,
-		// The survivor must never re-establish serving for the session that
-		// goes terminal; should a sweep transiently adopt it while it is still
-		// running, the re-adopt relinquishes the lease rather than fencing the
-		// live session's pod, so the terminal session ends unbound and unleased.
-		Fail: map[string]bool{terminating: true},
 	}
 	sweep2 := coordination.NewSweeper(staticTenants{tenant}, sessions, leases, coordination.Options{
 		ReplicaID: "replica-2",
@@ -203,18 +208,6 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 		}()
 	}
 
-	// Concurrently transition the second session to terminal during takeover.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		if _, err := sessions.Update(ctx, tenant, terminating, func(row *sessionstore.Session) error {
-			row.State = session.StateCompleted
-			return nil
-		}); err != nil {
-			t.Errorf("terminate second session: %v", err)
-		}
-	}()
-
 	// Let the concurrent window run, then quiesce.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) && !bound2.Bound(live) {
@@ -240,8 +233,19 @@ func TestColocationInvariantUnderConcurrentHandoff_spec_10_1(t *testing.T) {
 		t.Fatalf("coordination_generation = %d, want 2 (handoff bumped once)", got.CoordinationGeneration)
 	}
 
-	// The terminal session was not resurrected: never adopted, never fenced,
-	// no lease.
+	// The terminal session was not resurrected: the survivor's takeover sweep
+	// enumerated it every pass but its terminal-skip gate excluded it, so the
+	// readopter was never called for it, its coordination_generation was never
+	// bumped, and it acquired neither a lease nor a binding. Asserting the
+	// readopter call count and the generation directly pins the terminal gate,
+	// rather than inferring non-resurrection from a relinquished lease.
+	if n := readopter.CalledFor(terminating); n != 0 {
+		t.Errorf("readopter called %d times for the terminal session, want 0 (terminal session must not be adopted)", n)
+	}
+	gotTerm, _ := sessions.Get(ctx, tenant, terminating)
+	if gotTerm.CoordinationGeneration != 0 {
+		t.Errorf("terminal session coordination_generation = %d, want 0 (never adopted/bumped)", gotTerm.CoordinationGeneration)
+	}
 	if _, ok := leases.holder(tenant, terminating); ok {
 		t.Errorf("terminal session acquired a coordination lease, want none (not resurrected)")
 	}

@@ -24,6 +24,7 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -32,9 +33,17 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
+
+// Tenants is a coordination.TenantLister over a fixed set of tenant ids.
+type Tenants []string
+
+// ListTenants returns the fixed tenant set.
+func (t Tenants) ListTenants(context.Context) ([]string, error) { return []string(t), nil }
 
 // fakeRuntime is the minimal RuntimeProcess the adapter's StartSession needs.
 // It runs no real process; the fixture exercises the coordinator generation
@@ -199,9 +208,10 @@ type FenceReadopter struct {
 	TenantID  string
 	Fail      map[string]bool
 
-	mu    sync.Mutex
-	calls int
-	gens  []int64
+	mu       sync.Mutex
+	calls    int
+	gens     []int64
+	sessions []string
 }
 
 // ReadoptAndFence fences the pod to the post-handoff generation and returns a
@@ -211,6 +221,7 @@ func (r *FenceReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionI
 	r.mu.Lock()
 	r.calls++
 	r.gens = append(r.gens, generation)
+	r.sessions = append(r.sessions, sessionID)
 	r.mu.Unlock()
 
 	if r.Fail[sessionID] {
@@ -244,4 +255,62 @@ func (r *FenceReadopter) Generations() []int64 {
 	out := make([]int64, len(r.gens))
 	copy(out, r.gens)
 	return out
+}
+
+// CalledFor reports how many times ReadoptAndFence ran for the session. It
+// lets a test assert a terminal session was never adopted (re-fenced) by the
+// survivor's takeover sweep, so the §10.1 terminal-skip gate is pinned directly
+// rather than inferred from a relinquished lease.
+// spec: §10.1 (a terminal session is no longer coordinated by anyone).
+func (r *FenceReadopter) CalledFor(sessionID string) int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n := 0
+	for _, s := range r.sessions {
+		if s == sessionID {
+			n++
+		}
+	}
+	return n
+}
+
+// Replica is a real gateway coordination replica: the production Sweeper wired
+// over a shared session store and lease store, its own per-replica binding
+// registry, and its own fence readopter over a shared pod. Standing up two
+// Replicas over one Redis lease store and one Postgres session store makes a
+// coordinator handoff a genuine cross-replica lease race and generation fence
+// driven by the production Sweeper on both sides, rather than a directly modeled
+// lease write. The coordinating replica binds the session (holds the lease at
+// the at-bind generation through its own sweep); the survivor's Sweeper adopts
+// the lapsed lease once the coordinator crashes.
+// spec: §4.6.1 (coordinating replica holds the lease), §10.1 (coordinator
+// handoff; generation fence).
+type Replica struct {
+	ID        string
+	Sweeper   *coordination.Sweeper
+	Bindings  *Bindings
+	Readopter *FenceReadopter
+}
+
+// NewReplica builds a real coordination Replica for tenantID over the shared
+// session store, lease store, and pod. The sessions named in bind are published
+// on the replica's binding registry so a coordinating replica holds the binding
+// the §4.6.1 co-location invariant requires, and its sweep renews (rather than
+// adopts) those leases. ttl is the lease lifetime; a short ttl on a coordinating
+// replica lets a test inject a crash as a genuine Redis lease lapse once the
+// replica stops sweeping.
+func NewReplica(id, tenantID string, pod *Pod, sessions sessionstore.Store, leases leasestore.LeaseStore, ttl time.Duration, bind ...string) *Replica {
+	bindings := NewBindings()
+	for _, s := range bind {
+		bindings.Publish(s)
+	}
+	readopter := &FenceReadopter{Pod: pod, Bindings: bindings, Leases: leases, ReplicaID: id, TenantID: tenantID}
+	sw := coordination.NewSweeper(Tenants{tenantID}, sessions, leases, coordination.Options{
+		ReplicaID: id,
+		TTL:       ttl,
+		Interval:  time.Hour,
+		Bindings:  bindings,
+		Readopter: readopter,
+	})
+	return &Replica{ID: id, Sweeper: sw, Bindings: bindings, Readopter: readopter}
 }
