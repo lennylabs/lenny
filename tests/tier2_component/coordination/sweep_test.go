@@ -93,6 +93,24 @@ func (r *fakeReadopter) callCount() int {
 	return r.calls
 }
 
+// failingUpdateStore wraps a session store and fails its first failUpdates
+// Update calls, so a component test can model a transient Postgres error
+// during the crash-takeover generation bump against the real Redis lease
+// store. Every other method delegates to the wrapped store, and Update falls
+// through once the failure budget is spent.
+type failingUpdateStore struct {
+	sessionstore.Store
+	failUpdates int
+}
+
+func (s *failingUpdateStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if s.failUpdates > 0 {
+		s.failUpdates--
+		return sessionstore.Session{}, errors.New("transient store error during generation bump")
+	}
+	return s.Store.Update(ctx, tenantID, id, mutate)
+}
+
 // staticLister is a coordination.TenantLister over a fixed slice.
 type staticLister []string
 
@@ -406,6 +424,78 @@ func TestSweeperContract(t *testing.T) {
 	// re-adopt inside the window and re-bump the generation every sweep. The
 	// generation increment stays in the store; after the window elapses the
 	// session is re-adopted.
+	// spec: §10.1 (coordinator handoff fences the pod to the post-handoff
+	// generation; a failed generation bump restarts the handoff from lease
+	// acquisition), §4.2 line 156. When the RecordHandoff store write fails
+	// transiently the sweeper must not drive the re-adopt fence at the
+	// baseline generation 0: it releases the just-acquired real Redis lease
+	// and skips the re-adopt, so the next sweep re-observes the unheld lapsed
+	// lease and re-runs the full bump-then-fence takeover once the store
+	// recovers, fencing to the real post-handoff generation.
+	//
+	// Regression: the pre-fix sweeper proceeded to ReadoptAndFence with the 0
+	// RecordHandoff returns on a store error, driving the fence at generation
+	// 0 and self-holding the lease so the takeover never re-ran and the bump
+	// was lost. This asserts no fence on the failed bump, the lease released
+	// rather than self-held, and the eventual fence carrying the post-bump
+	// generation.
+	t.Run("failed generation bump skips fence and releases lease", func(t *testing.T) {
+		run := uniq(t)
+		sessID := run + "-gen-bump-fail"
+		base := memstore.New()
+		seedSession(t, base, "acme", sessID, session.StateRunning)
+		sessions := &failingUpdateStore{Store: base, failUpdates: 1}
+
+		bindings := newFakeBindingReg()
+		readopter := &fakeReadopter{leases: leases, replicaID: "replica-1", bindings: bindings}
+		sw := coordination.NewSweeper(staticLister([]string{"acme"}), sessions, leases, coordination.Options{
+			ReplicaID: "replica-1",
+			TTL:       30 * time.Second,
+			Interval:  time.Hour,
+			Bindings:  bindings,
+			Readopter: readopter,
+		})
+
+		// First sweep: the generation bump fails, so no fence is driven and
+		// the just-acquired lease is released rather than self-held.
+		held, err := sw.Sweep(ctx)
+		if err != nil {
+			t.Fatalf("first Sweep: %v", err)
+		}
+		if held != 0 {
+			t.Fatalf("held = %d, want 0 (lease released after the failed bump)", held)
+		}
+		if readopter.callCount() != 0 {
+			t.Fatalf("ReadoptAndFence calls = %d, want 0 (no fence at a baseline generation)", readopter.callCount())
+		}
+		if _, err := leases.Get(ctx, "acme", sessID); err == nil {
+			t.Fatalf("lease still held after a failed generation bump, want released")
+		}
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 0 {
+			t.Fatalf("generation = %d, want 0 (the failed bump did not land)", got.CoordinationGeneration)
+		}
+
+		// Second sweep: the store has recovered, so the takeover re-runs from
+		// a fresh handoff observation, bumps to generation 1, and fences to it.
+		held, err = sw.Sweep(ctx)
+		if err != nil {
+			t.Fatalf("second Sweep: %v", err)
+		}
+		if held != 1 {
+			t.Fatalf("held = %d, want 1 (orphan re-adopted after the store recovered)", held)
+		}
+		if readopter.callCount() != 1 {
+			t.Fatalf("ReadoptAndFence calls = %d, want 1 (fence fires on the successful bump)", readopter.callCount())
+		}
+		if readopter.gens[0] != 1 {
+			t.Errorf("fenced generation = %d, want 1 (the post-bump generation, never 0)", readopter.gens[0])
+		}
+		if !bindings.Bound(sessID) {
+			t.Errorf("binding not published after the recovered takeover")
+		}
+	})
+
 	t.Run("terminal fence failure relinquishes lease and backs off re-adoption", func(t *testing.T) {
 		run := uniq(t)
 		sessID := run + "-relinquish"

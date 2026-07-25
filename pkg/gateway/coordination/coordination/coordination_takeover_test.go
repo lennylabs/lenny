@@ -203,6 +203,94 @@ func TestSweepCrashTakeoverTerminalFenceRelinquishesAndBacksOff_spec_10_1(t *tes
 	}
 }
 
+// failingUpdateStore wraps a session store and fails its first failUpdates
+// Update calls, so a test can model a transient store error during the
+// crash-takeover generation bump. Every other method delegates to the
+// wrapped store, and Update falls through once the failure budget is spent.
+type failingUpdateStore struct {
+	sessionstore.Store
+	failUpdates int
+}
+
+func (s *failingUpdateStore) Update(ctx context.Context, tenantID, id string, mutate func(*sessionstore.Session) error) (sessionstore.Session, error) {
+	if s.failUpdates > 0 {
+		s.failUpdates--
+		return sessionstore.Session{}, errors.New("transient store error during generation bump")
+	}
+	return s.Store.Update(ctx, tenantID, id, mutate)
+}
+
+// spec: §10.1 (coordinator handoff fences the pod to the post-handoff
+// generation; a failed generation bump restarts the handoff from lease
+// acquisition). When the RecordHandoff store write fails transiently the
+// Sweeper must not drive CoordinatorFence at the baseline generation 0: it
+// releases the just-acquired lease and skips the re-adopt, so a subsequent
+// sweep re-observes the unheld lapsed lease and re-runs the full
+// bump-then-fence takeover once the store recovers, fencing the pod to the
+// real post-handoff generation.
+//
+// Regression: the pre-fix code proceeded to ReadoptAndFence with the 0 that
+// RecordHandoff returns on a store error, driving CoordinatorFence(session,
+// 0) and self-holding the lease so the takeover predicate never fired again
+// and the bump was lost forever. This asserts no fence is driven on the
+// failed bump, the lease is released rather than self-held, and the eventual
+// fence carries the post-bump generation and never 0.
+func TestSweepCrashTakeoverSkipsFenceWhenGenerationBumpFails_spec_10_1(t *testing.T) {
+	ctx := context.Background()
+	base := memstore.New()
+	mustCreate(t, base, sessionstore.Session{ID: "orphan", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-orphan"})
+	sessions := &failingUpdateStore{Store: base, failUpdates: 1}
+
+	leases := newFakeLeases()
+	bindings := newFakeBindings()
+	readopter := &fakeReadopter{leases: leases, tenantID: "acme", replicaID: "rep-1", bindings: bindings}
+
+	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, leases, Options{
+		ReplicaID: "rep-1",
+		Bindings:  bindings,
+		Readopter: readopter,
+	})
+
+	// First sweep: the generation bump fails, so no fence is driven and the
+	// just-acquired lease is released rather than self-held.
+	held, err := sw.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("first Sweep: %v", err)
+	}
+	if held != 0 {
+		t.Fatalf("held = %d, want 0 (lease released after the failed bump)", held)
+	}
+	if len(readopter.calls) != 0 {
+		t.Fatalf("ReadoptAndFence calls = %d, want 0 (no fence at a baseline generation)", len(readopter.calls))
+	}
+	if h, ok := leases.held("acme", "orphan"); ok {
+		t.Fatalf("lease still held by %q after a failed bump, want released", h)
+	}
+	got, _ := sessions.Get(ctx, "acme", "orphan")
+	if got.CoordinationGeneration != 0 {
+		t.Fatalf("generation = %d, want 0 (the failed bump did not land)", got.CoordinationGeneration)
+	}
+
+	// Second sweep: the store has recovered, so the takeover re-runs from a
+	// fresh handoff observation, bumps to generation 1, and fences to it.
+	held, err = sw.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("second Sweep: %v", err)
+	}
+	if held != 1 {
+		t.Fatalf("held = %d, want 1 (orphan re-adopted after the store recovered)", held)
+	}
+	if len(readopter.calls) != 1 {
+		t.Fatalf("ReadoptAndFence calls = %d, want 1 (fence fires on the successful bump)", len(readopter.calls))
+	}
+	if readopter.calls[0].generation != 1 {
+		t.Errorf("fenced generation = %d, want 1 (the post-bump generation, never 0)", readopter.calls[0].generation)
+	}
+	if !bindings.bound["orphan"] {
+		t.Errorf("binding not present after the recovered takeover published")
+	}
+}
+
 // spec: §10.1 (coordinator handoff re-adopts the still-running pod), §4.2
 // line 156. A nil Readopter disables the re-adopt: the generation bump and
 // the lease acquire still stand on the takeover edge, and the self-held

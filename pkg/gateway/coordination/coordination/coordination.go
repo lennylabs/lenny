@@ -362,6 +362,29 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 			// (Attach content stream stays lazy).
 			if !bound && priorHolder != s.replicaID {
 				generation := s.RecordHandoff(ctx, tenantID, row.ID)
+				if generation == 0 {
+					// The generation bump failed transiently (the store write
+					// errored). §10.1 requires the new coordinator to fence the
+					// pod to the post-handoff generation, so a failed bump must
+					// restart the handoff from lease acquisition rather than
+					// drive CoordinatorFence at the baseline generation 0, which
+					// would record a generation below the pod's current fenced
+					// value and undermine the monotonic-generation split-brain
+					// guard. Release the just-acquired lease and skip the
+					// re-adopt: the next sweep re-observes the unheld lapsed
+					// lease and re-runs the full bump-then-fence takeover from a
+					// fresh handoff observation once the store recovers. Not
+					// self-holding the lease across sweeps is what keeps the
+					// takeover predicate (!bound && priorHolder != s.replicaID)
+					// able to fire again.
+					// spec: §10.1 (CoordinatorFence to the post-handoff
+					// generation; a failed generation bump restarts the handoff
+					// from lease acquisition).
+					if err := s.leases.Release(ctx, tenantID, row.ID, s.replicaID); err != nil {
+						log.Printf("coordination: release lease after failed generation bump for session %s: %v", row.ID, err)
+					}
+					continue
+				}
 				publish, ferr := s.readoptAndFence(ctx, tenantID, row.ID, generation)
 				if ferr != nil {
 					// Terminal fence failure. The coordfence driver already
@@ -407,8 +430,11 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 // internal Get→Acquire window. The sweeper invokes it internally on
 // every observed cross-replica handoff and passes the new generation to
 // the re-adopt fence so the pod is fenced to the post-handoff generation.
-// A transient store error returns 0; the caller fences at the baseline and
-// the next sweep re-attempts the bump from a fresh handoff observation.
+// A transient store error returns 0, which signals a failed bump: the
+// crash-takeover caller then releases the just-acquired lease and skips the
+// re-adopt, so the next sweep re-observes the unheld lease and re-runs the
+// bump-then-fence takeover from a fresh handoff observation rather than
+// fencing the pod at the baseline generation 0.
 // spec: §4.2 line 156.
 func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string) int64 {
 	updated, err := s.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
