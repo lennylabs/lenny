@@ -50,6 +50,8 @@ func runValidateMaps(args []string) int {
 		validateSpecMapCoverage(specMapPath, exceptionsPath),
 		validateSpecMapTestFiles(specMapPath, exceptionsPath,
 			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
+		validateSpecMapTestFuncs(specMapPath,
+			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
 		validateGroupsYAML(groupsPath),
 		validateGroupsSubsetsYAML(subsetsPath),
 		validateSpecMapExceptionsYAML(exceptionsPath),
@@ -534,6 +536,102 @@ func validateSpecMapTestFiles(specMapPath, exceptionsPath, pendingPath, root str
 	}
 	return newResult("spec-map test files", true,
 		"every concrete test-file reference resolves on disk")
+}
+
+// validateSpecMapTestFuncs confirms that every `path::TestName`
+// reference in a section's `tests` array names a test function that
+// actually exists in the referenced file. validateSpecMapTestFiles
+// only probes that the file exists; it strips the `::TestName`
+// selector before the stat and never checks that the named function
+// resolves. A rename that repoints or drops a test function (for
+// example renaming TestFoo to TestBar) therefore leaves the old
+// `file.go::TestFoo` entry compiling-but-dangling: the file still
+// exists, so the existence gate stays green, while the section now
+// maps to a function name that no longer exists and `lenny-test
+// --spec <section>` would select nothing for that name.
+//
+// Only entries that carry a `::TestName` selector on a concrete `.go`
+// file are checked. A file listed in the pending channel, or a file
+// that does not resolve on disk (already reported by
+// validateSpecMapTestFiles), is skipped so a single defect is
+// reported once. The check reads the file and requires a top-level
+// `func TestName(` declaration to be present.
+//
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// the tests ... that encode it"). A reference that names a
+// nonexistent function is as misleading to a maintainer reading the
+// map as a reference to a nonexistent file.
+func validateSpecMapTestFuncs(specMapPath, pendingPath, root string) checkResult {
+	data, err := os.ReadFile(specMapPath)
+	if err != nil {
+		return newResult("spec-map test funcs", false, err.Error())
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return newResult("spec-map test funcs", false, err.Error())
+	}
+	pending := readPendingPaths(pendingPath)
+	dangling := []string{}
+	for section, entry := range doc.Sections {
+		for _, t := range entry.Tests {
+			i := strings.Index(t, "::")
+			if i < 0 {
+				continue
+			}
+			path, fn := t[:i], t[i+2:]
+			if !strings.HasSuffix(path, ".go") || fn == "" {
+				continue
+			}
+			// A whole-file waiver (path with the ::TestName stripped, the
+			// form validateSpecMapTestFiles honors) exempts every func in
+			// that file; a precise `path::TestName` waiver exempts only
+			// the one dangling reference so a new dangling entry in the
+			// same file is still caught.
+			if pending[path] || pending[t] {
+				continue
+			}
+			body, err := os.ReadFile(filepath.Join(root, path))
+			if err != nil {
+				// Missing file is validateSpecMapTestFiles' finding; do
+				// not double-report it here.
+				continue
+			}
+			if !hasTestFuncDecl(string(body), fn) {
+				dangling = append(dangling, fmt.Sprintf("%s → %s::%s", section, path, fn))
+			}
+		}
+	}
+	if len(dangling) > 0 {
+		sort.Strings(dangling)
+		preview := dangling
+		if len(preview) > 5 {
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(dangling)-5))
+		}
+		return newResult("spec-map test funcs", false,
+			fmt.Sprintf("%d test-function reference(s) name a function absent from the file: %s",
+				len(dangling), strings.Join(preview, "; ")))
+	}
+	return newResult("spec-map test funcs", true,
+		"every path::TestName reference resolves to a test function")
+}
+
+// hasTestFuncDecl reports whether src declares a top-level function
+// named fn (matched as `func fn(`). Whitespace between `func` and the
+// name is tolerated; a method receiver (`func (r T) fn(`) does not
+// match because a test function is a plain top-level declaration.
+func hasTestFuncDecl(src, fn string) bool {
+	needle := "func " + fn + "("
+	for _, line := range strings.Split(src, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // readPendingPaths reads tests/change-graph-pending.txt — one path

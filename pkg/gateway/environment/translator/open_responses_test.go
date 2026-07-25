@@ -189,7 +189,17 @@ func TestOpenResponsesAdapterCapabilities_spec_9_1_35(t *testing.T) {
 	}
 }
 
-func TestOpenResponsesPreservesPreviousResponseID(t *testing.T) {
+// TestOpenResponsesSingleShotDropsPreviousResponseIDLineage pins that the
+// single-shot create-and-start path does not thread previous_response_id
+// into the session row's ParentSessionID. Persisting the lineage would trip
+// the delegated-child credential-lease semantics (a lineage on an ephemeral
+// single-shot session would be mistaken for a delegated child and its lease
+// root would not be registered), so continuation re-claims a fresh pod per
+// request and the stored lineage stays empty. A subsequent GET therefore
+// echoes an empty previous_response_id. This replaces the earlier test that
+// asserted the row preserved the lineage pointer.
+// spec: §15; §8.2.
+func TestOpenResponsesSingleShotDropsPreviousResponseIDLineage(t *testing.T) {
 	h, store := newResponsesHandler(t)
 	rr := respPost(t, h.Handler(), map[string]any{
 		"model":                "echo",
@@ -197,15 +207,28 @@ func TestOpenResponsesPreservesPreviousResponseID(t *testing.T) {
 		"previous_response_id": "resp_prev",
 	})
 	if rr.Code != http.StatusOK {
-		t.Fatalf("status: %d", rr.Code)
+		t.Fatalf("status: %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var resp translator.OpenResponsesResponse
-	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
-	if resp.PreviousResponseID != "resp_prev" {
-		t.Errorf("previous_response_id: %q", resp.PreviousResponseID)
+	// The single-shot path stores an empty ParentSessionID even though the
+	// request carried previous_response_id.
+	row, err := store.Get(context.Background(), "acme", "resp_1")
+	if err != nil {
+		t.Fatalf("session not stored: %v", err)
 	}
-	row, _ := store.Get(context.Background(), "acme", "resp_1")
-	if row.ParentSessionID != "resp_prev" {
-		t.Errorf("ParentSessionID: %q", row.ParentSessionID)
+	if row.ParentSessionID != "" {
+		t.Errorf("ParentSessionID: got %q, want empty (lineage not persisted)", row.ParentSessionID)
+	}
+	// GET echoes the empty stored lineage.
+	greq := httptest.NewRequest(http.MethodGet, "/v1/responses/resp_1", nil)
+	greq.Header.Set("X-Lenny-Tenant-ID", "acme")
+	grr := httptest.NewRecorder()
+	h.Handler().ServeHTTP(grr, greq)
+	if grr.Code != http.StatusOK {
+		t.Fatalf("GET status: %d", grr.Code)
+	}
+	var got translator.OpenResponsesResponse
+	_ = json.Unmarshal(grr.Body.Bytes(), &got)
+	if got.PreviousResponseID != "" {
+		t.Errorf("GET previous_response_id: got %q, want empty", got.PreviousResponseID)
 	}
 }

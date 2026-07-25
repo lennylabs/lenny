@@ -422,11 +422,27 @@ type CreateAndStartResponse = CreateSessionResponse
 // precondition table to running before returning.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	tenantID := s.resolveTenant(r)
-	if !s.createAndStartGates(w, r, tenantID) {
+
+	// spec: §11.1; §10.6; §4.8; §15.2.1 rule 1 — decode the request first so
+	// the §11.1 concurrency and admission-rate gates and the §10.6
+	// environment-admission gate can read the requested runtimeRef, isolation
+	// profile, pool, and environment. The full gate set, including the §4.8
+	// PostAuth policy chain, then runs BEFORE buildCreateAndStartRow runs the
+	// §4.8 PreRoute/PostRoute interceptor chains and the §10.7 experiment
+	// router. This holds both the §11.1 concurrency-and-rate-before-policy
+	// ordering and the §4.8 PostAuth-before-PreRoute phase order that the
+	// two-step create path holds, and always runs before mintClaimStartPersist
+	// claims a pod.
+	req, ok := s.decodeCreateAndStartRequest(w, r)
+	if !ok {
 		return
 	}
 
-	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID)
+	if !s.createAndStartGates(w, r, tenantID, req) {
+		return
+	}
+
+	row, build, ok := s.buildCreateAndStartRow(w, r, tenantID, req)
 	if !ok {
 		return
 	}
@@ -444,13 +460,24 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	s.writeCreateSessionResponse(w, row, level, uploadToken, build.planWarnings)
 }
 
-// createAndStartGates runs the §15.1 admission gates that precede any row
-// construction on the combined create-and-start path: the active-user
-// gate, the §12.8 tenant-state gate, the §12.9 tenant data-classification
-// gate, the §11 session-quota gate, and the §4.8 policy chain. Each writes
-// its own §15.1 error envelope and returns false; true means the request
-// may proceed to row construction. spec: §15.1, §12.8, §12.9, §11, §4.8.
-func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID string) bool {
+// createAndStartGates runs the §15.1 admission gates on the combined
+// create-and-start path over the decoded request: the active-user gate, the
+// §12.8 tenant-state gate, the §12.9 tenant data-classification gate, the §11
+// session-quota gate, the §11.1 concurrency and admission-rate gates, the §4.8
+// PostAuth policy chain, and the §10.6 environment-admission gate. The §11.1
+// concurrency and admission-rate gates run before the policy chain and the
+// §10.6 environment-admission gate runs after it, in the same relative order
+// the two-step create path applies them (createAdmissionGates in create.go),
+// so an over-limit create reserves no rate or token budget. The gates read the
+// requested runtimeRef, isolation profile, pool, and environment straight from
+// the decoded request, so this whole set runs BEFORE buildCreateAndStartRow
+// runs the §4.8 PreRoute/PostRoute interceptor chains and the §10.7 experiment
+// router, preserving the §4.8 PostAuth-before-PreRoute phase order (spec: §4.8
+// PreAuth → PostAuth → PreRoute → PostRoute). Each gate writes its own §15.1
+// error envelope and returns false; true means the request may proceed to the
+// row build and pod claim.
+// spec: §15.1, §12.8, §12.9, §11, §11.1, §10.6, §4.8, §15.2.1 rule 1.
+func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID string, req CreateAndStartRequest) bool {
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
@@ -469,7 +496,39 @@ func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, ten
 	if !s.requireSessionQuota(w, r, tenantID) {
 		return false
 	}
-	return s.requirePolicyChain(w, r, tenantID)
+	// spec: §11.1 line 8 — global, per-user, and per-runtime concurrent-session
+	// admission caps. Enforced before the admission-rate and policy gates so an
+	// over-limit create consumes no rate budget and reserves no token budget,
+	// matching the two-step create path. The caller's subject is the per-user
+	// scope key; an unauthenticated principal leaves the per-user scope inert.
+	concUser := ""
+	if p, ok := getPrincipal(r); ok {
+		concUser = p.Subject
+	}
+	if !s.requireConcurrencyLimits(w, r, tenantID, concUser, req.RuntimeRef) {
+		return false
+	}
+	// spec: §11.1 line 7 — per-runtime and per-pool requests-per-minute
+	// admission limits, enforced before the §4.8 policy chain so an over-limit
+	// create never reserves token budget. The requested isolation profile
+	// (defaulted when omitted) resolves the pool, and the client-pinned pool
+	// keys the per-pool scope, matching the two-step create path.
+	rlProfile := req.IsolationProfile
+	if rlProfile == "" {
+		rlProfile = s.defaultIsoProf
+	}
+	if !s.requireAdmissionRateLimit(w, r, tenantID, req.RuntimeRef, rlProfile, req.Pool) {
+		return false
+	}
+	if !s.requirePolicyChain(w, r, tenantID) {
+		return false
+	}
+	// spec: §11.1 line 13 / §10.6 — a create-and-start that names no
+	// environment is admitted only when the caller belongs to at least one
+	// environment or the tenant's noEnvironmentPolicy resolves to allow-all;
+	// the platform default deny-all rejects with 403, closing the fail-open
+	// the create-and-start path had before it ran this gate.
+	return s.requireEnvironmentAdmission(w, r, req.Environment, req.RuntimeRef)
 }
 
 // createAndStartBuild carries the per-create resolution
@@ -484,30 +543,44 @@ type createAndStartBuild struct {
 	planWarnings []workspaceplan.Warning
 }
 
-// buildCreateAndStartRow decodes the CreateAndStartRequest and runs the
-// §27.4 playground-visibility, §5.3 isolation-profile, §7.1/§14.1
-// pool-selectable, §14 workspace-plan, §7.5 setup-command, and §4.8
-// PreRoute/PostRoute validation, resolving the §7.1 isolation level and
-// assembling the StateRunning session row (the client-pinned pool, the
-// §15.1 callback, retention/resume deadlines, §27.6 playground caps, the
-// §10.7 experiment variant, and the runtime-hint route rewrites). It
-// returns the built row and the createAndStartBuild the persist and
-// response stages consume, writing the §15.1 error envelope and returning
-// ok=false on any rejection. spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
-func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID string) (sessionstore.Session, createAndStartBuild, bool) {
+// decodeCreateAndStartRequest decodes the §15.1 POST /v1/sessions/start body
+// and enforces the runtimeRef required-field check, resolving the request
+// fields the §11.1 concurrency/admission-rate and §10.6 environment-admission
+// gates read (runtimeRef, isolation profile, pool, environment) before those
+// gates run. It writes the §15.1 error envelope and returns ok=false on a
+// malformed body or a missing runtimeRef. Splitting the decode from the row
+// build lets createAndStartGates run the §4.8 PostAuth policy chain before
+// buildCreateAndStartRow runs the §4.8 PreRoute/PostRoute chains, preserving
+// the §4.8 phase order. spec: §15.1, §11.1, §10.6, §4.8.
+func (s *Server) decodeCreateAndStartRequest(w http.ResponseWriter, r *http.Request) (CreateAndStartRequest, bool) {
 	var req CreateAndStartRequest
 	body := jsonReader(w, r)
 	defer body.Close()
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
-		return sessionstore.Session{}, createAndStartBuild{}, false
+		return CreateAndStartRequest{}, false
 	}
 	if req.RuntimeRef == "" {
 		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtimeRef is required",
 			map[string]any{"field": "runtimeRef"})
-		return sessionstore.Session{}, createAndStartBuild{}, false
+		return CreateAndStartRequest{}, false
 	}
+	return req, true
+}
 
+// buildCreateAndStartRow runs the §27.4 playground-visibility, §5.3
+// isolation-profile, §7.1/§14.1 pool-selectable, §14 workspace-plan, §7.5
+// setup-command, and §4.8 PreRoute/PostRoute validation over the decoded
+// request, resolving the §7.1 isolation level and assembling the StateRunning
+// session row (the client-pinned pool, the §15.1 callback, retention/resume
+// deadlines, §27.6 playground caps, the §10.7 experiment variant, and the
+// runtime-hint route rewrites). The §4.8 PreRoute/PostRoute interceptor chains
+// and the §10.7 experiment router run here, after createAndStartGates has run
+// the §4.8 PostAuth policy chain, so the §4.8 PostAuth-before-PreRoute phase
+// order holds. It returns the built row and the createAndStartBuild the persist
+// and response stages consume, writing the §15.1 error envelope and returning
+// ok=false on any rejection. spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
+func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID string, req CreateAndStartRequest) (sessionstore.Session, createAndStartBuild, bool) {
 	// spec: §27.5 line 190 / §27.9 line 250 — parity with handleCreate: an
 	// origin=playground caller may only create against a playground-visible
 	// runtime, so the create-and-start ingress enforces the same §27.4
@@ -3493,6 +3566,83 @@ func (s *Server) lookupPendingRequest(ctx context.Context, tenantID, sessionID s
 		}
 	}
 	return ""
+}
+
+// errResumeHeldPodNotSuspended is returned by the resumeHeldPod store
+// mutator when the target row is no longer session.StateSuspended. The
+// guard runs inside the store.Update mutator so the check and the
+// suspended → running write commit as one critical section under the
+// pgstore FOR UPDATE row lock / memstore mutex; returning this sentinel
+// leaves the row unchanged. The caller (deliverMessageBatch) maps it to
+// the §7.2 path-6 `queued` fail-closed fallback rather than resurrecting
+// a terminal row to running. spec: §7.2 path 6 (line 330 queued fallback).
+var errResumeHeldPodNotSuspended = errors.New("resume held pod: session is not suspended")
+
+// resumeHeldPod performs the §7.2 path-6 pod-held resume: it transitions a
+// suspended session whose pod is still held from `suspended` to `running`,
+// reusing any bound pod (no fresh warm-pod claim). It is the coordinator-side
+// half of the atomic resume-and-deliver; the caller (deliverMessageBatch)
+// delivers the message via executor.Send after this returns.
+//
+// It fails closed atomically: the state guard runs inside the store.Update
+// mutator, which returns errResumeHeldPodNotSuspended when the row is not
+// session.StateSuspended before calling transitionResume. Under the pgstore
+// SELECT ... FOR UPDATE row lock and the memstore mutex the check and the
+// transition commit as one critical section, so a concurrent terminal
+// transition on the suspended row (Suspended → Cancelled via DELETE, Suspended
+// → Expired via the watchdog, Suspended → Completed/Failed via parent cascade,
+// all legal in the state machine) cannot slip between the guard and the write
+// and resurrect a terminal session to running. Neither store validates
+// transition legality, so the in-mutator guard is the only thing preventing an
+// illegal terminal → running write. A misroute (a non-suspended row) surfaces
+// the sentinel to the caller, which maps it to a `queued` fallback rather than
+// a silent fresh claim.
+//
+// The guard does not require a non-empty PodAssignment: no §6.2 sweep releases
+// a suspended pod today, so every `suspended` row is pod-held in the currently
+// reachable state set, and in --dev-mode the gateway builds no pod binder so
+// PodAssignment is empty while the session still holds its in-process executor.
+// §6.2 keeps a released session in `suspended` (podless) with no state change;
+// when the deferred §6.2 sweep lands the guard must additionally distinguish a
+// pod-held row from a podless-suspended row and route the podless case to
+// `resume_pending`/`queued` per §7.2 line 328.
+//
+// On the state write it reuses transitionResume (the {Suspended, Running} edge
+// is legal) and emits the same resume status-change (emitStatusChange) and
+// session.resumed lifecycle audit that handleResume emits. For the in-process
+// echo executor there is no pod adapter to signal, so the method returns after
+// the state write; the runtime delivery is the caller's executor.Send. The
+// real-pod in-place adapter-resume signal against a still-held pod (waiting for
+// the §4.7 ready_for_input signal) is deferred.
+//
+// spec: §7.2 path 6 (lines 326-327).
+func (s *Server) resumeHeldPod(ctx context.Context, tenantID, id string) error {
+	updated, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
+		if row.State != session.StateSuspended {
+			return errResumeHeldPodNotSuspended
+		}
+		transitionResume(row)
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("resume held pod %s: %w", id, err)
+	}
+	// spec: §11.7 / §16.7 — mirror handleResume: append the session.resumed
+	// audit row after the successful resume, then surface the resume
+	// status-change on the session's SSE stream.
+	if s.lifecycleAudit != nil {
+		s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+			EventType:  auditSessionResumed,
+			TenantID:   updated.TenantID,
+			SessionID:  updated.ID,
+			UserID:     updated.UserID,
+			RuntimeRef: updated.RuntimeRef,
+			State:      string(updated.State),
+			At:         s.clock(),
+		})
+	}
+	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)
+	return nil
 }
 
 // resumeOnPod restores a session onto a fresh §5 warm pod. When the

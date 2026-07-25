@@ -68,3 +68,11 @@ tests/testinfra/kind/minio-ca.gen.crt
 *.db
 .beads-credential-key
 .beads/proxieddb/
+
+# test/coverage run artifacts (never commit)
+.cov*
+.ctest.log
+.fulltest.log
+.itest.log
+.covss.log
+.covmr.log

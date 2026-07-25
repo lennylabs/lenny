@@ -749,7 +749,7 @@
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnsatisfiablePin_spec_14_1",
         "pkg/gateway/sessionserver/pool_selection_component_test.go::TestCreateBodyPoolRejectsUnauthorizedPin_spec_7_1",
         "tests/tier9_security/pool_access_pin_test.go::TestCreateBodyPoolEnforcesTenantAccess_spec_4",
-        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
+        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenResumeAndDeliver",
         "tests/tier5_e2e_kind/prompt_roundtrip_test.go::TestPromptRoundTripsToRealPodAndReturnsContent",
         "tests/tier5_e2e_kind/checkpoint_resume_test.go::TestCheckpointThenResumeRestoresWorkspace"
       ],
@@ -766,7 +766,7 @@
         "pkg/gateway/sessionserver/messages_test.go",
         "pkg/gateway/sessionserver/interactions_test.go",
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
-        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenQueuedMessage",
+        "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenResumeAndDeliver",
         "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
         "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
@@ -2255,6 +2255,7 @@
         "tests/tier2_component/stores/usagestore_test.go",
         "tests/tier2_component/translators/openai_chat_translator_test.go",
         "tests/tier2_component/translators/openai_responses_translator_test.go",
+        "tests/tier2_component/translators/openai_singleshot_lifecycle_test.go",
         "tests/tier3_contract/rest_sessions/unexercised_endpoints_test.go",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestServedDocumentIsValidOpenAPI31",
         "tests/tier3_contract/rest_sessions/openapi_document_test.go::TestSessionDomainDocumentedPathsHaveLiveHandlers",
