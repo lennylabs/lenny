@@ -22,6 +22,8 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math/rand"
+	"sync"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -59,6 +61,48 @@ type BindingRegistry interface {
 	EvictBinding(sessionID string)
 }
 
+// Readopter re-establishes coordination of a still-running pod on the
+// crash-takeover edge. The production implementation (wired in the gateway
+// binary) dials the pod from its persisted SandboxName and sends
+// CoordinatorFence as the first RPC over that connection, before any §15.5
+// version handshake, because a crash-takeover pod is already in its §10.1
+// hold state and rejects every inbound RPC except CoordinatorFence. It
+// drives the fence through the reused coordfence retry/relinquish policy.
+//
+// On a successful fence acknowledgement it returns a publish callback and a
+// nil error; the Sweeper invokes publish to place the re-established
+// BindResult into the shared podRegistry and hold the connection open as
+// the serving binding, so the pod stays continuously coordinated and does
+// not re-enter hold state. The Sweeper calls publish only after the fence
+// acknowledges, honoring the §10.1 precondition that no operational RPC
+// reaches the pod until the fence acknowledges.
+//
+// On a terminal fence failure it publishes no binding, closes the
+// connection, and relinquishes the lease (the coordfence driver releases
+// it and backs off per §10.1 line 35), returning a non-nil error. The
+// Sweeper then records a per-session adoption backoff so the fixed sweep
+// interval does not re-adopt inside the spec's jittered backoff window.
+//
+// The coordination package defines the interface here so it imports
+// neither podsession, adapterclient, nor coordfence directly. A nil
+// Readopter disables the re-adopt (the generation bump and the lease
+// acquire still stand); a deployment or test without the seam then relies
+// on a peer replica that has it to re-establish the serving binding.
+// spec: §10.1 (coordinator handoff re-adopts the still-running pod;
+// CoordinatorFence precondition), §4.7 (Attach content stream stays lazy).
+type Readopter interface {
+	ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (publish func(), err error)
+}
+
+// minAdoptionBackoff and maxAdoptionBackoff bound the §10.1 line 35 jittered
+// re-adoption delay a Sweeper waits after a relinquished crash-takeover
+// before it re-adopts the same session. Jittering across the window keeps
+// competing replicas from re-adopting a relinquished session in lockstep.
+const (
+	minAdoptionBackoff = 2 * time.Second
+	maxAdoptionBackoff = 16 * time.Second
+)
+
 // Options configures a Sweeper.
 type Options struct {
 	// ReplicaID identifies this gateway replica; it becomes the lease
@@ -85,18 +129,44 @@ type Options struct {
 	// renews only leases it already holds and adopts still-running-pod
 	// orphans. spec: §4.6.1 (coordinating replica holds the lease), §10.1.
 	Bindings BindingRegistry
+	// Readopter re-adopts and fences a still-running pod on the
+	// crash-takeover edge, publishing the re-established serving binding
+	// only after the fence acknowledges. Nil disables the re-adopt; the
+	// generation bump and the lease acquire still stand, but this replica
+	// does not re-establish the serving binding. spec: §10.1 (coordinator
+	// handoff re-adopts the still-running pod).
+	Readopter Readopter
+	// AdoptionBackoff overrides the §10.1 line 35 re-adoption delay applied
+	// after a relinquished crash-takeover. A value <= 0 selects a jittered
+	// delay across the 2s-to-16s window; a positive value is used verbatim,
+	// so an operator (or a test) can pin the delay. spec: §10.1 line 35
+	// (relinquish-and-backoff).
+	AdoptionBackoff time.Duration
+	// Clock supplies the current time for the adoption-backoff window. Nil
+	// selects time.Now; a test injects a controllable clock to exercise the
+	// backoff deterministically.
+	Clock func() time.Time
 }
 
 // Sweeper renews the coordination leases for a gateway replica.
 type Sweeper struct {
-	tenants   TenantLister
-	sessions  sessionstore.Store
-	leases    leasestore.LeaseStore
-	mirror    coordlease.Store
-	bindings  BindingRegistry
-	replicaID string
-	ttl       time.Duration
-	interval  time.Duration
+	tenants         TenantLister
+	sessions        sessionstore.Store
+	leases          leasestore.LeaseStore
+	mirror          coordlease.Store
+	bindings        BindingRegistry
+	readopter       Readopter
+	replicaID       string
+	ttl             time.Duration
+	interval        time.Duration
+	adoptionBackoff time.Duration
+	now             func() time.Time
+
+	// mu guards backoffUntil, the per-session adoption-backoff window a
+	// relinquished crash-takeover records so the fixed sweep interval does
+	// not re-adopt inside the §10.1 jittered backoff window.
+	mu           sync.Mutex
+	backoffUntil map[string]time.Time
 }
 
 // NewSweeper returns a Sweeper. Interval defaults to 15s and TTL to
@@ -110,15 +180,23 @@ func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases leases
 	if ttl <= 0 {
 		ttl = 4 * interval
 	}
+	now := opts.Clock
+	if now == nil {
+		now = time.Now
+	}
 	return &Sweeper{
-		tenants:   tenants,
-		sessions:  sessions,
-		leases:    leases,
-		mirror:    opts.Mirror,
-		bindings:  opts.Bindings,
-		replicaID: opts.ReplicaID,
-		ttl:       ttl,
-		interval:  interval,
+		tenants:         tenants,
+		sessions:        sessions,
+		leases:          leases,
+		mirror:          opts.Mirror,
+		bindings:        opts.Bindings,
+		readopter:       opts.Readopter,
+		replicaID:       opts.ReplicaID,
+		ttl:             ttl,
+		interval:        interval,
+		adoptionBackoff: opts.AdoptionBackoff,
+		now:             now,
+		backoffUntil:    map[string]time.Time{},
 	}
 }
 
@@ -210,7 +288,11 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 
 			bound := s.boundHere(row.ID)
 			leaseUnheld := errors.Is(getErr, leasestore.ErrNotFound)
-			adoptable := leaseUnheld && isRunningPod(row)
+			// A session in its post-relinquish adoption backoff is not
+			// re-adopted until the §10.1 line 35 jittered window elapses, so
+			// the fixed sweep does not re-drive RecordHandoff and the fence on
+			// every sweep after a terminal fence failure released the lease.
+			adoptable := leaseUnheld && isRunningPod(row) && !s.inAdoptionBackoff(row.ID)
 
 			// A bound session whose held gateway-to-pod gRPC channel has
 			// died is evicted and its lease released rather than renewed, so
@@ -255,12 +337,54 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 				}
 				return held, err
 			}
-			// A handoff occurred when the prior holder was a different
-			// replica. A self-renew (priorHolder == s.replicaID) and a
-			// fresh acquisition on an unheld lease (priorHolder == "")
-			// are not handoffs.
-			if priorHolder != "" && priorHolder != s.replicaID {
-				s.RecordHandoff(ctx, tenantID, row.ID)
+			// The crash-takeover edge is a successful Acquire that changed the
+			// holder to this replica for an adoptable still-running-pod session
+			// this replica does not bind: the prior coordinator crashed, its
+			// Redis lease lapsed (priorHolder == "") or was observed departing
+			// in the narrow Get-then-Acquire race (priorHolder is a different
+			// replica), and this replica adopts the orphan. A self-renew
+			// (priorHolder == s.replicaID) and a renew of a session this replica
+			// binds are not takeovers. The edge does not depend on the pre-Acquire
+			// Get observing the departed holder, because a lapsed Redis lease
+			// leaves priorHolder empty and the adoption of an adoptable session
+			// is itself the handoff signal.
+			//
+			// On that edge the new coordinator bumps coordination_generation and
+			// re-adopts the still-running pod through the injected seam, which
+			// fences the pod as its first RPC and returns a publish callback the
+			// Sweeper invokes only after the fence acknowledges. Because the
+			// published binding (or, without a re-adopt seam, the self-held
+			// lease) makes the next sweep a renew (priorHolder == s.replicaID),
+			// the bump and the fence fire exactly once per handoff.
+			// spec: §10.1 (coordinator handoff re-adopts the still-running pod;
+			// CoordinatorFence precondition; no operational RPC before the fence
+			// acknowledges), §4.2 line 156 (generation bump on handoff), §4.7
+			// (Attach content stream stays lazy).
+			if !bound && priorHolder != s.replicaID {
+				generation := s.RecordHandoff(ctx, tenantID, row.ID)
+				publish, ferr := s.readoptAndFence(ctx, tenantID, row.ID, generation)
+				if ferr != nil {
+					// Terminal fence failure. The coordfence driver already
+					// relinquished the lease (released it and backed off per
+					// §10.1 line 35) and published no binding. Record a
+					// per-session adoption backoff so the fixed sweep does not
+					// re-adopt inside the spec's jittered window and re-drive
+					// RecordHandoff and the fence every sweep. The generation
+					// increment stays in Postgres; the next coordinator to
+					// acquire the lease increments it again.
+					// spec: §10.1 line 35 (relinquish-and-backoff).
+					log.Printf("coordination: re-adopt fence for session %s relinquished: %v", row.ID, ferr)
+					s.recordAdoptionBackoff(row.ID)
+					continue
+				}
+				// The fence acknowledged: publish the re-established BindResult
+				// to the shared podRegistry and hold the connection open as the
+				// serving binding. Publishing only after the acknowledgement
+				// honors the §10.1 precondition that no operational RPC reaches
+				// the pod until the fence acknowledges.
+				// spec: §10.1 (no operational RPC before the fence acknowledges).
+				publish()
+				s.clearAdoptionBackoff(row.ID)
 			}
 			// §10.1 line 165 — mirror the held lease into Postgres so the
 			// preStop barrier-target query observes it. A cross-replica
@@ -281,16 +405,77 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 // Exported so the sessionserver and component tests can verify the
 // bump-once-per-handoff contract directly without racing the sweeper's
 // internal Get→Acquire window. The sweeper invokes it internally on
-// every observed cross-replica handoff.
+// every observed cross-replica handoff and passes the new generation to
+// the re-adopt fence so the pod is fenced to the post-handoff generation.
+// A transient store error returns 0; the caller fences at the baseline and
+// the next sweep re-attempts the bump from a fresh handoff observation.
 // spec: §4.2 line 156.
-func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string) {
-	_, err := s.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
+func (s *Sweeper) RecordHandoff(ctx context.Context, tenantID, sessionID string) int64 {
+	updated, err := s.sessions.Update(ctx, tenantID, sessionID, func(row *sessionstore.Session) error {
 		row.CoordinationGeneration++
 		return nil
 	})
 	if err != nil {
 		log.Printf("coordination: bump coordination_generation for session %s: %v", sessionID, err)
+		return 0
 	}
+	return updated.CoordinationGeneration
+}
+
+// readoptAndFence drives the injected re-adopt seam on the crash-takeover
+// edge. A nil seam disables the re-adopt: the generation bump and the lease
+// acquire stand, but this replica does not re-establish the serving
+// binding, so the publish is a no-op and a peer replica that has the seam
+// re-adopts the pod.
+func (s *Sweeper) readoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
+	if s.readopter == nil {
+		return func() {}, nil
+	}
+	return s.readopter.ReadoptAndFence(ctx, tenantID, sessionID, generation)
+}
+
+// inAdoptionBackoff reports whether the session is inside its post-relinquish
+// re-adoption backoff window. An elapsed window is cleared lazily so the map
+// does not accumulate stale entries. spec: §10.1 line 35.
+func (s *Sweeper) inAdoptionBackoff(sessionID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	until, ok := s.backoffUntil[sessionID]
+	if !ok {
+		return false
+	}
+	if !s.now().Before(until) {
+		delete(s.backoffUntil, sessionID)
+		return false
+	}
+	return true
+}
+
+// recordAdoptionBackoff opens the §10.1 line 35 jittered re-adoption backoff
+// window for a session whose crash-takeover fence relinquished the lease.
+func (s *Sweeper) recordAdoptionBackoff(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.backoffUntil[sessionID] = s.now().Add(s.nextBackoff())
+}
+
+// clearAdoptionBackoff drops any adoption backoff for a session whose
+// takeover fence acknowledged, so a later dead-connection re-orphan is
+// re-adopted without waiting on a stale window.
+func (s *Sweeper) clearAdoptionBackoff(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.backoffUntil, sessionID)
+}
+
+// nextBackoff returns the §10.1 line 35 re-adoption delay. A positive
+// operator override (Options.AdoptionBackoff) is used verbatim; otherwise
+// the delay is jittered uniformly across the 2s-to-16s window.
+func (s *Sweeper) nextBackoff() time.Duration {
+	if s.adoptionBackoff > 0 {
+		return s.adoptionBackoff
+	}
+	return minAdoptionBackoff + time.Duration(rand.Int63n(int64(maxAdoptionBackoff-minAdoptionBackoff)))
 }
 
 // upsertMirror records the §10.1 line 165 barrier-target row for a lease

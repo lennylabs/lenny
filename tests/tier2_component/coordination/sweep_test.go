@@ -15,6 +15,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -25,6 +27,71 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
+
+// fakeBindingReg is a coordination.BindingRegistry over an in-memory set,
+// standing in for the per-replica podsession registry. A takeover publish
+// flips a session to bound, modeling the production podRegistry.Put that
+// holds the re-established connection open as the serving binding.
+type fakeBindingReg struct {
+	mu    sync.Mutex
+	bound map[string]bool
+}
+
+func newFakeBindingReg() *fakeBindingReg { return &fakeBindingReg{bound: map[string]bool{}} }
+
+func (f *fakeBindingReg) Bound(id string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bound[id]
+}
+
+func (f *fakeBindingReg) ConnAlive(string) bool { return true }
+
+func (f *fakeBindingReg) EvictBinding(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.bound, id)
+}
+
+func (f *fakeBindingReg) publish(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bound[id] = true
+}
+
+// fakeReadopter is a coordination.Readopter for the crash-takeover
+// component tests. On a non-failing session it returns a publish callback
+// that flips the fake binding to bound; on a failing session it models the
+// coordfence relinquish by releasing the real coordination lease and
+// returning an error, so the Sweeper records an adoption backoff.
+type fakeReadopter struct {
+	fail      map[string]bool
+	leases    leasestore.LeaseStore
+	replicaID string
+	bindings  *fakeBindingReg
+
+	mu    sync.Mutex
+	calls int
+	gens  []int64
+}
+
+func (r *fakeReadopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID string, generation int64) (func(), error) {
+	r.mu.Lock()
+	r.calls++
+	r.gens = append(r.gens, generation)
+	r.mu.Unlock()
+	if r.fail[sessionID] {
+		_ = r.leases.Release(ctx, tenantID, sessionID, r.replicaID)
+		return nil, errors.New("coordfence: relinquished")
+	}
+	return func() { r.bindings.publish(sessionID) }, nil
+}
+
+func (r *fakeReadopter) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
 
 // staticLister is a coordination.TenantLister over a fixed slice.
 type staticLister []string
@@ -210,36 +277,40 @@ func TestSweeperContract(t *testing.T) {
 		}
 	})
 
-	// spec: §4.2 line 156 — the sweeper does NOT bump
-	// coordination_generation on a self-renew (the prior holder is
-	// this same replica) or on a fresh acquisition of an unheld lease
-	// (no prior holder).
-	t.Run("Sweep self-renew does not bump counter", func(t *testing.T) {
+	// spec: §4.2 line 156, §10.1 (coordinator handoff re-adopts the
+	// still-running pod) — a fresh acquisition of a running-pod orphan by a
+	// replica that holds no binding for it is a crash takeover (the prior
+	// coordinator crashed and its lease lapsed), so the sweeper bumps
+	// coordination_generation exactly once. The self-renew that follows
+	// (the lease is now self-held) must NOT bump again, so the generation
+	// advances once per handoff rather than once per sweep.
+	t.Run("Sweep takeover bumps once then self-renew does not bump", func(t *testing.T) {
 		run := uniq(t)
 		sessions := memstore.New()
 		sessID := run + "-self-renew"
 		seedSession(t, sessions, "acme", sessID, session.StateRunning)
 		sw := newSweeper(sessions, []string{"acme"}, "replica-1")
 
-		// First sweep: lease unheld, fresh acquisition by replica-1.
-		// No handoff (priorHolder is empty).
+		// First sweep: lease unheld, running-pod orphan adopted by replica-1.
+		// This is a crash takeover, so the generation bumps to 1.
 		if _, err := sw.Sweep(ctx); err != nil {
 			t.Fatalf("first Sweep: %v", err)
 		}
 		got, _ := sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 0 {
-			t.Errorf("after fresh acquisition Sweep, CoordinationGeneration = %d, want 0",
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("after takeover Sweep, CoordinationGeneration = %d, want 1",
 				got.CoordinationGeneration)
 		}
 
 		// Second sweep: lease held by replica-1, renewed by replica-1.
-		// No handoff (priorHolder == replicaID).
+		// No handoff (priorHolder == replicaID), so no further bump.
 		if _, err := sw.Sweep(ctx); err != nil {
 			t.Fatalf("second Sweep (renew): %v", err)
 		}
 		got, _ = sessions.Get(ctx, "acme", sessID)
-		if got.CoordinationGeneration != 0 {
-			t.Errorf("after self-renew Sweep, CoordinationGeneration = %d, want 0",
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("after self-renew Sweep, CoordinationGeneration = %d, want 1 "+
+				"(handoff bumps once, not once per sweep)",
 				got.CoordinationGeneration)
 		}
 	})
@@ -269,6 +340,138 @@ func TestSweeperContract(t *testing.T) {
 			t.Errorf("after held-by-other Sweep, CoordinationGeneration = %d, want 0 "+
 				"(Acquire returned ErrHeld; no handoff observed)",
 				got.CoordinationGeneration)
+		}
+	})
+
+	// spec: §10.1 (coordinator handoff re-adopts the still-running pod;
+	// CoordinatorFence precondition; no operational RPC before the fence
+	// acknowledges), §4.2 line 156. On the crash-takeover edge the sweeper
+	// adopts the lapsed lease, bumps coordination_generation, drives the
+	// re-adopt fence with the post-bump generation over the real Redis lease
+	// store, and publishes the binding only after the fence acknowledges —
+	// once per handoff. The next sweep observes the published binding and
+	// renews without re-fencing.
+	t.Run("crash takeover fences and publishes once per handoff", func(t *testing.T) {
+		run := uniq(t)
+		sessID := run + "-takeover"
+		sessions := memstore.New()
+		seedSession(t, sessions, "acme", sessID, session.StateRunning)
+
+		bindings := newFakeBindingReg()
+		readopter := &fakeReadopter{leases: leases, replicaID: "replica-1", bindings: bindings}
+		sw := coordination.NewSweeper(staticLister([]string{"acme"}), sessions, leases, coordination.Options{
+			ReplicaID: "replica-1",
+			TTL:       30 * time.Second,
+			Interval:  time.Hour,
+			Bindings:  bindings,
+			Readopter: readopter,
+		})
+
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("first Sweep: %v", err)
+		}
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 1 {
+			t.Fatalf("generation = %d, want 1 (takeover bumped once)", got.CoordinationGeneration)
+		}
+		if readopter.callCount() != 1 {
+			t.Fatalf("ReadoptAndFence calls = %d, want 1", readopter.callCount())
+		}
+		if readopter.gens[0] != 1 {
+			t.Errorf("fenced generation = %d, want 1", readopter.gens[0])
+		}
+		if !bindings.Bound(sessID) {
+			t.Errorf("binding not published after the fence acknowledged")
+		}
+		if lease, err := leases.Get(ctx, "acme", sessID); err != nil || lease.Holder != "replica-1" {
+			t.Errorf("lease after takeover: %+v err=%v, want held by replica-1", lease, err)
+		}
+
+		// The published binding makes the next sweep a renew.
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("second Sweep: %v", err)
+		}
+		got, _ = sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("generation = %d, want 1 (no re-bump on the renew sweep)", got.CoordinationGeneration)
+		}
+		if readopter.callCount() != 1 {
+			t.Errorf("ReadoptAndFence calls = %d, want 1 (fence fires once per handoff)", readopter.callCount())
+		}
+	})
+
+	// spec: §10.1 line 35 (relinquish-and-backoff). A terminal fence failure
+	// relinquishes the real Redis lease (coordfence release) and the sweeper
+	// records a per-session adoption backoff, so the fixed sweep does not
+	// re-adopt inside the window and re-bump the generation every sweep. The
+	// generation increment stays in the store; after the window elapses the
+	// session is re-adopted.
+	t.Run("terminal fence failure relinquishes lease and backs off re-adoption", func(t *testing.T) {
+		run := uniq(t)
+		sessID := run + "-relinquish"
+		sessions := memstore.New()
+		seedSession(t, sessions, "acme", sessID, session.StateRunning)
+
+		readopter := &fakeReadopter{fail: map[string]bool{sessID: true}, leases: leases, replicaID: "replica-1"}
+		now := time.Unix(2000, 0).UTC()
+		var clockMu sync.Mutex
+		clock := func() time.Time {
+			clockMu.Lock()
+			defer clockMu.Unlock()
+			return now
+		}
+		advance := func(d time.Duration) {
+			clockMu.Lock()
+			defer clockMu.Unlock()
+			now = now.Add(d)
+		}
+		sw := coordination.NewSweeper(staticLister([]string{"acme"}), sessions, leases, coordination.Options{
+			ReplicaID:       "replica-1",
+			TTL:             30 * time.Second,
+			Interval:        time.Hour,
+			Readopter:       readopter,
+			AdoptionBackoff: 10 * time.Second,
+			Clock:           clock,
+		})
+
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("first Sweep: %v", err)
+		}
+		got, _ := sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 1 {
+			t.Fatalf("generation = %d, want 1 (bump stays after relinquish)", got.CoordinationGeneration)
+		}
+		if _, err := leases.Get(ctx, "acme", sessID); err == nil {
+			t.Fatalf("lease still held after terminal fence relinquish, want released")
+		}
+
+		// Inside the backoff window: no re-adopt, no re-bump.
+		advance(5 * time.Second)
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("second Sweep: %v", err)
+		}
+		got, _ = sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 1 {
+			t.Errorf("generation = %d, want 1 (no re-adopt inside the backoff window)", got.CoordinationGeneration)
+		}
+		if readopter.callCount() != 1 {
+			t.Errorf("ReadoptAndFence calls = %d, want 1 (no re-fence inside backoff)", readopter.callCount())
+		}
+		if _, err := leases.Get(ctx, "acme", sessID); err == nil {
+			t.Errorf("lease re-acquired inside the backoff window, want unheld")
+		}
+
+		// After the window elapses: re-adopted, generation climbs once more.
+		advance(10 * time.Second)
+		if _, err := sw.Sweep(ctx); err != nil {
+			t.Fatalf("third Sweep: %v", err)
+		}
+		got, _ = sessions.Get(ctx, "acme", sessID)
+		if got.CoordinationGeneration != 2 {
+			t.Errorf("generation = %d, want 2 (re-adopted after the backoff elapsed)", got.CoordinationGeneration)
+		}
+		if readopter.callCount() != 2 {
+			t.Errorf("ReadoptAndFence calls = %d, want 2 (re-fenced after the backoff elapsed)", readopter.callCount())
 		}
 	})
 }
