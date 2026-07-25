@@ -79,8 +79,10 @@ func mustCreate(t *testing.T, store sessionstore.Store, s sessionstore.Session) 
 func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CoordinationGeneration: 2})
-	mustCreate(t, sessions, sessionstore.Session{ID: "s2", TenantID: "acme", State: session.StateRunning})
+	// The running sessions carry a persisted pod assignment so the sweep
+	// adopts their lapsed lease as a still-running-pod orphan and mirrors it.
+	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-s1", CoordinationGeneration: 2})
+	mustCreate(t, sessions, sessionstore.Session{ID: "s2", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-s2"})
 	mustCreate(t, sessions, sessionstore.Session{ID: "done", TenantID: "acme", State: session.StateCompleted})
 
 	mirror := coordlease.NewMemoryStore(nil)
@@ -126,8 +128,8 @@ func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	mustCreate(t, sessions, sessionstore.Session{ID: "mine", TenantID: "acme", State: session.StateRunning})
-	mustCreate(t, sessions, sessionstore.Session{ID: "theirs", TenantID: "acme", State: session.StateRunning})
+	mustCreate(t, sessions, sessionstore.Session{ID: "mine", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-mine"})
+	mustCreate(t, sessions, sessionstore.Session{ID: "theirs", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-theirs"})
 
 	leases := newFakeLeases()
 	// "theirs" is already held by rep-2.
@@ -151,7 +153,7 @@ func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
 func TestSweepNilMirrorIsNoop_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning})
+	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-s1"})
 	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, newFakeLeases(), Options{ReplicaID: "rep-1"})
 	if held, err := sw.Sweep(ctx); err != nil || held != 1 {
 		t.Fatalf("Sweep with nil mirror: held=%d err=%v, want 1, nil", held, err)

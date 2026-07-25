@@ -5,9 +5,10 @@
 // Component test for the §10.1 lease coordination sweeper
 // (pkg/gateway/coordination), exercised against a real Redis lease
 // store with in-memory session and tenant stores. It confirms a
-// sweep acquires the coordination lease for every non-terminal
-// session, leaves terminal sessions and other replicas' sessions
-// alone, and is idempotent across passes.
+// sweep adopts the coordination lease only for a still-running-pod
+// session (running or input_required with a persisted pod assignment)
+// this replica holds no binding for, leaves never-bound, terminal, and
+// other replicas' sessions alone, and is idempotent across passes.
 package coordination_test
 
 import (
@@ -43,9 +44,14 @@ func uniq(t *testing.T) string {
 
 func seedSession(t *testing.T, store *memstore.Store, tenant, id string, state session.State) {
 	t.Helper()
-	if err := store.Create(context.Background(), sessionstore.Session{
-		ID: id, TenantID: tenant, State: state, RuntimeRef: "echo",
-	}); err != nil {
+	row := sessionstore.Session{ID: id, TenantID: tenant, State: state, RuntimeRef: "echo"}
+	// A running-pod session carries a persisted pod assignment; that is the
+	// signal that makes its lapsed lease adoptable by the coordination
+	// sweep, which no longer acquires the lease of a never-bound session.
+	if state == session.StateRunning || state == session.StateInputRequired {
+		row.PodAssignment = "pod-" + id
+	}
+	if err := store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed session %s: %v", id, err)
 	}
 }
@@ -53,9 +59,10 @@ func seedSession(t *testing.T, store *memstore.Store, tenant, id string, state s
 // spec: 10.1
 // diagnosis: the lease coordination sweeper in
 // pkg/gateway/coordination did not behave as specified. A sweep must
-// acquire the coordination lease for every non-terminal session, leave
-// terminal sessions and other replicas' sessions alone, and be
-// idempotent across passes.
+// adopt the coordination lease only for a still-running-pod session
+// (running or input_required with a persisted pod assignment) it holds no
+// binding for, leave never-bound, terminal, and other replicas' sessions
+// alone, and be idempotent across passes.
 func TestSweeperContract(t *testing.T) {
 	t.Parallel()
 	rd := containers.StartRedis(t, containers.RedisOptions{})
@@ -70,13 +77,22 @@ func TestSweeperContract(t *testing.T) {
 		})
 	}
 
-	t.Run("sweep acquires leases for non-terminal sessions only", func(t *testing.T) {
+	t.Run("sweep adopts running-pod sessions and leaves never-bound and terminal alone", func(t *testing.T) {
 		run := uniq(t)
 		sessions := memstore.New()
-		live := []string{run + "-a", run + "-b", run + "-c"}
-		seedSession(t, sessions, "acme", live[0], session.StateRunning)
-		seedSession(t, sessions, "acme", live[1], session.StateCreated)
-		seedSession(t, sessions, "acme", live[2], session.StateAwaitingClientAction)
+		// Adoptable still-running-pod orphans: running / input_required with
+		// a persisted pod assignment and no local binding.
+		adopt := []string{run + "-run", run + "-input"}
+		seedSession(t, sessions, "acme", adopt[0], session.StateRunning)
+		seedSession(t, sessions, "acme", adopt[1], session.StateInputRequired)
+		// Never-bound non-terminal sessions: the sweep must not adopt these,
+		// because a peer must not land the lease on a replica that holds no
+		// binding before the owning replica's at-bind acquire runs.
+		neverBound := []string{run + "-created", run + "-ready", run + "-suspended", run + "-awaiting"}
+		seedSession(t, sessions, "acme", neverBound[0], session.StateCreated)
+		seedSession(t, sessions, "acme", neverBound[1], session.StateReady)
+		seedSession(t, sessions, "acme", neverBound[2], session.StateSuspended)
+		seedSession(t, sessions, "acme", neverBound[3], session.StateAwaitingClientAction)
 		done := run + "-done"
 		seedSession(t, sessions, "acme", done, session.StateCompleted)
 		seedSession(t, sessions, "acme", run+"-failed", session.StateFailed)
@@ -85,21 +101,23 @@ func TestSweeperContract(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Sweep: %v", err)
 		}
-		if held != 3 {
-			t.Errorf("held = %d, want 3 (the non-terminal sessions)", held)
+		if held != 2 {
+			t.Errorf("held = %d, want 2 (the running-pod orphans only)", held)
 		}
-		for _, id := range live {
+		for _, id := range adopt {
 			lease, err := leases.Get(ctx, "acme", id)
 			if err != nil {
-				t.Errorf("non-terminal session %s has no lease: %v", id, err)
+				t.Errorf("running-pod session %s has no lease: %v", id, err)
 				continue
 			}
 			if lease.Holder != "replica-1" {
 				t.Errorf("session %s lease holder = %q, want replica-1", id, lease.Holder)
 			}
 		}
-		if _, err := leases.Get(ctx, "acme", done); err == nil {
-			t.Error("a completed session must not hold a coordination lease")
+		for _, id := range append(neverBound, done, run+"-failed") {
+			if _, err := leases.Get(ctx, "acme", id); err == nil {
+				t.Errorf("session %s must not hold a coordination lease (never-bound or terminal)", id)
+			}
 		}
 	})
 
