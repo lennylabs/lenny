@@ -81,6 +81,71 @@ func TestCoordLeasePgRoundTrip_spec_10_1_165(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 — GetBySession resolves the recorded coordinator identity
+// and its dialable coordinator_address for the eviction-drive routing
+// read; a handoff overwrites both; and a released lease resolves no
+// coordinator (the released_at IS NULL filter), so a NULL address
+// (Sweeper-written pre-seed row) collapses to the empty string.
+// diagnosis: a failure means the by-session coordinator read returns the
+// wrong holder or address, or resolves a released lease, breaking §4.6.1
+// eviction-drive routing and the cross-replica forward hop.
+func TestCoordLeasePgGetBySession_spec_4_6_1(t *testing.T) {
+	store := newCoordLeaseStore(t)
+	ctx := context.Background()
+
+	// Seed with a dialable address, as the bind-time seed does.
+	if err := store.Upsert(ctx, coordlease.Lease{
+		TenantID: "acme", SessionID: "s1", CoordinatorReplica: "rep-1",
+		CoordinatorAddress: "10.0.0.1:50054", CoordinationGeneration: 2,
+	}); err != nil {
+		t.Fatalf("Upsert: %v", err)
+	}
+
+	got, found, err := store.GetBySession(ctx, "acme", "s1")
+	if err != nil {
+		t.Fatalf("GetBySession: %v", err)
+	}
+	if !found || got.CoordinatorReplica != "rep-1" || got.CoordinatorAddress != "10.0.0.1:50054" || got.CoordinationGeneration != 2 {
+		t.Fatalf("GetBySession = %+v found=%v, want rep-1 / 10.0.0.1:50054 / gen 2", got, found)
+	}
+
+	// A handoff overwrites both the identity and the address.
+	if err := store.Upsert(ctx, coordlease.Lease{
+		TenantID: "acme", SessionID: "s1", CoordinatorReplica: "rep-2",
+		CoordinatorAddress: "10.0.0.2:50054", CoordinationGeneration: 3,
+	}); err != nil {
+		t.Fatalf("handoff Upsert: %v", err)
+	}
+	got, _, _ = store.GetBySession(ctx, "acme", "s1")
+	if got.CoordinatorReplica != "rep-2" || got.CoordinatorAddress != "10.0.0.2:50054" {
+		t.Fatalf("after handoff GetBySession = %+v, want rep-2 / 10.0.0.2:50054", got)
+	}
+
+	// A Sweeper-written row that records no address reads the empty string
+	// rather than failing the NULL scan.
+	if err := store.Upsert(ctx, coordlease.Lease{
+		TenantID: "globex", SessionID: "s2", CoordinatorReplica: "rep-1", CoordinationGeneration: 1,
+	}); err != nil {
+		t.Fatalf("Upsert no-address: %v", err)
+	}
+	if got, found, _ := store.GetBySession(ctx, "globex", "s2"); !found || got.CoordinatorAddress != "" {
+		t.Fatalf("no-address GetBySession = %+v found=%v, want found with empty address", got, found)
+	}
+
+	// A missing session resolves no coordinator.
+	if _, found, _ := store.GetBySession(ctx, "acme", "missing"); found {
+		t.Fatal("GetBySession(missing) found = true, want false")
+	}
+
+	// A released lease resolves no coordinator.
+	if err := store.Release(ctx, "acme", "s1"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if _, found, _ := store.GetBySession(ctx, "acme", "s1"); found {
+		t.Fatal("GetBySession found = true after Release, want false")
+	}
+}
+
 // spec: §12.1 line 5 — the mandatory erasure primitives remove the scoped
 // rows and reject an empty scope.
 // diagnosis: a failure means the coordination-lease erasure primitive

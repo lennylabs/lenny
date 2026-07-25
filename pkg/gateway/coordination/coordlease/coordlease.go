@@ -49,6 +49,12 @@ type Lease struct {
 	SessionID string
 	// CoordinatorReplica is the OTel service.instance.id of the holder.
 	CoordinatorReplica string
+	// CoordinatorAddress is the coordinator's dialable inter-replica
+	// address (POD_IP plus the inter-replica gRPC port). CoordinatorReplica
+	// is an opaque service.instance.id and is not routable on its own, so
+	// the §4.6.1 eviction-forward hop dials this address. Empty when the
+	// writer records no address (migration 0180 nullable column).
+	CoordinatorAddress string
 	// CoordinationGeneration is the §4.2 fenced generation carried in
 	// the CheckpointBarrier message (§10.1 line 165).
 	CoordinationGeneration int64
@@ -73,6 +79,16 @@ type Store interface {
 	// whose coordinator_replica equals replica — the §10.1 line 165
 	// barrier-target set. The query is cross-tenant.
 	ListHeldByReplica(ctx context.Context, replica string) ([]Lease, error)
+
+	// GetBySession resolves the recorded coordinator for a session — the
+	// §4.6.1 eviction-drive routing read. It returns the active
+	// (released_at IS NULL) row's coordinator identity and dialable
+	// address, with found=false when no row exists or the lease is
+	// released. A released lease resolves no coordinator: the same
+	// released_at IS NULL filter ListHeldByReplica applies, so a session
+	// whose coordinator has relinquished routes nowhere rather than to a
+	// stale holder.
+	GetBySession(ctx context.Context, tenantID, sessionID string) (lease Lease, found bool, err error)
 
 	// DeleteByUser removes every row in tenantID whose session id is in
 	// sessionIDs. The §12.8 orchestrator owns the session-id lookup
@@ -146,6 +162,19 @@ func (m *MemoryStore) ListHeldByReplica(_ context.Context, replica string) ([]Le
 		out = append(out, row.lease)
 	}
 	return out, nil
+}
+
+// GetBySession resolves the recorded coordinator for (tenant, session).
+// A released row resolves no coordinator (found=false), replicating the
+// released_at IS NULL filter ListHeldByReplica applies.
+func (m *MemoryStore) GetBySession(_ context.Context, tenantID, sessionID string) (Lease, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	row, ok := m.rows[leaseKey{tenantID, sessionID}]
+	if !ok || row.released {
+		return Lease{}, false, nil
+	}
+	return row.lease, true, nil
 }
 
 // DeleteByUser removes every row in tenantID whose session_id is in the

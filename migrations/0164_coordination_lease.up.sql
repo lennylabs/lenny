@@ -19,6 +19,16 @@
 -- handoff overwrites coordinator_replica with the new holder, and it
 -- marks released_at when the session reaches a terminal state.
 --
+-- The session server is a second writer: it seeds this row at session
+-- bind with the binding replica as the initial coordinator_replica. In
+-- the window before the first coordination sweep the seeded replica holds
+-- no coordination lease yet, so coordinator_replica can name a
+-- non-lease-holding binding replica until the next sweep overwrites it
+-- with the lease holder. The seed lets the §4.6.1 individual agent-pod
+-- eviction drive resolve a session's coordinator before it can be evicted.
+-- Migration 0180 adds the coordinator_address column the mirror now
+-- carries alongside coordinator_replica for the eviction-forward hop.
+--
 -- This is platform-operational coordination state, not tenant data: a
 -- single gateway replica coordinates sessions across every tenant, so
 -- the barrier-target query is cross-tenant and there is no

@@ -568,6 +568,11 @@ var prodMigrationSchema = []struct {
 	// the deny bit; this BOOLEAN NOT NULL DEFAULT false column adds only it.
 	// spec: §8.3 (deny marker persistence).
 	{migration: "0179", table: "sessions", columns: []string{"credential_deny"}},
+	// 0180 adds the §4.6.1 coordinator_address column to coordination_lease:
+	// coordinator_replica is an opaque OTel service.instance.id, so the
+	// eviction-forward hop needs the coordinator's dialable inter-replica
+	// address recorded alongside its identity. spec: §10.1, §4.6.1.
+	{migration: "0180", table: "coordination_lease", columns: []string{"coordinator_address"}},
 }
 
 // spec: 12.2, 18.5

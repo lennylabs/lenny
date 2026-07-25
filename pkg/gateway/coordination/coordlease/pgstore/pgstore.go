@@ -15,6 +15,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
@@ -46,15 +47,16 @@ func (s *Store) Upsert(ctx context.Context, l coordlease.Lease) error {
 	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO coordination_lease (
-			tenant_id, session_id, coordinator_replica,
+			tenant_id, session_id, coordinator_replica, coordinator_address,
 			coordination_generation, acquired_at, released_at)
-		VALUES ($1, $2, $3, $4, $5, NULL)
+		VALUES ($1, $2, $3, NULLIF($4, ''), $5, $6, NULL)
 		ON CONFLICT (tenant_id, session_id) DO UPDATE SET
 			coordinator_replica = EXCLUDED.coordinator_replica,
+			coordinator_address = EXCLUDED.coordinator_address,
 			coordination_generation = EXCLUDED.coordination_generation,
 			acquired_at = EXCLUDED.acquired_at,
 			released_at = NULL`,
-		l.TenantID, l.SessionID, l.CoordinatorReplica,
+		l.TenantID, l.SessionID, l.CoordinatorReplica, l.CoordinatorAddress,
 		l.CoordinationGeneration, s.now())
 	return err
 }
@@ -92,6 +94,29 @@ func (s *Store) ListHeldByReplica(ctx context.Context, replica string) ([]coordl
 		out = append(out, l)
 	}
 	return out, rows.Err()
+}
+
+// GetBySession resolves the recorded coordinator for a session — the
+// §4.6.1 eviction-drive routing read. It returns the active
+// (released_at IS NULL) row's coordinator identity and dialable address,
+// with found=false when no active row exists. The released_at IS NULL
+// predicate replicates the ListHeldByReplica filter, so a released lease
+// resolves no coordinator. A NULL coordinator_address collapses to the
+// empty string, which resolves no forward target.
+func (s *Store) GetBySession(ctx context.Context, tenantID, sessionID string) (coordlease.Lease, bool, error) {
+	l := coordlease.Lease{TenantID: tenantID, SessionID: sessionID}
+	err := s.pool.QueryRow(ctx,
+		`SELECT coordinator_replica, COALESCE(coordinator_address, ''), coordination_generation
+		FROM coordination_lease
+		WHERE tenant_id = $1 AND session_id = $2 AND released_at IS NULL`,
+		tenantID, sessionID).Scan(&l.CoordinatorReplica, &l.CoordinatorAddress, &l.CoordinationGeneration)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return coordlease.Lease{}, false, nil
+	}
+	if err != nil {
+		return coordlease.Lease{}, false, err
+	}
+	return l, true, nil
 }
 
 // DeleteByUser removes every row in tenantID whose session_id is in

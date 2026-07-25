@@ -88,6 +88,45 @@ func TestMemoryStoreReleaseExcludesFromTargets_spec_10_1_165(t *testing.T) {
 	}
 }
 
+// spec: §4.6.1 — GetBySession resolves the recorded coordinator identity
+// and dialable address for the eviction drive, and a released lease
+// resolves no coordinator (found=false), replicating the released_at IS
+// NULL filter ListHeldByReplica applies.
+func TestMemoryStoreGetBySession_spec_4_6_1(t *testing.T) {
+	ctx := context.Background()
+	s := NewMemoryStore(nil)
+	_ = s.Upsert(ctx, Lease{
+		TenantID: "acme", SessionID: "s1", CoordinatorReplica: "rep-1",
+		CoordinatorAddress: "10.0.0.1:50054", CoordinationGeneration: 4,
+	})
+
+	got, found, err := s.GetBySession(ctx, "acme", "s1")
+	if err != nil {
+		t.Fatalf("GetBySession: %v", err)
+	}
+	if !found {
+		t.Fatal("GetBySession found = false, want true for an active lease")
+	}
+	if got.CoordinatorReplica != "rep-1" || got.CoordinatorAddress != "10.0.0.1:50054" || got.CoordinationGeneration != 4 {
+		t.Fatalf("GetBySession = %+v, want rep-1 / 10.0.0.1:50054 / gen 4", got)
+	}
+
+	// A missing session resolves no coordinator.
+	if _, found, _ := s.GetBySession(ctx, "acme", "missing"); found {
+		t.Fatal("GetBySession(missing) found = true, want false")
+	}
+
+	// A released lease resolves no coordinator: the released_at IS NULL
+	// filter means a session whose coordinator relinquished routes nowhere
+	// rather than to a stale holder.
+	if err := s.Release(ctx, "acme", "s1"); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if _, found, _ := s.GetBySession(ctx, "acme", "s1"); found {
+		t.Fatal("GetBySession found = true after Release, want false (released resolves no coordinator)")
+	}
+}
+
 func TestMemoryStoreUpsertRejectsEmptyIDs(t *testing.T) {
 	ctx := context.Background()
 	s := NewMemoryStore(nil)
