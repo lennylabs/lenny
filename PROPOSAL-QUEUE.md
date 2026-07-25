@@ -550,7 +550,7 @@ Severity-first. All `open` and unassigned at seed time (2026-07-12).
 - **relates to:** C-13 (landed 0057, the §15 single-shot pod-binding this extends); C-51 (the idle-TTL pod-hold follow-up captured alongside it).
 
 ### C-51 — Single-shot adapter pod-hold idle TTL — §15/§6.2
-- **status:** open (filed 2026-07-25 by the integrator from proposal-C's inbox request; an unconverged design draft is captured on impl as `proposals/0061_draft_single-shot-adapter-pod-hold-idle-ttl.md`, renamed from the branch's 0057 which collided with the landed C-13 0057)
+- **status:** claimed:proposal-C@2026-07-25T23:46:41Z (converging the captured `0061_draft` through change-proposal; human sign-off requirement: the idle-TTL is configurable PER RUNTIME. Sequence gate C-50/0059 is landed.) Filed 2026-07-25 by the integrator from proposal-C's inbox request; an unconverged design draft is captured on impl as `proposals/0061_draft_single-shot-adapter-pod-hold-idle-ttl.md`, renamed from the branch's 0057 which collided with the landed C-13 0057.
 - **assigned:** proposal-C
 - **findings:** (none yet — design capture; file findings when the proposal converges)
 - **root spec gap:** The built-in OpenAI-dialect adapters (`/v1/chat/completions`, `/v1/responses`) claim and release a warm pod on every HTTP request under the §15 single-shot compute model, so a multi-turn conversation pays a pod-claim plus full-history rehydration cost on every turn. Holding the pod for an idle TTL would avoid the pod-per-message churn, but the hold/release semantics, the TTL default and its operator override, and the interaction with §6.2 recycling and warm-pool capacity are undefined.
