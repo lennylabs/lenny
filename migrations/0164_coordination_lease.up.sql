@@ -44,8 +44,13 @@ CREATE TABLE coordination_lease (
     tenant_id               TEXT        NOT NULL,
     session_id              TEXT        NOT NULL,
     -- coordinator_replica is the OTel service.instance.id of the gateway
-    -- replica that currently holds the session-coordination lease. The
-    -- §10.1 line 165 barrier-target query filters on it.
+    -- replica recorded as the session's coordinator. It names either the
+    -- replica that currently holds the session-coordination lease (written
+    -- by the Sweeper on every sweep) or, in the pre-first-sweep window, the
+    -- binding replica the session server seeded at bind, which holds no
+    -- coordination lease yet and which the next sweep overwrites with the
+    -- lease holder. The value is therefore not always the current lease
+    -- holder. The §10.1 line 165 barrier-target query filters on it.
     coordinator_replica     TEXT        NOT NULL,
     -- coordination_generation is the §4.2 fenced generation the holder
     -- last observed for the session. The CheckpointBarrier message
