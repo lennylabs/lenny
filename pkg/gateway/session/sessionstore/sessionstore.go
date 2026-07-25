@@ -144,6 +144,17 @@ type Session struct {
 	// §7.1 derive copy semantics. Set only on derived sessions.
 	ParentSessionID string
 
+	// ContinuationParentID is the OpenResponsesAdapter previous_response_id of
+	// the prior response this single-shot continuation chains from. It is
+	// distinct from ParentSessionID, which the §8.2/§8.6 delegation machinery
+	// and the delegation-tree orphan-cleanup sweep own: a single-shot
+	// continuation must not set ParentSessionID or it would be misclassified as
+	// a delegated child and swept. The pointer rides the §14.1 request-envelope
+	// bundle rather than a dedicated column; GET /v1/responses/{id} echoes it as
+	// previous_response_id.
+	// spec: §15 built-in adapter single-shot compute model.
+	ContinuationParentID string
+
 	// RootSessionID is the §8.9 / §12.5 delegation-tree root: every
 	// session in a delegation tree carries the same RootSessionID,
 	// equal to the session at the tree's apex. A standalone session

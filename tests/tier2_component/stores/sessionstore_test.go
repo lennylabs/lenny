@@ -842,6 +842,52 @@ func TestSessionStoreContract(t *testing.T) {
 			t.Errorf("CredentialDeny = true, want false")
 		}
 	})
+
+	// spec: §14.1 line 311 (request-envelope bundle), §15 (built-in adapter
+	// single-shot compute model) — the OpenResponsesAdapter
+	// previous_response_id lineage rides the §14.1 request-envelope JSONB
+	// bundle rather than a dedicated column. A session carrying only a
+	// ContinuationParentID (no other bundled field) must not be dropped by the
+	// all-empty nil guard: the pointer must survive a Postgres reload so
+	// GET /v1/responses/{id} echoes the originating previous_response_id.
+	// diagnosis: if this fails, the continuation lineage does not persist
+	// through the request-envelope bundle, so a single-shot continuation loses
+	// its previous_response_id across a coordinator handoff or replica reload
+	// and GET /v1/responses/{id} echoes empty.
+	t.Run("continuation_parent_id envelope round-trip", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		prevID := newUUID(t)
+		id := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: id, TenantID: tenant, State: session.StateCompleted, RuntimeRef: "echo",
+			ContinuationParentID: prevID,
+		}); err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		got, err := store.Get(ctx, tenant, id)
+		if err != nil {
+			t.Fatalf("Get: %v", err)
+		}
+		if got.ContinuationParentID != prevID {
+			t.Errorf("ContinuationParentID = %q, want %q", got.ContinuationParentID, prevID)
+		}
+
+		// A chain-root session carrying no continuation pointer reads back
+		// empty, so GET echoes an empty previous_response_id.
+		rootID := newUUID(t)
+		if err := store.Create(ctx, sessionstore.Session{
+			ID: rootID, TenantID: tenant, State: session.StateCompleted, RuntimeRef: "echo",
+		}); err != nil {
+			t.Fatalf("Create root: %v", err)
+		}
+		gotRoot, err := store.Get(ctx, tenant, rootID)
+		if err != nil {
+			t.Fatalf("Get root: %v", err)
+		}
+		if gotRoot.ContinuationParentID != "" {
+			t.Errorf("chain-root ContinuationParentID = %q, want empty", gotRoot.ContinuationParentID)
+		}
+	})
 }
 
 // insertMessage writes one session_messages row under the tenant
