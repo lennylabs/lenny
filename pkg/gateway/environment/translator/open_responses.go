@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -166,6 +167,7 @@ type OpenResponsesHandler struct {
 	defaultRuntime string
 	binder         SingleShotBinder
 	releaseTimeout time.Duration
+	cont           *continuity
 }
 
 // OpenResponsesOptions configures the handler.
@@ -185,6 +187,14 @@ type OpenResponsesOptions struct {
 	// runs under. Zero defaults to defaultSingleShotReleaseTimeout.
 	// Operator-tunable.
 	ReleaseTimeout time.Duration
+
+	// Transcripts is the §15.1 transcript registry the adapter records each
+	// completed turn into and walks on a continuation to rehydrate the prior
+	// conversation onto the freshly-claimed pod. Pass nil to disable
+	// continuity (the §17.4 in-memory mode and the in-process unit tests):
+	// rehydrate then returns empty prior history and record is a no-op.
+	// spec: §15 built-in adapter single-shot compute model.
+	Transcripts transcriptstore.Store
 }
 
 // NewOpenResponsesHandler returns a configured handler.
@@ -216,6 +226,11 @@ func NewOpenResponsesHandler(store sessionstore.Store, exec executor.Executor, o
 		defaultRuntime: rt,
 		binder:         binder,
 		releaseTimeout: releaseTimeout,
+		// The continuity helper is nil-tolerant on its transcripts backing: a
+		// nil Transcripts store makes rehydrate a no-op returning empty prior
+		// history and record a no-op, preserving the in-memory and unit path.
+		// spec: §15 built-in adapter single-shot compute model.
+		cont: &continuity{sessions: store, transcripts: opts.Transcripts},
 	}
 }
 
@@ -261,10 +276,12 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 	// Claim a warm pod, launch the runtime, and register the binding
 	// through the shared §15.2.1 create-and-start service. The single-shot
 	// path does not thread previous_response_id into the row's
-	// ParentSessionID: the create-and-start reuse surface carries no parent
-	// field and setting it would trip the §8.2/§8.6 delegated-child lease
-	// semantics, so continuation re-claims a fresh pod per request and the
-	// stored ParentSessionID stays empty (GET echoes empty).
+	// ParentSessionID: that field is owned by the §8.2/§8.6 delegated-child
+	// lease machinery and the delegation-tree orphan-cleanup sweep, and
+	// setting it would misclassify the ephemeral single-shot session as a
+	// delegated child. The continuation lineage is persisted separately in
+	// ContinuationParentID on completion, so GET echoes it without tripping
+	// the delegation semantics.
 	// spec: §15 built-in adapter single-shot compute model; §8.2 delegated-child lease; §7.1 atomicity.
 	sessionID, err := h.binder.BindSingleShot(r.Context(), SingleShotSpec{
 		TenantID:    tenantID,
@@ -292,7 +309,29 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	sendResp, err := h.exec.Send(r.Context(), sessionID, msgs)
+	// On a continuation, resolve previous_response_id fail-closed and walk its
+	// continuation chain to assemble the prior conversation. The freshly
+	// claimed pod has empty runtime memory, so the prior turns are prepended
+	// ahead of the new turn within the one dispatch below; the runtime then
+	// continues the conversation. An unknown or cross-tenant id maps to a
+	// native 404 with no dispatch (the deferred release still drains the pod).
+	// spec: §15 built-in adapter single-shot compute model; §4.2 session-store tenant isolation.
+	var prior []executor.Message
+	if req.PreviousResponseID != "" {
+		prior, err = h.cont.rehydrate(r.Context(), tenantID, req.PreviousResponseID)
+		if err != nil {
+			if errors.Is(err, errContinuationNotFound) {
+				writeOpenAIError(w, http.StatusNotFound, "not_found_error",
+					"previous_response_id not found")
+				return
+			}
+			writeOpenAIError(w, http.StatusInternalServerError, "server_error",
+				fmt.Sprintf("continuation resolution failed: %v", err))
+			return
+		}
+	}
+
+	sendResp, err := h.exec.Send(r.Context(), sessionID, append(prior, msgs...))
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, "server_error",
 			fmt.Sprintf("executor failure: %v", err))
@@ -302,9 +341,23 @@ func (h *OpenResponsesHandler) handleCreate(w http.ResponseWriter, r *http.Reque
 
 	_, _ = h.store.Update(r.Context(), tenantID, sessionID, func(s *sessionstore.Session) error {
 		s.State = session.StateCompleted
+		// Persist the continuation lineage only for a continuation; chain-root
+		// rows stay clean so GET echoes an empty previous_response_id.
+		// spec: §15 built-in adapter single-shot compute model.
+		if req.PreviousResponseID != "" {
+			s.ContinuationParentID = req.PreviousResponseID
+		}
 		return nil
 	})
 	disp = executor.DispositionCompleted
+
+	// Record this response's own turn (the new input plus its assistant
+	// output, excluding the rehydrated prior conversation, which stays in the
+	// ancestors' own buckets) on its own session id, unconditionally including
+	// a chain-root turn, so a later continuation can rehydrate it. Best-effort,
+	// matching the canonical §15.1 transcript-write path.
+	// spec: §15.1 session transcript best-effort write.
+	h.cont.record(r.Context(), tenantID, sessionID, msgs, out)
 
 	if req.Stream {
 		writeOpenResponsesStream(w, sessionID, req.PreviousResponseID, now, out)
@@ -394,7 +447,7 @@ func (h *OpenResponsesHandler) handleGet(w http.ResponseWriter, r *http.Request)
 		CreatedAt:          row.CreatedAt.Unix(),
 		Status:             mapStateToResponsesStatus(row.State),
 		Model:              row.RuntimeRef,
-		PreviousResponseID: row.ParentSessionID,
+		PreviousResponseID: row.ContinuationParentID,
 		Output:             nil,
 		Error:              nil,
 		IncompleteDetails:  nil,
