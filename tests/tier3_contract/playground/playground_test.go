@@ -18,6 +18,7 @@
 package playground_test
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -27,8 +28,11 @@ import (
 	"testing"
 	"time"
 
+	"nhooyr.io/websocket"
+
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -620,5 +624,158 @@ func TestLoginEndpointIsOIDCModeOnly(t *testing.T) {
 	_ = devResp.Body.Close()
 	if devResp.StatusCode != http.StatusNotFound {
 		t.Fatalf("dev-mode login status = %d, want 404", devResp.StatusCode)
+	}
+}
+
+// wsRoundTrip writes one JSON-RPC 2.0 request frame over conn and returns
+// the decoded response frame.
+func wsRoundTrip(t *testing.T, ctx context.Context, conn *websocket.Conn, method string) map[string]any {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  method,
+	})
+	if err != nil {
+		t.Fatalf("marshal %s frame: %v", method, err)
+	}
+	if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
+		t.Fatalf("write %s frame: %v", method, err)
+	}
+	_, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("read %s response: %v", method, err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("unmarshal %s response: %v; frame %s", method, err, data)
+	}
+	return resp
+}
+
+// wsInitialize sends the §4.1 initialize request over conn and fails the
+// test if the gateway does not answer with a well-formed result frame,
+// proving the connection is genuinely live under whatever credential
+// authenticated the upgrade rather than merely accepted at the TCP level.
+func wsInitialize(t *testing.T, ctx context.Context, conn *websocket.Conn) {
+	t.Helper()
+	resp := wsRoundTrip(t, ctx, conn, "initialize")
+	if _, isErr := resp["error"]; isErr {
+		t.Fatalf("initialize returned an error frame: %v", resp)
+	}
+	if _, ok := resp["result"].(map[string]any); !ok {
+		t.Fatalf("initialize response missing result: %v", resp)
+	}
+}
+
+// spec: 27.3 (spec/27_web-playground.md:139) — "`reusable: true` indicates
+// the bearer MAY be reused across any number of concurrent MCP WebSocket
+// connections for the same user within its TTL — opening a second chat tab
+// in the same browser does not require a second exchange. The server does
+// not track or limit concurrent WebSocket count against a single bearer."
+//
+// diagnosis: A second /mcp/v1/ws upgrade presenting the same still-valid
+// playground bearer as an already-open connection was rejected, or opening
+// it disturbed the first connection. Reusability is asserted nowhere else
+// in the suite: every other WebSocket-auth test dials once per bearer. If
+// this test fails, either the real production auth middleware
+// (pkg/gateway/middleware/auth) started tracking single-use bearers (a
+// behavior the spec explicitly disclaims), or the §27.5.4 revocation watch
+// wiring in pkg/gateway/mcpfabric/mcp is closing a sibling connection it
+// should not touch.
+func TestMintedBearerIsReusableAcrossConcurrentWebSocketConnections(t *testing.T) {
+	signer := devSigner()
+	cfg := playground.Config{
+		Enabled: true, AuthMode: playground.AuthModeDev, DevTenantID: "acme",
+		BearerTTL: 900 * time.Second, OIDCSessionTTL: time.Hour,
+	}
+	h := playground.New(cfg, playground.Options{
+		Signer:   signer,
+		Verifier: signer,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Sessions: playground.NewMemorySessionStore(),
+	})
+	pgSrv := httptest.NewServer(h.TokenRoutes())
+	defer pgSrv.Close()
+
+	// Mint exactly one playground bearer, the same way a single browser tab
+	// exchanges its session cookie for a bearer once.
+	resp, raw := postJSON(t, pgSrv.URL+"/v1/playground/token", "{}", nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mint status = %d, want 200; body=%s", resp.StatusCode, raw)
+	}
+	var minted struct {
+		BearerToken string `json:"bearerToken"`
+		Reusable    bool   `json:"reusable"`
+	}
+	if err := json.Unmarshal(raw, &minted); err != nil {
+		t.Fatalf("decode mint body: %v", err)
+	}
+	if !minted.Reusable {
+		t.Fatalf("mint response reusable = %v, want true", minted.Reusable)
+	}
+
+	// The real /mcp/v1/ws production wiring: the standard §10.2 auth
+	// middleware (validating the same bearer chain any non-playground MCP
+	// client goes through, per §27.3 "the gateway validates the bearer
+	// exactly as it would for any non-playground MCP client") in front of
+	// the real MCP WebSocket transport, with the §27.5.4 revocation watch
+	// wired from the auth-middleware principal exactly as
+	// cmd/lenny-gateway/httpsurface.go wires it.
+	mcpSrv := mcp.NewServer()
+	mcpSrv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
+		p, ok := authmw.FromContext(r.Context())
+		if !ok {
+			return mcp.WSPrincipal{}, false
+		}
+		return mcp.WSPrincipal{Tenant: p.TenantID, JTI: p.JTI, Origin: p.Origin}, true
+	}, h, 0)
+	wsHandler := authmw.Wrap(mcpSrv.WebSocketHandler(), authmw.Options{
+		Verifier:    signer,
+		MultiTenant: true,
+		Registry:    fakeTenants{registered: map[string]bool{"acme": true}},
+		RequireAuth: true,
+	})
+	wsSrv := httptest.NewServer(wsHandler)
+	defer wsSrv.Close()
+	wsURL := "ws" + strings.TrimPrefix(wsSrv.URL, "http")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	dial := func() *websocket.Conn {
+		t.Helper()
+		conn, upgradeResp, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+			HTTPHeader: http.Header{"Authorization": []string{"Bearer " + minted.BearerToken}},
+		})
+		if err != nil {
+			status := "n/a"
+			if upgradeResp != nil {
+				status = upgradeResp.Status
+			}
+			t.Fatalf("dial /mcp/v1/ws with the minted bearer: %v (upgrade response status %s)", err, status)
+		}
+		return conn
+	}
+
+	// Two concurrent connections presenting the identical bearer. Both must
+	// be accepted: the spec disclaims any server-side tracking of
+	// concurrent WebSocket count per bearer.
+	connA := dial()
+	defer func() { _ = connA.Close(websocket.StatusNormalClosure, "") }()
+	connB := dial()
+	defer func() { _ = connB.Close(websocket.StatusNormalClosure, "") }()
+
+	wsInitialize(t, ctx, connA)
+	wsInitialize(t, ctx, connB)
+
+	// Closing one connection must not disturb the sibling connection
+	// carrying the same bearer.
+	if err := connA.Close(websocket.StatusNormalClosure, "done"); err != nil {
+		t.Fatalf("close connA: %v", err)
+	}
+	pingResp := wsRoundTrip(t, ctx, connB, "ping")
+	if _, ok := pingResp["result"]; !ok {
+		t.Fatalf("connB ping after connA closed = %v, want a result frame (the sibling connection must stay live)", pingResp)
 	}
 }

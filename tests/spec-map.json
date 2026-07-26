@@ -4056,6 +4056,7 @@
         "tests/tier3_contract/playground/playground_test.go::TestAPIKeyModeRejectsCookieOnlyMaterial",
         "tests/tier3_contract/playground/playground_test.go::TestOIDCModeReportsBothWhenCookieAndBearerPresented",
         "tests/tier3_contract/playground/playground_test.go::TestDevModeIgnoresPresentedMaterial",
+        "tests/tier3_contract/playground/playground_test.go::TestMintedBearerIsReusableAcrossConcurrentWebSocketConnections",
         "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerAuthorizationRequestCarriesPKCEAndEchoesState",
         "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerCompletesConformantPKCEExchange",
         "tests/tier3_contract/playground/oidc_pkce_conformance_test.go::TestOIDCExchangerRejectsMismatchedPKCEVerifier",
