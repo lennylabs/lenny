@@ -108,7 +108,7 @@ func (h *Handler) mintOIDC(w http.ResponseWriter, r *http.Request) {
 	}
 	// §27.3.1 line 81: recover the tenant from the fan-in index since the
 	// cookie carries only the opaque id. A store error fails closed (503);
-	// a missing entry is an expired session (401). F-27.3.8.
+	// a missing entry is an expired session (401).
 	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
 	if terr != nil {
 		writeError(w, http.StatusServiceUnavailable, "REDIS_UNAVAILABLE",

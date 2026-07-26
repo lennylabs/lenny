@@ -231,7 +231,6 @@ func (c Config) Validate() error {
 // GET /v1/runtimes discovery surface and at session create, but only for
 // origin=playground requests — a non-playground caller is never narrowed by
 // the playground value. spec: §27.4 line 176; §27.5 line 190; §27.9 line 250.
-// F-27.4.1.
 func (c Config) RuntimeVisible(name string) bool {
 	if len(c.AllowedRuntimes) == 0 {
 		return true
@@ -281,8 +280,8 @@ func runtimeGlobMatch(pattern, s string) bool {
 // platform bound; it only tightens a looser one. A zero maxClientIdleSeconds
 // (no idle bound resolved) yields the configured playground cap unchanged.
 // The gateway session server invokes this through its PlaygroundCapResolver
-// seam to stamp the cap onto a §27.3 origin=playground session at create time
-// (F-27.6.1). spec: §27.6 line 201.
+// seam to stamp the cap onto a §27.3 origin=playground session at create
+// time. spec: §27.6 line 201.
 func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 	pg := c.MaxIdleTimeSeconds
 	if maxClientIdleSeconds > 0 && maxClientIdleSeconds < pg {
@@ -297,7 +296,7 @@ func (c Config) EffectiveIdleSeconds(maxClientIdleSeconds int) int {
 // a zero runtimeMinutes yields the configured playground cap. The
 // gateway session server invokes this through its PlaygroundCapResolver
 // seam to stamp the cap onto a §27.3 origin=playground session at create
-// time (F-27.6.2). spec: §27.6 line 200.
+// time. spec: §27.6 line 200.
 func (c Config) EffectiveSessionMinutes(runtimeMinutes int) int {
 	pg := c.MaxSessionMinutes
 	if runtimeMinutes > 0 && runtimeMinutes < pg {

@@ -228,7 +228,6 @@ func revocationChannel(tenant string) string {
 // after gateway start still warms the replica's negative cache without
 // a per-tenant subscription enrolment step. spec: §27.6 line 204 /
 // §27.3.1 line 96 — "Every gateway replica subscribes to this channel".
-// F-27.6.7.
 const revocationChannelPattern = "t:*:pg:revocations"
 
 // tenantFromRevocationChannel extracts the tenant id from a concrete
@@ -255,7 +254,7 @@ func tenantFromRevocationChannel(channel string) (string, bool) {
 // propagation latency, and the publish timestamp lets a peer compute
 // the end-to-end §27.8 propagation sample on receipt. The jti is placed
 // last so a SplitN keeps it intact even though §10.2 jti material never
-// contains the delimiter. spec: §27.8 line 241. F-27.6.6.
+// contains the delimiter. spec: §27.8 line 241.
 func encodeRevocationMsg(originReplicaID string, publishNano int64, jti string) string {
 	return originReplicaID + "|" + strconv.FormatInt(publishNano, 10) + "|" + jti
 }
@@ -300,7 +299,7 @@ type MemorySessionStore struct {
 	revoked  map[string]time.Time
 	// idTenant is the §27.3.1 fan-in index: opaque session id -> tenant,
 	// so TenantForSession recovers the tenant the cookie no longer
-	// carries. F-27.3.8.
+	// carries.
 	idTenant map[string]memTenantIndex
 	now      func() time.Time
 }
@@ -311,7 +310,7 @@ type memSession struct {
 }
 
 // memTenantIndex is one §27.3.1 session-id -> tenant index entry, held
-// under the session TTL so a stale id self-expires. F-27.3.8.
+// under the session TTL so a stale id self-expires.
 type memTenantIndex struct {
 	tenant    string
 	expiresAt time.Time
@@ -468,7 +467,7 @@ type RedisSessionStore struct {
 	// subscriber including the originating replica, so the subscribe
 	// loop compares this id against the message origin to record the
 	// §27.8 propagation sample only for messages a *peer* published.
-	// spec: §27.8 line 241. F-27.6.6.
+	// spec: §27.8 line 241.
 	replicaID string
 
 	// propObserver, when set, receives the §27.8
@@ -502,7 +501,7 @@ func NewRedisSessionStore(client redis.UniversalClient) *RedisSessionStore {
 // subscribe loop and returns s for chaining. The gateway calls it so a
 // peer-observed revocation records a lenny_playground_session_revocation_propagation_seconds
 // sample. revocationPropagation is itself nil-safe, so WithMetrics(nil)
-// leaves sampling disabled. spec: §27.8 line 241. F-27.6.6.
+// leaves sampling disabled. spec: §27.8 line 241.
 func (s *RedisSessionStore) WithMetrics(m *Metrics) *RedisSessionStore {
 	if m == nil {
 		return s
@@ -597,7 +596,7 @@ func (s *RedisSessionStore) RevokeSession(ctx context.Context, tenant, id string
 		// authoritative store consulted on every request, so the
 		// fan-out is a propagation accelerator (§27.3.1). The payload
 		// carries this replica's id and the publish instant so a peer
-		// can record the §27.8 cross-replica propagation sample. F-27.6.6.
+		// can record the §27.8 cross-replica propagation sample.
 		_ = s.client.Publish(ctx, revocationChannel(tenant), encodeRevocationMsg(s.replicaID, publishNano, jti)).Err()
 	}
 	return nil
@@ -708,7 +707,7 @@ func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) 
 //
 // spec: §27.6 line 204 / §27.3.1 line 96 — every replica subscribes and
 // a dropped subscription re-subscribes and emits the resubscribe
-// outcome. F-27.6.6, F-27.6.7.
+// outcome.
 func (s *RedisSessionStore) SubscribeAllRevocations(ctx context.Context) {
 	if s.client == nil {
 		<-ctx.Done()
@@ -767,7 +766,7 @@ func (s *RedisSessionStore) drainRevocations(ctx context.Context, ch <-chan *red
 // timestamp, records the §27.8 end-to-end propagation latency under the
 // pubsub_delivered outcome. A message this replica published itself
 // warms the cache but is not sampled (it is not a cross-replica
-// observation). spec: §27.8 line 241. F-27.6.6.
+// observation). spec: §27.8 line 241.
 func (s *RedisSessionStore) handleRevocationMessage(channel, payload string) {
 	tenant, ok := tenantFromRevocationChannel(channel)
 	if !ok {

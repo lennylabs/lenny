@@ -201,7 +201,7 @@ func (h *Handler) establishSession(ctx context.Context, w http.ResponseWriter, s
 	}
 	// §27.3.1 line 81: the cookie carries only the opaque session id. The
 	// tenant is recovered server-side from the fan-in index PutSession
-	// wrote, so the cookie value discloses no tenant id. F-27.3.8.
+	// wrote, so the cookie value discloses no tenant id.
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    sessionID,
@@ -235,7 +235,7 @@ func (h *Handler) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 	// §27.3.1 line 81: recover the tenant from the fan-in index since the
 	// cookie carries only the opaque id. A missing entry or store error
-	// leaves logout idempotent (the cookie is already cleared). F-27.3.8.
+	// leaves logout idempotent (the cookie is already cleared).
 	tenant, found, terr := h.sessions.TenantForSession(r.Context(), id)
 	if terr != nil || !found {
 		w.WriteHeader(http.StatusOK)
@@ -273,7 +273,7 @@ func (h *Handler) revokeSessionRecord(ctx context.Context, tenant, id string, re
 	// the originating replica's local write. Recording the local
 	// MULTI/EXEC round-trip under {outcome="redis_authoritative"} (as the
 	// prior code did) mislabelled a same-replica write as a cross-replica
-	// observation and never captured the quantity the SLO bounds. F-27.6.6.
+	// observation and never captured the quantity the SLO bounds.
 	h.emitBearerRevokedAudit(ctx, tenant, rec.UserID, id, rec.BearerJTIs)
 	return nil
 }
@@ -510,7 +510,7 @@ func (h *Handler) callbackURL(r *http.Request) string {
 // via SessionStore.TenantForSession rather than embedded in the cookie.
 // The opaque id is base64url (newOpaqueID) and never contains a dot, so
 // a legacy dotted value fails the index lookup and is treated as an
-// expired session. F-27.3.8.
+// expired session.
 func parseSessionCookie(r *http.Request) (id string, ok bool) {
 	c, err := r.Cookie(sessionCookie)
 	if err != nil || c.Value == "" {

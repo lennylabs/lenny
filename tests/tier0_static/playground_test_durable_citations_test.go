@@ -199,6 +199,85 @@ func TestPlaygroundTestFilesCiteOnlyDurableSpecSections(t *testing.T) {
 	}
 }
 
+// playgroundSourceDir is the playground package tree whose non-test Go
+// files the source sweep covers.
+const playgroundSourceDir = "pkg/gateway/mcpfabric/playground"
+
+// playgroundSourceFiles returns every non-test `.go` file under the
+// playground package tree, in sorted repo-relative order.
+func playgroundSourceFiles(t *testing.T, root string) []string {
+	t.Helper()
+
+	found := []string{}
+	err := filepath.WalkDir(filepath.Join(root, playgroundSourceDir), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return relErr
+		}
+		if d.IsDir() {
+			if skippedTreeDirs[d.Name()] || skippedTreeDirs[rel] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(rel, ".go") && !strings.HasSuffix(rel, "_test.go") {
+			found = append(found, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk %s for Go source files: %v", playgroundSourceDir, err)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// TestPlaygroundSourceCitesOnlyDurableSpecSections holds the playground
+// package's production comments to the same citation rule as its tests.
+// The doc comment on a handler, a store method, or a config accessor is
+// where a reader learns which requirement the code implements, so a
+// retired tracker id sitting beside the spec citation reads there as a
+// second, equally live reference and resolves to nothing.
+//
+// The sweep is scoped to the playground package tree rather than the
+// repository. The same ids appear in several hundred non-test Go files
+// under pkg/ and cmd/, and stripping those is a separate, deliberately
+// scoped cleanup; a guard that failed over all of them would be red on
+// arrival and could not gate anything. Scoping it here keeps the §27
+// surface closed and leaves the wider sweep to its own change.
+//
+// spec: code-best-practices.md's traceability rule — "Cite the spec on
+// spec-derived logic with `// spec: §X.Y`. Do not include line numbers
+// since they can shift frequently. A reviewer should be able to trace a
+// behavior to its spec section." — together with test-coverage.md,
+// "Every test carries a `// spec:` annotation naming the spec sections
+// it exercises ... The harness maps tests to spec sections through this
+// annotation." A BUILD-GAPS.md finding id is not a spec section and
+// carries no such trace.
+//
+// diagnosis: a match reports the offending file, its 1-based line
+// number, the id, and the line text. Delete the id and keep the
+// "// spec: §X.Y" citation and the prose that already sits beside it.
+// Rewrap the comment when deleting the id empties a line.
+func TestPlaygroundSourceCitesOnlyDurableSpecSections(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	files := playgroundSourceFiles(t, root)
+	if len(files) == 0 {
+		t.Fatalf("found no non-test Go files under %s; the sweep is broken, since the package holds the §27 handlers at minimum", playgroundSourceDir)
+	}
+
+	for _, rel := range files {
+		for _, hit := range scanForBuildGapID(t, root, rel, buildGapIDPattern) {
+			t.Errorf("%s; cite a durable \"// spec: §X.Y\" section reference plus prose instead", hit)
+		}
+	}
+}
+
 // TestBuildGapIDPatternsMatchBothSpellings pins the sweep's own
 // detection surface. A guard whose pattern misses the underscore
 // spelling reports green over a file whose test names still carry a
