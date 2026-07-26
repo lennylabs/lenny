@@ -4067,7 +4067,8 @@
         "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster",
         "tests/tier8_chaos/playground_revocation_redis_outage_test.go::TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers",
         "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3",
-        "tests/tier4_integration/playground_dev_ready_gate_test.go::TestPlaygroundDevReadyGateSelfHealsAgainstRealPostgres"
+        "tests/tier4_integration/playground_dev_ready_gate_test.go::TestPlaygroundDevReadyGateSelfHealsAgainstRealPostgres",
+        "tests/tier4_integration/playground_ws_revocation_test.go::TestPlaygroundLogoutClosesLiveWebSocketWith4401_spec_27_3_1_97"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
