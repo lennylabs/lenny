@@ -11,6 +11,7 @@ Test infrastructure for Lenny. The architecture and conventions are defined in [
 | `groups.yaml` | Named test selection groups (`pr`, `pr-fast`, `nightly`, `pre-release`, `phase-<N>-gate`). |
 | `groups.subsets.yaml` | Concrete subset definitions referenced by `groups.yaml`. |
 | `spec-map-exceptions.yaml` | Spec sections explicitly exempt from the "every section has at least one test" rule, with justifications. |
+| `spec-map-inpackage-pending.txt` | In-package test files `validate-maps` tolerates as absent from `spec-map.json`, one repo-relative path per line. Waives the backlog the in-package orphan sweep inherited so the check ratchets on new drift. |
 | `results/` | Latest verdict (`latest.json`, `latest.junit.xml`). Gitignored. |
 
 ## Subdirectories

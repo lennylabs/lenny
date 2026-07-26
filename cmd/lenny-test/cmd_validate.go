@@ -46,7 +46,8 @@ func runValidateMaps(args []string) int {
 		validateSpecMapPaths(specMapPath, root),
 		validateChangeGraphPaths(changeGraphPath, root),
 		validateChangeGraphFileExistence(changeGraphPath, root),
-		validateTestFilesMapped(specMapPath, root),
+		validateTestFilesMapped(specMapPath,
+			filepath.Join(root, "tests", "spec-map-inpackage-pending.txt"), root),
 		validateSpecMapCoverage(specMapPath, exceptionsPath),
 		validateSpecMapTestFiles(specMapPath, exceptionsPath,
 			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
@@ -316,44 +317,69 @@ func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult 
 		fmt.Sprintf("%d glob(s); every path resolves on disk", len(doc.Globs)))
 }
 
-// validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
-// files and confirms each is referenced from at least one section's
-// `tests` list in spec-map.json (or is explicitly exempt via
-// tests/spec-map-exceptions.yaml — though this version of the
-// validator does not yet parse exceptions per-file). Test files
-// matching the `testinfra/` or `testdata/` prefix are exempt by
-// construction; same for fuzz_test.go and property_test.go which
-// live alongside their pkg/.
-func validateTestFilesMapped(specMapPath, root string) checkResult {
+// specMapReferences reads spec-map.json and returns the set of paths
+// referenced from any section's `tests` list together with the set of
+// packages the sections claim under `packages`. A `tests` entry is
+// normalised to a repo-relative path: the `::TestName` selector and a
+// trailing `/...` or `/` are stripped, so a package-level entry lands
+// in the set as the package directory.
+func specMapReferences(specMapPath string) (mapped, packages map[string]bool, err error) {
 	data, err := os.ReadFile(specMapPath)
 	if err != nil {
-		return newResult("test files mapped", false, err.Error())
+		return nil, nil, err
 	}
 	var doc struct {
 		Sections map[string]struct {
-			Tests []string `json:"tests"`
+			Tests    []string `json:"tests"`
+			Packages []string `json:"packages"`
 		} `json:"sections"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return newResult("test files mapped", false, err.Error())
+		return nil, nil, err
 	}
-	mapped := map[string]bool{}
+	mapped = map[string]bool{}
+	packages = map[string]bool{}
 	for _, sec := range doc.Sections {
 		for _, t := range sec.Tests {
-			// Normalise: a test entry might be a file path, a
-			// directory glob (.../...), or a TestName attached via
-			// "::". Strip the trailing /... or ::Name.
-			path := t
-			if i := strings.Index(path, "::"); i >= 0 {
-				path = path[:i]
-			}
-			path = strings.TrimSuffix(path, "/...")
-			path = strings.TrimSuffix(path, "/")
-			mapped[path] = true
+			mapped[normaliseMapPath(t)] = true
+		}
+		for _, p := range sec.Packages {
+			packages[normaliseMapPath(p)] = true
 		}
 	}
+	return mapped, packages, nil
+}
 
-	// Walk every _test.go under the tier dirs at or above component.
+// normaliseMapPath strips the `::TestName` selector and a trailing
+// `/...` or `/` from a spec-map reference, leaving a repo-relative path.
+func normaliseMapPath(entry string) string {
+	path := entry
+	if i := strings.Index(path, "::"); i >= 0 {
+		path = path[:i]
+	}
+	path = strings.TrimSuffix(path, "/...")
+	return strings.TrimSuffix(path, "/")
+}
+
+// isMappedPath reports whether rel, or any ancestor directory of it, is
+// referenced from a section's `tests` list. A directory or package-level
+// entry therefore covers every test file underneath it.
+func isMappedPath(mapped map[string]bool, rel string) bool {
+	if mapped[rel] {
+		return true
+	}
+	for parent := filepath.Dir(rel); parent != "." && parent != "/" && parent != ""; parent = filepath.Dir(parent) {
+		if mapped[parent] {
+			return true
+		}
+	}
+	return false
+}
+
+// tierTestFileOrphans walks the tier directories at or above component
+// and returns the repo-relative paths of the `_test.go` files no
+// section references.
+func tierTestFileOrphans(root string, mapped map[string]bool) []string {
 	tierDirs := []string{
 		"tests/tier2_component",
 		"tests/tier3_contract",
@@ -383,36 +409,133 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 			// Scaffold test files are deliberate placeholders ahead
 			// of their backing implementation; exempt by convention
 			// (filename suffix or every test is a t.Skip scaffold).
-			base := filepath.Base(path)
-			if base == "scaffolds_test.go" {
+			if filepath.Base(path) == "scaffolds_test.go" {
 				return nil
 			}
 			rel, _ := filepath.Rel(root, path)
-			// Try direct match, parent dir match, parent's parent match.
-			if mapped[rel] {
+			if isMappedPath(mapped, rel) {
 				return nil
-			}
-			parent := filepath.Dir(rel)
-			for parent != "." && parent != "/" {
-				if mapped[parent] {
-					return nil
-				}
-				parent = filepath.Dir(parent)
 			}
 			orphans = append(orphans, rel)
 			return nil
 		})
 	}
+	return orphans
+}
+
+// inPackageTestFileOrphans returns the repo-relative paths of the
+// `_test.go` files that sit in a package a section claims, carry a
+// `// spec:` annotation, and are referenced from no section's `tests`
+// list. Much of the suite lives next to the code it exercises rather
+// than under tests/tierN (the §27 playground session-lifecycle and mint
+// suites, for example), and TESTING.md §5 requires every test function
+// carrying a `// spec:` annotation to appear in the map under each
+// section it names. The walk stays in the claimed directory itself,
+// since a subdirectory is a package of its own that a section claims
+// separately.
+//
+// A path listed in tests/spec-map-inpackage-pending.txt is waived, so
+// the check ratchets on newly added drift while the pre-existing
+// backlog is worked down.
+func inPackageTestFileOrphans(root string, mapped, packages, waived map[string]bool) []string {
+	orphans := []string{}
+	pkgs := make([]string, 0, len(packages))
+	for pkg := range packages {
+		pkgs = append(pkgs, pkg)
+	}
+	sort.Strings(pkgs)
+	for _, pkg := range pkgs {
+		if isSupportTreePath(pkg) {
+			continue
+		}
+		dir := filepath.Join(root, pkg)
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			// A section may claim a package that has not shipped yet,
+			// or name a chart template rather than a directory.
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, "_test.go") || name == "scaffolds_test.go" {
+				continue
+			}
+			rel := filepath.Join(pkg, name)
+			// The file counts as referenced when the map names it
+			// directly or names its own package. An ancestor glob such
+			// as `pkg/gateway/...` is a unit-tier selection entry that
+			// spans dozens of packages, so honouring it here would waive
+			// the whole subtree.
+			if waived[rel] || mapped[rel] || mapped[pkg] {
+				continue
+			}
+			if !hasSpecAnnotation(filepath.Join(dir, name)) {
+				continue
+			}
+			orphans = append(orphans, rel)
+		}
+	}
+	return orphans
+}
+
+// isSupportTreePath reports whether a repo-relative path sits in a
+// shared harness or fixture tree. Those trees hold helpers and golden
+// data rather than the tests that encode a spec section, so the spec map
+// does not reference them.
+func isSupportTreePath(rel string) bool {
+	for _, seg := range strings.Split(filepath.ToSlash(rel), "/") {
+		if seg == "testinfra" || seg == "testdata" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasSpecAnnotation reports whether the file carries a `// spec:`
+// annotation, which is what obliges it to appear in the spec map.
+func hasSpecAnnotation(path string) bool {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	return strings.Contains(string(body), "// spec:")
+}
+
+// validateTestFilesMapped confirms every test file the spec map is
+// responsible for is referenced from at least one section's `tests`
+// list. It covers two populations: the `_test.go` files under
+// tests/tier{2..12}_*/, and the annotated in-package `_test.go` files of
+// the packages the sections claim. An unreferenced file is an orphan:
+// the section it encodes does not trace to it, so a reader of the map
+// concludes the behavior is untested and `lenny-test --spec <section>`
+// selects nothing for it.
+//
+// Test files under `testinfra/` or `testdata/` are exempt by
+// construction, as are scaffolds_test.go placeholders and the
+// in-package paths listed in tests/spec-map-inpackage-pending.txt.
+func validateTestFilesMapped(specMapPath, pendingPath, root string) checkResult {
+	mapped, packages, err := specMapReferences(specMapPath)
+	if err != nil {
+		return newResult("test files mapped", false, err.Error())
+	}
+	waived := readPendingPaths(pendingPath)
+
+	orphans := tierTestFileOrphans(root, mapped)
+	orphans = append(orphans, inPackageTestFileOrphans(root, mapped, packages, waived)...)
+	sort.Strings(orphans)
+
 	if len(orphans) > 0 {
 		preview := orphans
 		if len(preview) > 5 {
-			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(orphans)-5))
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(orphans)-5))
 		}
 		return newResult("test files mapped", false,
-			fmt.Sprintf("%d test file(s) absent from spec-map: %s",
+			fmt.Sprintf("%d test file(s) absent from spec-map: %s (add each to the tests list of the section its // spec: annotation names, or waive an in-package path in tests/spec-map-inpackage-pending.txt)",
 				len(orphans), strings.Join(preview, "; ")))
 	}
-	return newResult("test files mapped", true, "every tier-2+ test file appears in spec-map")
+	return newResult("test files mapped", true,
+		"every tier-2+ test file and every annotated in-package test file of a claimed package appears in spec-map")
 }
 
 // validateSpecMapCoverage confirms every spec section in the map

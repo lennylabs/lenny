@@ -4,6 +4,7 @@ package tier0_static
 
 import (
 	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -74,16 +75,19 @@ func playgroundTestFiles(t *testing.T, root string) []string {
 // section to the tests, packages, migrations, and chart templates that
 // encode it" and that validation confirms "Every test function with a
 // `// spec:` annotation appears in the spec map under each section it
-// lists". `lenny-test validate-maps` enforces that only for the files
-// under tests/tier2_component and above, so a playground test that sits
-// in-package next to the code it exercises (the §27.6 effective-cap
-// arithmetic in pkg/gateway/sessionserver, the §10.2 mint scope
-// narrowing in pkg/gateway/mcpfabric/playground, the §27.2 preflight
-// gate in pkg/preflight) can encode a §27 guarantee and never appear in
-// the map. A reader of the §27.5 or §27.6 entry then concludes the
-// behavior is untested. This sweep is the file-level counterpart of the
-// validator: every playground test file on disk, wherever it lives, is
-// referenced from some section's `tests` list.
+// lists". `lenny-test validate-maps` covers the files under
+// tests/tier2_component and above plus the in-package test files of the
+// packages a section claims, and the second population carries a waiver
+// file. A playground test that sits in-package next to the code it
+// exercises (the §27.6 effective-cap arithmetic in
+// pkg/gateway/sessionserver, the §10.2 mint scope narrowing in
+// pkg/gateway/mcpfabric/playground, the §27.2 preflight gate in
+// pkg/preflight) therefore has two ways to encode a §27 guarantee and
+// never appear in the map: it can live in a package no section claims,
+// or its path can be waived. A reader of the §27.5 or §27.6 entry then
+// concludes the behavior is untested. This sweep is the unconditional
+// counterpart of the validator: every playground test file on disk,
+// wherever it lives, is referenced from some section's `tests` list.
 //
 // diagnosis: A playground test file exists on disk but no section of
 //
@@ -159,6 +163,112 @@ func TestSpecMapSectionsClaimPlaygroundCapAndScopePackages(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("spec-map section %s claims packages %v, which omit %s", section, claimed, pkg)
+		}
+	}
+}
+
+// inPackageWaivers returns the repo-relative paths listed in
+// tests/spec-map-inpackage-pending.txt, the file through which
+// `lenny-test validate-maps` tolerates an in-package test that no
+// spec-map section references.
+func inPackageWaivers(t *testing.T, root string) []string {
+	t.Helper()
+
+	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map-inpackage-pending.txt"))
+	if err != nil {
+		t.Fatalf("read tests/spec-map-inpackage-pending.txt: %v", err)
+	}
+	out := []string{}
+	for _, line := range strings.Split(string(body), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// spec: §27.5 (web playground — protocol), §27.6 (web playground —
+//
+//	session lifecycle and cleanup)
+//
+// TESTING.md §5 requires the spec map to trace every section to "the
+// tests, packages, migrations, and chart templates that encode it", and
+// `lenny-test validate-maps` now sweeps the in-package test files of
+// every package a section claims, not the tier directories alone. The
+// sweep carries a waiver file for the backlog it inherited. A waiver is
+// an escape hatch, and the §27 in-package suites (the cap arithmetic in
+// pkg/gateway/sessionserver, the mint and session-record suites in
+// pkg/gateway/mcpfabric/playground, the gating checks in pkg/preflight)
+// are all mapped today. Waiving one of them would reopen exactly the
+// drift the sweep exists to close, while leaving the gate green.
+//
+// diagnosis: A playground test file was added to
+//
+//	tests/spec-map-inpackage-pending.txt instead of to the `tests` list
+//	of the section its `// spec:` annotation names. Remove the waiver and
+//	reference the file from tests/spec-map.json.
+func TestInPackageWaiversNamePlaygroundNoTest(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+	waived := []string{}
+	for _, entry := range inPackageWaivers(t, root) {
+		if strings.Contains(strings.ToLower(entry), "playground") {
+			waived = append(waived, entry)
+		}
+	}
+	if len(waived) > 0 {
+		t.Errorf("%d playground test file(s) are waived in tests/spec-map-inpackage-pending.txt: %v; §27 coverage must be referenced from tests/spec-map.json rather than waived", len(waived), waived)
+	}
+}
+
+// spec: §27.5 (web playground — protocol), §27.6 (web playground —
+//
+//	session lifecycle and cleanup)
+//
+// A waiver that names a file which no longer exists, or one that the map
+// has since gained a reference for, silently widens the escape hatch:
+// the entry stays behind and a later file with the same path inherits
+// the waiver. TESTING.md §5 makes the map the record of what encodes a
+// section, so the waiver list has to stay a list of live, still-unmapped
+// files.
+//
+// diagnosis: An entry in tests/spec-map-inpackage-pending.txt is stale.
+//
+//	Either the file was renamed or deleted (drop the line), or
+//	tests/spec-map.json now references it (drop the line, the map covers
+//	it), or the entry is not a test-file path at all.
+func TestInPackageWaiversAreLiveAndStillUnmapped(t *testing.T) {
+	t.Parallel()
+
+	root := schematest.RepoRoot(t)
+
+	referenced := map[string]bool{}
+	for _, paths := range readSpecMapTests(t) {
+		for _, path := range paths {
+			referenced[strings.TrimSuffix(strings.TrimSuffix(path, "/..."), "/")] = true
+		}
+	}
+
+	seen := map[string]bool{}
+	for _, entry := range inPackageWaivers(t, root) {
+		if seen[entry] {
+			t.Errorf("tests/spec-map-inpackage-pending.txt lists %s twice", entry)
+			continue
+		}
+		seen[entry] = true
+		if !strings.HasSuffix(entry, "_test.go") {
+			t.Errorf("tests/spec-map-inpackage-pending.txt entry %s is not a _test.go path; the file waives in-package test files only", entry)
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, entry)); err != nil {
+			t.Errorf("tests/spec-map-inpackage-pending.txt waives %s, which is not on disk: %v", entry, err)
+			continue
+		}
+		if referenced[entry] || referenced[filepath.Dir(entry)] {
+			t.Errorf("tests/spec-map-inpackage-pending.txt waives %s, which tests/spec-map.json already references; drop the waiver", entry)
 		}
 	}
 }
