@@ -4103,6 +4103,8 @@
         "pkg/gateway/mcpfabric/playground/idle_sweep_test.go::TestRevokeSessionAdminRevokeThroughRedisPrimitive_spec_27_3_1_207",
         "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundIdleOverrideReclaimsSessionAtEffectiveCap",
         "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundHardDurationCapTerminatesSessionAtEffectiveCap",
+        "tests/tier4_integration/playground_client_closed_test.go::TestPlaygroundClientClosedCancelsRunningSessionOverWebSocket",
+        "tests/tier4_integration/playground_client_closed_test.go::TestPlaygroundClientClosedIdleFallbackWhenWebSocketDropsSilently",
         "tests/tier9_security/playground_revocation_bypass_test.go::TestPlaygroundCrossReplicaRevocationBypassAdversarial",
         "tests/tier7a_load_local/playground_revocation_propagation_slo_test.go::TestPlaygroundLogoutPropagationSLOUnderLoad",
         "tests/tier7b_load_kind/scaffolds_test.go::TestPlaygroundRevocation"
