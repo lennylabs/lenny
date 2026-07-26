@@ -283,10 +283,22 @@ test("the playground walks the runtime picker, session configuration, and chat s
   const interruptFrame = JSON.parse(ws.sent[2]);
   assert.equal(interruptFrame.params.name, "lenny/interrupt_session", "the Interrupt button must issue lenny/interrupt_session");
   assert.equal(interruptFrame.params.arguments.sessionId, "sess-1");
+  // The inspector panel shows "the exact MCP frames for debugging", so
+  // a control frame the chat pane put on the wire is one of the frames
+  // it must render, on the same footing as the chat and attach frames.
+  assert.match(framePanel.textContent, /=> .*lenny\/interrupt_session/, "the raw-frame inspector must render the outbound interrupt frame");
 
   // The Cancel button must issue lenny/cancel_session.
   cancelButton.dispatch("click");
   assert.equal(ws.sent.length, 4);
   const cancelFrame = JSON.parse(ws.sent[3]);
   assert.equal(cancelFrame.params.name, "lenny/cancel_session", "the Cancel button must issue lenny/cancel_session");
+  assert.match(framePanel.textContent, /=> .*lenny\/cancel_session/, "the raw-frame inspector must render the outbound cancel frame");
+
+  // The inspector renders the exact frame that went over the wire, so
+  // the recorded control frames must be byte-identical to what the
+  // WebSocket carried.
+  const inspectorLines = framePanel.textContent.split("\n");
+  assert.ok(inspectorLines.includes("=> " + ws.sent[2]), "the raw-frame inspector must render the exact interrupt frame that was sent");
+  assert.ok(inspectorLines.includes("=> " + ws.sent[3]), "the raw-frame inspector must render the exact cancel frame that was sent");
 });

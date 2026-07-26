@@ -730,8 +730,8 @@
 
     var card = el("div", { class: "chat-card" }, [
       el("div", { class: "row" }, [
-        el("button", { text: "interrupt", class: "secondary", onclick: function () { sendControl("interrupt"); } }),
-        el("button", { text: "cancel", class: "secondary", onclick: function () { sendControl("cancel"); } }),
+        el("button", { text: "interrupt", class: "secondary", onclick: function () { sendControl("interrupt", recordFrame); } }),
+        el("button", { text: "cancel", class: "secondary", onclick: function () { sendControl("cancel", recordFrame); } }),
         snippetLang,
         el("button", { text: "copy SDK snippet", class: "secondary", onclick: function () { copySnippet(snippetLang.value); } }),
         el("button", { text: "new session", class: "secondary", onclick: renderRuntimePicker }),
@@ -926,17 +926,26 @@
     recordFrame("=>", frame);
   }
 
-  function sendControl(kind) {
+  // sendControl sends an Interrupt or Cancel control frame over the MCP
+  // WebSocket. It takes the chat pane's recordFrame so the control frame
+  // lands in the raw-frame inspector alongside the attach and chat
+  // frames: §27.4 specifies the inspector as the panel "that shows the
+  // exact MCP frames for debugging", and a control frame the pane put on
+  // the wire is one of them.
+  // spec: §27.4 (chat screen: Interrupt button, Cancel button, raw-frame inspector)
+  function sendControl(kind, recordFrame) {
     if (!state.ws || state.ws.readyState !== WebSocket.OPEN) return;
     // §15.2 lines 1295/1303: the registered control tools are
     // interrupt_session and cancel_session.
     var tool = kind === "interrupt" ? "lenny/interrupt_session" : "lenny/cancel_session";
-    state.ws.send(JSON.stringify({
+    var frame = JSON.stringify({
       jsonrpc: "2.0",
       id: kind + "-" + Date.now(),
       method: "tools/call",
       params: { name: tool, arguments: { sessionId: state.sessionId } },
-    }));
+    });
+    state.ws.send(frame);
+    recordFrame("=>", frame);
   }
 
   // §27.6: on browser close the client sends session.cancel with the
