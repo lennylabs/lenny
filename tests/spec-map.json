@@ -4139,13 +4139,14 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestStaticAssetCacheHeaders",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP",
-        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP"
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP",
+        "tests/tier5_e2e_kind/playground_assets_test.go::TestPlaygroundAssetCacheHeadersOnLiveCluster"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint. TestPlaygroundResponsesCarryExactSpecCSP parses the header into directive-source-list pairs and pins the full §27.7 directive set byte-exact, rejecting any missing or extra directive."
+      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint. TestPlaygroundResponsesCarryExactSpecCSP parses the header into directive-source-list pairs and pins the full §27.7 directive set byte-exact, rejecting any missing or extra directive. TestPlaygroundAssetCacheHeadersOnLiveCluster is the tier-5 live-cluster counterpart (index no-store, hashed-bundle immutable, and the SPA-fallback-to-index-html cache/content-type behavior for an unknown client-side route through the real Ingress) but is t.Skip'd pending the same §16.1.1 authMode-metrics-label crash-loop already blocking every other live-process playground test with playground.enabled=true (BUILD-GAPS.md §16.1 Finding 8; see the parent \"27\" entry's notes)."
     },
     "27.8": {
       "title": "Web Playground — Metrics",
