@@ -317,3 +317,112 @@ func idTenantForCookie(t *testing.T, store SessionStore, cookie string) (id, ten
 	}
 	return id, tenant
 }
+
+// TestEstablishedSessionRecordCarriesOperatorLabels drives a real
+// §27.3.1 OIDC login (GET /playground/auth/login then
+// /playground/auth/callback) against a Config whose
+// playground.sessionLabels carries operator-supplied keys, then reads
+// the persisted SessionRecord back out of the SessionStore. The §27.2
+// line 41 "Labels applied to playground sessions for audit/accounting"
+// contract requires the created record to carry both the load-bearing
+// origin=playground entry and every operator-configured key: unlike
+// TestSessionRecordCarriesLabelsThroughJSON (a JSON round-trip of a
+// hand-built struct literal), this exercises the actual
+// establishSession mint path so a regression that drops
+// Config.EffectiveLabels() from the write path is caught. F-27.2.1.
+func TestEstablishedSessionRecordCarriesOperatorLabels_spec_27_2_41(t *testing.T) {
+	signer := devSigner()
+	store := NewMemorySessionStore()
+	oidc := &fakeOIDC{subject: OIDCSubject{
+		UserID:   "carol",
+		TenantID: "acme",
+		Scope:    "tools:sessions:read",
+	}}
+	operatorLabels := map[string]string{"environment": "stage", "team": "platform"}
+	h := New(Config{
+		Enabled:        true,
+		AuthMode:       AuthModeOIDC,
+		OIDCSessionTTL: time.Hour,
+		BearerTTL:      900 * time.Second,
+		SessionLabels:  operatorLabels,
+	}, Options{
+		Signer:   signer,
+		Sessions: store,
+		OIDC:     oidc,
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+	})
+
+	pgSrv := httptest.NewServer(h.PlaygroundRoutes())
+	defer pgSrv.Close()
+
+	cookie := completeOIDCLogin(t, h, pgSrv, oidc)
+	id, tenant := idTenantForCookie(t, store, cookie)
+
+	rec, err := store.GetSession(context.Background(), tenant, id)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if rec.Labels["origin"] != PlaygroundOrigin {
+		t.Fatalf("persisted record labels[origin] = %q, want %q", rec.Labels["origin"], PlaygroundOrigin)
+	}
+	if rec.Labels["environment"] != "stage" {
+		t.Fatalf("persisted record labels[environment] = %q, want stage", rec.Labels["environment"])
+	}
+	if rec.Labels["team"] != "platform" {
+		t.Fatalf("persisted record labels[team] = %q, want platform", rec.Labels["team"])
+	}
+}
+
+// TestBearerMintedAuditEventCarriesOperatorLabels drives a real dev-mode
+// mint (POST /v1/playground/token) against a Config whose
+// playground.sessionLabels carries operator-supplied keys and asserts
+// the emitted playground.bearer_minted audit event's Labels field
+// carries both the load-bearing origin=playground entry and the
+// operator overrides. TestLogoutRevokesSessionBearer already checks
+// every emitted event's origin label; this test additionally exercises
+// a Config with multi-key operator labels so a regression that emits
+// only the origin entry (dropping the rest of EffectiveLabels()) on
+// the mint path is caught. F-27.2.1.
+func TestBearerMintedAuditEventCarriesOperatorLabels_spec_27_2_41(t *testing.T) {
+	audit := NewMemoryAuditEmitter()
+	operatorLabels := map[string]string{"environment": "stage", "team": "platform"}
+	h := New(Config{
+		Enabled:       true,
+		AuthMode:      AuthModeDev,
+		DevTenantID:   "acme",
+		BearerTTL:     900 * time.Second,
+		SessionLabels: operatorLabels,
+	}, Options{Signer: devSigner()}).WithAuditEmitter(audit)
+
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/playground/token", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("mint status = %d, want 200", resp.StatusCode)
+	}
+
+	events := audit.Events()
+	var minted *AuditEvent
+	for i := range events {
+		if events[i].Type == "playground.bearer_minted" {
+			minted = &events[i]
+		}
+	}
+	if minted == nil {
+		t.Fatalf("no playground.bearer_minted event emitted; events=%+v", events)
+	}
+	if minted.Labels["origin"] != PlaygroundOrigin {
+		t.Fatalf("audit event labels[origin] = %q, want %q", minted.Labels["origin"], PlaygroundOrigin)
+	}
+	if minted.Labels["environment"] != "stage" {
+		t.Fatalf("audit event labels[environment] = %q, want stage", minted.Labels["environment"])
+	}
+	if minted.Labels["team"] != "platform" {
+		t.Fatalf("audit event labels[team] = %q, want platform", minted.Labels["team"])
+	}
+}
