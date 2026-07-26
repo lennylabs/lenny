@@ -4034,6 +4034,7 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeMintStampsOriginClaim",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeReadyGateRejectsUnseededTenant",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestDevModeReadyGateSelfHealsOnceTenantSeeded",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeRejectsNonUserBearer",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestAPIKeyModeScopeIsNarrowedToIntersection",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestOIDCModeRejectsBearerOnTokenEndpoint",

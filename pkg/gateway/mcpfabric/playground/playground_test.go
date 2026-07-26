@@ -253,6 +253,63 @@ func TestDevModeReadyGateRejectsUnseededTenant(t *testing.T) {
 	}
 }
 
+// TestDevModeReadyGateSelfHealsOnceTenantSeeded exercises the §27.2
+// layer-4 self-heal transition: a devTenantId that is well-formed but
+// absent from the tenant registry returns 503
+// LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED, and once the tenant row
+// commits the very next request to the same route succeeds without a
+// process restart. The gateway does not cache the earlier negative
+// lookup: it re-consults the registry on every request, so no
+// additional signal beyond the row appearing is required to recover.
+func TestDevModeReadyGateSelfHealsOnceTenantSeeded(t *testing.T) {
+	signer := devSigner()
+	tenants := fakeTenants{registered: map[string]bool{}} // acme not seeded yet
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
+		Signer:  signer,
+		Tenants: tenants,
+	})
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+
+	// First request: the tenant row has not committed yet, so the
+	// Ready-gate rejects with 503.
+	resp1, err := http.Post(srv.URL+"/v1/playground/token", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST token (pre-seed): %v", err)
+	}
+	defer resp1.Body.Close()
+	if resp1.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("pre-seed status = %d, want 503", resp1.StatusCode)
+	}
+	io.Copy(io.Discard, resp1.Body)
+
+	// The lenny-bootstrap Job commits the tenant row. No gateway
+	// restart or rollout occurs between the two requests: the same
+	// running handler and the same underlying registry map are reused,
+	// only the map's contents change.
+	tenants.registered["acme"] = true
+
+	// Second request against the same handler: the Ready-gate
+	// re-consults the registry (it keeps no negative cache from the
+	// first request) and now finds the tenant present, so the mint
+	// succeeds.
+	resp2, err := http.Post(srv.URL+"/v1/playground/token", "application/json", strings.NewReader("{}"))
+	if err != nil {
+		t.Fatalf("POST token (post-seed): %v", err)
+	}
+	defer resp2.Body.Close()
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("post-seed status = %d, want 200 (self-heal did not occur)", resp2.StatusCode)
+	}
+	var body tokenResponse
+	if err := json.NewDecoder(resp2.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if body.TokenType != "Bearer" {
+		t.Fatalf("post-seed token response = %+v, want a minted Bearer token", body)
+	}
+}
+
 func TestAPIKeyModeRejectsNonUserBearer(t *testing.T) {
 	signer := devSigner()
 	// A session_capability JWT pasted into the API-key form must be
