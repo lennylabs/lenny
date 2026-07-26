@@ -9,7 +9,7 @@ import (
 
 // TestSDKSnippetGeneratorNeverEmbedsALiveCredential runs the Node
 // unit test for the playground's "Copy as client SDK snippet"
-// generator (ui/app.test.js).
+// generator (uitests/app.test.js).
 //
 // spec: §27.9 ("The 'Copy as client SDK snippet' feature generates
 // code that never includes credentials; snippets reference
@@ -31,10 +31,13 @@ func TestSDKSnippetGeneratorNeverEmbedsALiveCredential(t *testing.T) {
 		t.Skipf("precondition: node is not installed; the playground SDK-snippet unit test needs the Node toolchain")
 	}
 
+	// The JS test lives in uitests/ rather than in ui/ because the
+	// gateway embeds the ui/ subtree wholesale and serves every file
+	// under it at GET /playground/<path> (spec: §27.2, §27.7).
 	cmd := exec.Command("node", "--test", "app.test.js")
-	cmd.Dir = "ui"
+	cmd.Dir = "uitests"
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("node --test ui/app.test.js failed: %v\n%s", err, out)
+		t.Fatalf("node --test uitests/app.test.js failed: %v\n%s", err, out)
 	}
 }

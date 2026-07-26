@@ -16,6 +16,17 @@ import (
 // every /playground/ asset from this filesystem; there is no separate
 // deployment target (§27.2).
 //
+// The pattern covers the ui/ subtree wholesale, so every file placed
+// there is reachable at GET /playground/<path> for any caller that
+// clears the playground auth chain, served with the year-long
+// immutable cache header §27.7 reserves for the SPA's own assets.
+// §27.7 serves index.html plus the hashed script and style bundles
+// from this filesystem, so ui/ holds browser assets only. The SPA's
+// Node unit tests live in the sibling uitests/ directory, which this
+// pattern does not cover.
+//
+// spec: §27.7 (asset serving and CSP), §27.2 (embedded asset bundle)
+//
 //go:embed ui
 var uiFS embed.FS
 

@@ -12,6 +12,12 @@
 // (expandable panel that shows the exact MCP frames for debugging),
 // and a 'Copy as client SDK snippet' button...")
 //
+// This file sits in uitests/ rather than beside app.js in ui/ because
+// the gateway embeds the whole ui/ subtree and serves every file in it
+// at GET /playground/<path> (spec: §27.2, §27.7). Test source is not
+// one of the static assets §27.7 serves, so it stays outside the
+// embedded subtree and reaches app.js by relative path.
+//
 // app.js has no build step (see its header comment) and is not an ES
 // module; it is a plain CommonJS-compatible IIFE that Node can
 // `require` directly (the same pattern app.test.js already uses for
@@ -140,7 +146,7 @@ global.sessionStorage = { getItem: function () { return null; }, setItem: functi
 global.navigator = { clipboard: { writeText: function () {} } };
 global.alert = function () {};
 
-const app = require(path.join(__dirname, "app.js"));
+const app = require(path.join(__dirname, "..", "ui", "app.js"));
 
 function flush() {
   return new Promise(function (resolve) { setTimeout(resolve, 0); });

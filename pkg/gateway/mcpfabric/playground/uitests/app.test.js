@@ -6,6 +6,12 @@
 // includes credentials; snippets reference environment variables /
 // OIDC flow only.").
 //
+// This file sits in uitests/ rather than beside app.js in ui/ because
+// the gateway embeds the whole ui/ subtree and serves every file in it
+// at GET /playground/<path> (spec: §27.2, §27.7). Test source is not
+// one of the static assets §27.7 serves, so it stays outside the
+// embedded subtree and reaches app.js by relative path.
+//
 // app.js has no build step (see its header comment) and is not an ES
 // module; it is a plain CommonJS-compatible IIFE that Node can
 // `require` directly. When loaded under Node's CommonJS loader (as
@@ -29,7 +35,7 @@ global.window = {
   addEventListener() {},
 };
 
-const app = require(path.join(__dirname, "app.js"));
+const app = require(path.join(__dirname, "..", "ui", "app.js"));
 
 // A realistic-shaped live bearer. If a regression interpolated the
 // live credential into the generated snippet, this is the value that

@@ -9,7 +9,7 @@ import (
 
 // TestPlaygroundUIWalksThreeScreensAndExercisesChatControls runs the
 // Node unit test that renders the playground SPA's three screens
-// (ui/screens.test.js).
+// (uitests/screens.test.js).
 //
 // spec: §27.4 ("The playground ships as a single-page React app with
 // three screens: 1. Runtime picker ... 2. Session configuration ...
@@ -39,10 +39,13 @@ func TestPlaygroundUIWalksThreeScreensAndExercisesChatControls(t *testing.T) {
 		t.Skipf("precondition: node is not installed; the playground UI screen-walk test needs the Node toolchain")
 	}
 
+	// The JS test lives in uitests/ rather than in ui/ because the
+	// gateway embeds the ui/ subtree wholesale and serves every file
+	// under it at GET /playground/<path> (spec: §27.2, §27.7).
 	cmd := exec.Command("node", "--test", "screens.test.js")
-	cmd.Dir = "ui"
+	cmd.Dir = "uitests"
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("node --test ui/screens.test.js failed: %v\n%s", err, out)
+		t.Fatalf("node --test uitests/screens.test.js failed: %v\n%s", err, out)
 	}
 }
