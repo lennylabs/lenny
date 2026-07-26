@@ -562,6 +562,7 @@
     "pkg/gateway/mcpfabric/playground": {
       "static": ["tests/tier0_static/playground_no_offline_assets_test.go"],
       "unit": ["pkg/gateway/mcpfabric/playground/..."],
+      "contract": ["tests/tier3_contract/playground/..."],
       "integration": ["tests/tier4_integration/playground_frame_redaction_test.go"]
     },
     "pkg/ops/auditrate": {
