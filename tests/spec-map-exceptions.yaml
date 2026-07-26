@@ -52,10 +52,6 @@ exceptions:
     reason: non-normative
     justification: Web playground purpose and non-goals. Aspirational framing for the feature.
 
-  - section: "27.4"
-    reason: non-normative
-    justification: Web playground UI surface. Visual layout description without executable behavior; the bundled SPA assets are covered by the §27.7 asset-serving tests.
-
   # Wave 0 spec-map reconciliation: non-normative sections (design
   # philosophy, overviews, summaries, examples, reference tables) and
   # deferred sections whose feature is built by a later wave. A
