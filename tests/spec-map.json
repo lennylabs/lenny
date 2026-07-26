@@ -4077,6 +4077,18 @@
       "blocked_until_phase": "5",
       "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints. TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers drives the §27.3.1 line 99 fail-closed guarantee against a real, then-terminated, Redis container (via pkg/gateway/mcpfabric/playground.RedisSessionStore and the real pkg/gateway/middleware/auth middleware, not a fake checker), then confirms a fresh Redis becoming reachable resumes correct revocation enforcement. TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drives the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit) with playground.authMode=dev and global.devMode=false and asserts a non-zero exit naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN, the process-boot backstop for a deployment that bypassed Helm-validate. TestPlaygroundDevReadyGateSelfHealsAgainstRealPostgres drives the real cmd/lenny-gateway binary against a real Postgres container (tests/testinfra/containers.StartPostgres) with an unseeded devTenantId, asserting the admin API, /healthz, and /v1/sessions/start stay available and /playground/ returns 503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED, then seeds the tenant row through the same POST /v1/admin/bootstrap upsert path the real lenny-bootstrap Job uses and asserts the next /playground/ request returns 200 with no gateway restart, closing the gap where TestDevModeReadyGateSelfHealsOnceTenantSeeded only exercised the transition against a fake in-memory tenant registry; it is t.Skip'd pending the same §16.1.1 authMode-metrics-label crash-loop already blocking every other live-process playground test with playground.enabled=true (BUILD-GAPS.md §16.1 Finding 8)."
     },
+    "27.4": {
+      "title": "Web Playground — UI Surface",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "pkg/gateway/mcpfabric/playground/ui_screens_test.go::TestPlaygroundUIWalksThreeScreensAndExercisesChatControls"
+      ],
+      "packages": [
+        "pkg/gateway/mcpfabric/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "The three-screen SPA surface (runtime picker, session configuration, chat). TestPlaygroundUIWalksThreeScreensAndExercisesChatControls shells out to a Node unit test (ui/screens.test.js, same pattern as ui_snippet_test.go) that drives the real app.js render functions against a minimal in-memory DOM/fetch/WebSocket shim (no browser or jsdom dependency): it walks the runtime picker (filtered by allowedRuntimes) to session configuration to chat by dispatching the same click events a browser would, sends a chat message, and asserts the Interrupt and Cancel buttons issue lenny/interrupt_session and lenny/cancel_session over the MCP WebSocket and that the raw-frame inspector renders the frames sent. Other §27.4 item-level assertions (the SDK-snippet language coverage, the schema-driven config form, the allowedRuntimes glob source-string checks, the effective-scope wiring, and the delegation-field gate) are pinned by source-string tests already registered under runtime_visible_test.go and are not duplicated in this section's tests list."
+    },
     "27.5": {
       "title": "Web Playground — Protocol",
       "spec_file": "spec/27_web-playground.md",
