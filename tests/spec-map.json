@@ -3996,15 +3996,17 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go",
+        "tests/tier0_static/playground_no_offline_assets_test.go::TestPlaygroundBundleShipsNoOfflineCapableAssets",
         "tests/tier3_contract/playground/playground_test.go",
         "tests/tier5_e2e_kind/playground_test.go::TestPlaygroundDevModeJourneyOnLiveCluster",
         "tests/tier9_security/playground_test.go::TestPlaygroundSecurityPostureOnLiveCluster"
       ],
       "packages": [
-        "pkg/gateway/mcpfabric/playground"
+        "pkg/gateway/mcpfabric/playground",
+        "tests/tier0_static"
       ],
       "blocked_until_phase": "5",
-      "notes": "The tier-5/tier-9 live-cluster tests are currently t.Skip'd: playground.enabled=true crash-loops the live gateway because pkg/gateway/mcpfabric/playground/metrics.go registers the lenny_playground_page_views_total counter with the non-snake_case label \"authMode\", which pkg/observability/metrics's §16.1.1 validator rejects at startup (fatal). §27.8's own metrics table also names that label \"authMode\", so the fix needs a spec/code reconciliation, not a code-only change; see BUILD-GAPS.md §16.1 Metrics Finding 8."
+      "notes": "TestPlaygroundBundleShipsNoOfflineCapableAssets pins the §27.1 non-goal \"No offline mode. The playground requires a live gateway.\" against the embedded SPA bundle: it first confirms assets.go still carries exactly one `//go:embed ui` directive (so enumerating the directory on disk is a faithful reading of what the gateway binary ships), then walks pkg/gateway/mcpfabric/playground/ui asserting the bundle contains no service-worker script, no application-cache manifest, and no web-app manifest, and that no shipped asset references navigator.serviceWorker, applicationCache, the Cache Storage API, IndexedDB, localStorage, or a <link rel=\"manifest\">. The localStorage and IndexedDB legs also pin the §27.4 line \"No conversation persistence. Refresh clears the pane\"; comment-only lines are skipped so app.js's prose stating the bearer is never held in localStorage does not read as a use of it. The tier-5/tier-9 live-cluster tests are currently t.Skip'd: playground.enabled=true crash-loops the live gateway because pkg/gateway/mcpfabric/playground/metrics.go registers the lenny_playground_page_views_total counter with the non-snake_case label \"authMode\", which pkg/observability/metrics's §16.1.1 validator rejects at startup (fatal). §27.8's own metrics table also names that label \"authMode\", so the fix needs a spec/code reconciliation, not a code-only change; see BUILD-GAPS.md §16.1 Metrics Finding 8."
     },
     "27.2": {
       "title": "Web Playground — Placement and Gating",
@@ -4145,6 +4147,7 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestAuthErrorPageSecurityHeaders",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP",
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundCSPConnectSrcNamesOnlySelfAndTheGatewayWebSocketHost",
         "tests/tier5_e2e_kind/playground_assets_test.go::TestPlaygroundAssetCacheHeadersOnLiveCluster",
         "charts/lenny/tests/gateway-deployment_test.yaml"
       ],
@@ -4152,7 +4155,7 @@
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint. TestPlaygroundResponsesCarryExactSpecCSP parses the header into directive-source-list pairs and pins the full §27.7 directive set byte-exact, rejecting any missing or extra directive. TestPlaygroundAssetCacheHeadersOnLiveCluster is the tier-5 live-cluster counterpart (index no-store, hashed-bundle immutable, and the SPA-fallback-to-index-html cache/content-type behavior for an unknown client-side route through the real Ingress) but is t.Skip'd pending the same §16.1.1 authMode-metrics-label crash-loop already blocking every other live-process playground test with playground.enabled=true (BUILD-GAPS.md §16.1 Finding 8; see the parent \"27\" entry's notes)."
+      "notes": "CSP, security headers, static-asset cache headers, dev-mode banner on the config endpoint. TestPlaygroundResponsesCarryExactSpecCSP parses the header into directive-source-list pairs and pins the full §27.7 directive set byte-exact, rejecting any missing or extra directive. TestPlaygroundCSPConnectSrcNamesOnlySelfAndTheGatewayWebSocketHost covers the leg that test cannot reach with an unset GatewayHost: with a gateway host configured, connect-src is exactly \"'self' wss://<gateway-host>\" and names no other origin, which is what keeps the SPA reaching the live gateway and nothing else (§27.1 \"No offline mode. The playground requires a live gateway.\"). TestPlaygroundAssetCacheHeadersOnLiveCluster is the tier-5 live-cluster counterpart (index no-store, hashed-bundle immutable, and the SPA-fallback-to-index-html cache/content-type behavior for an unknown client-side route through the real Ingress) but is t.Skip'd pending the same §16.1.1 authMode-metrics-label crash-loop already blocking every other live-process playground test with playground.enabled=true (BUILD-GAPS.md §16.1 Finding 8; see the parent \"27\" entry's notes)."
     },
     "27.8": {
       "title": "Web Playground — Metrics",

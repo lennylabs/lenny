@@ -578,6 +578,48 @@ func TestPlaygroundResponsesCarryExactSpecCSP(t *testing.T) {
 	}
 }
 
+// spec: 27.7 ("connect-src 'self' wss://<gateway-host>;"), 27.1 ("No
+// offline mode. The playground requires a live gateway.")
+// diagnosis: With a gateway host configured, the /playground/*
+// connect-src source list is not exactly "'self' wss://<gateway-host>".
+// connect-src is the directive that decides which origins the SPA may
+// reach for data: it must name the gateway's own WebSocket origin and
+// nothing else, so the page cannot fall back to a third-party origin
+// when the gateway is unreachable. Reconcile the connectSrc build in
+// the gateway's contentSecurityPolicy() with the §27.7 block.
+func TestPlaygroundCSPConnectSrcNamesOnlySelfAndTheGatewayWebSocketHost(t *testing.T) {
+	const gatewayHost = "gateway.acme.com"
+
+	h := playground.New(playground.Config{
+		Enabled:        true,
+		AuthMode:       playground.AuthModeDev,
+		DevTenantID:    "acme",
+		BearerTTL:      900 * time.Second,
+		OIDCSessionTTL: time.Hour,
+		GatewayHost:    gatewayHost,
+	}, playground.Options{
+		Signer:   devSigner(),
+		Verifier: devSigner(),
+		Tenants:  fakeTenants{registered: map[string]bool{"acme": true}},
+		Sessions: playground.NewMemorySessionStore(),
+	})
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/")
+	if err != nil {
+		t.Fatalf("GET /playground/: %v", err)
+	}
+	defer resp.Body.Close()
+
+	got := parseCSP(t, resp.Header.Get("Content-Security-Policy"))
+
+	want := "'self' wss://" + gatewayHost
+	if got["connect-src"] != want {
+		t.Fatalf("CSP connect-src = %q, want %q", got["connect-src"], want)
+	}
+}
+
 // parseCSP parses a Content-Security-Policy header value into a map
 // of directive name to its source-list string, trimming whitespace
 // introduced by "; " separators.
