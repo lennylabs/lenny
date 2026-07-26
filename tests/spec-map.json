@@ -4082,13 +4082,16 @@
       "spec_file": "spec/27_web-playground.md",
       "tests": [
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundJWTAcceptedByPublicSessionsAPI",
-        "tests/tier3_contract/playground/playground_test.go::TestLoginEndpointIsOIDCModeOnly"
+        "tests/tier3_contract/playground/playground_test.go::TestLoginEndpointIsOIDCModeOnly",
+        "tests/tier4_integration/playground_ws_carrier_test.go::TestPlaygroundBearerCarrierRedactedFromAccessLogAndAudit_spec_27_5"
       ],
       "packages": [
-        "pkg/gateway/mcpfabric/playground"
+        "pkg/gateway/mcpfabric/playground",
+        "pkg/gateway/mcpfabric/mcp",
+        "pkg/gateway/middleware/correlation"
       ],
       "blocked_until_phase": "5",
-      "notes": "Playground-minted JWTs are honored by the public REST surface. Gatekeeper endpoints exist only in their applicable auth mode."
+      "notes": "Playground-minted JWTs are honored by the public REST surface. Gatekeeper endpoints exist only in their applicable auth mode. TestPlaygroundBearerCarrierRedactedFromAccessLogAndAudit_spec_27_5 mints a real playground bearer over the real dev-mode /v1/playground/token endpoint, dials a real mcp.Server WebSocket transport through the real production middleware order (mcp.WebSocketBearerCarrier wrapping the correlation access-log middleware), asserts the Sec-WebSocket-Protocol echo is exactly lenny.mcp.v1, and asserts the raw bearer token never appears in the captured access-log lines or the emitted playground.bearer_minted audit event. It composes the real middleware and handler types directly rather than booting cmd/lenny-gateway, since --playground-enabled currently crash-loops the compiled binary on an unrelated defect (BUILD-GAPS.md §16.1 Metrics Finding 8, the camelCase authMode metrics label)."
     },
     "27.6": {
       "title": "Web Playground — Session Lifecycle and Cleanup",
