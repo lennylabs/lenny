@@ -21,8 +21,10 @@ import (
 // publish instant, the peer message that warms the negative cache and
 // records one pubsub_delivered sample, the self-published message that
 // warms the cache without being sampled, the unrecognised channel that
-// is ignored entirely, and the clock-skew case that clamps a negative
-// latency to zero. `lenny-test validate-maps` only walks
+// is ignored entirely, the clock-skew case that clamps a negative
+// latency to zero, and the cross-replica case that holds every emitted
+// outcome label inside the domain the metrics table declares.
+// `lenny-test validate-maps` only walks
 // tests/tier2_component and above for orphaned test files, so an
 // in-package test under pkg/ can encode a §27.8 guarantee and still be
 // invisible to the spec map. This list keeps the §27.8 entry honest
@@ -36,6 +38,7 @@ var propagationHistogramTests = []string{
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_test.go::TestHandleRevocationMessageBadChannelIgnored",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_test.go::TestHandleRevocationMessageNegativeLatencyClamped",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_test.go::TestSubscribeAllRevocationsWarmsCacheForArbitraryTenant_spec_27_6_204",
+	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestRevocationPropagationOutcomesStayWithinSpec278Domain_spec_27_8_244",
 }
 
 // spec: §27.8 (Metrics) — "`lenny_playground_session_revocation_propagation_seconds`
