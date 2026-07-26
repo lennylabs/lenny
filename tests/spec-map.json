@@ -4138,11 +4138,13 @@
       "spec_file": "spec/27_web-playground.md",
       "tests": [
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSPEmptyGatewayHost",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestStaticAssetCacheHeaders",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP",
-        "tests/tier5_e2e_kind/playground_assets_test.go::TestPlaygroundAssetCacheHeadersOnLiveCluster"
+        "tests/tier5_e2e_kind/playground_assets_test.go::TestPlaygroundAssetCacheHeadersOnLiveCluster",
+        "charts/lenny/tests/gateway-deployment_test.yaml"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"

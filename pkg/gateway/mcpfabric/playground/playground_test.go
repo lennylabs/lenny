@@ -703,6 +703,35 @@ func TestSecurityHeadersAndCSP(t *testing.T) {
 	}
 }
 
+// spec: §27.7 (the CSP applied to /playground/*): "connect-src 'self'
+// wss://<gateway-host>;". <gateway-host> is only known once an operator
+// configures it (Config.GatewayHost, wired from the chart's
+// playground.gatewayHost value); when it is unset the directive must
+// still be well-formed, so the gateway emits "connect-src 'self'" alone
+// with no trailing "wss://" placeholder.
+func TestSecurityHeadersAndCSPEmptyGatewayHost(t *testing.T) {
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
+		Signer:  devSigner(),
+		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+	})
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/")
+	if err != nil {
+		t.Fatalf("GET index: %v", err)
+	}
+	defer resp.Body.Close()
+
+	csp := resp.Header.Get("Content-Security-Policy")
+	if !strings.Contains(csp, "connect-src 'self'") {
+		t.Fatalf("CSP %q is missing directive %q", csp, "connect-src 'self'")
+	}
+	if strings.Contains(csp, "wss://") {
+		t.Fatalf("CSP %q contains a wss:// connect-src host with GatewayHost unset, want none", csp)
+	}
+}
+
 func TestStaticAssetCacheHeaders(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
 		Signer:  devSigner(),

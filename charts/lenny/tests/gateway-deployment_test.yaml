@@ -2744,6 +2744,37 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --playground-session-labels=environment=stage,origin=playground,
 
+  # spec: §27.7 line 221 — connect-src 'self' wss://<gateway-host> lets
+  # the playground SPA open the MCP WebSocket. playground.gatewayHost is
+  # the chart value the gateway interpolates into that directive, so the
+  # chart must wire it through to the --playground-gateway-host flag.
+  - it: renders --playground-gateway-host from playground.gatewayHost
+    set:
+      playground.enabled: true
+      playground.gatewayHost: gw.acme.com
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-gateway-host=gw.acme.com
+
+  # spec: §27.7 line 221 — the connect-src host is only known once an
+  # operator sets playground.gatewayHost; the chart default is "" (see
+  # values.yaml playground.gatewayHost: "Leave empty to omit the
+  # directive host"), so the flag must not render at all in that case.
+  - it: omits --playground-gateway-host when playground.gatewayHost is empty (chart default)
+    set:
+      playground.enabled: true
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --playground-gateway-host
+
   # spec: §9.4 line 202 — the chart's memory block renders the
   # --memory-max-per-user and --memory-record-count-interval flags on
   # the Deployment so deployers can tune both knobs without editing
