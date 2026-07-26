@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -64,13 +65,22 @@ func (stubCheckpointTransport) GetChunk(context.Context, string, map[string]stri
 }
 
 // TestEvictionSnapshotFailsClosedOnNonDroppedHandshake_spec_4_4 pins the third
-// deny cell: even on a pod that is itself terminating (the evicting flag is
-// set), a quiesce handshake that fails for a reason other than a dropped
-// connection (here a cancelled context) fails closed with codes.Internal and
-// takes no best-effort snapshot, so no checkpoint chunk is streamed. The
-// downgrade is scoped to a genuinely dropped runtime connection, classified by
-// the lifecycle package's connection-state sentinels, rather than any handshake
-// failure.
+// deny cell: on a pod that is itself terminating (the evicting flag is set)
+// whose runtime is still connected but does not answer the checkpoint_request,
+// the quiesce handshake lapses on the caller's deadline while the runtime
+// connection is present, so the checkpoint fails closed with codes.Internal
+// and takes no best-effort snapshot. The downgrade is scoped to a genuinely
+// gone runtime, so a runtime that is connected but slow keeps failing closed
+// rather than silently downgrading to a best-effort archive of a workspace the
+// live runtime may still be mutating.
+//
+// The runtime stays connected for the whole checkpoint, so RuntimeConnected
+// reports true and the pre-handshake best-effort shortcut does not fire; the
+// deadline-lapsed RequestCheckpoint error is not a connection-state sentinel,
+// so the in-flight best-effort branch does not fire either. Against a variant
+// that keyed the downgrade on any handshake failure, this drive would archive
+// best-effort and the test would fail, so it pins the connected-but-slow
+// fail-closed outcome rather than merely covering the branch.
 //
 // spec: §4.4 (best-effort eviction snapshot), §4.6.1 (agent-pod disruption
 // protection).
@@ -83,19 +93,23 @@ func TestEvictionSnapshotFailsClosedOnNonDroppedHandshake_spec_4_4(t *testing.T)
 		t.Fatalf("seed workspace: %v", err)
 	}
 
-	// A never-run lifecycle channel: RequestCheckpoint returns the cancelled
-	// context error, which is not a connection-state sentinel, so the gate
-	// stays fail-closed. Close releases the listener socket.
-	lc, err := NewLifecycleChannel(filepath.Join(t.TempDir(), "lc.sock"))
-	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+	// A connected Full-level runtime that completes the handshake but never
+	// answers the checkpoint_request: RequestCheckpoint blocks until the
+	// caller's deadline lapses and returns a bare context error, not a
+	// connection-state sentinel, while RuntimeConnected stays true.
+	lc, fr := startLifecycleChannel(t)
+	fr.handshake()
+	if !lc.WaitHandshake(context.Background(), 2*time.Second) {
+		t.Fatal("runtime handshake did not complete")
 	}
-	t.Cleanup(func() { _ = lc.Close() })
 	s.Lifecycle = lc
 	s.setEvicting()
+	if !lc.RuntimeConnected() {
+		t.Fatal("runtime must be connected for the connected-but-slow deny cell")
+	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
 	stream := &fakeCheckpointStream{
 		ctx: ctx,
 		recv: []*adapterv1.CheckpointRequest{{
@@ -109,11 +123,11 @@ func TestEvictionSnapshotFailsClosedOnNonDroppedHandshake_spec_4_4(t *testing.T)
 
 	rerr := s.Checkpoint(stream)
 	if status.Code(rerr) != codes.Internal {
-		t.Fatalf("code = %v, want Internal: a non-dropped handshake failure must fail closed even while evicting", status.Code(rerr))
+		t.Fatalf("code = %v, want Internal: a connected-but-slow handshake must fail closed even while evicting", status.Code(rerr))
 	}
 	for _, resp := range stream.sent {
 		if resp.GetChunkReady() != nil {
-			t.Fatal("fail-closed path streamed a chunk; no best-effort snapshot must be taken on a non-dropped handshake failure")
+			t.Fatal("fail-closed path streamed a chunk; no best-effort snapshot must be taken while the runtime is still connected")
 		}
 	}
 }

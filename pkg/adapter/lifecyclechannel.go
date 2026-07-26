@@ -257,6 +257,34 @@ func (lc *LifecycleChannel) isClosed() bool {
 	return lc.closed
 }
 
+// RuntimeConnected reports whether a runtime connection is currently bound
+// and past its handshake. It returns false before the first runtime dials
+// and after a runtime connection drops: Run's resetConn clears the
+// connection and re-arms a fresh, unclosed ready channel, so a request that
+// arrives after the drop would otherwise block on that ready channel until
+// the caller's context lapses. The eviction best-effort checkpoint gate
+// reads this to tell a runtime that has already exited (the default sidecar
+// SIGTERMs the hookless runtime container at t=0) apart from one that is
+// connected but slow to answer a checkpoint_request.
+//
+// spec: §4.4 (best-effort eviction snapshot), §4.6.1 (agent-pod disruption
+// protection).
+func (lc *LifecycleChannel) RuntimeConnected() bool {
+	lc.mu.Lock()
+	conn := lc.conn
+	ready := lc.ready
+	lc.mu.Unlock()
+	if conn == nil {
+		return false
+	}
+	select {
+	case <-ready:
+		return true
+	default:
+		return false
+	}
+}
+
 // currentReady returns the channel that closes when the active
 // connection's handshake completes. It is recreated per connection, so
 // callers capture it under the lock before waiting.

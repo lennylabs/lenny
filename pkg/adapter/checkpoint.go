@@ -157,25 +157,38 @@ func (s *Server) Checkpoint(stream adapterv1.Adapter_CheckpointServer) error {
 	// frame or a gateway Abort completes with status failed and the reason.
 	completeStatus, completeReason := "ok", ""
 	if s.Lifecycle != nil {
+		// spec: §4.4 (best-effort eviction snapshot), §4.6.1 — when this pod is
+		// itself terminating (its own SIGTERM/eviction handler has engaged, so
+		// isEvicting is set) and no runtime is currently connected, the runtime
+		// container has already exited under the default sidecar SIGTERM at
+		// t=0 before the eviction checkpoint_request could reach it. Issuing
+		// the request anyway would block on the re-armed lifecycle ready
+		// channel until the caller's deadline lapses, consuming the archive
+		// budget for a checkpoint_ready that never comes, and only then surface
+		// as a bare context deadline rather than a connection-state sentinel.
+		// The adapter therefore skips the handshake and archives the
+		// still-mounted /workspace emptyDir best-effort as an ordinary
+		// workspace checkpoint. The exited runtime is no longer writing to the
+		// workspace, so it is already quiesced. The gate is the local evicting
+		// flag, not the trigger: the §10.1 gateway-drain barrier drive also
+		// carries TriggerEviction but runs against a still-running pod whose
+		// evicting flag stays false, so its checkpoint keeps the cooperative
+		// handshake and fails closed on a dropped connection. No
+		// CompleteCheckpoint is registered because the runtime is gone; the
+		// best-effort branch streams the workspace directly.
+		if s.isEvicting() && !s.Lifecycle.RuntimeConnected() {
+			_, serr := s.streamChunks(ctx, stream, start, trigger, roots)
+			return serr
+		}
 		if rerr := s.Lifecycle.RequestCheckpoint(ctx, start.GetCheckpointId(), int32(start.GetDeadlineMs())); rerr != nil {
-			// spec: §4.4 (best-effort eviction snapshot), §4.6.1 — when this
-			// pod is itself terminating (its own SIGTERM/eviction handler has
-			// engaged, so isEvicting is set) and the cooperative quiesce
-			// handshake cannot complete because the runtime's lifecycle
-			// connection has already dropped, the exited runtime is no longer
-			// writing to the still-mounted /workspace emptyDir, so the adapter
-			// archives it best-effort as an ordinary workspace checkpoint
-			// rather than aborting to the minimal-state fallback and losing
-			// the workspace. The dropped-connection test is by the lifecycle
-			// package's connection-state sentinels, not a string match, so a
-			// deadline lapse or any other handshake failure still fails
-			// closed. The gate is the local evicting flag, not the trigger:
-			// the §10.1 gateway-drain barrier drive also carries
-			// TriggerEviction but runs against a still-running pod whose
-			// evicting flag stays false, so a transient drop there keeps
-			// failing closed. No CompleteCheckpoint is registered because the
-			// runtime is gone; the best-effort branch streams the workspace
-			// directly.
+			// The runtime dropped in flight, after RuntimeConnected reported it
+			// present: resetConn fails the pending checkpoint_request with a
+			// connection-state sentinel. While this pod is terminating, archive
+			// /workspace best-effort rather than aborting to the minimal-state
+			// fallback and losing the workspace. The dropped-connection test is
+			// by the lifecycle package's connection-state sentinels, not a
+			// string match, so a deadline lapse against a still-connected
+			// runtime or any other handshake failure still fails closed.
 			if s.isEvicting() && lifecycleConnectionDropped(rerr) {
 				_, serr := s.streamChunks(ctx, stream, start, trigger, roots)
 				return serr
