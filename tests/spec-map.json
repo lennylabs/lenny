@@ -4065,7 +4065,8 @@
         "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerRejectsBadSignature",
         "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster",
         "tests/tier8_chaos/playground_revocation_redis_outage_test.go::TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers",
-        "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3"
+        "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3",
+        "tests/tier4_integration/playground_dev_ready_gate_test.go::TestPlaygroundDevReadyGateSelfHealsAgainstRealPostgres"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4074,7 +4075,7 @@
         "cmd/lenny-gateway"
       ],
       "blocked_until_phase": "5",
-      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints. TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers drives the §27.3.1 line 99 fail-closed guarantee against a real, then-terminated, Redis container (via pkg/gateway/mcpfabric/playground.RedisSessionStore and the real pkg/gateway/middleware/auth middleware, not a fake checker), then confirms a fresh Redis becoming reachable resumes correct revocation enforcement. TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drives the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit) with playground.authMode=dev and global.devMode=false and asserts a non-zero exit naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN, the process-boot backstop for a deployment that bypassed Helm-validate."
+      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints. TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers drives the §27.3.1 line 99 fail-closed guarantee against a real, then-terminated, Redis container (via pkg/gateway/mcpfabric/playground.RedisSessionStore and the real pkg/gateway/middleware/auth middleware, not a fake checker), then confirms a fresh Redis becoming reachable resumes correct revocation enforcement. TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drives the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit) with playground.authMode=dev and global.devMode=false and asserts a non-zero exit naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN, the process-boot backstop for a deployment that bypassed Helm-validate. TestPlaygroundDevReadyGateSelfHealsAgainstRealPostgres drives the real cmd/lenny-gateway binary against a real Postgres container (tests/testinfra/containers.StartPostgres) with an unseeded devTenantId, asserting the admin API, /healthz, and /v1/sessions/start stay available and /playground/ returns 503 LENNY_PLAYGROUND_DEV_TENANT_NOT_SEEDED, then seeds the tenant row through the same POST /v1/admin/bootstrap upsert path the real lenny-bootstrap Job uses and asserts the next /playground/ request returns 200 with no gateway restart, closing the gap where TestDevModeReadyGateSelfHealsOnceTenantSeeded only exercised the transition against a fake in-memory tenant registry; it is t.Skip'd pending the same §16.1.1 authMode-metrics-label crash-loop already blocking every other live-process playground test with playground.enabled=true (BUILD-GAPS.md §16.1 Finding 8)."
     },
     "27.5": {
       "title": "Web Playground — Protocol",
