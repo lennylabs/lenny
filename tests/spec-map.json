@@ -4051,14 +4051,16 @@
         "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerLoginRedirectsToDiscoveredProvider",
         "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerCompletesRealPKCEExchange",
         "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerRejectsBadSignature",
-        "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster"
+        "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster",
+        "tests/tier8_chaos/playground_revocation_redis_outage_test.go::TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
-        "tests/tier2_component/playground"
+        "tests/tier2_component/playground",
+        "tests/tier8_chaos"
       ],
       "blocked_until_phase": "5",
-      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints."
+      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints. TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers drives the §27.3.1 line 99 fail-closed guarantee against a real, then-terminated, Redis container (via pkg/gateway/mcpfabric/playground.RedisSessionStore and the real pkg/gateway/middleware/auth middleware, not a fake checker), then confirms a fresh Redis becoming reachable resumes correct revocation enforcement."
     },
     "27.5": {
       "title": "Web Playground — Protocol",
