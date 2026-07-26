@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -145,5 +146,54 @@ func TestPlaygroundEgressGate_spec_27_9_251(t *testing.T) {
 	apiReq.Header.Set("X-Origin", "api")
 	if s.playgroundEgress(apiReq) {
 		t.Error("playgroundEgress for origin=api = true, want false")
+	}
+}
+
+// spec: §27.9 (raw-frame inspector: "The raw-frame inspector displays
+// redacted frames only; the gateway applies the same redaction rules as
+// the audit log (§16.4) before sending frames to the browser."); §16.4
+// (credential-sensitive payloads are excluded from payload-level
+// surfaces) — every gateway MCP tool returns its body as a JSON document
+// serialized into a single content[].text string (textResult,
+// pkg/gateway/mcpfabric/mcptools/mcptools.go), so a credential a tool
+// returns reaches the browser inside that string rather than as a scalar
+// under a credential-named key. A frame the inspector renders must not
+// carry the credential literal in any form.
+//
+// The assertion currently fails: redactFrameValue scrubs a scalar only
+// when its own map key is credential-named, and "text" is not a
+// credential-named key, so the serialized document travels through the
+// walker untouched. Whether the §16.4 rule the spec points at (a
+// whole-payload exclusion for named credential-sensitive RPCs, with a
+// lease-id/provider/outcome allowlist) obliges the frame redactor to
+// parse and rewrite JSON embedded in a text block is not settled by the
+// spec text, so the test is held non-blocking until the requirement is
+// decided.
+func TestRedactPlaygroundFrameScrubsCredentialInsideTextBlockJSON_spec_27_9(t *testing.T) {
+	t.Skip("open coverage question: the spec does not state whether audit-equivalent frame redaction must walk JSON serialized into a tool result text block")
+
+	const secret = "ghs_SECRETVALUE"
+	body, err := json.Marshal(map[string]string{
+		"host":     "github.com",
+		"username": "x-access-token",
+		"token":    secret,
+	})
+	if err != nil {
+		t.Fatalf("marshal tool body: %v", err)
+	}
+	frame, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"result": map[string]any{
+			"content": []any{map[string]any{"type": "text", "text": string(body)}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal frame: %v", err)
+	}
+
+	out := redactPlaygroundFrame(frame)
+	if strings.Contains(string(out), secret) {
+		t.Errorf("credential survived redaction in a tool result text block: %s", out)
 	}
 }
