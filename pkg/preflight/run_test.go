@@ -137,6 +137,45 @@ func TestRunEmitsVolumeEncryptionCheck_spec_12_9_1050(t *testing.T) {
 	}
 }
 
+// TestRunDoesNotFailOnUnacknowledgedAPIKeyModeWarning exercises the
+// §27.2 line 42 non-blocking contract at the exact boundary
+// cmd/lenny-preflight's main() gates the Job's exit code on: a
+// playground.authMode=apiKey install outside global.devMode with
+// playground.acknowledgeApiKeyMode left false must not make
+// preflight.Failed(report) true, and the WARNING must still be visible
+// in the aggregated report next to every other check outcome.
+//
+// spec: §27.2 line 42 — "`lenny-preflight` emits a non-blocking
+// `WARNING` unless this value is `true`".
+func TestRunDoesNotFailOnUnacknowledgedAPIKeyModeWarning_spec_27_2(t *testing.T) {
+	c := runClient(t, allBaselineWebhooks()...)
+
+	report := preflight.Run(context.Background(), c, preflight.Config{
+		Namespace: preflightNS,
+		Playground: preflight.PlaygroundConfig{
+			Enabled:               true,
+			AuthMode:              "apiKey",
+			GlobalDevMode:         false,
+			AcknowledgeAPIKeyMode: false,
+		},
+	})
+	if preflight.Failed(report) {
+		for _, r := range report {
+			if !r.Decision.Passed {
+				t.Errorf("check %q failed: %s", r.Name, r.Decision.Reason)
+			}
+		}
+		t.Fatal("an unacknowledged playground.authMode=apiKey install must not fail the preflight Job")
+	}
+	warning := resultByName(report, "playground.apiKeyMode")
+	if !warning.Passed {
+		t.Fatalf("playground.apiKeyMode: want a passing (non-blocking) decision, got fail: %s", warning.Reason)
+	}
+	if !strings.HasPrefix(warning.Reason, "WARNING") {
+		t.Fatalf("playground.apiKeyMode: want the WARNING to still surface in the aggregated report, got %q", warning.Reason)
+	}
+}
+
 func TestRunFailsOnFailOpenWebhook(t *testing.T) {
 	// preflight runs before the chart's main phase, so a not-yet-deployed
 	// webhook is not a gap. The genuine fail-open gap the inventory check
