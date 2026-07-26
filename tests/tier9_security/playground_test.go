@@ -8,11 +8,15 @@
 package tier9_security_test
 
 import (
+	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"nhooyr.io/websocket"
 
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
@@ -120,4 +124,155 @@ func TestPlaygroundSecurityPostureOnLiveCluster(t *testing.T) {
 			t.Fatalf("POST /v1/playground/token with a stray bearer and cookie in dev mode: want 200 (dev mode ignores caller material), got %d (body %s)", resp.StatusCode, body)
 		}
 	})
+}
+
+// spec: §27.1 ("Give security reviewers a UI surface to exercise the
+// policy/audit pipeline end-to-end."); §27.5 (the playground UI "sends a
+// chat message over the MCP WebSocket as a JSON-RPC tools/call for the
+// session-message tool" (`lenny/send_message`), attaches to the session
+// event stream first with `lenny/attach_session` "so the gateway pushes
+// the agent's output ... back as notifications/lenny/sessionEvent frames
+// over this socket", and the agent's reply "arrives as a session event,
+// not as a tools/call result" (pkg/gateway/mcpfabric/playground/ui/app.js,
+// the §27.4/§27.5 chat-screen wiring)); §27.9 line 254 ("The raw-frame
+// inspector displays redacted frames only; the gateway applies the same
+// redaction rules as the audit log ([§16.4]) before sending frames to the
+// browser.").
+//
+// diagnosis: a failure here means a security reviewer's playground chat
+// session does not work end to end against a live, chart-deployed
+// gateway and a real runtime pod: the dev-mode bearer cannot open a real
+// MCP WebSocket, attach to the session's event stream, send a chat
+// message, and observe the agent's reply delivered as a live
+// notifications/lenny/sessionEvent push over that same socket. This is
+// the "full chat session" leg of the gap; it does not by itself prove
+// the §27.9 credential-redaction guarantee (see the skip reason below).
+func TestPlaygroundLiveChatSessionOverWebSocket(t *testing.T) {
+	// Same root blocker as TestPlaygroundSecurityPostureOnLiveCluster
+	// above: playground.enabled=true crash-loops the live gateway (the
+	// non-snake_case "authMode" metrics label), so no playground route is
+	// reachable on the e2e overlay today. Separately, and only relevant
+	// once that is fixed: the browser-facing `lenny/send_message` tool
+	// schema carries a plain string `message` argument
+	// (pkg/gateway/mcpfabric/playground/ui/app.js), and the deployed
+	// echo-runtime-sidecar registers no application-level tools of its
+	// own, so nothing in the current live tool surface can put a
+	// credential-shaped scalar value under a sensitive JSON key (the
+	// precondition redactPlaygroundFrame scrubs, see
+	// pkg/gateway/mcpfabric/mcp/playground_redact.go) into a frame this
+	// test could observe. This test exercises the full chat-session
+	// journey; the credential-redaction assertion is left for whatever
+	// resolves that second, separate question.
+	t.Skip("playground.enabled=true crash-loops the live gateway (non-snake_case metrics label); needs a spec/code reconciliation before this can run")
+
+	d := sessiondriver.New(t)
+	base := d.BaseURL()
+	client := &http.Client{Timeout: 30 * time.Second}
+
+	req, err := http.NewRequest(http.MethodPost, base+"/v1/playground/token", nil)
+	if err != nil {
+		t.Fatalf("build mint request: %v", err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("POST /v1/playground/token: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("POST /v1/playground/token: want 200, got %d (body %s)", resp.StatusCode, raw)
+	}
+	var minted struct {
+		BearerToken string `json:"bearerToken"`
+	}
+	if err := json.Unmarshal(raw, &minted); err != nil {
+		t.Fatalf("decode mint response: %v; body %s", err, raw)
+	}
+	if minted.BearerToken == "" {
+		t.Fatalf("mint response carried no bearerToken: %s", raw)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	sess, err := d.CreateAndStart(ctx, "acme", sessiondriver.EchoRuntimeSidecar)
+	if err != nil {
+		t.Fatalf("create and start a session for the chat leg: %v", err)
+	}
+
+	wsURL := "ws" + strings.TrimPrefix(base, "http") + "/mcp/v1/ws"
+	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
+		HTTPHeader: http.Header{"Authorization": []string{"Bearer " + minted.BearerToken}},
+	})
+	if err != nil {
+		t.Fatalf("dial /mcp/v1/ws with the playground-minted bearer: %v", err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeFrame := func(v any) {
+		body, err := json.Marshal(v)
+		if err != nil {
+			t.Fatalf("marshal frame: %v", err)
+		}
+		if err := conn.Write(ctx, websocket.MessageText, body); err != nil {
+			t.Fatalf("write frame: %v", err)
+		}
+	}
+	readFrame := func() map[string]any {
+		_, data, err := conn.Read(ctx)
+		if err != nil {
+			t.Fatalf("read frame: %v", err)
+		}
+		var f map[string]any
+		if err := json.Unmarshal(data, &f); err != nil {
+			t.Fatalf("unmarshal frame: %v; frame %s", err, data)
+		}
+		return f
+	}
+
+	// §15.2 line 1289 / §27.5 R2: attach before sending, or the socket
+	// never receives the pushed session events the reply arrives on.
+	writeFrame(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "attach-1",
+		"method":  "tools/call",
+		"params":  map[string]any{"name": "lenny/attach_session", "arguments": map[string]any{"sessionId": sess.ID}},
+	})
+	if attachResp := readFrame(); attachResp["error"] != nil {
+		t.Fatalf("lenny/attach_session returned an error frame: %v", attachResp["error"])
+	}
+
+	const wantText = "hello from the security reviewer"
+	writeFrame(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      "msg-1",
+		"method":  "tools/call",
+		"params":  map[string]any{"name": "lenny/send_message", "arguments": map[string]any{"to": sess.ID, "message": wantText}},
+	})
+
+	// The delivery receipt (a tools/call result) and the agent's reply
+	// (a notifications/lenny/sessionEvent push, per §27.5) can arrive in
+	// either order; read frames until the session event carries the
+	// echoed text back or the deadline in ctx expires.
+	deadline := time.After(30 * time.Second)
+	for {
+		select {
+		case <-deadline:
+			t.Fatal("did not observe the agent's reply as a notifications/lenny/sessionEvent frame within 30s")
+		default:
+		}
+		frame := readFrame()
+		if frame["method"] != "notifications/lenny/sessionEvent" {
+			continue
+		}
+		params, _ := frame["params"].(map[string]any)
+		data, _ := params["data"].(map[string]any)
+		text, _ := data["text"].(string)
+		if strings.Contains(text, wantText) {
+			// echocore prefixes every echoed text part with "[echo
+			// seq=N] "; observing the sent text back proves the full
+			// send -> runtime -> attach-stream -> browser round trip
+			// worked over the live deployed chart.
+			return
+		}
+	}
 }

@@ -4144,13 +4144,20 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSP",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesAPIKeyBanner",
         "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestMemorySessionStorePerTenantIsolation",
-        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers"
+        "pkg/gateway/mcpfabric/playground/sessionrecord_test.go::TestRevokeSessionDeletesRecordAndMarksBearers",
+        "pkg/gateway/mcpfabric/mcp/playground_redact_internal_test.go::TestRedactPlaygroundFrameScrubsCredentialScalars_spec_27_9_251",
+        "pkg/gateway/mcpfabric/mcp/playground_redact_internal_test.go::TestRedactPlaygroundFramePreservesSchemaAndID_spec_27_9_251",
+        "pkg/gateway/mcpfabric/mcp/websocket_test.go::TestWebSocketPlaygroundEgressPreservesSchema_spec_27_9_251",
+        "pkg/gateway/mcpfabric/mcp/websocket_test.go::TestWebSocketNonPlaygroundEgressUnredacted_spec_27_9_251",
+        "tests/tier9_security/playground_test.go::TestPlaygroundSecurityPostureOnLiveCluster",
+        "tests/tier9_security/playground_test.go::TestPlaygroundLiveChatSessionOverWebSocket"
       ],
       "packages": [
-        "pkg/gateway/mcpfabric/playground"
+        "pkg/gateway/mcpfabric/playground",
+        "pkg/gateway/mcpfabric/mcp"
       ],
       "blocked_until_phase": "5",
-      "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface. The apiKey-mode warning banner is pinned as server-sourced (config.json only, absent from the static bundle) at the component level; the tier5 live-bundle-swap leg is blocked on the same §16.1 metrics-label crash-loop tracked against T-27.2.2."
+      "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface. The apiKey-mode warning banner is pinned as server-sourced (config.json only, absent from the static bundle) at the component level; the tier5 live-bundle-swap leg is blocked on the same §16.1 metrics-label crash-loop tracked against T-27.2.2. The credential-redaction mechanism itself has unit/component coverage (playground_redact_internal_test.go, websocket_test.go) proving the gate scrubs a credential literal at any nesting depth while preserving schema fields, keyed on the origin=playground claim. The two tests newly added under tests/tier9_security/playground_test.go (the live CSP/header posture, and a full attach_session+send_message chat session over a live deployed gateway) remain t.Skip'd pending the same metrics-label crash-loop fix; the chat-session test additionally needs a live tool surface capable of carrying a credential-shaped scalar value before it can also verify the redaction guarantee end to end, which the current lenny/send_message (string-only) tool schema and the echo-runtime-sidecar (no application-level tools) do not provide."
     }
   }
 }
