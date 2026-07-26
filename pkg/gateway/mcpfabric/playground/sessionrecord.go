@@ -194,6 +194,15 @@ func revokedKey(tenant, jti string) string {
 	return "t:" + tenant + ":pg:revoked:" + jti
 }
 
+// revokedMarkerValue is the value stored at revokedKey. The §27.3.1
+// session-record table pins the marker to an "Empty value
+// (presence-only)": the revocation check reads it with EXISTS, and the
+// stored bytes carry no meaning. Keeping the write empty keeps the
+// on-the-wire Redis record readable against the spec table by an
+// operator or a second implementation.
+// spec: §27.3.1 (session record backing store)
+const revokedMarkerValue = ""
+
 // sessTenantIndexKey is the §27.3.1 fan-in index that recovers the
 // tenant owning an opaque session id. It lets the
 // lenny_playground_session cookie carry only the opaque session id
@@ -584,7 +593,7 @@ func (s *RedisSessionStore) RevokeSession(ctx context.Context, tenant, id string
 		if jti == "" {
 			continue
 		}
-		pipe.Set(ctx, revokedKey(tenant, jti), "1", revokedTTL)
+		pipe.Set(ctx, revokedKey(tenant, jti), revokedMarkerValue, revokedTTL)
 	}
 	if _, err := pipe.Exec(ctx); err != nil {
 		return err
@@ -609,7 +618,7 @@ func (s *RedisSessionStore) MarkBearerRevoked(ctx context.Context, tenant, jti s
 	if jti == "" {
 		return nil
 	}
-	if err := s.client.Set(ctx, revokedKey(tenant, jti), "1", ttl).Err(); err != nil {
+	if err := s.client.Set(ctx, revokedKey(tenant, jti), revokedMarkerValue, ttl).Err(); err != nil {
 		return err
 	}
 	_ = s.client.Publish(ctx, revocationChannel(tenant), encodeRevocationMsg(s.replicaID, s.now().UnixNano(), jti)).Err()

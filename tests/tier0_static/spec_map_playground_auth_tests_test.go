@@ -26,6 +26,7 @@ import (
 var playgroundAuthTestFiles = []string{
 	"pkg/gateway/mcpfabric/playground/cookie_opaque_test.go",
 	"pkg/gateway/mcpfabric/playground/cross_replica_test.go",
+	"pkg/gateway/mcpfabric/playground/revocation_marker_value_test.go",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_test.go",
 	"pkg/gateway/mcpfabric/playground/token_currentexp_test.go",
 	"pkg/gateway/mcpfabric/playground/user_invalidation_test.go",
