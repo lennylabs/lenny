@@ -30,12 +30,14 @@ import (
 // so `\bF_27_2_5\b` never matches inside an identifier. The id itself is
 // submatch 2.
 var buildGapIDPattern = regexp.MustCompile(
-	`(^|[^0-9A-Za-z])(F-\d+\.\d+(?:\.\d+)?|F_\d+_\d+(?:_\d+)?)([^0-9A-Za-z]|$)`)
+	`(^|[^0-9A-Za-z])(F-\d+\.\d+(?:\.\d+)?|F_\d+_\d+(?:_\d+)?)([^0-9A-Za-z]|$)`,
+)
 
 // section27BuildGapIDPattern narrows buildGapIDPattern to the §27
 // (web playground) family, in both spellings.
 var section27BuildGapIDPattern = regexp.MustCompile(
-	`(^|[^0-9A-Za-z])(F-27\.\d+(?:\.\d+)?|F_27_\d+(?:_\d+)?)([^0-9A-Za-z]|$)`)
+	`(^|[^0-9A-Za-z])(F-27\.\d+(?:\.\d+)?|F_27_\d+(?:_\d+)?)([^0-9A-Za-z]|$)`,
+)
 
 // selfExemptFile is this file, which is the one place in the repository
 // that must spell a build-gap id out: TestBuildGapIDPatternsMatchBothSpellings
