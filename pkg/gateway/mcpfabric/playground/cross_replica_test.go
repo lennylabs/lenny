@@ -16,7 +16,7 @@ import (
 // request carrying the same cookie or bearer on replica B, both before
 // and after the pub/sub message is delivered (the authoritative Redis
 // check covers the pre-delivery case; the LRU negative cache covers the
-// post-delivery case)." F-27.3.10.
+// post-delivery case)."
 func TestPlaygroundSessionRevocationCrossReplica_spec_27_3_1_98(t *testing.T) {
 	mr := miniredis.RunT(t)
 	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -79,7 +79,7 @@ func TestPlaygroundSessionRevocationCrossReplica_spec_27_3_1_98(t *testing.T) {
 // tenant-key-isolation guarantee to the pg:sess:* and pg:revoked:* key
 // prefixes: a record or revocation marker written for tenant A must not
 // be visible to a request scoped to tenant B reusing the same
-// (lexically-equal) session id or jti. F-27.3.10.
+// (lexically-equal) session id or jti.
 func TestRedisSessionStoreTenantKeyIsolation_spec_27_3_1_98(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
@@ -116,7 +116,7 @@ func TestRedisSessionStoreTenantKeyIsolation_spec_27_3_1_98(t *testing.T) {
 // TestRedisTenantForSessionIndexRoundTrip exercises the §27.3.1 fan-in
 // index on the Redis-backed store: PutSession writes pg:sess-tenant:{id}
 // so the tenant is recoverable from the opaque cookie id alone, and
-// RevokeSession deletes it. F-27.3.8.
+// RevokeSession deletes it.
 func TestRedisTenantForSessionIndexRoundTrip_spec_27_3_1_81(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

@@ -44,7 +44,7 @@ func playgroundCtx() context.Context {
 
 // TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6 — a caller whose bearer
 // carries no origin=playground claim is left untouched: no label, no caps, no
-// counter. F-27.3.3.
+// counter.
 func TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6(t *testing.T) {
 	count := 0
 	s := &Server{
@@ -70,7 +70,7 @@ func TestApplyPlaygroundCaps_NonPlaygroundNoOp_spec_27_6(t *testing.T) {
 
 // TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6 — even with
 // no cap resolver wired, the origin=playground label (§27.6 line 203) is
-// stamped and the §27.8 counter fires. F-27.6.8 / F-27.6.11.
+// stamped and the §27.8 counter fires.
 func TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6(t *testing.T) {
 	count := 0
 	s := &Server{incPlaygroundSessionCreated: func(rt string) {
@@ -94,7 +94,7 @@ func TestApplyPlaygroundCaps_LabelAndCounterWithoutResolver_spec_27_6(t *testing
 
 // TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6 — with no runtime
 // cap declared, the §27.6 playground idle (line 201) and duration (line 200)
-// caps are stamped onto the row unchanged. F-27.6.1 / F-27.6.2.
+// caps are stamped onto the row unchanged.
 func TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6(t *testing.T) {
 	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
 	row := sessionstore.Session{}
@@ -112,7 +112,7 @@ func TestApplyPlaygroundCaps_StampsCapsNoRuntimeLimit_spec_27_6(t *testing.T) {
 
 // TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6 — when the runtime's
 // own limits.maxSessionAge is tighter than the playground cap, the §27.6 line
-// 200 min() keeps the runtime bound. F-27.6.2.
+// 200 min() keeps the runtime bound.
 func TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -133,7 +133,7 @@ func TestApplyPlaygroundCaps_RuntimeDurationTighter_spec_27_6(t *testing.T) {
 // TestApplyPlaygroundCaps_SubMinuteRuntimeNotLoosened_spec_27_6 — a runtime cap
 // below 60s rounds to zero whole minutes; the seconds re-clamp keeps the row
 // at the exact runtime bound rather than loosening it to the playground
-// default. F-27.6.2.
+// default.
 func TestApplyPlaygroundCaps_SubMinuteRuntimeNotLoosened_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -157,7 +157,7 @@ func TestApplyPlaygroundCaps_SubMinuteRuntimeNotLoosened_spec_27_6(t *testing.T)
 // knob. A runtime declaring a maxClientIdleSeconds tighter than the playground
 // cap keeps the runtime bound: min(maxClientIdleSeconds,
 // playground.maxIdleTimeSeconds). spec: §6.84, §3.1 (maxClientIdleSeconds
-// supersedes maxIdleTimeSeconds). F-27.6.1.
+// supersedes maxIdleTimeSeconds).
 func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -183,7 +183,7 @@ func TestApplyPlaygroundCaps_IdleResolvesAgainstClientIdleBound_spec_27_6(t *tes
 // against the runtime's effective maxSessionAgeSeconds (the §6.2 idle-clock
 // default). A maxSessionAgeSeconds tighter than the playground cap keeps the
 // session-age bound. spec: §6.84, §3.1 (idle defaults to effective
-// maxSessionAgeSeconds). F-27.6.1.
+// maxSessionAgeSeconds).
 func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	if err := runtimes.Create(context.Background(), runtimestore.Runtime{
@@ -206,7 +206,7 @@ func TestApplyPlaygroundCaps_IdleDefaultsToSessionAge_spec_27_6(t *testing.T) {
 
 // TestApplyPlaygroundCaps_MinWinsOverClientTimeouts_spec_27_6 — a tighter §14
 // client-requested timeout is preserved; the playground cap only tightens, it
-// never loosens. F-27.6.1 / F-27.6.2.
+// never loosens.
 func TestApplyPlaygroundCaps_MinWinsOverClientTimeouts_spec_27_6(t *testing.T) {
 	s := &Server{playgroundCaps: fakePlaygroundCaps{idleSeconds: 300, sessionMins: 30}}
 	row := sessionstore.Session{

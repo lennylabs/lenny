@@ -14,7 +14,7 @@ import (
 
 // spec: §27.8 line 241 — the propagation pub/sub payload carries the
 // origin replica id and the publish instant so a peer can compute the
-// end-to-end latency. encode/parse must round-trip. F-27.6.6.
+// end-to-end latency. encode/parse must round-trip.
 func TestEncodeParseRevocationMsgRoundTrip_spec_27_8_241(t *testing.T) {
 	const replica = "replica-A"
 	const jti = "jti-abc_DEF-123"
@@ -31,7 +31,7 @@ func TestEncodeParseRevocationMsgRoundTrip_spec_27_8_241(t *testing.T) {
 
 // A payload with no envelope (a bare jti) recovers the jti so the
 // negative cache is still warmed, but reports tsOK=false so no
-// propagation sample is recorded for it. F-27.6.6.
+// propagation sample is recorded for it.
 func TestParseRevocationMsgBareJTI(t *testing.T) {
 	replica, nano, jti, tsOK := parseRevocationMsg("just-a-jti")
 	if tsOK {
@@ -43,7 +43,7 @@ func TestParseRevocationMsgBareJTI(t *testing.T) {
 }
 
 // A non-numeric timestamp segment is treated as unparseable (tsOK=false)
-// while still recovering the trailing jti segment. F-27.6.6.
+// while still recovering the trailing jti segment.
 func TestParseRevocationMsgBadTimestamp(t *testing.T) {
 	_, _, jti, tsOK := parseRevocationMsg("replica-A|not-a-number|jti-x")
 	if tsOK {
@@ -56,7 +56,7 @@ func TestParseRevocationMsgBadTimestamp(t *testing.T) {
 
 // The jti is the last segment via SplitN(payload, "|", 3), so a jti
 // that itself contained the delimiter would be preserved intact. This
-// guards the parser against ever truncating jti material. F-27.6.6.
+// guards the parser against ever truncating jti material.
 func TestParseRevocationMsgJTIKeepsTail(t *testing.T) {
 	replica, _, jti, tsOK := parseRevocationMsg("rep|123|a|b")
 	if !tsOK || replica != "rep" || jti != "a|b" {
@@ -67,7 +67,6 @@ func TestParseRevocationMsgJTIKeepsTail(t *testing.T) {
 // spec: §27.6 line 204 / §10.2 tenant format — the pattern-subscription
 // consume loop extracts the tenant from a concrete channel name. Only a
 // well-formed t:{tenant}:pg:revocations channel yields a tenant.
-// F-27.6.7.
 func TestTenantFromRevocationChannel_spec_27_6_204(t *testing.T) {
 	cases := []struct {
 		channel string
@@ -93,7 +92,7 @@ func TestTenantFromRevocationChannel_spec_27_6_204(t *testing.T) {
 // A peer-published message warms the per-tenant negative cache and
 // records exactly one §27.8 pubsub_delivered propagation sample. The
 // recovered jti is then visible to IsBearerRevoked through the cache
-// without a Redis round-trip. spec: §27.8 line 241. F-27.6.6.
+// without a Redis round-trip. spec: §27.8 line 241.
 func TestHandleRevocationMessagePeerWarmsCacheAndSamples_spec_27_8_241(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	store := &RedisSessionStore{
@@ -135,7 +134,7 @@ func TestHandleRevocationMessagePeerWarmsCacheAndSamples_spec_27_8_241(t *testin
 
 // A message this replica published itself is not a cross-replica
 // observation: the cache is still warmed (the writer benefits from its
-// own fan-out) but no propagation sample is recorded. F-27.6.6.
+// own fan-out) but no propagation sample is recorded.
 func TestHandleRevocationMessageSelfPublishNotSampled(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	store := &RedisSessionStore{
@@ -159,7 +158,7 @@ func TestHandleRevocationMessageSelfPublishNotSampled(t *testing.T) {
 }
 
 // A message on an unrecognised channel is ignored: no cache mutation,
-// no sample. F-27.6.7.
+// no sample.
 func TestHandleRevocationMessageBadChannelIgnored(t *testing.T) {
 	store := &RedisSessionStore{
 		now:       time.Now,
@@ -182,7 +181,7 @@ func TestHandleRevocationMessageBadChannelIgnored(t *testing.T) {
 
 // A negative publish-to-receive delta (clock skew where the publish
 // stamp is in the receiver's future) clamps to zero rather than
-// recording a negative latency. F-27.6.6.
+// recording a negative latency.
 func TestHandleRevocationMessageNegativeLatencyClamped(t *testing.T) {
 	now := time.Date(2026, 5, 29, 12, 0, 0, 0, time.UTC)
 	store := &RedisSessionStore{
@@ -207,7 +206,7 @@ func TestHandleRevocationMessageNegativeLatencyClamped(t *testing.T) {
 // RevokeSession on the (sole, self-publishing) replica must become
 // visible to IsBearerRevoked through the pub/sub-warmed cache for an
 // arbitrary tenant, proving the pattern subscription is not bound to a
-// startup tenant list. F-27.6.6, F-27.6.7.
+// startup tenant list.
 func TestSubscribeAllRevocationsWarmsCacheForArbitraryTenant_spec_27_6_204(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})

@@ -13,7 +13,7 @@ import (
 // TestSessionCookieIsOpaqueAndDoesNotEmbedTenant asserts the §27.3.1
 // line 81 contract that the lenny_playground_session cookie carries only
 // the opaque session id and never the tenant. The tenant is recovered
-// server-side from the fan-in index. F-27.3.8.
+// server-side from the fan-in index.
 func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T) {
 	store := NewMemorySessionStore()
 	oidc := &fakeOIDC{subject: OIDCSubject{UserID: "alice", TenantID: "acme", Scope: "tools:sessions:read"}}
@@ -49,7 +49,7 @@ func TestSessionCookieIsOpaqueAndDoesNotEmbedTenant_spec_27_3_1_81(t *testing.T)
 // TestTenantForSessionIndexRoundTripAndRevocation covers the §27.3.1
 // fan-in index lifecycle on the in-memory store: PutSession writes the
 // id→tenant mapping, RevokeSession removes it, and an unknown id reports
-// not-found. F-27.3.8.
+// not-found.
 func TestTenantForSessionIndexRoundTripAndRevocation_spec_27_3_1_81(t *testing.T) {
 	store := NewMemorySessionStore()
 	ctx := context.Background()
@@ -75,7 +75,7 @@ func TestTenantForSessionIndexRoundTripAndRevocation_spec_27_3_1_81(t *testing.T
 }
 
 // TestTenantForSessionExpires covers the §27.3.1 index entry expiring
-// with the session TTL so a stale id self-clears. F-27.3.8.
+// with the session TTL so a stale id self-clears.
 func TestTenantForSessionExpires_spec_27_3_1_81(t *testing.T) {
 	store := NewMemorySessionStore()
 	now := time.Unix(1_700_000_000, 0)

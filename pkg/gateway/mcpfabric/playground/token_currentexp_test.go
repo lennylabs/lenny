@@ -17,7 +17,7 @@ import (
 // bearer jti/exp". CurrentExp must equal the minted bearer's exp so the
 // §27.3.1 revokedMarkerTTL bounds the marker to the live bearer's
 // remaining lifetime rather than falling through to the conservative
-// BearerTTL+skew default. F-27.6.10.
+// BearerTTL+skew default.
 func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 	signer := devSigner()
 	store := NewMemorySessionStore()
@@ -70,7 +70,7 @@ func TestMintStampsCurrentExpOnSessionRecord_spec_27_3_1_93(t *testing.T) {
 		t.Fatalf("GetSession after mint: %v", err)
 	}
 	if rec.CurrentExp == 0 {
-		t.Fatal("CurrentExp was not stamped on the session record at mint (F-27.6.10 regression)")
+		t.Fatal("CurrentExp was not stamped on the session record at mint, so the §27.3.1 revokedMarkerTTL falls back to the conservative BearerTTL+skew default")
 	}
 	if rec.CurrentExp != int64(bearerExp) {
 		t.Fatalf("record CurrentExp = %d, want minted bearer exp %d", rec.CurrentExp, int64(bearerExp))

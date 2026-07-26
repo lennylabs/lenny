@@ -30,7 +30,7 @@ func TestCheckPlaygroundConfigSkipsWhenDisabled_spec_27_2(t *testing.T) {
 
 // TestCheckPlaygroundConfigDevModeForbidden_F_27_2_5 exercises the
 // §27.3 install-time gate: playground.authMode=dev requires
-// global.devMode=true. The fix for F-27.2.5 surfaces the rejection at
+// global.devMode=true. The preflight check surfaces the rejection at
 // helm install rather than at pod start.
 func TestCheckPlaygroundConfigDevModeForbidden_F_27_2_5(t *testing.T) {
 	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
@@ -170,7 +170,7 @@ func TestCheckPlaygroundAPIKeyModeDisabled_F_27_9_2(t *testing.T) {
 // TestCheckPlaygroundConfigNoLongerEmitsAPIKeyWarning pins the split: the
 // structural playground-config row stays silent on the unacknowledged
 // apiKey case (the WARNING moved to the playground.apiKeyMode row) so the
-// warning is emitted exactly once. F-27.9.2.
+// warning is emitted exactly once.
 func TestCheckPlaygroundConfigNoLongerEmitsAPIKeyWarning_F_27_9_2(t *testing.T) {
 	d := preflight.CheckPlaygroundConfig(preflight.PlaygroundConfig{
 		Enabled:               true,

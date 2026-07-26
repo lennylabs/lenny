@@ -20,7 +20,7 @@ type playgroundCapsFake struct {
 	idleSeconds int
 	sessionMins int
 	// hidden names a single runtime the §27.2 playground.allowedRuntimes
-	// list excludes; empty means every runtime is visible. F-27.4.1.
+	// list excludes; empty means every runtime is visible.
 	hidden string
 }
 
@@ -56,8 +56,7 @@ type createSessionEnvelope struct {
 // TestCreatePlaygroundOriginStampsCapsAndLabel_spec_27_6 — a §27.3
 // origin=playground create lands the §27.6 idle/duration caps and the
 // origin=playground audit label on both the response and the persisted row,
-// and increments the §27.8 created counter. F-27.3.3 / F-27.6.1 / F-27.6.2 /
-// F-27.6.8 / F-27.6.11.
+// and increments the §27.8 created counter.
 func TestCreatePlaygroundOriginStampsCapsAndLabel_spec_27_6(t *testing.T) {
 	srv, store := seedNoEnvServer(t, "sess_pg", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
 	created := 0
@@ -107,7 +106,7 @@ func TestCreatePlaygroundOriginStampsCapsAndLabel_spec_27_6(t *testing.T) {
 
 // TestCreateNonPlaygroundLeavesOriginUnset_spec_27_6 — a non-playground create
 // carries no origin label, no playground caps, and never increments the
-// counter, so the §27.6 enforcement is scoped to the origin claim. F-27.3.3.
+// counter, so the §27.6 enforcement is scoped to the origin claim.
 func TestCreateNonPlaygroundLeavesOriginUnset_spec_27_6(t *testing.T) {
 	srv, store := seedNoEnvServer(t, "sess_plain", tenantstore.NoEnvPolicyAllowAll, tenantstore.NoEnvPolicyDenyAll)
 	created := 0

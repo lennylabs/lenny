@@ -16,7 +16,7 @@ import (
 // enumerates playground session records idle past the reclamation window
 // and revokes each through the shared revocation primitive with reason
 // idle_timeout. These tests cover the store enumeration and the handler
-// sweep. F-27.3.7.
+// sweep.
 
 // TestMemoryIdleSessionsSelectsIdleRecords: IdleSessions returns records
 // whose last activity predates the cutoff and skips active, invalidated,
@@ -163,7 +163,7 @@ func TestRevokeSessionAdminRevokeThroughRedisPrimitive_spec_27_3_1_207(t *testin
 // revokes idle records through the shared revocation primitive — the
 // record is deleted, every minted bearer lands on the deny list, and the
 // §27.8 metric attributes the revocation to idle_timeout — while an active
-// session survives. F-27.3.7.
+// session survives.
 func TestSweepIdleSessionsRevokesIdleThroughPrimitive_spec_27_3_1_94(t *testing.T) {
 	store := NewMemorySessionStore()
 	h, _, m := newRevokeHandler(t, store)
@@ -209,7 +209,7 @@ func TestSweepIdleSessionsRevokesIdleThroughPrimitive_spec_27_3_1_94(t *testing.
 // TestSweepIdleSessionsDoesNotReapBetweenMints: a session that minted a
 // bearer more than the idle grace (5m) ago but less than a full bearer
 // lifetime ago is NOT reaped — the window exceeds BearerTTL so an active
-// user who has not yet re-minted is never disconnected. F-27.3.7.
+// user who has not yet re-minted is never disconnected.
 func TestSweepIdleSessionsDoesNotReapBetweenMints_spec_27_6_201(t *testing.T) {
 	store := NewMemorySessionStore()
 	h, _, _ := newRevokeHandler(t, store)
@@ -236,7 +236,7 @@ func TestSweepIdleSessionsDoesNotReapBetweenMints_spec_27_6_201(t *testing.T) {
 }
 
 // TestSweepIdleSessionsNilStore: a handler with no session store sweeps
-// nothing without error. F-27.3.7.
+// nothing without error.
 func TestSweepIdleSessionsNilStore(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{Signer: devSigner()})
 	n, err := h.SweepIdleSessions(context.Background())

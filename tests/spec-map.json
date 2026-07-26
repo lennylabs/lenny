@@ -4135,7 +4135,8 @@
       "tests": [
         "pkg/gateway/mcpfabric/playground/ui_screens_test.go::TestPlaygroundUIWalksThreeScreensAndExercisesChatControls",
         "tests/tier11_docs/playground_delegation_scope_test.go::TestPlaygroundDelegationGateWordingAgrees",
-        "tests/tier11_docs/playground_delegation_scope_test.go::TestPlaygroundDocsDoNotDocumentDelegationGate"
+        "tests/tier11_docs/playground_delegation_scope_test.go::TestPlaygroundDocsDoNotDocumentDelegationGate",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestsCiteOnlyDurableSpecSections"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4152,7 +4153,8 @@
         "tests/tier3_contract/playground/playground_test.go::TestLoginEndpointIsOIDCModeOnly",
         "tests/tier4_integration/playground_ws_carrier_test.go::TestPlaygroundBearerCarrierRedactedFromAccessLogAndAudit_spec_27_5",
         "tests/tier4_integration/playground_authmode_matrix_test.go::TestPlaygroundWebSocketCodepathIdenticalAcrossAuthModes_spec_27_5",
-        "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapReferencesEveryPlaygroundTestFile"
+        "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapReferencesEveryPlaygroundTestFile",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestsCiteOnlyDurableSpecSections"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4190,14 +4192,15 @@
         "pkg/gateway/sessionserver/playground_caps_internal_test.go::TestApplyPlaygroundCaps_MinWinsOverClientTimeouts_spec_27_6",
         "pkg/gateway/sessionserver/playground_caps_internal_test.go::TestMinPositiveInt64",
         "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapSectionsClaimPlaygroundCapAndScopePackages",
-        "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapReferencesEveryPlaygroundTestFile"
+        "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapReferencesEveryPlaygroundTestFile",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestsCiteOnlyDurableSpecSections"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
         "pkg/gateway/sessionserver"
       ],
       "blocked_until_phase": "5",
-      "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation. TestPlaygroundCrossReplicaRevocationBypassAdversarial is a written-but-skipped tier-9 test that drives the cross-replica revocation guarantee against two real cmd/lenny-gateway subprocesses and a real Redis container over a genuine OIDC PKCE flow; it is blocked by the same playground.enabled=true crash-loop (non-snake_case \"authMode\" metrics label, BUILD-GAPS.md §16.1 Metrics Finding 8) already blocking every other live-process playground test. TestPlaygroundLogoutPropagationSLOUnderLoad is the same written-but-skipped pattern extended to the §27.3.1 P99 propagation SLO: many concurrent OIDC-mode sessions across several real replica subprocesses, measuring cross-replica revocation-visibility latency into a histogram and asserting the 500ms P99 budget. TestPlaygroundRevocation (tier7b, Kind/k6-based) remains an empty scaffold pending the same reconciliation, since the shared e2e overlay cannot safely enable the playground for every other Kind scenario it hosts until then. The §27.6 min() cap arithmetic itself lives in pkg/gateway/sessionserver, and playground_caps_internal_test.go pins it case by case against the internal applyPlaygroundCaps entry point: a principal without the origin=playground claim is left untouched; the origin label and the §27.8 counter fire even when no cap resolver is wired; both caps are stamped when the runtime declares no limit of its own; a tighter runtime maxSessionAge wins over the playground duration cap and a sub-minute runtime limit is never loosened by minute-granular rounding; the effective idle cap resolves against the pool's maxClientIdleSeconds and falls back to the effective session age when no client idle bound is set; and a tighter §14 client-supplied timeout still wins. TestMinPositiveInt64 pins the positive-only min() helper the cap math is built on, which treats a non-positive bound as absent rather than as zero."
+      "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation. TestPlaygroundCrossReplicaRevocationBypassAdversarial is a written-but-skipped tier-9 test that drives the cross-replica revocation guarantee against two real cmd/lenny-gateway subprocesses and a real Redis container over a genuine OIDC PKCE flow; it is blocked by the same playground.enabled=true crash-loop (non-snake_case \"authMode\" metrics label, BUILD-GAPS.md §16.1 Metrics Finding 8) already blocking every other live-process playground test. TestPlaygroundLogoutPropagationSLOUnderLoad is the same written-but-skipped pattern extended to the §27.3.1 P99 propagation SLO: many concurrent OIDC-mode sessions across several real replica subprocesses, measuring cross-replica revocation-visibility latency into a histogram and asserting the 500ms P99 budget. TestPlaygroundRevocation (tier7b, Kind/k6-based) remains an empty scaffold pending the same reconciliation, since the shared e2e overlay cannot safely enable the playground for every other Kind scenario it hosts until then. The §27.6 min() cap arithmetic itself lives in pkg/gateway/sessionserver, and playground_caps_internal_test.go pins it case by case against the internal applyPlaygroundCaps entry point: a principal without the origin=playground claim is left untouched; the origin label and the §27.8 counter fire even when no cap resolver is wired; both caps are stamped when the runtime declares no limit of its own; a tighter runtime maxSessionAge wins over the playground duration cap and a sub-minute runtime limit is never loosened by minute-granular rounding; the effective idle cap resolves against the pool's maxClientIdleSeconds and falls back to the effective session age when no client idle bound is set; and a tighter §14 client-supplied timeout still wins. TestMinPositiveInt64 pins the positive-only min() helper the cap math is built on, which treats a non-positive bound as absent rather than as zero. TestPlaygroundTestsCiteOnlyDurableSpecSections is the citation-hygiene counterpart of that traceability sweep: it walks the same set of playground test files and fails when one names a retired BUILD-GAPS.md F-<section>.<n> id, which resolves to nothing in the repository, instead of the durable spec-section reference the harness maps tests through."
     },
     "27.7": {
       "title": "Web Playground — Asset Serving and CSP",

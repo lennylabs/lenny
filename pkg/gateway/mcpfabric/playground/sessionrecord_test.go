@@ -15,7 +15,7 @@ import (
 // TestSessionRecordCarriesLabelsThroughJSON exercises the §27.2
 // line 41 SessionRecord.Labels round-trip: an operator-supplied
 // label survives Marshal+Unmarshal so a Redis-stored record carries
-// the audit/accounting labels back on every reread. F-27.2.1.
+// the audit/accounting labels back on every reread.
 func TestSessionRecordCarriesLabelsThroughJSON_spec_27_2_41(t *testing.T) {
 	original := SessionRecord{
 		UserID:   "alice",
@@ -172,7 +172,7 @@ func TestLogoutRevokesSessionBearer(t *testing.T) {
 		}
 		// spec: §27.2 line 41 — every playground audit event carries
 		// the EffectiveLabels map (origin: "playground" plus any
-		// operator-configured entries). F-27.2.1.
+		// operator-configured entries).
 		if ev.Labels["origin"] != PlaygroundOrigin {
 			t.Fatalf("audit event %q labels[origin] = %q, want %q",
 				ev.Type, ev.Labels["origin"], PlaygroundOrigin)
@@ -307,7 +307,7 @@ func mintWithCookie(t *testing.T, tokenSrv *httptest.Server, cookie string) stri
 // idTenantForCookie returns the opaque session id (the whole cookie
 // value per §27.3.1 line 81) together with the tenant the store indexed
 // for it. The cookie no longer embeds the tenant, so the tenant is
-// recovered through SessionStore.TenantForSession. F-27.3.8.
+// recovered through SessionStore.TenantForSession.
 func idTenantForCookie(t *testing.T, store SessionStore, cookie string) (id, tenant string) {
 	t.Helper()
 	id = cookie
@@ -329,7 +329,7 @@ func idTenantForCookie(t *testing.T, store SessionStore, cookie string) (id, ten
 // TestSessionRecordCarriesLabelsThroughJSON (a JSON round-trip of a
 // hand-built struct literal), this exercises the actual
 // establishSession mint path so a regression that drops
-// Config.EffectiveLabels() from the write path is caught. F-27.2.1.
+// Config.EffectiveLabels() from the write path is caught.
 func TestEstablishedSessionRecordCarriesOperatorLabels_spec_27_2_41(t *testing.T) {
 	signer := devSigner()
 	store := NewMemorySessionStore()
@@ -382,7 +382,7 @@ func TestEstablishedSessionRecordCarriesOperatorLabels_spec_27_2_41(t *testing.T
 // every emitted event's origin label; this test additionally exercises
 // a Config with multi-key operator labels so a regression that emits
 // only the origin entry (dropping the rest of EffectiveLabels()) on
-// the mint path is caught. F-27.2.1.
+// the mint path is caught.
 func TestBearerMintedAuditEventCarriesOperatorLabels_spec_27_2_41(t *testing.T) {
 	audit := NewMemoryAuditEmitter()
 	operatorLabels := map[string]string{"environment": "stage", "team": "platform"}

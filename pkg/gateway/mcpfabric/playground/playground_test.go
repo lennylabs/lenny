@@ -119,7 +119,7 @@ func TestConfigValidateDevTenantRules(t *testing.T) {
 
 // TestEffectiveLabelsDefaultsToOrigin exercises the §27.2 line 41
 // default: an unset playground.sessionLabels yields the
-// load-bearing {origin: "playground"} label. F-27.2.1.
+// load-bearing {origin: "playground"} label.
 func TestEffectiveLabelsDefaultsToOrigin_spec_27_2_41(t *testing.T) {
 	cfg := Config{}
 	labels := cfg.EffectiveLabels()
@@ -133,7 +133,7 @@ func TestEffectiveLabelsDefaultsToOrigin_spec_27_2_41(t *testing.T) {
 
 // TestEffectiveLabelsMergesOperatorLabels exercises operator-supplied
 // labels: the chart-rendered map is preserved and merged with the
-// load-bearing origin entry. F-27.2.1.
+// load-bearing origin entry.
 func TestEffectiveLabelsMergesOperatorLabels_spec_27_2_41(t *testing.T) {
 	cfg := Config{SessionLabels: map[string]string{"environment": "stage", "team": "platform"}}
 	labels := cfg.EffectiveLabels()
@@ -150,7 +150,7 @@ func TestEffectiveLabelsMergesOperatorLabels_spec_27_2_41(t *testing.T) {
 
 // TestEffectiveLabelsReStampsOrigin exercises the §27.3 mode-agnostic
 // guarantee: an operator cannot silence the load-bearing origin
-// label by overriding it. F-27.2.1.
+// label by overriding it.
 func TestEffectiveLabelsReStampsOrigin_spec_27_3(t *testing.T) {
 	cfg := Config{SessionLabels: map[string]string{"origin": "spoof"}}
 	labels := cfg.EffectiveLabels()

@@ -17,7 +17,6 @@ import (
 // playground revocation primitive for every session the user holds. The
 // §11.4 user-invalidation fan-out (Handler.RevokeSessionsForUser) looks
 // the user's sessions up through the user index and revokes each.
-// F-27.6.4, F-27.3.2.
 
 func idSet(ids []string) map[string]bool {
 	m := make(map[string]bool, len(ids))

@@ -12,7 +12,7 @@ import (
 // playground.allowedRuntimes glob semantics RuntimeVisible enforces: `*` is
 // the only metacharacter and matches any sequence; a pattern with no `*` is an
 // exact match; the default ["*"] (applied by withDefaults) makes every runtime
-// visible. F-27.4.1.
+// visible.
 func TestRuntimeVisibleGlob_spec_27_5_190(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -46,7 +46,7 @@ func TestRuntimeVisibleGlob_spec_27_5_190(t *testing.T) {
 
 // TestRuntimeVisibleWithDefaults_spec_27_2 pins that withDefaults normalizes an
 // empty AllowedRuntimes to the all-visible posture, so a Config built from
-// operator values with no allowedRuntimes set exposes every runtime. F-27.4.1.
+// operator values with no allowedRuntimes set exposes every runtime.
 func TestRuntimeVisibleWithDefaults_spec_27_2(t *testing.T) {
 	c := Config{}.withDefaults()
 	if len(c.AllowedRuntimes) != 1 || c.AllowedRuntimes[0] != "*" {
@@ -72,7 +72,7 @@ func readUIAsset(t *testing.T, name string) string {
 // TestPlaygroundSDKSnippetCoversThreeLanguages_spec_27_4_item3 pins the §27.4
 // item 3 requirement that "Copy as client SDK snippet" emits equivalent code in
 // Go, Python, and TypeScript — the bundle must carry a template for each and a
-// language picker, not a hard-coded single language. F-27.4.4 / F-27.9.4.
+// language picker, not a hard-coded single language.
 func TestPlaygroundSDKSnippetCoversThreeLanguages_spec_27_4_item3(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	for _, marker := range []string{
@@ -96,7 +96,7 @@ func TestPlaygroundSDKSnippetCoversThreeLanguages_spec_27_4_item3(t *testing.T) 
 // TestPlaygroundSchemaDrivenConfig_spec_27_4_item2 pins that the §27.4 item 2
 // session-config screen renders a form from the runtime's runtimeOptionsSchema
 // rather than a single raw JSON textarea, and posts the correct
-// runtimeRef/runtimeOptions create body. F-27.4.2.
+// runtimeRef/runtimeOptions create body.
 func TestPlaygroundSchemaDrivenConfig_spec_27_4_item2(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	for _, marker := range []string{
@@ -119,7 +119,6 @@ func TestPlaygroundSchemaDrivenConfig_spec_27_4_item2(t *testing.T) {
 // TestPlaygroundPickerFiltersAllowedRuntimes_spec_27_5_190 pins that the §27.4
 // runtime picker consults the server-sourced playground.allowedRuntimes list,
 // matching the gateway's authoritative filter a second time client-side.
-// F-27.4.1.
 func TestPlaygroundPickerFiltersAllowedRuntimes_spec_27_5_190(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	for _, marker := range []string{"runtimeAllowed", "allowedRuntimes", "globMatch"} {
@@ -136,7 +135,6 @@ func TestPlaygroundPickerFiltersAllowedRuntimes_spec_27_5_190(t *testing.T) {
 // tools:sessions:write while honoring the tools:sessions:* and tools:* wildcards
 // per the gateway scopes.Set.Matches semantics. The bundle is plain ES2017 with
 // no build step, so the test inspects its source for these surfaces directly.
-// F-27.4.5.
 func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	// The state initializer declares effectiveScope so the §27.4 gate reads a
@@ -175,7 +173,6 @@ func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 // never dereferenced when the affordance is hidden, and the obsolete flat
 // delegationPolicyId key is gone. The bundle is plain ES2017 with no build
 // step, so the test inspects its source for these surfaces directly.
-// F-27.4.5.
 func TestPlaygroundGatesDelegationField_spec_27_4_item2(t *testing.T) {
 	app := readUIAsset(t, "app.js")
 	// renderSessionConfig gates the delegation affordance on the minted
