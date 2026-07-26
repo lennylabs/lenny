@@ -56,11 +56,6 @@ exceptions:
     reason: non-normative
     justification: Web playground UI surface. Visual layout description without executable behavior; the bundled SPA assets are covered by the §27.7 asset-serving tests.
 
-  - section: "27.10"
-    reason: non-normative
-    justification: Web playground roll-forward notes. Forward-compatibility guidance, no executable behavior.
-
-
   # Wave 0 spec-map reconciliation: non-normative sections (design
   # philosophy, overviews, summaries, examples, reference tables) and
   # deferred sections whose feature is built by a later wave. A

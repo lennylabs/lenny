@@ -4182,6 +4182,19 @@
       ],
       "blocked_until_phase": "5",
       "notes": "Per-tenant isolation, session revocation, and the CSP that closes the documented browser-side attack surface. The apiKey-mode warning banner is pinned as server-sourced (config.json only, absent from the static bundle) at the component level; the tier5 live-bundle-swap leg is blocked on the same §16.1 metrics-label crash-loop tracked against T-27.2.2. The credential-redaction mechanism itself has unit/component coverage (playground_redact_internal_test.go, websocket_test.go) proving the gate scrubs a credential literal at any nesting depth while preserving schema fields, keyed on the origin=playground claim. The two tests newly added under tests/tier9_security/playground_test.go (the live CSP/header posture, and a full attach_session+send_message chat session over a live deployed gateway) remain t.Skip'd pending the same metrics-label crash-loop fix; the chat-session test additionally needs a live tool surface capable of carrying a credential-shaped scalar value before it can also verify the redaction guarantee end to end, which the current lenny/send_message (string-only) tool schema and the echo-runtime-sidecar (no application-level tools) do not provide."
+    },
+    "27.10": {
+      "title": "Web Playground — Roll-Forward Notes",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "tests/tier4_integration/playground_rollforward_test.go::TestPlaygroundDisableDoesNotAffectInFlightSessions_spec_27_10"
+      ],
+      "packages": [
+        "pkg/gateway/sessionserver",
+        "pkg/gateway/mcpfabric/playground"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "The §27.10 claim that disabling playground.enabled is safe at any time and does not affect an in-flight session, playground-origin or not, only blocking new playground traffic. The tier-4 test composes the real sessionserver.Server and playground.Handler types (the same composition tests/tier4_integration/playground_idle_override_test.go and playground_authmode_matrix_test.go use, since booting the compiled cmd/lenny-gateway binary with --playground-enabled still crash-loops on the §16.1 metrics-label defect tracked against T-27.2.2) as two independent handler compositions sharing one sessionserver.Server/store: a \"before\" composition with the playground routes mounted and an \"after\" composition without them, modeling the observable effect of the httpsurface.go conditional mount flipping off. It creates a playground-origin session and a directly authenticated non-playground session against the \"before\" composition, then asserts against the \"after\" composition that GET /playground/ and POST /v1/playground/token both 404 while both sessions remain readable and can each still be driven to completion via POST .../terminate."
     }
   }
 }
