@@ -528,6 +528,9 @@
     "docs/": {
       "docs": ["tests/tier11_docs/..."]
     },
+    "TESTING.md": {
+      "docs": ["tests/tier11_docs/..."]
+    },
     "spec/": {
       "static": ["tests/tier0_static/spec_link_check_test.go"]
     },

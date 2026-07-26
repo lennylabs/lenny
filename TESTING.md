@@ -1951,7 +1951,7 @@ Coverage:
 
 ### 14.12 Web playground
 
-Coverage spans Tier 5 e2e (full chart with `playground.enabled: true`) and Tier 9 (security). Maps to the §spec/27 surface (§spec/27.2 placement, §spec/27.3 authentication, §spec/27.6 lifecycle, §spec/27.7 CSP and asset serving, §spec/27.8 metrics, §spec/27.9 security). spec-map-exceptions.yaml exempts §spec/27 from §22.2 spec coverage as post-v1; this section names the test surface that lands when the feature unblocks.
+Coverage spans Tier 5 e2e (full chart with `playground.enabled: true`) and Tier 9 (security). Maps to the §spec/27 surface (§spec/27.2 placement, §spec/27.3 authentication, §spec/27.6 lifecycle, §spec/27.7 CSP and asset serving, §spec/27.8 metrics, §spec/27.9 security). The playground is compiled into the gateway binary as an embedded asset bundle, and `tests/spec-map.json` records tests for each §spec/27 subsection. spec-map-exceptions.yaml exempts §spec/27.1 alone, as non-normative purpose-and-non-goals framing; the remaining subsections are mapped under §22.2 spec coverage.
 
 Notable cases:
 - Three auth modes: OIDC, API Key, Dev. Dev mode requires `global.devMode: true` and synthetic principal.
