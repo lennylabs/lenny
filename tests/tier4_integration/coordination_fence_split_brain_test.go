@@ -1,0 +1,168 @@
+//go:build integration
+
+// SPDX-License-Identifier: MIT
+
+// Tier-4 integration coverage for the §10.1 coordination_generation
+// split-brain fence across two gateway replicas. Both replicas run the
+// production coordination Sweeper: replica-1 is the coordinating replica that
+// binds the running session and holds its Redis lease at generation 1 through
+// its own sweep, and replica-2 is the survivor whose Sweeper takes the session
+// over once replica-1 crashes. Both share a real Redis lease store and the
+// shared session store backed by the production Postgres pgstore, so the
+// coordination_generation the fence turns on is exercised over the same Postgres
+// CAS production uses, and a real in-process §4.7 adapter models the
+// still-running pod. The test drives a coordinator handoff — replica-1 stops
+// sweeping and its lease is gone, the survivor's Sweeper adopts the orphan,
+// bumps coordination_generation over Postgres, and re-fences the pod — then
+// asserts the previous coordinator's next session-mutating RPC is rejected by
+// the pod's generation fence once the generation advanced. This builds the
+// reusable two-replica coordination harness the TEST-GAPS.md T-4.2.4 finding
+// requires over shared Postgres and Redis rather than in-process fakes, so the
+// fence is the real adapter fence, the generation bump is a real Postgres CAS,
+// and the lease handoff is a real cross-replica Redis lease driven by two real
+// Sweepers.
+package tier4_integration_test
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/coordfixture"
+	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+)
+
+// spec: §10.1 (coordination_generation split-brain fence; coordinator handoff
+// re-adopts the still-running pod; a stale coordinator's RPC is rejected),
+// §4.2 line 156 (coordination_generation incremented on coordinator handoff
+// across gateway replicas), §4.6.1 (coordinating replica holds the lease).
+//
+// diagnosis: a failure means the two-replica coordinator handoff did not fence
+// the still-running pod to the post-handoff generation over shared Redis, so a
+// stale coordinator could still drive the pod after the handoff advanced the
+// generation — the split-brain the fence exists to prevent. The lease and the
+// binding, or the fenced generation and the lease holder, diverged across the
+// two replicas.
+func TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1(t *testing.T) {
+	t.Parallel()
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	leases := leasestore.New(rd.Client)
+	pg := containers.StartPostgres(t, containers.PostgresOptions{
+		MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations"),
+	})
+	sessions := sessionpg.New(pg.Pool)
+	ctx := context.Background()
+
+	const tenant = "acme"
+	seedTenant(t, pg, tenant)
+	sessID := uuid.NewString()
+	const ttl = 30 * time.Second
+
+	// The session is running with a persisted pod assignment, coordinated by
+	// replica-1 at generation 1 (its at-bind fence). The pod is fenced to 1.
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: sessID, TenantID: tenant, State: session.StateRunning,
+		PodAssignment: "pod-" + sessID, CoordinationGeneration: 1, CreatedAt: time.Unix(1, 0).UTC(),
+	}); err != nil {
+		t.Fatalf("seed session: %v", err)
+	}
+	pod := coordfixture.StartPod(t, sessID)
+
+	// replica-1 is a real coordinating gateway replica: its Sweeper binds the
+	// session, and after its at-bind fence to generation 1 its sweep holds the
+	// real Redis lease at that generation without bumping (a bound renew is not
+	// a handoff).
+	coordinator := coordfixture.NewReplica("replica-1", tenant, pod, sessions, leases, ttl, sessID)
+	if _, err := pod.Fence(ctx, 1); err != nil {
+		t.Fatalf("replica-1 at-bind fence to generation 1: %v", err)
+	}
+	if _, err := coordinator.Sweeper.Sweep(ctx); err != nil {
+		t.Fatalf("replica-1 coordinating sweep: %v", err)
+	}
+	if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-1" {
+		t.Fatalf("after replica-1 coordinating sweep lease holder = %+v err=%v, want replica-1", lease, err)
+	}
+	got, _ := sessions.Get(ctx, tenant, sessID)
+	if got.CoordinationGeneration != 1 {
+		t.Fatalf("coordination_generation after replica-1 sweep = %d, want 1 (a bound renew is not a handoff)", got.CoordinationGeneration)
+	}
+
+	// replica-2 is the survivor: a second real Sweeper sharing the same Redis
+	// lease store and Postgres session store, holding no binding for the session.
+	survivor := coordfixture.NewReplica("replica-2", tenant, pod, sessions, leases, ttl)
+
+	// While replica-1's lease is live, replica-2's sweep skips the session on
+	// ErrHeld: it never steals a live coordinator's lease.
+	if held, err := survivor.Sweeper.Sweep(ctx); err != nil || held != 0 {
+		t.Fatalf("pre-handoff survivor Sweep: held=%d err=%v, want 0 (replica-1's live lease is not stolen)", held, err)
+	}
+	if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-1" {
+		t.Fatalf("pre-handoff lease holder = %+v err=%v, want replica-1", lease, err)
+	}
+	if pod.LastFenced() != 1 {
+		t.Fatalf("pre-handoff pod fenced generation = %d, want 1", pod.LastFenced())
+	}
+
+	// replica-1 crashes: it stops sweeping and its Redis lease is gone. The
+	// session is now a lapsed-lease still-running-pod orphan replica-2 adopts.
+	if err := leases.Release(ctx, tenant, sessID, "replica-1"); err != nil {
+		t.Fatalf("model replica-1 crash (lease gone): %v", err)
+	}
+
+	// replica-2's Sweeper adopts the orphan, bumps coordination_generation to
+	// 2, re-adopts the still-running pod through the fence-first re-adopt, and
+	// publishes the binding only after the fence acknowledged.
+	held, err := survivor.Sweeper.Sweep(ctx)
+	if err != nil {
+		t.Fatalf("takeover Sweep: %v", err)
+	}
+	if held != 1 {
+		t.Fatalf("takeover Sweep held = %d, want 1 (orphan adopted)", held)
+	}
+	got, _ = sessions.Get(ctx, tenant, sessID)
+	if got.CoordinationGeneration != 2 {
+		t.Fatalf("coordination_generation = %d, want 2 (handoff bumped once)", got.CoordinationGeneration)
+	}
+	if survivor.Readopter.Calls() != 1 || survivor.Readopter.Generations()[0] != 2 {
+		t.Fatalf("fence calls = %v to generations %v, want one fence to generation 2", survivor.Readopter.Calls(), survivor.Readopter.Generations())
+	}
+	if !survivor.Bindings.Bound(sessID) {
+		t.Fatalf("replica-2 did not publish the binding after the fence acknowledged")
+	}
+	if lease, err := leases.Get(ctx, tenant, sessID); err != nil || lease.Holder != "replica-2" {
+		t.Fatalf("post-handoff lease holder = %+v err=%v, want replica-2 (lease co-located with the binding)", lease, err)
+	}
+
+	// The pod is now fenced to the post-handoff generation.
+	if pod.LastFenced() != 2 {
+		t.Fatalf("post-handoff pod fenced generation = %d, want 2", pod.LastFenced())
+	}
+
+	// The split-brain fence: replica-1 is a stale coordinator, and its next
+	// session-mutating RPC carries the pre-handoff generation 1. The pod
+	// rejects it now that the generation advanced to 2.
+	if !pod.StaleRPCRejected(ctx, 1) {
+		t.Errorf("stale coordinator RPC at generation 1 was NOT rejected after the handoff advanced to 2 (split-brain)")
+	}
+
+	// The next survivor sweep observes the published binding and renews without
+	// a second bump or fence, so the generation does not climb per sweep.
+	if _, err := survivor.Sweeper.Sweep(ctx); err != nil {
+		t.Fatalf("renew Sweep: %v", err)
+	}
+	got, _ = sessions.Get(ctx, tenant, sessID)
+	if got.CoordinationGeneration != 2 {
+		t.Errorf("coordination_generation = %d after renew sweep, want 2 (no re-bump per sweep)", got.CoordinationGeneration)
+	}
+	if survivor.Readopter.Calls() != 1 {
+		t.Errorf("fence calls = %d after renew sweep, want 1 (fence fires once per handoff)", survivor.Readopter.Calls())
+	}
+}

@@ -82,6 +82,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -193,8 +194,28 @@ type Server struct {
 	// pool the queue is bypassed and the acquisition returns
 	// WARM_POOL_EXHAUSTED immediately. Always non-nil after New.
 	// spec: §4.6.1 (Pool exhaustion behavior), §5.2 (onPoolExhausted).
-	claimQueue     *podClaimQueue
-	fencer         CoordinationFencer
+	claimQueue *podClaimQueue
+	fencer     CoordinationFencer
+	// leaseStore is the §12.2 per-session coordination LeaseStore. The
+	// bind funnel (registerBinding and the hoisted early-commit sites)
+	// acquires the lease on this replica before it publishes the pod
+	// binding, so the replica that holds the binding holds the lease from
+	// bind time and a peer coordination sweep observes the held lease and
+	// skips the session on ErrHeld. Nil disables the at-bind acquire (the
+	// in-memory / dev posture with no Redis leasestore); the bind then
+	// publishes as before. spec: §4.6.1 (coordinating replica holds the
+	// lease), §10.1 (per-session coordination lease).
+	leaseStore leasestore.LeaseStore
+	// replicaID is the lease-holder identity the at-bind Acquire records.
+	// It must match the coordination Sweeper's ReplicaID so the Sweeper
+	// renews the leases this replica acquires at bind. Empty disables the
+	// at-bind acquire. spec: §10.1.
+	replicaID string
+	// coordLeaseTTL is the TTL the at-bind Acquire stamps on the lease. The
+	// coordination Sweeper renews it on its own cadence, so the TTL must
+	// exceed the sweep interval for a held lease not to lapse between
+	// renewals. Defaults to DefaultCoordinationLeaseTTL. spec: §10.1.
+	coordLeaseTTL  time.Duration
 	agentNamespace string
 	// poolNameResolver resolves the §5.2 warm pool a (runtimeRef,
 	// isolation profile) pair maps to, for the §15.1 line 797 pool-drain
@@ -643,6 +664,13 @@ func resolveEvalLimit(v, def int) int {
 // hook below lets the gateway plumb the watchdog-configured value.
 // spec: §4.2 line 159 — "Resume eligibility and window".
 const DefaultResumeWindow = 2 * time.Hour
+
+// DefaultCoordinationLeaseTTL is the TTL the at-bind coordination-lease
+// acquire stamps when the gateway does not override it. It matches the
+// coordination Sweeper's default lease lifetime (four 15s sweep
+// intervals) so a lease acquired at bind does not lapse before the first
+// renewal. spec: §10.1 (per-session coordination lease).
+const DefaultCoordinationLeaseTTL = 60 * time.Second
 
 // Sealer takes the §7.1 final workspace snapshot of a session that has
 // reached a terminal state. The gateway invokes it as the
@@ -1227,6 +1255,25 @@ type Options struct {
 	// §11.3 line 209.
 	CoordinationFencer CoordinationFencer
 
+	// CoordinationLeaseStore is the §12.2 LeaseStore the at-bind acquire
+	// claims the per-session coordination lease against, so the replica
+	// that holds the pod binding holds the lease from bind time (§10.1
+	// co-location). Nil disables the at-bind acquire (the in-memory / dev
+	// posture with no Redis leasestore). spec: §4.6.1, §10.1.
+	CoordinationLeaseStore leasestore.LeaseStore
+
+	// ReplicaID is the lease-holder identity the at-bind Acquire records.
+	// It must match the coordination Sweeper's ReplicaID so the Sweeper
+	// renews the leases this replica acquires at bind. Empty disables the
+	// at-bind acquire. spec: §10.1.
+	ReplicaID string
+
+	// CoordinationLeaseTTL is the TTL stamped on the at-bind lease acquire.
+	// A non-positive value falls through to DefaultCoordinationLeaseTTL. It
+	// must exceed the coordination Sweeper interval so a held lease does not
+	// lapse between renewals. spec: §10.1.
+	CoordinationLeaseTTL time.Duration
+
 	// AgentNamespace is the namespace the warm pools and Sandboxes live
 	// in. Required when PodBinder is set.
 	AgentNamespace string
@@ -1774,6 +1821,9 @@ func New(store sessionstore.Store, opts Options) *Server {
 		podBinder:                  opts.PodBinder,
 		podRegistry:                opts.PodRegistry,
 		fencer:                     opts.CoordinationFencer,
+		leaseStore:                 opts.CoordinationLeaseStore,
+		replicaID:                  opts.ReplicaID,
+		coordLeaseTTL:              opts.CoordinationLeaseTTL,
 		agentNamespace:             opts.AgentNamespace,
 		admissionRL:                opts.AdmissionRateLimitCounter,
 		perRuntimePerMin:           opts.PerRuntimePerMinute,
@@ -1894,6 +1944,11 @@ func New(store sessionstore.Store, opts Options) *Server {
 	}
 	if s.clock == nil {
 		s.clock = func() time.Time { return time.Now().UTC() }
+	}
+	if s.coordLeaseTTL <= 0 {
+		// spec: §10.1 — the at-bind lease TTL must exceed the coordination
+		// sweep interval so a held lease does not lapse between renewals.
+		s.coordLeaseTTL = DefaultCoordinationLeaseTTL
 	}
 	// §4.6.1 per-pool claim FIFO backing sessionPolicy.onPoolExhausted: queue.
 	// It shares the server clock so a test can drive the wait deadline, and it

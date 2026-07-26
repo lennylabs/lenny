@@ -222,7 +222,18 @@ func (w *gatewayWiring) buildSessionServer(
 		PodBinder:          w.podBinder,
 		PodRegistry:        w.podRegistry,
 		CoordinationFencer: w.coordFencer,
-		AgentNamespace:     *agentNamespace,
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease) — the at-bind Acquire in the bind
+		// funnel claims the coordination lease on this replica before the
+		// session row becomes an adoptable running-pod session, so the replica
+		// that holds the pod binding is the lease holder from bind time. The
+		// lease store is the same §12.4 store the Sweeper renews against and is
+		// nil in the in-memory/dev posture with no Redis, which makes the
+		// at-bind Acquire a no-op. ReplicaID must match the Sweeper's holder
+		// identity so a self-bind renews rather than conflicts.
+		CoordinationLeaseStore: w.coordLeaseStore,
+		ReplicaID:              w.replica,
+		AgentNamespace:         *agentNamespace,
 		// spec: §11.1 line 7 — per-runtime and per-pool admission rate
 		// limits, enforced at session creation where the runtime/pool are
 		// known. Shares the same per-minute counter the §11.1 HTTP

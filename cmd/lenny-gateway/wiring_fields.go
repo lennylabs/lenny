@@ -388,6 +388,7 @@ type gatewayWiringFields struct {
 	capOverrides       runtimecapoverride.Store
 	connectors         connectorstore.Store
 	coordFencer        sessionserver.CoordinationFencer
+	coordLeaseStore    leasestore.LeaseStore
 	coordMirror        coordlease.Store
 	credAssign         credassign.Assigner
 	credCache          *credcache.Cache

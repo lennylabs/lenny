@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
@@ -843,11 +844,35 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		}
 	}
 
+	if bound != nil {
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease) — the single-call /start commits
+		// the row to `running` with pod_assignment through store.Create
+		// below, before registerBinding runs, so acquire the coordination
+		// lease here, ahead of that commit. Left to registerBinding, a peer
+		// sweep firing in the commit-to-registerBinding window would read the
+		// committed running-pod row with an unheld lease as adoptable and
+		// steal it. ErrHeld is unreachable for a genuinely fresh single-call
+		// session whose lease is unheld, but on a raced peer it fails closed:
+		// release the bound pod and abort before the commit.
+		if err := s.acquireCoordinationLease(r.Context(), row.TenantID, row.ID); err != nil {
+			s.rollbackBinding(r.Context(), bound)
+			s.writeSessionCreationFailed(w, "coordination_lease_held", err.Error())
+			return level, "", false
+		}
+	}
+
 	if err := s.store.Create(r.Context(), *row); err != nil {
 		// spec: §7.1 line 28 — persistence failure after the bind must
 		// roll back the claimed pod so the gateway does not leak a pod
 		// or its credential lease past a "no session_id returned"
-		// failure.
+		// failure. spec: §4.6.1, §10.1 — the coordination lease was
+		// acquired above ahead of this commit, so release it too, or the
+		// failed commit strands a held lease with no binding and decouples
+		// the lease holder from the binding holder co-location unifies.
+		if bound != nil {
+			s.releaseCoordinationLease(r.Context(), row.TenantID, row.ID)
+		}
 		s.rollbackBinding(r.Context(), bound)
 		s.writeSessionCreationFailed(w, "row_persistence_failed", err.Error())
 		return level, "", false
@@ -858,7 +883,15 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	// ExtendForBudget trigger) resolves it instead of ErrSessionNotFound.
 	// F-15.3.5.
 	s.registerLeaseTree(*row)
-	s.registerBinding(r.Context(), bound)
+	// The coordination lease was already acquired above, ahead of the
+	// running-commit, so the binding publishes unconditionally here rather
+	// than routing back through registerBinding's self-renew acquire. Gating
+	// the publish on a second acquire would let a transient leaseStore error
+	// skip the podRegistry.Put while the row is already committed to running
+	// and this replica holds the lease, stranding a committed running session
+	// with a held lease but no binding, the lease-without-binding decoupling
+	// co-location removes. spec: §4.6.1, §10.1.
+	s.publishBinding(r.Context(), bound)
 	// spec: §14 lines 100, 334, 338 — publish parse-time
 	// `workspace_plan_unknown_source_type` / `workspace_plan_path_collision`
 	// warnings on the per-session SSE bus so Ops/audit subscribers see
@@ -997,11 +1030,31 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		}
 	}
 
+	if bound != nil {
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease) — the delegated-child materialize
+		// commits the row to `running` with pod_assignment through the
+		// store.Update below, before registerBinding, so acquire the
+		// coordination lease here, ahead of that commit, so a peer sweep does
+		// not read the committed running-pod row with an unheld lease as
+		// adoptable and steal it. On ErrHeld (a raced peer) fail closed:
+		// release the bound pod before the commit.
+		if err := s.acquireCoordinationLease(ctx, tenantID, childID); err != nil {
+			s.rollbackBinding(ctx, bound)
+			return "", fmt.Errorf("acquire coordination lease for delegated child %s: %w", childID, err)
+		}
+	}
+
 	// spec: §8.2 step 9 / §8.8 — transition the existing StateCreated row to
 	// running via store.Update (no second store.Create). A persist failure
-	// after a successful launch releases the bound pod and its assigned lease
-	// via rollbackBinding before registerBinding runs, so no pod, lease, or
-	// registry entry leaks past the failed write.
+	// after a successful launch releases the bound pod and its assigned
+	// credential lease via rollbackBinding before registerBinding runs, so no
+	// pod, credential lease, or registry entry leaks past the failed write.
+	// spec: §4.6.1, §10.1 — it also releases the coordination lease acquired
+	// above ahead of this commit; the child row stays in StateCreated
+	// (non-terminal), so without the release a peer Sweeper's priorHolder
+	// renew branch would keep renewing the orphaned lease for a session that
+	// will never serve, holding a lease with no binding.
 	updated, err := s.store.Update(ctx, tenantID, childID, func(rr *sessionstore.Session) error {
 		transitionStart(rr)
 		if claimed {
@@ -1019,6 +1072,9 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		return nil
 	})
 	if err != nil {
+		if bound != nil {
+			s.releaseCoordinationLease(ctx, tenantID, childID)
+		}
 		s.rollbackBinding(ctx, bound)
 		return "", fmt.Errorf("transition delegated child %s to running: %w", childID, err)
 	}
@@ -1027,11 +1083,17 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 	// carries a ParentSessionID, so registerLeaseTree no-ops here (the root
 	// registered the tree); the call mirrors the create path for uniformity.
 	s.registerLeaseTree(updated)
-	// registerBinding publishes the BindResult into the shared podRegistry so
-	// PodExecutor.streamFor resolves the child, and persists the pod assignment
+	// Publish the BindResult into the shared podRegistry so
+	// PodExecutor.streamFor resolves the child and persist the pod assignment
 	// and workspace root for cross-replica recovery. Without it Executor.Send
-	// still rejects the child as unbound.
-	s.registerBinding(ctx, bound)
+	// still rejects the child as unbound. The coordination lease was already
+	// acquired above ahead of the running-commit, so the publish is
+	// unconditional rather than routed through registerBinding's self-renew
+	// acquire: gating it on a second acquire would let a transient leaseStore
+	// error skip the publish while the row is already committed to running and
+	// this replica holds the lease, stranding a committed running child with a
+	// held lease but no binding. spec: §4.6.1, §10.1.
+	s.publishBinding(ctx, bound)
 	return session.StateRunning, nil
 }
 
@@ -1102,7 +1164,18 @@ func (s *Server) handleStart(w http.ResponseWriter, r *http.Request) {
 			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")
 			return
 		}
-		s.registerBinding(r.Context(), result)
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease) — the row is still `ready` here
+		// (the running-commit follows below), so the at-bind acquire inside
+		// registerBinding precedes the running-commit. On ErrHeld a live
+		// foreign holder still coordinates this session, so publish nothing,
+		// release this replica's freshly launched pod, and fail the start
+		// closed rather than double-bind.
+		if err := s.registerBinding(r.Context(), result); err != nil {
+			s.rollbackBinding(r.Context(), result)
+			s.writePodClaimError(w, err, "STARTING_FAILED", "could not place the session on a warm pod")
+			return
+		}
 		// spec: §7.5 line 475 — persist the per-command setup output a
 		// concurrent-workspace slot launch captured so a subsequent GET
 		// /v1/sessions/{id} can surface it. The exclusive-pool launch-only path
@@ -2734,7 +2807,45 @@ func applySlotRetryPolicy(ctx context.Context, binder slotBinder, health *slothe
 // handoff. The persist is best-effort: a failure leaves the in-memory
 // Registry authoritative and the next coordination sweep re-publishes
 // the assignment. spec: §4.2 line 160 — "Pod-to-session binding".
-func (s *Server) registerBinding(ctx context.Context, result *podsession.BindResult) {
+func (s *Server) registerBinding(ctx context.Context, result *podsession.BindResult) error {
+	if result == nil {
+		return nil
+	}
+	// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+	// (per-session coordination lease) — acquire the coordination lease on
+	// this replica before the binding is published, so the replica that
+	// holds the binding is the lease holder from bind time and a peer
+	// coordination sweep observes the held lease and skips the session on
+	// ErrHeld. The acquire is idempotent for the same holder, so a path
+	// whose acquire was already hoisted ahead of an earlier running-commit
+	// self-renews here harmlessly. On a live foreign holder (ErrHeld,
+	// reachable on the resume paths) publish and persist nothing and return
+	// the error so the caller fails the bind closed rather than double-bind
+	// a session another replica still coordinates.
+	if err := s.acquireCoordinationLease(ctx, result.TenantID, result.SessionID); err != nil {
+		return err
+	}
+	s.publishBinding(ctx, result)
+	return nil
+}
+
+// publishBinding publishes an already-owned bind into the shared executor
+// Registry and persists its pod assignment, workspace root, and any §14
+// advisory warnings, without touching the coordination lease. It is the
+// publish half of registerBinding, split out so a caller that already holds
+// the lease can publish unconditionally instead of routing back through the
+// idempotent self-renew acquire. On the early-commit paths (single-call
+// /start store.Create, delegated-child materialize store.Update) the lease is
+// hoisted-acquired ahead of the running-commit, so the row is already
+// committed to `running` by the time the binding publishes; gating the
+// publish on a second acquire there would let a transient leaseStore error
+// strand a committed running row with a held lease but no binding, the exact
+// lease-without-binding decoupling co-location removes. The publish must
+// therefore be unconditional once the lease is held.
+//
+// spec: §4.2 line 160 (pod-to-session binding); §4.6.1 (coordinating replica
+// holds the lease); §10.1 (per-session coordination lease).
+func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResult) {
 	if result == nil {
 		return
 	}
@@ -2754,6 +2865,71 @@ func (s *Server) registerBinding(ctx context.Context, result *podsession.BindRes
 	// skipped archive entry so a client can audit the strip-components
 	// rule.
 	s.publishWorkspaceWarnings(result)
+}
+
+// acquireCoordinationLease claims the §10.1 per-session coordination
+// lease for this replica at bind, so the replica that holds the pod
+// binding holds the lease from bind time (§4.6.1 co-location). It is the
+// canonical at-bind acquire every bind-and-publish site routes through:
+// registerBinding calls it before publishing, and the early-commit paths
+// (single-call /start, delegated-child materialize, checkpoint-restore
+// resume) call it directly before the running-commit or the direct
+// podRegistry.Put, so a peer sweep never reads a committed running-pod row
+// with an unheld lease as adoptable. leasestore.Acquire is idempotent for
+// the same holder, so a later registerBinding on a hoisted path self-renews.
+//
+// A nil leaseStore or an empty replicaID (the in-memory / dev posture with
+// no Redis leasestore) makes it a no-op, leaving the bind to publish as
+// before. On a live foreign holder it returns leasestore.ErrHeld unwrapped
+// so a caller can branch on errors.Is; any other Redis error is wrapped
+// and, per the fail-closed rule on this coordination-ownership path,
+// aborts the bind.
+//
+// spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
+// coordination lease; fail-closed on a live foreign holder).
+func (s *Server) acquireCoordinationLease(ctx context.Context, tenantID, sessionID string) error {
+	if s.leaseStore == nil || s.replicaID == "" {
+		return nil
+	}
+	if _, err := s.leaseStore.Acquire(ctx, tenantID, sessionID, s.replicaID, s.coordLeaseTTL); err != nil {
+		if errors.Is(err, leasestore.ErrHeld) {
+			return err
+		}
+		return fmt.Errorf("acquire coordination lease for session %s: %w", sessionID, err)
+	}
+	return nil
+}
+
+// releaseCoordinationLease releases the §10.1 per-session coordination
+// lease this replica acquired at bind, so a running-commit that fails
+// after a successful at-bind acquire leaves neither a published binding
+// nor a held lease. It is the rollback counterpart to
+// acquireCoordinationLease and runs alongside rollbackBinding on the
+// early-commit paths (single-call /start store.Create, delegated-child
+// materialize store.Update): those paths acquire the lease ahead of the
+// running-commit, so a commit failure would otherwise strand a held lease
+// with no binding, decoupling the lease holder from the binding holder
+// that §4.6.1 co-location keeps unified. On the durable delegated-child
+// StateCreated row the strand is not self-healing (a peer Sweeper's
+// priorHolder-renew branch keeps renewing the orphaned lease), so the
+// explicit release is required rather than left to the 60s TTL.
+//
+// Release is holder-checked and Lua-atomic (leasestore.go), so it is a
+// no-op when this replica does not hold the lease. A nil leaseStore or an
+// empty replicaID (the in-memory / dev posture) makes it a no-op. The
+// release is best-effort: a Redis error at rollback is logged and
+// swallowed, because the 60s lease TTL surfaces the lease for re-adoption
+// even if the release write is lost.
+//
+// spec: §4.6.1 (coordinating replica holds the lease), §10.1 (per-session
+// coordination lease).
+func (s *Server) releaseCoordinationLease(ctx context.Context, tenantID, sessionID string) {
+	if s.leaseStore == nil || s.replicaID == "" {
+		return
+	}
+	if err := s.leaseStore.Release(ctx, tenantID, sessionID, s.replicaID); err != nil {
+		log.Printf("sessionserver: release coordination lease for session %s: %v", sessionID, err)
+	}
 }
 
 // publishWorkspaceWarnings emits one §14 `workspace_plan_warning`
@@ -3679,7 +3855,18 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 		if err != nil {
 			return "", err
 		}
-		s.registerBinding(ctx, result)
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease) — the row is still `ready` here,
+		// so registerBinding's at-bind acquire precedes the running-commit.
+		// On ErrHeld a live foreign holder still coordinates this session
+		// (handleResume applies no upstream holder gate), so publish no
+		// competing binding, skip fenceResumedPod, release the fresh pod
+		// claim startOnPod made, and fail the resume closed rather than
+		// double-bind.
+		if berr := s.registerBinding(ctx, result); berr != nil {
+			s.rollbackBinding(ctx, result)
+			return "", berr
+		}
 		// spec: §5.2 — a service-mode session is claimless, so startOnPod
 		// returns a nil BindResult with no pod to fence. Service mode has no
 		// Lenny-managed lifecycle and never reaches a resumable state, so this
@@ -3741,6 +3928,19 @@ func (s *Server) resumeOnPod(ctx context.Context, row sessionstore.Session) (str
 	})
 	if err != nil {
 		return "", err
+	}
+	// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+	// (per-session coordination lease) — the checkpoint-restore branch
+	// publishes the serving binding directly through podRegistry.Put below
+	// without going through registerBinding, so acquire the coordination
+	// lease here, ahead of that Put. On ErrHeld a live foreign holder still
+	// coordinates this session (handleResume applies no upstream holder
+	// gate), so skip the Put, the recovery-generation bump, and the fence,
+	// release the restored pod, and fail the resume closed rather than
+	// double-bind.
+	if lerr := s.acquireCoordinationLease(ctx, row.TenantID, row.ID); lerr != nil {
+		s.rollbackBinding(ctx, result.Result)
+		return "", lerr
 	}
 	s.podRegistry.Put(result.Result)
 	// spec: §4.2 line 156 — recovery_generation is incremented on each

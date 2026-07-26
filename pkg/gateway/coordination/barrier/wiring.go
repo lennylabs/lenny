@@ -21,33 +21,30 @@ import (
 const defaultTargetReadTimeout = 2 * time.Second
 
 // PodDispatcher is the production Dispatcher: it routes a CheckpointBarrier
-// to a session's pod adapter, preferring a live in-replica connection and
-// dialing a fresh one only when the binding is not held locally. A
-// generation-stale rejection (codes.FailedPrecondition) is surfaced as
-// ErrGenerationStale so Dispatch records it without aborting the drain.
+// to a session's pod adapter over the live in-replica connection the
+// gateway already holds for a session it coordinates. A generation-stale
+// rejection (codes.FailedPrecondition) is surfaced as ErrGenerationStale so
+// Dispatch records it without aborting the drain.
+//
+// The co-located coordination model keeps the lease holder and the pod
+// binding on one replica, so the coordinator always reaches the pod through
+// its held connection and the barrier needs no fresh-dial fallback.
 //
 // spec: §10.1 lines 165-167.
 type PodDispatcher struct {
 	// Conn resolves the live adapter connection the gateway already holds
 	// for a session it coordinates. ok is false when no local binding
-	// exists. Nil forces the Dial path for every target.
+	// exists, and the Dispatcher then records the target unreachable.
 	Conn func(sessionID string) (*adapterclient.Client, bool)
-	// Dial opens a fresh adapter connection to a pod address when no live
-	// connection is available. Nil records a target with no live
-	// connection as unreachable rather than dialing.
-	Dial func(addr string) (*adapterclient.Client, error)
 }
 
 var _ Dispatcher = (*PodDispatcher)(nil)
 
 // Send dispatches the barrier to the target's pod and returns the ack.
 func (d *PodDispatcher) Send(ctx context.Context, t Target, barrierID string) (Ack, error) {
-	cl, dialed, err := d.resolve(t)
+	cl, err := d.resolve(t)
 	if err != nil {
 		return Ack{}, err
-	}
-	if dialed {
-		defer cl.Close()
 	}
 	res, err := cl.CheckpointBarrier(ctx, t.SessionID, t.CoordinationGeneration, barrierID)
 	if err != nil {
@@ -61,22 +58,15 @@ func (d *PodDispatcher) Send(ctx context.Context, t Target, barrierID string) (A
 	}, nil
 }
 
-// resolve returns the adapter connection for the target. dialed is true
-// when the caller must close the returned connection.
-func (d *PodDispatcher) resolve(t Target) (cl *adapterclient.Client, dialed bool, err error) {
+// resolve returns the held adapter connection for the target, or an error
+// when this replica holds no live binding for the session.
+func (d *PodDispatcher) resolve(t Target) (*adapterclient.Client, error) {
 	if d.Conn != nil {
 		if c, ok := d.Conn(t.SessionID); ok && c != nil {
-			return c, false, nil
+			return c, nil
 		}
 	}
-	if d.Dial == nil || t.PodAddr == "" {
-		return nil, false, fmt.Errorf("barrier: no adapter connection for session %s", t.SessionID)
-	}
-	c, derr := d.Dial(t.PodAddr)
-	if derr != nil {
-		return nil, false, derr
-	}
-	return c, true, nil
+	return nil, fmt.Errorf("barrier: no adapter connection for session %s", t.SessionID)
 }
 
 // MirrorTargetLister is the production TargetLister: it enumerates the
@@ -93,11 +83,6 @@ type MirrorTargetLister struct {
 	// Mirror is the coordination_lease store. Nil takes the cache fallback
 	// directly.
 	Mirror coordlease.Store
-	// PodAddr resolves a session's pod dial address from the in-replica
-	// registry so the Dispatcher can reach a target that is not in the
-	// live connection cache. ok is false when this replica holds no
-	// binding for the session; the Dispatcher then records it unreachable.
-	PodAddr func(sessionID string) (string, bool)
 	// Fallback enumerates the barrier-target set from the in-memory lease
 	// cache (the registry snapshot). Used when the mirror read fails.
 	Fallback func() []Target
@@ -121,17 +106,11 @@ func (l *MirrorTargetLister) Targets(ctx context.Context) ([]Target, string, err
 		if err == nil {
 			out := make([]Target, 0, len(leases))
 			for _, le := range leases {
-				t := Target{
+				out = append(out, Target{
 					TenantID:               le.TenantID,
 					SessionID:              le.SessionID,
 					CoordinationGeneration: le.CoordinationGeneration,
-				}
-				if l.PodAddr != nil {
-					if addr, ok := l.PodAddr(le.SessionID); ok {
-						t.PodAddr = addr
-					}
-				}
-				out = append(out, t)
+				})
 			}
 			return out, SourcePostgres, nil
 		}

@@ -159,6 +159,26 @@ func (e *PodExecutor) streamFor(ctx context.Context, sessionID string) (*adapter
 	return s, nil
 }
 
+// EvictStream drops the session's cached Attach stream: it CloseSends the
+// stream and removes it from the executor's stream cache under the executor
+// lock, mirroring the teardown Release performs but leaving the pod running
+// and the binding untouched. It is the seam a coordination sweep calls when it
+// evicts a dead-connection binding so a subsequent same-replica re-adopt does
+// not keep serving over the stale cached stream. streamFor consults e.streams
+// before the registry, so without this eviction a re-adopt that republishes a
+// fresh BindResult would never Attach over the new binding. Evicting a session
+// with no cached stream is a no-op. spec: §4.7 (single content consumer per
+// session / Attach content stream), §4.6.1 (coordinating replica holds the
+// lease).
+func (e *PodExecutor) EvictStream(sessionID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if s, ok := e.streams[sessionID]; ok {
+		_ = s.CloseSend()
+		delete(e.streams, sessionID)
+	}
+}
+
 // readAttachResponse reads Attach frames until a `response` envelope and
 // returns its output parts. heartbeat_ack, status, and unparseable
 // frames are skipped. A `tool_call` frame carrying approvalRequired:true
@@ -303,12 +323,7 @@ func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 // phase — the per-slot lifecycle tracks that — so it releases the slot
 // without a disposition.
 func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition Disposition) error {
-	e.mu.Lock()
-	if s, ok := e.streams[sessionID]; ok {
-		_ = s.CloseSend()
-		delete(e.streams, sessionID)
-	}
-	e.mu.Unlock()
+	e.EvictStream(sessionID)
 
 	bind, ok := e.registry.Remove(sessionID)
 	if !ok {

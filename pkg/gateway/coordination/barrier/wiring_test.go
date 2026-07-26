@@ -129,37 +129,18 @@ func TestPodDispatcherSendGenerationStale_spec_10_1_165(t *testing.T) {
 	}
 }
 
-// spec: §10.1 line 165 — a target with no live connection and no dialer
-// is unreachable; the Outcome records the error and the drain continues.
-func TestPodDispatcherUnreachableWithoutConnOrDial(t *testing.T) {
+// spec: §10.1 line 165 — with the co-located coordination lease the
+// coordinator always reaches the pod through the held connection, so a
+// target for which this replica holds no live binding is unreachable and
+// the barrier has no fresh-dial fallback. The Outcome records the error
+// and the drain continues.
+func TestPodDispatcherUnreachableWithoutConn_spec_10_1_165(t *testing.T) {
 	d := &barrier.PodDispatcher{
 		Conn: func(string) (*adapterclient.Client, bool) { return nil, false },
 	}
 	_, err := d.Send(context.Background(), barrier.Target{SessionID: "s1"}, "b-1")
 	if err == nil {
-		t.Fatal("Send with no conn and no dial = nil error, want unreachable")
-	}
-}
-
-// spec: §10.1 line 165 — when no live connection is cached, the dispatcher
-// dials the target's pod address.
-func TestPodDispatcherDialsWhenNoLiveConn_spec_10_1_165(t *testing.T) {
-	_, cl := fencedAdapter(t)
-	var dialedAddr string
-	d := &barrier.PodDispatcher{
-		Conn: func(string) (*adapterclient.Client, bool) { return nil, false },
-		Dial: func(addr string) (*adapterclient.Client, error) {
-			dialedAddr = addr
-			return cl, nil
-		},
-	}
-	// gen 3 is stale → ErrGenerationStale, but the dial path is exercised.
-	_, err := d.Send(context.Background(), barrier.Target{SessionID: "s1", CoordinationGeneration: 3, PodAddr: "10.0.0.5:9090"}, "b-1")
-	if !errors.Is(err, barrier.ErrGenerationStale) {
-		t.Fatalf("Send = %v, want ErrGenerationStale via dial", err)
-	}
-	if dialedAddr != "10.0.0.5:9090" {
-		t.Errorf("dialed addr = %q, want 10.0.0.5:9090", dialedAddr)
+		t.Fatal("Send with no held binding = nil error, want unreachable")
 	}
 }
 
@@ -179,12 +160,6 @@ func TestMirrorTargetListerPostgresPrimary_spec_10_1_165(t *testing.T) {
 	l := &barrier.MirrorTargetLister{
 		ReplicaID: "rep-1",
 		Mirror:    mirror,
-		PodAddr: func(sessionID string) (string, bool) {
-			if sessionID == "s1" {
-				return "10.0.0.1:9090", true
-			}
-			return "", false
-		},
 	}
 	targets, source, err := l.Targets(context.Background())
 	if err != nil {
@@ -193,7 +168,7 @@ func TestMirrorTargetListerPostgresPrimary_spec_10_1_165(t *testing.T) {
 	if source != barrier.SourcePostgres {
 		t.Fatalf("source = %q, want postgres", source)
 	}
-	if len(targets) != 1 || targets[0].SessionID != "s1" || targets[0].CoordinationGeneration != 4 || targets[0].PodAddr != "10.0.0.1:9090" {
+	if len(targets) != 1 || targets[0].SessionID != "s1" || targets[0].CoordinationGeneration != 4 {
 		t.Fatalf("targets = %+v, want one resolved s1 target", targets)
 	}
 }
@@ -205,7 +180,7 @@ func TestMirrorTargetListerCacheFallbackOnError_spec_10_1_165(t *testing.T) {
 		ReplicaID: "rep-1",
 		Mirror:    erroringMirror{},
 		Fallback: func() []barrier.Target {
-			return []barrier.Target{{TenantID: "acme", SessionID: "cached", PodAddr: "10.0.0.2:9090"}}
+			return []barrier.Target{{TenantID: "acme", SessionID: "cached"}}
 		},
 	}
 	targets, source, err := l.Targets(context.Background())

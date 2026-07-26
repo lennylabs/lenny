@@ -1457,6 +1457,13 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		// §12.8 step 1: expose the lease store to the erasure orchestrator
 		// so a user erasure releases the user's active coordination leases.
 		erasureLeaseStore = leaseStore
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease) — the same lease store backs the
+		// at-bind Acquire in the sessionserver bind funnel, so the replica that
+		// holds the pod binding is the lease holder from bind time. Recorded on
+		// the accumulator for buildSessionServer to inject as
+		// CoordinationLeaseStore.
+		w.coordLeaseStore = leaseStore
 		// §10.1 line 165: mirror held leases into Postgres so the preStop
 		// barrier-target query observes coordinator handoffs that occurred
 		// in the seconds before drain. Without Postgres the mirror is nil
@@ -1464,9 +1471,30 @@ func (w *gatewayWiring) buildRedisAndQuota() {
 		if pgPool != nil {
 			coordMirror = coordleasepg.New(pgPool, nil)
 		}
+		// spec: §4.6.1 (coordinating replica holds the lease), §10.1
+		// (per-session coordination lease; coordinator handoff re-adopts the
+		// still-running pod) — co-locate the coordination lease with the pod
+		// binding. The Sweeper renews the lease for the sessions this replica
+		// binds (Bindings.Bound over podRegistry), evicts and releases a bound
+		// session whose held gateway-to-pod channel has died (Bindings.ConnAlive
+		// over the BindResult adapter channel, Bindings.EvictBinding over
+		// podRegistry plus the executor's cached Attach stream), and on the
+		// crash-takeover edge re-adopts the still-running pod through a
+		// fence-first re-adopt (Readopter over the Binder's ReadoptConnect entry
+		// point, the reused coordfence Fencer, and podRegistry.Put). Both seams
+		// read their collaborators (podRegistry, the executor, the Binder, the
+		// coordFencer) lazily at sweep time because they are constructed in
+		// later build steps; the Sweeper's Run loop starts only after the whole
+		// composition root is wired.
 		coordinator = coordination.NewSweeper(
 			tenantsLister{tenants}, sessions, leaseStore,
-			coordination.Options{ReplicaID: replica, Interval: *coordInterval, Mirror: coordMirror},
+			coordination.Options{
+				ReplicaID: replica,
+				Interval:  *coordInterval,
+				Mirror:    coordMirror,
+				Bindings:  coordinationBindings{w: w},
+				Readopter: coordinationReadopter{w: w},
+			},
 		)
 		// §12.4 Quota/Rate Limiting concern: the storage-quota counter
 		// lives in Redis so the quota holds across replicas; its reserve
