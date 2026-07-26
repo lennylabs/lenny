@@ -30,9 +30,10 @@ import (
 // (currently skipped, see the §27.8 spec-map note), and the dropped
 // subscription that re-subscribes and reports the outage under
 // outcome=resubscribe.
-// `lenny-test validate-maps` only walks
-// tests/tier2_component and above for orphaned test files, so an
-// in-package test under pkg/ can encode a §27.8 guarantee and still be
+// `lenny-test validate-maps` sweeps the in-package test files of the
+// packages a section claims as well as the tier directories, but it
+// carries a waiver file and it works at file granularity, so an
+// in-package test under pkg/ can still encode a §27.8 guarantee and be
 // invisible to the spec map. This list keeps the §27.8 entry honest
 // about where the histogram's observations are produced, rather than
 // leaving the entry to imply that only the metric catalog and the
