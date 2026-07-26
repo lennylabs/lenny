@@ -432,17 +432,29 @@ func TestPostgresWriteBurst(t *testing.T) {
 
 // spec: 12.7 (playground_revocation — cross-replica revoke propagation)
 // diagnosis: the §12.7 playground_revocation scenario has no surface on
-// the e2e build. It needs the §27 web playground deployment and its
-// tenant-wide revocation path; the e2e gateway runs with the playground
-// feature disabled, so GET /v1/playground and POST /v1/playground/token
-// return 404. The scenario lands when the e2e overlay enables the
-// playground.
+// the e2e build. Enabling playground.enabled=true on the shared e2e
+// overlay (tests/testinfra/kind/e2e-values.yaml) crash-loops every
+// gateway replica before the routes it would mount matter:
+// pkg/gateway/mcpfabric/playground/metrics.go registers the
+// lenny_playground_page_views_total counter with the non-snake_case
+// label "authMode", which pkg/observability/metrics's §16.1.1
+// validator rejects at startup (fatal). §27.8's own metrics table
+// also names that label "authMode", so the fix is a spec/code
+// reconciliation, not a code-only change, and it is not safe to flip
+// the shared overlay on for this scenario alone: every other tier-5/
+// tier-7 scenario shares this same cluster and install. See
+// tests/tier7a_load_local/playground_revocation_propagation_slo_test.go
+// for a fully written (also currently skipped, for the same reason)
+// local-process form of this SLO measurement against real replica
+// subprocesses and a real Redis container; promote or replace this
+// Kind/k6 scaffold once the metrics-label reconciliation lands.
 func TestPlaygroundRevocation(t *testing.T) {
 	kind.InstallLenny(t)
 	load.SkipUnlessAvailable(t)
-	t.Skip("external dependency: the §27 playground is disabled on the e2e gateway " +
-		"(playground routes return 404), so the playground_revocation scenario has no " +
-		"surface to load-test on the current build")
+	t.Skip("external dependency: playground.enabled=true crash-loops the e2e gateway " +
+		"(non-snake_case \"authMode\" metrics label rejected by the §16.1.1 validator), " +
+		"so the playground_revocation scenario has no surface to load-test until that " +
+		"spec/code reconciliation lands")
 }
 
 // spec: 12.7 (audit_lock — per-tenant audit advisory-lock latency)

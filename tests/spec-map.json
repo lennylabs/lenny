@@ -4086,13 +4086,15 @@
         "pkg/gateway/mcpfabric/playground/idle_sweep_test.go::TestRevokeSessionAdminRevokeThroughRedisPrimitive_spec_27_3_1_207",
         "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundIdleOverrideReclaimsSessionAtEffectiveCap",
         "tests/tier4_integration/playground_idle_override_test.go::TestPlaygroundHardDurationCapTerminatesSessionAtEffectiveCap",
-        "tests/tier9_security/playground_revocation_bypass_test.go::TestPlaygroundCrossReplicaRevocationBypassAdversarial"
+        "tests/tier9_security/playground_revocation_bypass_test.go::TestPlaygroundCrossReplicaRevocationBypassAdversarial",
+        "tests/tier7a_load_local/playground_revocation_propagation_slo_test.go::TestPlaygroundLogoutPropagationSLOUnderLoad",
+        "tests/tier7b_load_kind/scaffolds_test.go::TestPlaygroundRevocation"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground"
       ],
       "blocked_until_phase": "5",
-      "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation. TestPlaygroundCrossReplicaRevocationBypassAdversarial is a written-but-skipped tier-9 test that drives the cross-replica revocation guarantee against two real cmd/lenny-gateway subprocesses and a real Redis container over a genuine OIDC PKCE flow; it is blocked by the same playground.enabled=true crash-loop (non-snake_case \"authMode\" metrics label, BUILD-GAPS.md §16.1 Metrics Finding 8) already blocking every other live-process playground test."
+      "notes": "Per-origin idle-timeout override and duration cap. Session-store revocation, logout, and bearer-revocation propagation. TestPlaygroundCrossReplicaRevocationBypassAdversarial is a written-but-skipped tier-9 test that drives the cross-replica revocation guarantee against two real cmd/lenny-gateway subprocesses and a real Redis container over a genuine OIDC PKCE flow; it is blocked by the same playground.enabled=true crash-loop (non-snake_case \"authMode\" metrics label, BUILD-GAPS.md §16.1 Metrics Finding 8) already blocking every other live-process playground test. TestPlaygroundLogoutPropagationSLOUnderLoad is the same written-but-skipped pattern extended to the §27.3.1 P99 propagation SLO: many concurrent OIDC-mode sessions across several real replica subprocesses, measuring cross-replica revocation-visibility latency into a histogram and asserting the 500ms P99 budget. TestPlaygroundRevocation (tier7b, Kind/k6-based) remains an empty scaffold pending the same reconciliation, since the shared e2e overlay cannot safely enable the playground for every other Kind scenario it hosts until then."
     },
     "27.7": {
       "title": "Web Playground — Asset Serving and CSP",
