@@ -221,6 +221,76 @@ func TestWebSocketNonPlaygroundEgressUnredacted_spec_27_9_251(t *testing.T) {
 	}
 }
 
+// spec: §27.9 ("The raw-frame inspector displays redacted frames only;
+// the gateway applies the same redaction rules as the audit log (§16.4)
+// before sending frames to the browser."); §16.4 (credential-sensitive
+// payloads are excluded from payload-level surfaces) — the browser-
+// delivered leg of the embedded-document case. Every gateway MCP tool
+// returns its body as a JSON document serialized into a single
+// content[].text string (textResult,
+// pkg/gateway/mcpfabric/mcptools/mcptools.go), so a credential a tool
+// returns crosses the playground WebSocket inside that string rather
+// than as a scalar under a credential-named key. This drives the real
+// WebSocket handler over an origin=playground connection and asserts the
+// bytes the browser receives carry no credential literal.
+//
+// The assertion currently fails: the frame redactor scrubs a scalar only
+// when its own map key is credential-named, and "text" is not one, so
+// the serialized document crosses the wire untouched. Whether the §16.4
+// rule the spec points at (a whole-payload exclusion for named
+// credential-sensitive RPCs, with a lease-id/provider/outcome allowlist)
+// obliges the frame redactor to parse and rewrite JSON embedded in a
+// text block is not settled by the spec text, so this case is held
+// non-blocking until the requirement is decided. The decision is not
+// purely additive: the same redactor rewrites the functional wire frame
+// rather than a separate inspector copy, so scrubbing a credential a
+// tool deliberately returns to its caller also withholds it from a
+// playground-origin MCP client that needs it (lenny/create_session
+// returns the §7.1 uploadToken this way, and that token is what the
+// subsequent workspace-tarball upload presents).
+func TestWebSocketPlaygroundEgressScrubsCredentialInsideTextBlockJSON_spec_27_9(t *testing.T) {
+	t.Skip("open coverage question: the spec does not state whether audit-equivalent frame redaction must walk JSON serialized into a tool result text block")
+
+	const secret = "ghs_SECRETVALUE"
+	srv := mcp.NewServer()
+	srv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
+		return mcp.WSPrincipal{Tenant: "acme", JTI: "j1", Origin: r.Header.Get("X-Test-Origin")}, true
+	}, nil, 0)
+	// Mirrors the textResult framing every gateway MCP tool uses: the
+	// result body is a marshalled JSON document carried in one text block.
+	srv.RegisterTool(mcp.Tool{
+		Name:        "lenny/vcs_token",
+		Description: "return a VCS credential",
+		InputSchema: []byte(`{"type":"object"}`),
+	}, func(_ context.Context, _ json.RawMessage) (mcp.ToolResult, error) {
+		body, err := json.Marshal(map[string]string{
+			"host": "github.com", "username": "x-access-token", "token": secret,
+		})
+		if err != nil {
+			return mcp.ToolResult{}, err
+		}
+		return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: string(body)}}}, nil
+	})
+
+	ctx, conn, teardown := dialWithOrigin(t, srv, "playground")
+	defer teardown()
+
+	writeJSON(t, ctx, conn, map[string]any{
+		"jsonrpc": "2.0", "id": 4, "method": "tools/call",
+		"params": map[string]any{"name": "lenny/vcs_token", "arguments": map[string]any{}},
+	})
+	msgType, data, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatalf("ws read: %v", err)
+	}
+	if msgType != websocket.MessageText {
+		t.Fatalf("frame type = %v, want text", msgType)
+	}
+	if strings.Contains(string(data), secret) {
+		t.Errorf("credential survived playground egress redaction in a tool result text block: %s", data)
+	}
+}
+
 // spec: §4.1 / §15.2 / §15.2.1 — tools/call routes to the registered
 // handler and the success result returns over the same connection.
 // Multiple consecutive frames are dispatched independently.
