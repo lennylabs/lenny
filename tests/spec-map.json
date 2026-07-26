@@ -4141,6 +4141,8 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestSecurityHeadersAndCSPEmptyGatewayHost",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestStaticAssetCacheHeaders",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONCarriesDevBanner",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigJSONSecurityHeaders",
+        "pkg/gateway/mcpfabric/playground/playground_test.go::TestAuthErrorPageSecurityHeaders",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryCSP",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP",
         "tests/tier5_e2e_kind/playground_assets_test.go::TestPlaygroundAssetCacheHeadersOnLiveCluster",

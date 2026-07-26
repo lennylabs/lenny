@@ -732,6 +732,11 @@ func TestSecurityHeadersAndCSPEmptyGatewayHost(t *testing.T) {
 	}
 }
 
+// spec: §27.7 ("The gateway also sets X-Content-Type-Options: nosniff
+// and Referrer-Policy: same-origin on all playground responses.") —
+// the static asset response (app.js) is a playground response like
+// any other, so the two headers must be present alongside its
+// cache-control header, not only on the HTML index response.
 func TestStaticAssetCacheHeaders(t *testing.T) {
 	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
 		Signer:  devSigner(),
@@ -750,6 +755,64 @@ func TestStaticAssetCacheHeaders(t *testing.T) {
 	}
 	if got := resp.Header.Get("Cache-Control"); got != "public, max-age=31536000, immutable" {
 		t.Fatalf("app.js Cache-Control = %q, want the immutable header", got)
+	}
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("app.js X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := resp.Header.Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("app.js Referrer-Policy = %q, want same-origin", got)
+	}
+}
+
+// spec: §27.7 ("The gateway also sets X-Content-Type-Options: nosniff
+// and Referrer-Policy: same-origin on all playground responses.") —
+// config.json is a playground response served off the same
+// security-headers wrapper as the HTML index, so it must carry both
+// headers too.
+func TestConfigJSONSecurityHeaders(t *testing.T) {
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
+		Signer:  devSigner(),
+		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+	})
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/config.json")
+	if err != nil {
+		t.Fatalf("GET config.json: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("config.json X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := resp.Header.Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("config.json Referrer-Policy = %q, want same-origin", got)
+	}
+}
+
+// spec: §27.7 ("The gateway also sets X-Content-Type-Options: nosniff
+// and Referrer-Policy: same-origin on all playground responses.") —
+// the OIDC error page (GET /playground/auth/error) is a playground
+// response served off the same security-headers wrapper, so it must
+// carry both headers too.
+func TestAuthErrorPageSecurityHeaders(t *testing.T) {
+	h := New(Config{Enabled: true, AuthMode: AuthModeDev, DevTenantID: "acme"}, Options{
+		Signer:  devSigner(),
+		Tenants: fakeTenants{registered: map[string]bool{"acme": true}},
+	})
+	srv := httptest.NewServer(h.PlaygroundRoutes())
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/playground/auth/error?error=state_mismatch")
+	if err != nil {
+		t.Fatalf("GET auth/error: %v", err)
+	}
+	defer resp.Body.Close()
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("auth/error X-Content-Type-Options = %q, want nosniff", got)
+	}
+	if got := resp.Header.Get("Referrer-Policy"); got != "same-origin" {
+		t.Fatalf("auth/error Referrer-Policy = %q, want same-origin", got)
 	}
 }
 
