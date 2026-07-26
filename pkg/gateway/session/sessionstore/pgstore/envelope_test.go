@@ -140,6 +140,24 @@ func TestRequestEnvelopeCallbackRoundTrip_spec_14_108(t *testing.T) {
 	}
 }
 
+// spec: §15 built-in adapter single-shot compute model / §14.1 line 311 — a
+// session carrying only a ContinuationParentID (the OpenResponsesAdapter
+// previous_response_id lineage, no other §14.1 bundled field) still serializes
+// the bundle rather than being dropped by the all-empty nil guard, and the
+// pointer round-trips back onto the Session so GET /v1/responses/{id} echoes it.
+func TestRequestEnvelopeContinuationParentOnly_spec_15(t *testing.T) {
+	in := sessionstore.Session{ContinuationParentID: "resp_prior_0001"}
+	arg, ok := requestEnvelopeArg(in).(string)
+	if !ok {
+		t.Fatalf("requestEnvelopeArg(continuation-only) = %T, want non-nil string; the all-empty guard must not drop a continuation-pointer-only session", requestEnvelopeArg(in))
+	}
+	var out sessionstore.Session
+	applyStoredEnvelope(&out, []byte(arg))
+	if out.ContinuationParentID != in.ContinuationParentID {
+		t.Errorf("ContinuationParentID: got %q, want %q", out.ContinuationParentID, in.ContinuationParentID)
+	}
+}
+
 // applyStoredEnvelope must tolerate a malformed payload (the gateway
 // validates the bundle at admission, so a stored value is by-construction
 // well-formed; a corrupt one must not panic). F-14.1.14.

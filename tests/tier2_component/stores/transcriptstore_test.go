@@ -34,6 +34,27 @@ func seedSession(t *testing.T, ctx context.Context, sess *sessionpg.Store, tenan
 	return id
 }
 
+// seedContinuationTurn creates a completed response session row that chains
+// from parentID (empty for a chain root) via ContinuationParentID and records
+// that response's own single-turn transcript bucket, mirroring the
+// OpenResponsesAdapter per-response record. It returns the new response id.
+func seedContinuationTurn(t *testing.T, ctx context.Context, sess *sessionpg.Store,
+	store transcriptstore.Store, tenant, parentID string, entries ...transcriptstore.Entry,
+) string {
+	t.Helper()
+	id := newUUID(t)
+	if err := sess.Create(ctx, sessionstore.Session{
+		ID: id, TenantID: tenant, State: session.StateCompleted, RuntimeRef: "echo",
+		ContinuationParentID: parentID,
+	}); err != nil {
+		t.Fatalf("seed continuation turn: %v", err)
+	}
+	if err := store.Append(ctx, tenant, id, entries...); err != nil {
+		t.Fatalf("seed continuation transcript: %v", err)
+	}
+	return id
+}
+
 func entry(role, content string) transcriptstore.Entry {
 	return transcriptstore.Entry{Role: role, Content: content}
 }
@@ -149,6 +170,65 @@ func TestTranscriptStoreContract(t *testing.T) {
 		// A session with no transcript at all is ErrNotFound.
 		if _, err := store.Page(ctx, tenant, newUUID(t), 0, 10); !errors.Is(err, transcriptstore.ErrNotFound) {
 			t.Errorf("Page of unknown session: got %v, want ErrNotFound", err)
+		}
+	})
+
+	// spec: §15 — server-side previous_response_id continuation stores each
+	// response's own turn on its own per-session single-turn bucket, and a
+	// continuation walks the ContinuationParentID chain from the referenced
+	// response to the chain root, reassembling the prior conversation in
+	// chronological order (root first). This exercises the cross-datastore
+	// round-trip a Memory store cannot: the session-store ContinuationParentID
+	// pointers and the transcript buckets both survive a real Postgres reload,
+	// and each bucket holds exactly its own single turn (no copy-forward).
+	t.Run("chain-walk transcript persistence across per-response buckets", func(t *testing.T) {
+		tenant := freshTenant(t, ctx, pg)
+		root := seedContinuationTurn(t, ctx, sess, store, tenant, "",
+			entry("user", "turn one"), entry("assistant", "answer one"))
+		mid := seedContinuationTurn(t, ctx, sess, store, tenant, root,
+			entry("user", "turn two"), entry("assistant", "answer two"))
+		ref := seedContinuationTurn(t, ctx, sess, store, tenant, mid,
+			entry("user", "turn three"), entry("assistant", "answer three"))
+
+		// Walk the ContinuationParentID chain from ref back to the root,
+		// collecting each hop's single-turn bucket newest-first.
+		var perTurn [][]transcriptstore.Entry
+		for id := ref; id != ""; {
+			row, err := sess.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("session Get %s: %v", id, err)
+			}
+			bucket, err := store.Get(ctx, tenant, id)
+			if err != nil {
+				t.Fatalf("transcript Get %s: %v", id, err)
+			}
+			if len(bucket) != 2 {
+				t.Errorf("bucket %s holds %d entries, want 2 (one turn, no copy-forward)", id, len(bucket))
+			}
+			perTurn = append(perTurn, bucket)
+			id = row.ContinuationParentID
+		}
+		if len(perTurn) != 3 {
+			t.Fatalf("walked %d hops, want 3", len(perTurn))
+		}
+
+		// Reassemble chronologically (root first) and assert the full history.
+		var got []transcriptstore.Entry
+		for i := len(perTurn) - 1; i >= 0; i-- {
+			got = append(got, perTurn[i]...)
+		}
+		want := []struct{ role, content string }{
+			{"user", "turn one"}, {"assistant", "answer one"},
+			{"user", "turn two"}, {"assistant", "answer two"},
+			{"user", "turn three"}, {"assistant", "answer three"},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("reassembled %d entries, want %d", len(got), len(want))
+		}
+		for i, w := range want {
+			if got[i].Role != w.role || got[i].Content != w.content {
+				t.Errorf("entry %d = {%q, %q}, want {%q, %q}", i, got[i].Role, got[i].Content, w.role, w.content)
+			}
 		}
 	})
 

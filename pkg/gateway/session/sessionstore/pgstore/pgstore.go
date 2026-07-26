@@ -1334,6 +1334,13 @@ type storedEnvelope struct {
 	CallbackPinnedIP string                            `json:"callbackPinnedIp,omitempty"`
 	CallbackSecret   []byte                            `json:"callbackSecret,omitempty"`
 	WebhookEvents    []sessionstore.WebhookEventRecord `json:"webhookEvents,omitempty"`
+	// ContinuationParentID carries the §15 OpenResponsesAdapter
+	// previous_response_id lineage so GET /v1/responses/{id} echoes it. It
+	// rides the envelope bundle rather than a dedicated column: the
+	// continuation flow does only a by-id Get and a self-row GET echo, never a
+	// WHERE query, so no column or index is needed. spec: §15 built-in adapter
+	// single-shot compute model.
+	ContinuationParentID string `json:"continuationParentId,omitempty"`
 }
 
 // requestEnvelopeArg renders the §14.1 request-envelope bundle for a
@@ -1342,22 +1349,24 @@ type storedEnvelope struct {
 // bundled field unset. F-14.1.14.
 func requestEnvelopeArg(sess sessionstore.Session) any {
 	env := storedEnvelope{
-		Pool:             sess.Pool,
-		Timeouts:         sess.Timeouts,
-		CredentialPolicy: sess.CredentialPolicyOverride,
-		DelegationLease:  sess.DelegationLeaseRequest,
-		RuntimeOptions:   sess.RuntimeOptions,
-		Origin:           sess.Origin,
-		Labels:           sess.Labels,
-		CallbackURL:      sess.CallbackURL,
-		CallbackPinnedIP: sess.CallbackPinnedIP,
-		CallbackSecret:   sess.CallbackSecret,
-		WebhookEvents:    sess.WebhookEvents,
+		Pool:                 sess.Pool,
+		Timeouts:             sess.Timeouts,
+		CredentialPolicy:     sess.CredentialPolicyOverride,
+		DelegationLease:      sess.DelegationLeaseRequest,
+		RuntimeOptions:       sess.RuntimeOptions,
+		Origin:               sess.Origin,
+		Labels:               sess.Labels,
+		CallbackURL:          sess.CallbackURL,
+		CallbackPinnedIP:     sess.CallbackPinnedIP,
+		CallbackSecret:       sess.CallbackSecret,
+		WebhookEvents:        sess.WebhookEvents,
+		ContinuationParentID: sess.ContinuationParentID,
 	}
 	if env.Pool == "" && env.Timeouts == nil && env.CredentialPolicy == nil &&
 		env.DelegationLease == nil && len(env.RuntimeOptions) == 0 && env.Origin == "" &&
 		len(env.Labels) == 0 && env.CallbackURL == "" && env.CallbackPinnedIP == "" &&
-		len(env.CallbackSecret) == 0 && len(env.WebhookEvents) == 0 {
+		len(env.CallbackSecret) == 0 && len(env.WebhookEvents) == 0 &&
+		env.ContinuationParentID == "" {
 		return nil
 	}
 	b, err := json.Marshal(env)
@@ -1391,6 +1400,7 @@ func applyStoredEnvelope(s *sessionstore.Session, raw []byte) {
 	s.CallbackPinnedIP = env.CallbackPinnedIP
 	s.CallbackSecret = env.CallbackSecret
 	s.WebhookEvents = env.WebhookEvents
+	s.ContinuationParentID = env.ContinuationParentID
 }
 
 // decodeMetadata parses the JSONB payload back into a string→string
