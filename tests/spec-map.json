@@ -4012,6 +4012,8 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules",
         "tests/tier4_integration/playground_disabled_test.go::TestPlaygroundDisabledReturns404OnAllRoutes_spec_27_2",
+        "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnMalformedDevTenantID_spec_27_2",
+        "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3",
         "pkg/embedded/manifests/manifests_test.go::TestEmbeddedGatewayEnablesPlaygroundDevMode_spec_27_2"
       ],
       "packages": [
@@ -4020,7 +4022,7 @@
         "pkg/embedded/manifests"
       ],
       "blocked_until_phase": "5",
-      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds. The tier-4 test drives the real cmd/lenny-gateway binary with playground.enabled left at its default (false) and asserts GET /playground/, GET /playground/app.js, and POST /v1/playground/token all 404 because the routes are never mounted."
+      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds. The tier-4 test drives the real cmd/lenny-gateway binary with playground.enabled left at its default (false) and asserts GET /playground/, GET /playground/app.js, and POST /v1/playground/token all 404 because the routes are never mounted. TestPlaygroundStartupFatalOnMalformedDevTenantID_spec_27_2 and TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drive the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit, added alongside the existing StartWith long-running helper) to assert the §27.2 layer-3 startup-fatal backstop at the actual process boundary rather than at the unit-level playground.Config.Validate() call: a malformed --playground-dev-tenant-id exits non-zero naming LENNY_PLAYGROUND_DEV_TENANT_INVALID, and authMode=dev without --dev-mode exits non-zero naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN. Both fatal checks run before playground.NewMetrics() registration, so neither is blocked by the unrelated §16.1.1 authMode-metrics-label crash-loop noted on the parent \"27\" entry."
     },
     "27.3": {
       "title": "Web Playground — Authentication",
@@ -4052,15 +4054,17 @@
         "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerCompletesRealPKCEExchange",
         "tests/tier2_component/playground/oidc_discovery_wiring_test.go::TestDiscoveredOIDCExchangerRejectsBadSignature",
         "tests/tier5_e2e_kind/playground_oidc_journey_test.go::TestPlaygroundOIDCLoginToWebSocketJourneyOnLiveCluster",
-        "tests/tier8_chaos/playground_revocation_redis_outage_test.go::TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers"
+        "tests/tier8_chaos/playground_revocation_redis_outage_test.go::TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers",
+        "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
         "tests/tier2_component/playground",
-        "tests/tier8_chaos"
+        "tests/tier8_chaos",
+        "cmd/lenny-gateway"
       ],
       "blocked_until_phase": "5",
-      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints. TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers drives the §27.3.1 line 99 fail-closed guarantee against a real, then-terminated, Redis container (via pkg/gateway/mcpfabric/playground.RedisSessionStore and the real pkg/gateway/middleware/auth middleware, not a fake checker), then confirms a fresh Redis becoming reachable resumes correct revocation enforcement."
+      "notes": "Three auth modes (oidc, apiKey, dev) and the mode-polymorphic /v1/playground/token mint, the origin:\"playground\" claim, and per-mode gatekeeper endpoints. TestPlaygroundRevocationChecksFailsClosedOnRealRedisOutageAndRecovers drives the §27.3.1 line 99 fail-closed guarantee against a real, then-terminated, Redis container (via pkg/gateway/mcpfabric/playground.RedisSessionStore and the real pkg/gateway/middleware/auth middleware, not a fake checker), then confirms a fresh Redis becoming reachable resumes correct revocation enforcement. TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drives the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit) with playground.authMode=dev and global.devMode=false and asserts a non-zero exit naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN, the process-boot backstop for a deployment that bypassed Helm-validate."
     },
     "27.5": {
       "title": "Web Playground — Protocol",

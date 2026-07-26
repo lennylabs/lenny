@@ -12,7 +12,9 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -20,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -47,6 +50,28 @@ func SkipUnlessAvailable(t testing.TB) {
 	}
 }
 
+// Build compiles cmd/lenny-gateway into a fresh temp binary and returns
+// its path. Shared by StartWith (which boots the binary as a
+// long-running process) and RunToExit (which runs it to completion to
+// assert a startup-fatal exit). A build failure fails the test.
+func Build(t testing.TB) string {
+	t.Helper()
+	tmp, err := os.MkdirTemp("", "lenny-gateway-build-*")
+	if err != nil {
+		t.Fatalf("mkdtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
+
+	binary := filepath.Join(tmp, "lenny-gateway")
+	root := schematest.RepoRoot(t)
+	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build lenny-gateway: %v\n%s", err, out)
+	}
+	return binary
+}
+
 // Start builds + spawns cmd/lenny-gateway on a random free port and
 // returns when /v1/sessions is responsive. Skips the test when go is
 // not on PATH (CI environments without Go).
@@ -63,19 +88,13 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 		t.Skipf("go not on PATH: %v", err)
 	}
 
-	tmp, err := os.MkdirTemp("", "lenny-gateway-it-*")
+	binary := Build(t)
+
+	tmp, err := os.MkdirTemp("", "lenny-gateway-run-*")
 	if err != nil {
 		t.Fatalf("mkdtemp: %v", err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(tmp) })
-
-	binary := filepath.Join(tmp, "lenny-gateway")
-	root := schematest.RepoRoot(t)
-	build := exec.Command("go", "build", "-o", binary, "./cmd/lenny-gateway")
-	build.Dir = root
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build lenny-gateway: %v\n%s", err, out)
-	}
 
 	port, err := freePort()
 	if err != nil {
@@ -200,6 +219,57 @@ func (p *Process) waitReady(d time.Duration) error {
 		lastErr = fmt.Errorf("ready probe timed out")
 	}
 	return lastErr
+}
+
+// ExitResult is the outcome of running cmd/lenny-gateway to completion
+// via RunToExit, rather than the long-running Start/StartWith flow.
+type ExitResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+}
+
+// RunToExit builds cmd/lenny-gateway (or reuses a binary already built
+// by Build/StartWith in the same test) and runs it with args to
+// completion, waiting for the process to exit rather than for
+// readiness. It exists for the §27.2 layer-3 startup-fatal backstop: a
+// malformed playground config (or another startup-gate violation) makes
+// the real process log.Fatalf and exit non-zero before ever binding a
+// listener, so StartWith's readiness wait would just time out and fail
+// the test instead of letting the caller assert on the exit.
+//
+// A timeout or a process-start failure fails the test; a non-zero exit
+// is returned in ExitCode so the caller can assert on it and on the
+// captured stderr/stdout.
+func RunToExit(t testing.TB, timeout time.Duration, args ...string) ExitResult {
+	t.Helper()
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skipf("go not on PATH: %v", err)
+	}
+
+	binary := Build(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	res := ExitResult{Stdout: stdout.String(), Stderr: stderr.String()}
+	if ctx.Err() == context.DeadlineExceeded {
+		t.Fatalf("lenny-gateway %s: did not exit within %s (expected a startup-fatal exit)\nstdout:\n%s\nstderr:\n%s",
+			strings.Join(args, " "), timeout, res.Stdout, res.Stderr)
+	}
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			res.ExitCode = ee.ExitCode()
+		} else {
+			t.Fatalf("lenny-gateway %s: %v", strings.Join(args, " "), err)
+		}
+	}
+	return res
 }
 
 // freePort asks the kernel for a port and immediately releases it.
