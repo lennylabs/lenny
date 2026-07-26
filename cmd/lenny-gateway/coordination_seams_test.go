@@ -342,6 +342,80 @@ func TestReadoptAndFenceSurfacesReleaseFailureOnNonRelinquishFence(t *testing.T)
 	}
 }
 
+// TestReadoptAndFenceReleasesLeaseOnDialFailure pins the corrective recovery
+// path for a re-adopt whose pod dial fails before the fence. The dial fault
+// leaves the lease the Sweeper acquired held by this replica; the re-adopt must
+// release it itself so its lapse surfaces for a subsequent sweep to re-adopt
+// the still-running pod. Without the release the lease pins to a replica that
+// never fenced the pod, the next sweep renews it forever (the takeover
+// predicate never fires again), and the fenced-by-nothing pod self-terminates
+// in its hold state at 120s. Pre-fix code returned the dial error without
+// releasing the lease, so this test fails against it.
+//
+// spec: 10.1 (relinquish-and-backoff; hold state on connection loss), 4.6.1
+// (coordinating replica holds the lease)
+func TestReadoptAndFenceReleasesLeaseOnDialFailure(t *testing.T) {
+	dialer := &fakeReadoptDialer{err: errors.New("reconnect dial failed")}
+	fencer := &fakeReadoptFencer{}
+	pub := &recordingPublisher{}
+	rel := &recordingReleaser{}
+	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	if err == nil {
+		t.Fatal("readoptAndFence returned nil error on a dial failure")
+	}
+	if publish != nil {
+		t.Fatal("readoptAndFence returned a publish callback on a dial failure")
+	}
+	if fencer.gotSession != "" {
+		t.Fatal("the pod was fenced despite the dial failure (fence must not run without a connection)")
+	}
+	if len(pub.published) != 0 {
+		t.Fatal("a binding was published despite the dial failure")
+	}
+	if len(rel.released) != 1 {
+		t.Fatalf("the still-held lease was not released after a dial failure: releases=%d; the lease would pin to a replica that never bound and the pod would self-terminate in hold state", len(rel.released))
+	}
+	if got := rel.released[0]; got.tenantID != "acme" || got.sessionID != "s1" || got.holder != "replica-A" {
+		t.Fatalf("released lease = %+v, want acme/s1 held by replica-A", got)
+	}
+}
+
+// TestReadoptAndFenceReleasesLeaseOnSessionReadFailure pins the corrective
+// recovery path for a re-adopt whose session-row read fails before the dial and
+// the fence. Like the dial failure, this pre-fence fault leaves the lease held,
+// so the re-adopt must release it so its lapse surfaces for a subsequent sweep.
+// Pre-fix code returned the read error without releasing the lease, so this
+// test fails against it.
+//
+// spec: 10.1 (relinquish-and-backoff; hold state on connection loss), 4.6.1
+// (coordinating replica holds the lease)
+func TestReadoptAndFenceReleasesLeaseOnSessionReadFailure(t *testing.T) {
+	dialer := &fakeReadoptDialer{}
+	fencer := &fakeReadoptFencer{}
+	pub := &recordingPublisher{}
+	rel := &recordingReleaser{}
+	sessions := fakeSandboxReader{err: errors.New("session row read failed")}
+
+	publish, err := readoptAndFence(context.Background(), dialer, fencer, pub, sessions, rel, "acme", "s1", "replica-A")
+	if err == nil {
+		t.Fatal("readoptAndFence returned nil error on a session-row read failure")
+	}
+	if publish != nil {
+		t.Fatal("readoptAndFence returned a publish callback on a session-row read failure")
+	}
+	if dialer.dialAttempts != 0 {
+		t.Fatal("the pod was dialed despite the session-row read failure")
+	}
+	if len(rel.released) != 1 {
+		t.Fatalf("the still-held lease was not released after a session-row read failure: releases=%d", len(rel.released))
+	}
+	if got := rel.released[0]; got.tenantID != "acme" || got.sessionID != "s1" || got.holder != "replica-A" {
+		t.Fatalf("released lease = %+v, want acme/s1 held by replica-A", got)
+	}
+}
+
 // TestReadoptAndFenceReturnsErrorWhenSeamsUnwired pins the fail-closed guard:
 // with the re-adopt collaborators absent the Sweeper is told the re-adopt could
 // not run (so it publishes no binding it cannot back) rather than silently

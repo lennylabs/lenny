@@ -399,14 +399,18 @@ func (s *Sweeper) Sweep(ctx context.Context) (int, error) {
 				}
 				publish, ferr := s.readoptAndFence(ctx, tenantID, row.ID, generation)
 				if ferr != nil {
-					// Terminal fence failure. The coordfence driver already
-					// relinquished the lease (released it and backed off per
-					// §10.1 line 35) and published no binding. Record a
-					// per-session adoption backoff so the fixed sweep does not
-					// re-adopt inside the spec's jittered window and re-drive
-					// RecordHandoff and the fence every sweep. The generation
-					// increment stays in Postgres; the next coordinator to
-					// acquire the lease increments it again.
+					// The re-adopt failed and relinquished the lease it could
+					// not turn into a serving binding: a terminal fence failure
+					// is relinquished by the coordfence driver, and every
+					// pre-fence or best-effort failure (session-row read, pod
+					// dial, or a fence fault the driver did not relinquish) is
+					// released by the re-adopt seam. Either way the lease is no
+					// longer held, so its lapse surfaces for a subsequent sweep.
+					// Record a per-session adoption backoff so the fixed sweep
+					// does not re-adopt inside the spec's jittered window and
+					// re-drive RecordHandoff and the fence every sweep. The
+					// generation increment stays in Postgres; the next
+					// coordinator to acquire the lease increments it again.
 					// spec: §10.1 line 35 (relinquish-and-backoff).
 					log.Printf("coordination: re-adopt fence for session %s relinquished: %v", row.ID, ferr)
 					s.recordAdoptionBackoff(row.ID)

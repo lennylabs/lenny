@@ -103,10 +103,12 @@ type readoptFencer interface {
 
 // leaseReleaser releases the coordination lease this replica holds for a
 // session. leasestore.LeaseStore satisfies it through Release. The re-adopt
-// releases the lease itself when the Fencer reports a fence failure it did not
-// relinquish (a best-effort failure leaves the lease held), so the lapse
-// surfaces for a subsequent sweep to re-adopt the still-running pod rather than
-// pinning the lease to a replica that never established the serving binding.
+// releases the lease itself on every re-adopt failure that leaves it held: a
+// session-row read fault, a pod dial fault, or a best-effort fence fault the
+// Fencer did not relinquish. Only a terminal fence failure arrives with the
+// lease already relinquished. Releasing the still-held lease surfaces its lapse
+// for a subsequent sweep to re-adopt the still-running pod rather than pinning
+// the lease to a replica that never established the serving binding.
 // spec: §10.1 (relinquish-and-backoff; hold state on connection loss).
 type leaseReleaser interface {
 	Release(ctx context.Context, tenantID, sessionID, holder string) error
@@ -158,23 +160,40 @@ func (r coordinationReadopter) ReadoptAndFence(ctx context.Context, tenantID, se
 	return readoptAndFence(ctx, r.w.podBinder, r.w.coordFencer, r.w.podRegistry, r.w.sessions, r.w.coordLeaseStore, tenantID, sessionID, r.w.replica)
 }
 
+// releaseAfterReadoptFailure relinquishes the coordination lease the Sweeper
+// acquired for the crash-takeover after a re-adopt failure that left the lease
+// held: a session-row read fault, a pod dial fault, or a best-effort fence
+// fault the Fencer did not relinquish. Releasing it surfaces the lease lapse
+// for a subsequent sweep to re-adopt the still-running pod rather than pinning
+// the lease to a replica that never fenced it. It returns the triggering error
+// and, when the release itself faults, appends the release error so the
+// fail-closed lapse is not lost silently.
+// spec: §10.1 (relinquish-and-backoff; hold state on connection loss).
+func releaseAfterReadoptFailure(ctx context.Context, releaser leaseReleaser, tenantID, sessionID, holder string, cause error) error {
+	if rerr := releaser.Release(ctx, tenantID, sessionID, holder); rerr != nil {
+		return fmt.Errorf("%w; release still-held lease: %v", cause, rerr)
+	}
+	return cause
+}
+
 // readoptAndFence dials the still-running pod, fences it as the first RPC, and
 // returns a publish callback the Sweeper invokes only after the fence
-// acknowledges. A fence failure closes the dialed connection, publishes no
+// acknowledges. Every failure closes any dialed connection, publishes no
 // binding, and returns the error, so the Sweeper records a per-session
-// adoption backoff. The lease disposition depends on how the fence failed: on
-// a terminal failure the Fencer has already released the coordination lease
-// (relinquish-and-backoff, relinquished=true), so this only closes the
-// connection; on a best-effort failure the Fencer keeps the lease held
-// (relinquished=false), so this releases it here. Releasing the still-held
-// lease is what surfaces its lapse for a subsequent sweep to re-adopt the
-// still-running pod; without it the lease pins to this replica — which never
-// established the serving binding — the next sweep renews it forever, and the
-// fenced-by-nothing pod self-terminates in its §10.1 hold state at 120s with
-// no recovery. Publishing only after the acknowledgement honors the §10.1
-// precondition that no operational RPC (the executor's first Attach) reaches
-// the pod until the fence acknowledges; the held connection keeps the pod
-// continuously coordinated so it does not re-enter hold state.
+// adoption backoff. On every failure that leaves the coordination lease held —
+// the session-row read fault and the pod dial fault (both before the fence),
+// and a best-effort fence fault the Fencer did not relinquish — this releases
+// the lease itself. Only a terminal fence failure arrives with the lease
+// already relinquished (relinquish-and-backoff, relinquished=true), so on that
+// one path this closes the connection without a redundant release. Releasing
+// the still-held lease is what surfaces its lapse for a subsequent sweep to
+// re-adopt the still-running pod; without it the lease pins to this replica,
+// which never established the serving binding, the next sweep renews it
+// forever, and the fenced-by-nothing pod self-terminates in its §10.1 hold
+// state at 120s with no recovery. Publishing only after the acknowledgement
+// honors the §10.1 precondition that no operational RPC (the executor's first
+// Attach) reaches the pod until the fence acknowledges; the held connection
+// keeps the pod continuously coordinated so it does not re-enter hold state.
 // spec: §10.1 (relinquish-and-backoff; hold state on connection loss), §11.3
 // line 209, §4.7.
 func readoptAndFence(
@@ -188,29 +207,38 @@ func readoptAndFence(
 ) (func(), error) {
 	row, err := sessions.Get(ctx, tenantID, sessionID)
 	if err != nil {
-		return nil, fmt.Errorf("gateway: read session %s for crash-takeover re-adopt: %w", sessionID, err)
+		// A pre-fence failure leaves the lease the Sweeper acquired held by
+		// this replica; release it so its lapse surfaces for a subsequent
+		// re-adopt rather than pinning the lease to a replica that never fenced
+		// the pod. spec: §10.1 (relinquish-and-backoff).
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
+			fmt.Errorf("gateway: read session %s for crash-takeover re-adopt: %w", sessionID, err))
 	}
 	// Dial the pod without the §15.5 version handshake so CoordinatorFence is
 	// the first RPC to the hold-state pod.
 	sb, adapter, err := dialer.ReadoptConnect(ctx, row.PodAssignment)
 	if err != nil {
-		return nil, fmt.Errorf("gateway: re-adopt dial for session %s: %w", sessionID, err)
+		// The dial failed before the fence, so the Fencer never ran to
+		// relinquish the lease; release the still-held lease here for the same
+		// reason as the row-read failure above.
+		// spec: §10.1 (relinquish-and-backoff).
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder,
+			fmt.Errorf("gateway: re-adopt dial for session %s: %w", sessionID, err))
 	}
 	// Fence as the first RPC. On any fence error close the connection and
-	// report it so the Sweeper backs off and publishes no binding. When the
-	// Fencer did not relinquish (a best-effort failure that leaves the lease
-	// held), release the lease here so its lapse surfaces for a subsequent
-	// re-adopt; a terminal failure (relinquished) already released it.
-	// spec: §10.1 (relinquish-and-backoff), §11.3 line 209.
+	// report it so the Sweeper backs off and publishes no binding. A terminal
+	// failure (relinquished) already released the lease; a best-effort failure
+	// (a coordination_generation read error or a context cancellation) leaves
+	// the lease held, so release it here so its lapse surfaces for a subsequent
+	// re-adopt. spec: §10.1 (relinquish-and-backoff), §11.3 line 209.
 	relinquished, ferr := fencer.Fence(ctx, adapter, tenantID, sessionID)
 	if ferr != nil {
 		_ = adapter.Close()
-		if !relinquished {
-			if rerr := releaser.Release(ctx, tenantID, sessionID, holder); rerr != nil {
-				return nil, fmt.Errorf("gateway: re-adopt fence for session %s failed (%w); release still-held lease: %v", sessionID, ferr, rerr)
-			}
+		cause := fmt.Errorf("gateway: re-adopt fence for session %s: %w", sessionID, ferr)
+		if relinquished {
+			return nil, cause
 		}
-		return nil, fmt.Errorf("gateway: re-adopt fence for session %s: %w", sessionID, ferr)
+		return nil, releaseAfterReadoptFailure(ctx, releaser, tenantID, sessionID, holder, cause)
 	}
 	bind := &podsession.BindResult{
 		SessionID:   sessionID,
