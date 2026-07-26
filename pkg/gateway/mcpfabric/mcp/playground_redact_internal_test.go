@@ -168,32 +168,62 @@ func TestPlaygroundEgressGate_spec_27_9_251(t *testing.T) {
 // lease-id/provider/outcome allowlist) obliges the frame redactor to
 // parse and rewrite JSON embedded in a text block is not settled by the
 // spec text, so the test is held non-blocking until the requirement is
-// decided.
+// decided. The decision is not purely additive: the same frame redactor
+// runs on every outbound playground frame, so scrubbing a credential a
+// tool deliberately returns to its caller also withholds it from the
+// caller. The create_session case below is the concrete instance, since
+// the uploadToken it returns is the credential the workspace-tarball
+// upload leg then presents.
 func TestRedactPlaygroundFrameScrubsCredentialInsideTextBlockJSON_spec_27_9(t *testing.T) {
 	t.Skip("open coverage question: the spec does not state whether audit-equivalent frame redaction must walk JSON serialized into a tool result text block")
 
-	const secret = "ghs_SECRETVALUE"
-	body, err := json.Marshal(map[string]string{
-		"host":     "github.com",
-		"username": "x-access-token",
-		"token":    secret,
-	})
-	if err != nil {
-		t.Fatalf("marshal tool body: %v", err)
-	}
-	frame, err := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      1,
-		"result": map[string]any{
-			"content": []any{map[string]any{"type": "text", "text": string(body)}},
+	cases := []struct {
+		name   string
+		body   map[string]string
+		secret string
+	}{
+		{
+			// pkg/gateway/mcpfabric/mcptools/mcptools.go, lenny/vcs_token:
+			// marshals {host, username, token} through textResult. The tool
+			// requires an in-pod session principal, so this body is the
+			// pattern rather than a browser-reachable call.
+			name:   "vcs token body",
+			body:   map[string]string{"host": "github.com", "username": "x-access-token", "token": "ghs_SECRETVALUE"},
+			secret: "ghs_SECRETVALUE",
 		},
-	})
-	if err != nil {
-		t.Fatalf("marshal frame: %v", err)
+		{
+			// pkg/gateway/mcpfabric/mcptools/mcptools_register.go,
+			// lenny/create_session: marshals {sessionId, state, uploadToken}
+			// through textResult. This tool is reachable over the playground
+			// MCP WebSocket, so the uploadToken bearer that authorizes
+			// POST /v1/sessions/{id}/upload reaches the raw-frame inspector.
+			name:   "create session body",
+			body:   map[string]string{"sessionId": "sess-1", "state": "created", "uploadToken": "ult_SECRETVALUE"},
+			secret: "ult_SECRETVALUE",
+		},
 	}
 
-	out := redactPlaygroundFrame(frame)
-	if strings.Contains(string(out), secret) {
-		t.Errorf("credential survived redaction in a tool result text block: %s", out)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := json.Marshal(tc.body)
+			if err != nil {
+				t.Fatalf("marshal tool body: %v", err)
+			}
+			frame, err := json.Marshal(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": map[string]any{
+					"content": []any{map[string]any{"type": "text", "text": string(body)}},
+				},
+			})
+			if err != nil {
+				t.Fatalf("marshal frame: %v", err)
+			}
+
+			out := redactPlaygroundFrame(frame)
+			if strings.Contains(string(out), tc.secret) {
+				t.Errorf("credential survived redaction in a tool result text block: %s", out)
+			}
+		})
 	}
 }
