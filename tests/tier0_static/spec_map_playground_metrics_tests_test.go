@@ -27,9 +27,11 @@ import (
 // cold-cache peer whose per-request authoritative Redis check must not
 // add a sample per request, the cold-cache peer whose authoritative
 // Redis observation must be sampled under outcome=redis_authoritative
-// (currently skipped, see the §27.8 spec-map note), and the dropped
-// subscription that re-subscribes and reports the outage under
-// outcome=resubscribe.
+// (currently skipped, see the §27.8 spec-map note), the dropped
+// subscription that re-subscribes after the Redis server returns and
+// reports the outage under outcome=resubscribe, and its negative
+// counterpart holding an outage that never ends to no repeating sample
+// stream.
 // `lenny-test validate-maps` sweeps the in-package test files of the
 // packages a section claims as well as the tier directories, but it
 // carries a waiver file and it works at file granularity, so an
@@ -49,6 +51,7 @@ var propagationHistogramTests = []string{
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestAuthoritativeRedisCheckSamplesPropagationAtMostOncePerRevocation_spec_27_8_244",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestAuthoritativeRedisObservationRecordsRedisAuthoritativeOutcome_spec_27_8_244",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestDroppedSubscriptionEmitsResubscribeOutcome_spec_27_3_1_98",
+	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestUnrecoverableSubscriptionDropDoesNotRepeatResubscribeSamples_spec_27_3_1_98",
 }
 
 // spec: §27.8 (Metrics) — "`lenny_playground_session_revocation_propagation_seconds`

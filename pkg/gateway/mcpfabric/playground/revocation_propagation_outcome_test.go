@@ -209,35 +209,45 @@ func TestAuthoritativeRedisObservationRecordsRedisAuthoritativeOutcome_spec_27_8
 // TestDroppedSubscriptionEmitsResubscribeOutcome pins the §27.3.1
 // requirement that a replica whose revocation subscription drops
 // re-subscribes and reports the outage on the §27.8 propagation
-// histogram. Closing the subscriber's client closes the pub/sub message
-// channel underneath the consume loop, which is how a dropped
-// subscription surfaces to it; the loop then backs off, re-subscribes,
-// and records the gap.
+// histogram. The drop it drives is the one the spec sentence describes:
+// the Redis server carrying a live subscription goes away and later
+// comes back at the same address, so the replica loses revocation
+// messages for the length of the outage and must both re-establish the
+// subscription and report how long it was blind. The spec asks for a
+// sample whose value is the duration of the outage, so one outage
+// produces exactly one sample; a stream of samples emitted while the
+// subscription is still down reports no duration and skews a histogram
+// whose P99 is alerted against the 500 ms propagation SLO.
 //
 // spec: §27.3.1 — "Replicas with a dropped subscription MUST
 // re-subscribe and emit a
 // `lenny_playground_session_revocation_propagation_seconds` sample
 // tagged `{outcome=\"resubscribe\"}` for the duration of the outage."
 func TestDroppedSubscriptionEmitsResubscribeOutcome_spec_27_3_1_98(t *testing.T) {
-	mr := miniredis.RunT(t)
-	publisherClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	mr := miniredis.NewMiniRedis()
+	if err := mr.Start(); err != nil {
+		t.Fatalf("start redis: %v", err)
+	}
+	addr := mr.Addr()
+
+	publisherClient := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = publisherClient.Close() })
-	// The subscriber holds its own client so closing it drops only the
-	// subscription, leaving the publisher able to keep writing.
-	subscriberClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	// The subscriber holds its own client so the two replicas' pools are
+	// independent, as they are in production.
+	subscriberClient := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = subscriberClient.Close() })
 
 	publisher := NewRedisSessionStore(publisherClient)
 	subscriber := NewRedisSessionStore(subscriberClient)
 	var mu sync.Mutex
 	outcomes := map[string]int{}
-	var resubscribeSeconds float64
+	var resubscribeSeconds []float64
 	subscriber.propObserver = func(outcome string, seconds float64) {
 		mu.Lock()
 		defer mu.Unlock()
 		outcomes[outcome]++
 		if outcome == "resubscribe" {
-			resubscribeSeconds = seconds
+			resubscribeSeconds = append(resubscribeSeconds, seconds)
 		}
 	}
 
@@ -258,25 +268,116 @@ func TestDroppedSubscriptionEmitsResubscribeOutcome_spec_27_3_1_98(t *testing.T)
 		return outcomes["pubsub_delivered"] > 0
 	})
 
-	// Drop the subscription.
-	if err := subscriberClient.Close(); err != nil {
-		t.Fatalf("close subscriber client: %v", err)
-	}
+	mu.Lock()
+	deliveredBeforeOutage := outcomes["pubsub_delivered"]
+	mu.Unlock()
 
-	waitForCondition(t, 5*time.Second, func() bool {
+	// The outage: the Redis server carrying the subscription goes away.
+	// Revocations published anywhere in the fleet are invisible to this
+	// replica until it re-subscribes.
+	mr.Close()
+	outageStart := time.Now()
+	time.Sleep(300 * time.Millisecond)
+
+	// Redis returns at the same address; the replica must re-establish
+	// its subscription without operator intervention.
+	recovered := miniredis.NewMiniRedis()
+	if err := recovered.StartAddr(addr); err != nil {
+		t.Fatalf("restart redis at %s: %v", addr, err)
+	}
+	t.Cleanup(recovered.Close)
+
+	// The subscription is re-established once a freshly published
+	// revocation reaches the subscriber again.
+	waitForCondition(t, 20*time.Second, func() bool {
+		if err := publisher.RevokeSession(ctx, tenant, "sess-recovered", []string{"jti-recovered"}, time.Minute); err != nil {
+			return false
+		}
 		mu.Lock()
 		defer mu.Unlock()
-		return outcomes["resubscribe"] > 0
+		return outcomes["pubsub_delivered"] > deliveredBeforeOutage
 	})
+	outageEnd := time.Now()
+
+	// Give the loop a moment to settle so a repeating sample stream
+	// surfaces here rather than after the assertions.
+	time.Sleep(500 * time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()
-	if resubscribeSeconds < 0 {
-		t.Errorf("resubscribe sample recorded a negative outage duration %v", resubscribeSeconds)
+	if len(resubscribeSeconds) != 1 {
+		t.Fatalf("one dropped subscription recorded %d resubscribe samples %v, want exactly one carrying the outage duration", len(resubscribeSeconds), resubscribeSeconds)
+	}
+	if got := resubscribeSeconds[0]; got <= 0 || got > outageEnd.Sub(outageStart).Seconds()*2 {
+		t.Errorf("resubscribe sample recorded %v s, want a positive duration on the order of the %v outage", got, outageEnd.Sub(outageStart))
 	}
 	for outcome := range outcomes {
 		if !slices.Contains(spec278PropagationOutcomes, outcome) {
 			t.Errorf("propagation sample carried outcome %q, outside the §27.8 domain %v", outcome, spec278PropagationOutcomes)
 		}
+	}
+}
+
+// TestUnrecoverableSubscriptionDropDoesNotRepeatResubscribeSamples is
+// the negative half of the §27.3.1 resubscribe requirement. The sample
+// reports the duration of an outage, so it belongs to the moment the
+// subscription is back, and a subscription that never comes back
+// contributes no completed outage. A replica whose client is shut down
+// permanently must therefore not emit an unbounded sample stream on its
+// retry cadence: those samples carry no outage duration and would drag
+// the histogram's P99 across the 500 ms propagation SLO the §27.8 alert
+// watches, purely because a replica was retiring.
+//
+// spec: §27.3.1 — "Replicas with a dropped subscription MUST
+// re-subscribe and emit a
+// `lenny_playground_session_revocation_propagation_seconds` sample
+// tagged `{outcome=\"resubscribe\"}` for the duration of the outage."
+func TestUnrecoverableSubscriptionDropDoesNotRepeatResubscribeSamples_spec_27_3_1_98(t *testing.T) {
+	mr := miniredis.RunT(t)
+	publisherClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = publisherClient.Close() })
+	subscriberClient := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = subscriberClient.Close() })
+
+	publisher := NewRedisSessionStore(publisherClient)
+	subscriber := NewRedisSessionStore(subscriberClient)
+	var mu sync.Mutex
+	outcomes := map[string]int{}
+	subscriber.propObserver = func(outcome string, _ float64) {
+		mu.Lock()
+		defer mu.Unlock()
+		outcomes[outcome]++
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go subscriber.SubscribeAllRevocations(ctx)
+
+	const tenant = "acme"
+	// Wait until the subscription is live, so the close below drops a
+	// subscription that was actually established.
+	waitForCondition(t, 5*time.Second, func() bool {
+		if err := publisher.RevokeSession(ctx, tenant, "sess-shutdown", []string{"jti-shutdown"}, time.Minute); err != nil {
+			t.Fatalf("RevokeSession: %v", err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		return outcomes["pubsub_delivered"] > 0
+	})
+
+	// Shut the subscriber's client down for good. Nothing can restore
+	// this subscription, so no outage ever completes.
+	if err := subscriberClient.Close(); err != nil {
+		t.Fatalf("close subscriber client: %v", err)
+	}
+
+	// Well over the loop's retry cadence, so a per-retry emitter shows up
+	// as a multi-sample stream rather than as a single sample.
+	time.Sleep(2 * time.Second)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if outcomes["resubscribe"] > 1 {
+		t.Errorf("a permanently dropped subscription recorded %d resubscribe samples, want at most one per outage", outcomes["resubscribe"])
 	}
 }

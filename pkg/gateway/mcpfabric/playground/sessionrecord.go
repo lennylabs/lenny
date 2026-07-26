@@ -8,6 +8,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -696,6 +698,19 @@ func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) 
 	return refs, nil
 }
 
+const (
+	// revocationReceiveTimeout bounds one blocking read on the
+	// revocation subscription. A silent subscription is probed with a
+	// PING when the read times out, which is how a connection that died
+	// without producing a read error (a partition that swallows the
+	// FIN) surfaces as a drop rather than as an indefinite block.
+	revocationReceiveTimeout = 3 * time.Second
+	// revocationRetryBackoff paces re-subscription attempts while the
+	// subscription is down, so a Redis outage does not become a
+	// reconnect storm.
+	revocationRetryBackoff = 250 * time.Millisecond
+)
+
 // SubscribeAllRevocations runs the §27.3.1 pub/sub consume loop over a
 // single PSUBSCRIBE on revocationChannelPattern, so the replica warms
 // its negative cache for every tenant — including tenants provisioned
@@ -705,59 +720,89 @@ func (s *RedisSessionStore) IdleSessions(ctx context.Context, cutoff time.Time) 
 // a §27.8 {outcome="resubscribe"} sample. A nil client subscribes to
 // nothing and returns when ctx is cancelled.
 //
-// spec: §27.6 line 204 / §27.3.1 line 96 — every replica subscribes and
-// a dropped subscription re-subscribes and emits the resubscribe
-// outcome.
+// spec: §27.6 line 204 / §27.3.1 — every replica subscribes and a
+// dropped subscription re-subscribes and emits the resubscribe outcome.
 func (s *RedisSessionStore) SubscribeAllRevocations(ctx context.Context) {
 	if s.client == nil {
 		<-ctx.Done()
 		return
 	}
-	var droppedAt time.Time // zero on the first subscribe (no prior outage)
-	const resubscribeBackoff = 250 * time.Millisecond
+	// The PubSub object survives the outage: go-redis records the
+	// pattern even when the initial PSUBSCRIBE fails, and re-issues it
+	// on every reconnect, so one PubSub covers the whole loop and a
+	// replica that starts while Redis is down still ends up subscribed.
+	sub := s.client.PSubscribe(ctx, revocationChannelPattern)
+	defer func() { _ = sub.Close() }()
+	s.consumeRevocations(ctx, sub)
+}
+
+// consumeRevocations reads the revocation subscription until ctx is
+// cancelled, applying each message to the negative cache and timing any
+// outage. It reads through PubSub.ReceiveTimeout rather than
+// PubSub.Channel because the channel form hides connection failures: it
+// closes only when the client itself is closed, so a lost Redis server
+// (the case §27.3.1 names) would be invisible to the caller while a
+// client shutdown would look like an endlessly repeating outage.
+//
+// A read error marks the start of an outage; the next successful read
+// means go-redis has reconnected and re-issued the PSUBSCRIBE, which is
+// the instant the outage ends. Exactly one §27.8 {outcome="resubscribe"}
+// sample is recorded per completed outage, carrying its duration. An
+// outage that never ends (a closed client, a permanently unreachable
+// Redis) records nothing, because no re-subscription happened and there
+// is no elapsed outage to report.
+//
+// spec: §27.3.1 — "Replicas with a dropped subscription MUST
+// re-subscribe and emit a
+// lenny_playground_session_revocation_propagation_seconds sample tagged
+// {outcome="resubscribe"} for the duration of the outage."
+func (s *RedisSessionStore) consumeRevocations(ctx context.Context, sub *redis.PubSub) {
+	var droppedAt time.Time // zero while the subscription is healthy
 	for {
-		if err := ctx.Err(); err != nil {
-			return
-		}
-		// A re-subscribe means the prior subscription dropped; the gap
-		// from the drop to a healthy subscription is the propagation
-		// outage the §27.8 resubscribe outcome reports.
-		if !droppedAt.IsZero() {
-			s.recordPropagation("resubscribe", s.now().Sub(droppedAt).Seconds())
-		}
-		sub := s.client.PSubscribe(ctx, revocationChannelPattern)
-		ch := sub.Channel()
-		s.drainRevocations(ctx, ch)
-		_ = sub.Close()
 		if ctx.Err() != nil {
 			return
 		}
-		// The channel closed without ctx cancellation: the subscription
-		// dropped. Mark the outage start and back off before re-subscribing.
-		droppedAt = s.now()
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(resubscribeBackoff):
+		msg, err := sub.ReceiveTimeout(ctx, revocationReceiveTimeout)
+		if err != nil {
+			// A timed-out read is not yet a drop: the channel may simply
+			// be idle. PING to tell an idle subscription from a dead one.
+			if isReceiveTimeout(err) && sub.Ping(ctx) == nil {
+				continue
+			}
+			if ctx.Err() != nil {
+				return
+			}
+			if droppedAt.IsZero() {
+				droppedAt = s.now()
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(revocationRetryBackoff):
+			}
+			continue
+		}
+		// The read succeeded, so the subscription is live again. When it
+		// had dropped, the gap is the propagation outage §27.8 reports.
+		if !droppedAt.IsZero() {
+			s.recordPropagation("resubscribe", s.now().Sub(droppedAt).Seconds())
+			droppedAt = time.Time{}
+		}
+		if m, ok := msg.(*redis.Message); ok {
+			s.handleRevocationMessage(m.Channel, m.Payload)
 		}
 	}
 }
 
-// drainRevocations consumes pub/sub messages until ch closes or ctx is
-// cancelled, applying each to the negative cache and propagation
-// histogram via handleRevocationMessage.
-func (s *RedisSessionStore) drainRevocations(ctx context.Context, ch <-chan *redis.Message) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case msg, ok := <-ch:
-			if !ok {
-				return
-			}
-			s.handleRevocationMessage(msg.Channel, msg.Payload)
-		}
+// isReceiveTimeout reports whether err is the read deadline expiring on
+// an idle subscription rather than a connection failure. go-redis leaves
+// such a connection usable, so the caller must not treat it as a drop.
+func isReceiveTimeout(err error) bool {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
 	}
+	var netErr net.Error
+	return errors.As(err, &netErr) && netErr.Timeout()
 }
 
 // handleRevocationMessage applies one received revocation pub/sub
