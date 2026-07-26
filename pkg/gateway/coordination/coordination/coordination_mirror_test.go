@@ -79,8 +79,10 @@ func mustCreate(t *testing.T, store sessionstore.Store, s sessionstore.Session) 
 func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, CoordinationGeneration: 2})
-	mustCreate(t, sessions, sessionstore.Session{ID: "s2", TenantID: "acme", State: session.StateRunning})
+	// The running sessions carry a persisted pod assignment so the sweep
+	// adopts their lapsed lease as a still-running-pod orphan and mirrors it.
+	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-s1", CoordinationGeneration: 2})
+	mustCreate(t, sessions, sessionstore.Session{ID: "s2", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-s2"})
 	mustCreate(t, sessions, sessionstore.Session{ID: "done", TenantID: "acme", State: session.StateCompleted})
 
 	mirror := coordlease.NewMemoryStore(nil)
@@ -124,17 +126,22 @@ func TestSweepMirrorsHeldLeasesAndReleasesTerminal_spec_10_1_165(t *testing.T) {
 // spec: §4.6.1 — the sweep records this replica's dialable inter-replica
 // address as the mirror row's coordinator_address alongside its identity,
 // so the eviction-forward hop resolves a routable target for the current
-// coordinator.
+// coordinator. Co-location makes the coordinator the binding holder, so the
+// sweep mirrors the session this replica binds rather than an arbitrary
+// non-terminal session it happens to acquire.
 func TestSweepRecordsInterReplicaAddressInMirror_spec_4_6_1(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
 	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning})
 
+	bindings := newFakeBindings()
+	bindings.bound["s1"] = true
 	mirror := coordlease.NewMemoryStore(nil)
 	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, newFakeLeases(), Options{
 		ReplicaID:           "rep-1",
 		InterReplicaAddress: "10.0.0.1:50054",
 		Mirror:              mirror,
+		Bindings:            bindings,
 	})
 	if _, err := sw.Sweep(ctx); err != nil {
 		t.Fatalf("Sweep: %v", err)
@@ -152,29 +159,43 @@ func TestSweepRecordsInterReplicaAddressInMirror_spec_4_6_1(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 — a cross-replica lease handoff overwrites both the
+// spec: §4.6.1 — a cross-replica coordinator handoff overwrites both the
 // coordinator identity and its dialable address in the mirror, so the
 // eviction-forward hop dials the new holder rather than a stale predecessor.
+// Under co-location the handoff is the binding moving: the lease travels
+// with the binding, so the replica that binds the session next is the
+// coordinator the mirror must name.
 func TestSweepHandoffOverwritesMirrorAddress_spec_4_6_1(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
 	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning})
 
 	mirror := coordlease.NewMemoryStore(nil)
-	// rep-1 coordinates s1 first and records its own address.
-	rep1Leases := newFakeLeases()
-	sw1 := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, rep1Leases, Options{
-		ReplicaID: "rep-1", InterReplicaAddress: "10.0.0.1:50054", Mirror: mirror,
+	leases := newFakeLeases()
+
+	// rep-1 binds s1, so its sweep renews the co-located lease and records
+	// its own identity and address.
+	rep1Bindings := newFakeBindings()
+	rep1Bindings.bound["s1"] = true
+	sw1 := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, leases, Options{
+		ReplicaID: "rep-1", InterReplicaAddress: "10.0.0.1:50054",
+		Mirror: mirror, Bindings: rep1Bindings,
 	})
 	if _, err := sw1.Sweep(ctx); err != nil {
 		t.Fatalf("rep-1 Sweep: %v", err)
 	}
 
-	// The lease lapses and rep-2 acquires it on its own sweep, overwriting
-	// the mirror with its identity and address.
-	rep2Leases := newFakeLeases()
-	sw2 := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, rep2Leases, Options{
-		ReplicaID: "rep-2", InterReplicaAddress: "10.0.0.2:50054", Mirror: mirror,
+	// The binding moves to rep-2 and rep-1 relinquishes the co-located
+	// lease, so rep-2's sweep overwrites the mirror with its identity and
+	// address.
+	if err := leases.Release(ctx, "acme", "s1", "rep-1"); err != nil {
+		t.Fatalf("release rep-1 lease: %v", err)
+	}
+	rep2Bindings := newFakeBindings()
+	rep2Bindings.bound["s1"] = true
+	sw2 := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, leases, Options{
+		ReplicaID: "rep-2", InterReplicaAddress: "10.0.0.2:50054",
+		Mirror: mirror, Bindings: rep2Bindings,
 	})
 	if _, err := sw2.Sweep(ctx); err != nil {
 		t.Fatalf("rep-2 Sweep: %v", err)
@@ -195,8 +216,8 @@ func TestSweepHandoffOverwritesMirrorAddress_spec_4_6_1(t *testing.T) {
 func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	mustCreate(t, sessions, sessionstore.Session{ID: "mine", TenantID: "acme", State: session.StateRunning})
-	mustCreate(t, sessions, sessionstore.Session{ID: "theirs", TenantID: "acme", State: session.StateRunning})
+	mustCreate(t, sessions, sessionstore.Session{ID: "mine", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-mine"})
+	mustCreate(t, sessions, sessionstore.Session{ID: "theirs", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-theirs"})
 
 	leases := newFakeLeases()
 	// "theirs" is already held by rep-2.
@@ -220,7 +241,7 @@ func TestSweepSkipsForeignLeaseInMirror_spec_10_1_165(t *testing.T) {
 func TestSweepNilMirrorIsNoop_spec_10_1_165(t *testing.T) {
 	ctx := context.Background()
 	sessions := memstore.New()
-	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning})
+	mustCreate(t, sessions, sessionstore.Session{ID: "s1", TenantID: "acme", State: session.StateRunning, PodAssignment: "pod-s1"})
 	sw := NewSweeper(fakeTenants{ids: []string{"acme"}}, sessions, newFakeLeases(), Options{ReplicaID: "rep-1"})
 	if held, err := sw.Sweep(ctx); err != nil || held != 1 {
 		t.Fatalf("Sweep with nil mirror: held=%d err=%v, want 1, nil", held, err)

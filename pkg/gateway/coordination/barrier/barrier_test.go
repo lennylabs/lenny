@@ -69,8 +69,8 @@ func TestDispatchHappyPath_spec_10_1(t *testing.T) {
 	mx := newFakeMetrics()
 	c := New(&fakeLister{
 		targets: []Target{
-			{TenantID: "acme", SessionID: "s1", CoordinationGeneration: 2, PodAddr: "10.0.0.1"},
-			{TenantID: "acme", SessionID: "s2", CoordinationGeneration: 2, PodAddr: "10.0.0.2"},
+			{TenantID: "acme", SessionID: "s1", CoordinationGeneration: 2},
+			{TenantID: "acme", SessionID: "s2", CoordinationGeneration: 2},
 		},
 		source: SourcePostgres,
 	}, disp, meta, mx, nil)
