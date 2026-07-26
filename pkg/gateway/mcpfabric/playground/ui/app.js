@@ -1034,5 +1034,18 @@
     );
   }
 
+  // Test-only accessor for the Node-based unit test under ui/app.test.js
+  // (spec: §27.9, "Copy as client SDK snippet ... never includes
+  // credentials"). This branch runs only when the file is loaded
+  // through Node's CommonJS `require` (the browser never defines
+  // `module`), so it adds no runtime path to the served bundle. It
+  // exposes `state` so a test can set a live bearer before generating
+  // a snippet, and skips `start()` because there is no DOM to render
+  // into outside a browser.
+  if (typeof module !== "undefined" && module.exports) {
+    module.exports = { state: state, sdkSnippet: sdkSnippet, copySnippet: copySnippet, snippetLangLabel: snippetLangLabel };
+    return;
+  }
+
   start();
 })();

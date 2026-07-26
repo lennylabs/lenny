@@ -4163,7 +4163,8 @@
         "pkg/gateway/mcpfabric/mcp/websocket_test.go::TestWebSocketPlaygroundEgressPreservesSchema_spec_27_9_251",
         "pkg/gateway/mcpfabric/mcp/websocket_test.go::TestWebSocketNonPlaygroundEgressUnredacted_spec_27_9_251",
         "tests/tier9_security/playground_test.go::TestPlaygroundSecurityPostureOnLiveCluster",
-        "tests/tier9_security/playground_test.go::TestPlaygroundLiveChatSessionOverWebSocket"
+        "tests/tier9_security/playground_test.go::TestPlaygroundLiveChatSessionOverWebSocket",
+        "pkg/gateway/mcpfabric/playground/ui_snippet_test.go::TestSDKSnippetGeneratorNeverEmbedsALiveCredential"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
