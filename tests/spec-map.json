@@ -2802,11 +2802,13 @@
       "tests": [
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
-        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache"
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
+        "pkg/chart/values/schema_test.go::TestRejectsDevTenantIDPattern_spec_17_6_373"
       ],
       "packages": [
         "charts/lenny",
-        "cmd/lenny-ctl"
+        "cmd/lenny-ctl",
+        "pkg/chart/values"
       ],
       "blocked_until_phase": "4.5"
     },
@@ -4011,6 +4013,7 @@
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBadAuthMode",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateRejectsBearerTTLOutOfBound",
         "pkg/gateway/mcpfabric/playground/playground_test.go::TestConfigValidateDevTenantRules",
+        "pkg/chart/values/schema_test.go::TestRejectsDevTenantIDPattern_spec_17_6_373",
         "tests/tier4_integration/playground_disabled_test.go::TestPlaygroundDisabledReturns404OnAllRoutes_spec_27_2",
         "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnMalformedDevTenantID_spec_27_2",
         "tests/tier4_integration/playground_startup_fatal_test.go::TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3",
@@ -4019,10 +4022,11 @@
       "packages": [
         "pkg/gateway/mcpfabric/playground",
         "cmd/lenny-gateway",
-        "pkg/embedded/manifests"
+        "pkg/embedded/manifests",
+        "pkg/chart/values"
       ],
       "blocked_until_phase": "5",
-      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds. The tier-4 test drives the real cmd/lenny-gateway binary with playground.enabled left at its default (false) and asserts GET /playground/, GET /playground/app.js, and POST /v1/playground/token all 404 because the routes are never mounted. TestPlaygroundStartupFatalOnMalformedDevTenantID_spec_27_2 and TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drive the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit, added alongside the existing StartWith long-running helper) to assert the §27.2 layer-3 startup-fatal backstop at the actual process boundary rather than at the unit-level playground.Config.Validate() call: a malformed --playground-dev-tenant-id exits non-zero naming LENNY_PLAYGROUND_DEV_TENANT_INVALID, and authMode=dev without --dev-mode exits non-zero naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN. Both fatal checks run before playground.NewMetrics() registration, so neither is blocked by the unrelated §16.1.1 authMode-metrics-label crash-loop noted on the parent \"27\" entry."
+      "notes": "playground.enabled gating, authMode and devTenantId validation, bearerTtlSeconds bounds. TestRejectsDevTenantIDPattern_spec_17_6_373 pins the Helm values.schema.json pattern for playground.devTenantId byte-for-byte against the canonical §10.2 tenant_id regex (exported as pkg/auth.TenantIDPatternString) and exercises the slash and overlong-value rejection cases named in §27.2. The tier-4 test drives the real cmd/lenny-gateway binary with playground.enabled left at its default (false) and asserts GET /playground/, GET /playground/app.js, and POST /v1/playground/token all 404 because the routes are never mounted. TestPlaygroundStartupFatalOnMalformedDevTenantID_spec_27_2 and TestPlaygroundStartupFatalOnDevAuthModeWithoutDevMode_spec_27_3 drive the real cmd/lenny-gateway binary to completion (tests/testinfra/gateway.RunToExit, added alongside the existing StartWith long-running helper) to assert the §27.2 layer-3 startup-fatal backstop at the actual process boundary rather than at the unit-level playground.Config.Validate() call: a malformed --playground-dev-tenant-id exits non-zero naming LENNY_PLAYGROUND_DEV_TENANT_INVALID, and authMode=dev without --dev-mode exits non-zero naming LENNY_PLAYGROUND_DEV_MODE_FORBIDDEN. Both fatal checks run before playground.NewMetrics() registration, so neither is blocked by the unrelated §16.1.1 authMode-metrics-label crash-loop noted on the parent \"27\" entry."
     },
     "27.3": {
       "title": "Web Playground — Authentication",

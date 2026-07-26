@@ -248,9 +248,17 @@ func RolesGrant(roles []Role, perm Permission) bool {
 	return false
 }
 
-// tenantIDPattern is the regex from §10.2: `^[a-zA-Z0-9_-]{1,128}$`.
-// Enforced at every boundary that ingests a tenant identifier.
-var tenantIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
+// TenantIDPatternString is the canonical §10.2 tenant_id regular
+// expression, exported so packages that maintain their own copy of this
+// pattern for a different enforcement boundary (such as the Helm values
+// schema generator in pkg/chart/values, which encodes it as a JSON
+// Schema `pattern` keyword) can pin their copy against this one in a
+// contract test rather than let the copies drift apart silently.
+const TenantIDPatternString = `^[a-zA-Z0-9_-]{1,128}$`
+
+// tenantIDPattern is the regex from §10.2. Enforced at every boundary
+// that ingests a tenant identifier.
+var tenantIDPattern = regexp.MustCompile(TenantIDPatternString)
 
 // ValidateTenantID reports whether s satisfies the §10.2 format
 // constraint. Returns nil on success and a *TenantIDFormatError

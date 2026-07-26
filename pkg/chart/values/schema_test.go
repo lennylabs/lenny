@@ -3,10 +3,14 @@
 package values
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/auth"
 )
 
 // repoRoot walks up from this test file until it finds the module's
@@ -162,15 +166,69 @@ func TestRejectsUnknownTopLevelKey(t *testing.T) {
 	}
 }
 
+// devTenantIDPattern extracts the compiled JSON Schema `pattern` string
+// for playground.devTenantId from a generated values.schema.json so a
+// test can assert it directly against the canonical §10.2 tenant_id
+// regex, rather than only exercising it indirectly through accept/reject
+// cases.
+func devTenantIDPattern(t *testing.T, schema []byte) string {
+	t.Helper()
+	var doc struct {
+		Properties struct {
+			Playground struct {
+				Properties struct {
+					DevTenantID struct {
+						Pattern string `json:"pattern"`
+					} `json:"devTenantId"`
+				} `json:"properties"`
+			} `json:"playground"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(schema, &doc); err != nil {
+		t.Fatalf("decode schema: %v", err)
+	}
+	return doc.Properties.Playground.Properties.DevTenantID.Pattern
+}
+
 // TestRejectsDevTenantIDPattern enforces the §17.6 line 373 schema
 // constraint: devTenantId must match the canonical tenant_id regex.
+//
+// spec: §27.2 line 48 — the Helm `values.schema.json` pattern for
+// devTenantId "matches the canonical `tenant_id` regex at §10.2 ...
+// so a typo (whitespace, `.`, slash, overlong value) is rejected at
+// `helm install` / `helm upgrade` / `helm install --dry-run` time".
+// spec: §10.2 line 211 — the canonical pattern is
+// `^[a-zA-Z0-9_-]{1,128}$`.
 func TestRejectsDevTenantIDPattern_spec_17_6_373(t *testing.T) {
 	schema := mustSchema(t)
+
+	// Pin the schema's pattern string byte-for-byte against the §10.2
+	// implementation (pkg/auth.TenantIDPatternString) so the two copies
+	// cannot drift apart (e.g. one silently gaining a `.` or a wider
+	// length bound) without failing here.
+	if got, want := devTenantIDPattern(t, schema), auth.TenantIDPatternString; got != want {
+		t.Fatalf("playground.devTenantId schema pattern %q does not match the canonical §10.2 tenant_id regex %q", got, want)
+	}
+
 	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: \"bad.tenant\"\n")); err == nil {
 		t.Error("expected devTenantId with a '.' to be rejected by the pattern")
 	}
 	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: \"bad tenant\"\n")); err == nil {
 		t.Error("expected devTenantId with whitespace to be rejected by the pattern")
+	}
+	// spec: §27.2 line 48 names "slash" explicitly among the typos the
+	// pattern must catch.
+	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: \"a/b\"\n")); err == nil {
+		t.Error("expected devTenantId with a '/' to be rejected by the pattern")
+	}
+	// spec: §27.2 line 48 names "overlong value" explicitly; §10.2 line
+	// 211 bounds the pattern to 128 characters, so 129 is the first
+	// rejected length and 128 is the last accepted length.
+	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: \""+strings.Repeat("a", 129)+"\"\n")); err == nil {
+		t.Error("expected a 129-character devTenantId to be rejected by the pattern")
+	}
+	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: \""+strings.Repeat("a", 128)+"\"\n")); err != nil {
+		t.Errorf("expected a 128-character devTenantId to pass: %v", err)
 	}
 	if err := ValidateYAML(schema, []byte("playground:\n  devTenantId: acme\n")); err != nil {
 		t.Errorf("expected a valid devTenantId to pass: %v", err)
