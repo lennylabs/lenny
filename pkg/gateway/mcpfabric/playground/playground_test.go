@@ -261,6 +261,11 @@ func TestDevModeReadyGateRejectsUnseededTenant(t *testing.T) {
 // process restart. The gateway does not cache the earlier negative
 // lookup: it re-consults the registry on every request, so no
 // additional signal beyond the row appearing is required to recover.
+//
+// spec: §27.2 (layer-4 Ready-gate self-heal) — "The gateway re-checks
+// tenant existence on every /playground/* request ... so the 503
+// self-heals the instant the bootstrap Job commits the tenant row; no
+// gateway restart or rollout is required."
 func TestDevModeReadyGateSelfHealsOnceTenantSeeded(t *testing.T) {
 	signer := devSigner()
 	tenants := fakeTenants{registered: map[string]bool{}} // acme not seeded yet
