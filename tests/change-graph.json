@@ -557,7 +557,13 @@
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
       "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."],
-      "integration": ["tests/tier4_integration/playground_frame_redaction_test.go"]
+      "integration": [
+        "tests/tier4_integration/playground_authmode_matrix_test.go",
+        "tests/tier4_integration/playground_client_closed_test.go",
+        "tests/tier4_integration/playground_frame_redaction_test.go",
+        "tests/tier4_integration/playground_ws_carrier_test.go",
+        "tests/tier4_integration/playground_ws_revocation_test.go"
+      ]
     },
     "pkg/gateway/mcpfabric/playground": {
       "static": [
@@ -566,7 +572,19 @@
       ],
       "unit": ["pkg/gateway/mcpfabric/playground/..."],
       "contract": ["tests/tier3_contract/playground/..."],
-      "integration": ["tests/tier4_integration/playground_frame_redaction_test.go"]
+      "integration": [
+        "tests/tier4_integration/playground_apikey_mode_startup_test.go",
+        "tests/tier4_integration/playground_authmode_matrix_test.go",
+        "tests/tier4_integration/playground_client_closed_test.go",
+        "tests/tier4_integration/playground_dev_ready_gate_test.go",
+        "tests/tier4_integration/playground_disabled_test.go",
+        "tests/tier4_integration/playground_frame_redaction_test.go",
+        "tests/tier4_integration/playground_idle_override_test.go",
+        "tests/tier4_integration/playground_rollforward_test.go",
+        "tests/tier4_integration/playground_startup_fatal_test.go",
+        "tests/tier4_integration/playground_ws_carrier_test.go",
+        "tests/tier4_integration/playground_ws_revocation_test.go"
+      ]
     },
     "pkg/ops/auditrate": {
       "unit": ["pkg/ops/auditrate/..."],

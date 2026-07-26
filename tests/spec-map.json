@@ -4214,7 +4214,8 @@
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundResponsesCarryExactSpecCSP",
         "tests/tier3_contract/playground/playground_test.go::TestPlaygroundCSPConnectSrcNamesOnlySelfAndTheGatewayWebSocketHost",
         "tests/tier5_e2e_kind/playground_assets_test.go::TestPlaygroundAssetCacheHeadersOnLiveCluster",
-        "charts/lenny/tests/gateway-deployment_test.yaml"
+        "charts/lenny/tests/gateway-deployment_test.yaml",
+        "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackagesClaimTier4PlaygroundSuite"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4248,6 +4249,7 @@
         "pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestAuthoritativeRedisCheckSamplesPropagationAtMostOncePerRevocation_spec_27_8_244",
         "pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestDroppedSubscriptionEmitsResubscribeOutcome_spec_27_3_1_98",
         "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackageSelectsUnitTier",
+        "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackagesClaimTier4PlaygroundSuite",
         "tests/tier0_static/spec_map_playground_metrics_tests_test.go::TestSpecMap278ReferencesRevocationPropagationTests"
       ],
       "packages": [
@@ -4278,7 +4280,8 @@
         "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeWarning_F_27_9_2",
         "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeAckSuppresses_F_27_9_2",
         "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDevEscape_F_27_9_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDisabled_F_27_9_2"
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDisabled_F_27_9_2",
+        "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackagesClaimTier4PlaygroundSuite"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4292,7 +4295,8 @@
       "title": "Web Playground — Roll-Forward Notes",
       "spec_file": "spec/27_web-playground.md",
       "tests": [
-        "tests/tier4_integration/playground_rollforward_test.go::TestPlaygroundDisableDoesNotAffectInFlightSessions_spec_27_10"
+        "tests/tier4_integration/playground_rollforward_test.go::TestPlaygroundDisableDoesNotAffectInFlightSessions_spec_27_10",
+        "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackagesClaimTier4PlaygroundSuite"
       ],
       "packages": [
         "pkg/gateway/sessionserver",
