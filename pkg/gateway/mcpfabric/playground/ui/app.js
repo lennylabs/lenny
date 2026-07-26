@@ -1043,19 +1043,22 @@
     );
   }
 
-  // Test-only accessor for the Node-based unit tests under ui/app.test.js
-  // and ui/screens.test.js (spec: §27.9, "Copy as client SDK snippet ...
-  // never includes credentials"; spec: §27.4, the three-screen SPA
-  // surface). This branch runs only when the file is loaded through
-  // Node's CommonJS `require` (the browser never defines `module`), so
-  // it adds no runtime path to the served bundle. It exposes `state` so
-  // a test can set a live bearer or the picker's server config before
-  // driving a screen, `renderRuntimePicker` as the entry point a
-  // DOM-driven test walks from (the picker's "use this runtime" button
-  // calls renderSessionConfig, whose "create session" button calls
-  // renderChat, so no further screen functions need exporting), and
-  // skips `start()` because there is no DOM to render into outside a
-  // browser.
+  // Test-only accessor for the Node-based unit tests under
+  // uitests/app.test.js and uitests/screens.test.js. Those files live
+  // outside the ui/ subtree the gateway embeds and serves (spec: §27.7,
+  // static assets are served from the embedded FS), so they are never
+  // shipped to a browser. They cover spec: §27.9, "Copy as client SDK
+  // snippet ... never includes credentials", and spec: §27.4, the
+  // three-screen SPA surface. This branch runs only when the file is
+  // loaded through Node's CommonJS `require` (the browser never defines
+  // `module`), so it adds no runtime path to the served bundle. It
+  // exposes `state` so a test can set a live bearer or the picker's
+  // server config before driving a screen, and `renderRuntimePicker` as
+  // the entry point a DOM-driven test walks from (the picker's "use
+  // this runtime" button calls renderSessionConfig, whose "create
+  // session" button calls renderChat, so no further screen functions
+  // need exporting), and skips `start()` because there is no DOM to
+  // render into outside a browser.
   if (typeof module !== "undefined" && module.exports) {
     module.exports = {
       state: state,
