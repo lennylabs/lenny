@@ -140,6 +140,72 @@ func TestAuthoritativeRedisCheckSamplesPropagationAtMostOncePerRevocation_spec_2
 	}
 }
 
+// TestAuthoritativeRedisObservationRecordsRedisAuthoritativeOutcome
+// holds the histogram to the third value of its declared outcome
+// domain. A peer replica that runs no subscription has no pub/sub
+// message to learn from, so the authoritative Redis lookup on its auth
+// hot path is where it first observes the revocation. The metrics table
+// names that lookup as an observation point of the same histogram, and
+// redis_authoritative is the only declared label that describes it, so
+// the observation must be sampled under that outcome.
+//
+// spec: §27.8 — "End-to-end propagation latency from when a revocation
+// is written on the originating replica to when peer replicas observe
+// it on their auth hot path (authoritative Redis `GET` and/or
+// pub/sub-warmed negative cache). `outcome ∈ {pubsub_delivered,
+// redis_authoritative, resubscribe}`."
+func TestAuthoritativeRedisObservationRecordsRedisAuthoritativeOutcome_spec_27_8_244(t *testing.T) {
+	t.Skip("production emits no redis_authoritative sample and §27.3.1 stores the revocation marker presence-only, so a cold-cache peer has no origin write instant to measure from; the §27.8 outcome enumeration and the emission set await reconciliation")
+
+	mr := miniredis.RunT(t)
+	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = client.Close() })
+
+	publisher := NewRedisSessionStore(client)
+	// The peer never subscribes, so the pub/sub accelerator cannot warm
+	// its cache and the authoritative Redis lookup is its only route to
+	// observing the revocation.
+	peer := NewRedisSessionStore(client)
+	var mu sync.Mutex
+	type sample struct {
+		outcome string
+		seconds float64
+	}
+	var samples []sample
+	peer.propObserver = func(outcome string, seconds float64) {
+		mu.Lock()
+		samples = append(samples, sample{outcome, seconds})
+		mu.Unlock()
+	}
+
+	ctx := context.Background()
+	const tenant = "acme"
+	const jti = "jti-authoritative-outcome"
+	if err := publisher.RevokeSession(ctx, tenant, "sess-authoritative-outcome", []string{jti}, time.Minute); err != nil {
+		t.Fatalf("RevokeSession: %v", err)
+	}
+
+	revoked, err := peer.IsBearerRevoked(ctx, tenant, jti)
+	if err != nil || !revoked {
+		t.Fatalf("peer IsBearerRevoked = %v, %v; want true, nil", revoked, err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(samples) != 1 {
+		t.Fatalf("cold-cache peer observing a revocation through the authoritative Redis lookup recorded %d propagation samples %v, want exactly one", len(samples), samples)
+	}
+	if samples[0].outcome != "redis_authoritative" {
+		t.Errorf("authoritative-Redis observation recorded outcome %q, want redis_authoritative", samples[0].outcome)
+	}
+	if samples[0].seconds < 0 {
+		t.Errorf("authoritative-Redis observation recorded a negative propagation latency %v", samples[0].seconds)
+	}
+	if !slices.Contains(spec278PropagationOutcomes, samples[0].outcome) {
+		t.Errorf("propagation sample carried outcome %q, outside the §27.8 domain %v", samples[0].outcome, spec278PropagationOutcomes)
+	}
+}
+
 // TestDroppedSubscriptionEmitsResubscribeOutcome pins the §27.3.1
 // requirement that a replica whose revocation subscription drops
 // re-subscribes and reports the outage on the §27.8 propagation

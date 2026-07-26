@@ -25,8 +25,11 @@ import (
 // latency to zero, the cross-replica case that holds every emitted
 // outcome label inside the domain the metrics table declares, the
 // cold-cache peer whose per-request authoritative Redis check must not
-// add a sample per request, and the dropped subscription that
-// re-subscribes and reports the outage under outcome=resubscribe.
+// add a sample per request, the cold-cache peer whose authoritative
+// Redis observation must be sampled under outcome=redis_authoritative
+// (currently skipped, see the §27.8 spec-map note), and the dropped
+// subscription that re-subscribes and reports the outage under
+// outcome=resubscribe.
 // `lenny-test validate-maps` only walks
 // tests/tier2_component and above for orphaned test files, so an
 // in-package test under pkg/ can encode a §27.8 guarantee and still be
@@ -43,6 +46,7 @@ var propagationHistogramTests = []string{
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_test.go::TestSubscribeAllRevocationsWarmsCacheForArbitraryTenant_spec_27_6_204",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestRevocationPropagationOutcomesStayWithinSpec278Domain_spec_27_8_244",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestAuthoritativeRedisCheckSamplesPropagationAtMostOncePerRevocation_spec_27_8_244",
+	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestAuthoritativeRedisObservationRecordsRedisAuthoritativeOutcome_spec_27_8_244",
 	"pkg/gateway/mcpfabric/playground/revocation_propagation_outcome_test.go::TestDroppedSubscriptionEmitsResubscribeOutcome_spec_27_3_1_98",
 }
 
