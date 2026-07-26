@@ -11,7 +11,7 @@ import (
 )
 
 // spec: §15.2 line 1295 — interrupt_session is a registered §15.2 tool
-// (the playground's Interrupt button targets it, §27.5 / F-27.5.3). A
+// (the playground's Interrupt button targets it, §27.5). A
 // running session transitions to suspended, the same edge the REST
 // POST /v1/sessions/{id}/interrupt drives.
 func TestInterruptSessionTool_runningToSuspended(t *testing.T) {
@@ -60,7 +60,7 @@ func TestInterruptSessionTool_unknownSession(t *testing.T) {
 }
 
 // spec: §15.2 line 1303 — cancel_session force-cancels a session, marking
-// it cancelled (the REST DELETE /v1/sessions/{id} edge). F-27.5.3.
+// it cancelled (the REST DELETE /v1/sessions/{id} edge).
 func TestCancelSessionTool_marksCancelled(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_x", session.StateRunning, "")
@@ -82,7 +82,7 @@ func TestCancelSessionTool_marksCancelled(t *testing.T) {
 // spec: §27.6 line 202 — the playground_client_closed reason is a
 // best-effort hint. A hint on an already-terminal session is an
 // idempotent no-op rather than an INVALID_STATE_TRANSITION error, because
-// the dropped-frame fallback is the §27.6 idle-timeout path. F-27.6.5.
+// the dropped-frame fallback is the §27.6 idle-timeout path.
 func TestCancelSessionTool_bestEffortHintOnTerminalIsNoOp(t *testing.T) {
 	srv, store := newMCP(t)
 	mkSession(t, store, "sess_term", session.StateCompleted, "")
@@ -103,7 +103,6 @@ func TestCancelSessionTool_bestEffortHintOnTerminalIsNoOp(t *testing.T) {
 
 // spec: §27.6 line 202 — a best-effort hint for a session the gateway no
 // longer knows about (already reclaimed) is accepted, not RESOURCE_NOT_FOUND.
-// F-27.6.5.
 func TestCancelSessionTool_bestEffortHintOnUnknownIsAccepted(t *testing.T) {
 	srv, _ := newMCP(t)
 	resp := call(t, srv.Handler(), "lenny/cancel_session",

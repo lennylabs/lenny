@@ -73,7 +73,7 @@ func TestListRuntimesEmptyWhenUnwired(t *testing.T) {
 // §27.5 line 190 rule: an origin=playground caller's GET /v1/runtimes is
 // additionally filtered by playground.allowedRuntimes (modeled by the fake's
 // hidden runtime), while a non-playground caller on the same shared §9.1
-// surface sees every runtime. F-27.4.1.
+// surface sees every runtime.
 func TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{Name: "claude-agent", Type: runtimestore.TypeAgent})
@@ -117,7 +117,6 @@ func TestListRuntimesPlaygroundAllowedRuntimesFilter_spec_27_5_190(t *testing.T)
 // only §5.1 version-bearing field (minPlatformVersion) is surfaced for the
 // picker's version line. A runtime that declares neither omits both keys (so
 // the SPA falls back to the free-form editor and shows no version line).
-// F-27.4.2 / F-27.4.6.
 func TestListRuntimesSurfacesOptionsSchemaAndVersion_spec_27_4(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	_ = runtimes.Create(context.Background(), runtimestore.Runtime{

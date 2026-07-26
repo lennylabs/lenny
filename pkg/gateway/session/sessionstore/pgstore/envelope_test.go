@@ -71,7 +71,6 @@ func TestRequestEnvelopeRoundTrip_spec_14_1(t *testing.T) {
 	}
 	// spec: §27.6 line 203 — the origin=playground label survives the bundle
 	// round trip so a replica that reloads the row keeps the audit label.
-	// F-27.6.8.
 	if out.Origin != in.Origin {
 		t.Errorf("Origin: got %q, want %q", out.Origin, in.Origin)
 	}
@@ -79,7 +78,6 @@ func TestRequestEnvelopeRoundTrip_spec_14_1(t *testing.T) {
 
 // spec: §27.6 line 203 — a session carrying only the origin=playground label
 // (no §14 envelope fields) still serializes the bundle so the label is durable.
-// F-27.6.8.
 func TestRequestEnvelopeOriginOnly_spec_27_6(t *testing.T) {
 	arg, ok := requestEnvelopeArg(sessionstore.Session{Origin: "playground"}).(string)
 	if !ok {

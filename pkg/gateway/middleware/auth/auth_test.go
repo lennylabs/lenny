@@ -473,7 +473,7 @@ func TestDevHeadersPropagatesGroupsOnlyWhenAllowDevRolesIsSet(t *testing.T) {
 // playground session-capability JWT must reach handlers as Principal.Origin so
 // the session-creation path can detect a /playground/*-originated session and
 // apply the §27.6 caps + origin=playground label. A token without the claim
-// resolves to an empty Origin. F-27.3.3.
+// resolves to an empty Origin.
 func TestBearerCarriesOriginClaim_spec_27_3(t *testing.T) {
 	secret := []byte("secret")
 	signer := jwt.NewHMACSigner("test", secret)

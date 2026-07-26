@@ -446,8 +446,7 @@ func TestFullRevokeWithoutFanOutDepsStillSucceeds(t *testing.T) {
 }
 
 // spec: §27.6 line 204 — user.invalidated drives the §27 playground
-// revocation primitive for every session the user holds. F-27.6.4,
-// F-27.3.2.
+// revocation primitive for every session the user holds.
 func TestFullRevokeRevokesPlaygroundSessions(t *testing.T) {
 	pg := &fakePlaygroundRevoker{revoked: 2}
 	users := userstore.NewMemory()

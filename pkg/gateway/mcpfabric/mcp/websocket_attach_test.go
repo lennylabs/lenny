@@ -62,11 +62,11 @@ func sessionEventParams(t *testing.T, ctx context.Context, conn *websocket.Conn)
 	return params
 }
 
-// spec: §15.2 lines 1331/1370; §27.5 R2; F-27.4.7 — an attach_session
+// spec: §15.2 lines 1331/1370; §27.5 R2 — an attach_session
 // tools/call over the WebSocket acks, replays the retained backlog as
 // notifications/lenny/sessionEvent frames, then pushes live events on the
 // same socket. This is the stream the playground chat consumes.
-func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) {
+func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	// message_delivered events project to the generic
 	// notifications/lenny/sessionEvent frame (they are outside the §15.0
@@ -110,7 +110,7 @@ func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) 
 	}
 }
 
-// spec: §15.2 line 1331; F-27.4.7 — when the resume cursor sits below the
+// spec: §15.2 line 1331 — when the resume cursor sits below the
 // oldest retained event the WebSocket leg emits one gap_detected frame ahead
 // of the backlog, mirroring the SSE leg.
 func TestWebSocketAttachGapDetected_spec_15_2(t *testing.T) {
@@ -144,7 +144,7 @@ func TestWebSocketAttachGapDetected_spec_15_2(t *testing.T) {
 	}
 }
 
-// spec: §7.2 isolation; F-27.4.7 — a foreign or missing session is rejected
+// spec: §7.2 isolation — a foreign or missing session is rejected
 // with a structured JSON-RPC error before any event frame, and the
 // connection stays usable for a corrected next frame.
 func TestWebSocketAttachAuthorizeRejection_spec_7_2(t *testing.T) {
@@ -173,7 +173,7 @@ func TestWebSocketAttachAuthorizeRejection_spec_7_2(t *testing.T) {
 	}
 }
 
-// spec: §4.1 / §15.2; F-27.4.7 — request/response frames keep working while
+// spec: §4.1 / §15.2 — request/response frames keep working while
 // an attach push is live on the same socket. The read loop dispatches a ping
 // while the push goroutine tails the bus.
 func TestWebSocketAttachInterleavesWithRequestResponse(t *testing.T) {
@@ -201,7 +201,7 @@ func TestWebSocketAttachInterleavesWithRequestResponse(t *testing.T) {
 	}
 }
 
-// spec: §15.2; F-27.4.7 — an attach_session with no sessionId is a
+// spec: §15.2 — an attach_session with no sessionId is a
 // VALIDATION_ERROR and never opens a stream.
 func TestWebSocketAttachMissingSessionID(t *testing.T) {
 	bus := sessionevents.NewBus(16)
@@ -224,7 +224,7 @@ func TestWebSocketAttachMissingSessionID(t *testing.T) {
 	}
 }
 
-// spec: §27.9 line 251; F-27.4.7 — a pushed session-event frame on a
+// spec: §27.9 line 251 — a pushed session-event frame on a
 // playground-origin connection is run through the same §16.4 redaction the
 // request/response path applies, so a credential field in the event payload
 // reaches the raw-frame inspector scrubbed.

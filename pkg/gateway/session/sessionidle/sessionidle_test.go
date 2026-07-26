@@ -106,7 +106,7 @@ func TestResolverPlaygroundOverrideTightensPolicy_spec_27_6_201(t *testing.T) {
 
 // spec: 27.6 line 201 (playground idle override) — the playground override
 // applies against the maxSessionAge default too: a session whose only bound
-// is the age-default still gets the tighter playground cap. F-27.6.1.
+// is the age-default still gets the tighter playground cap.
 func TestResolverPlaygroundOverrideTightensAgeDefault_spec_27_6_201(t *testing.T) {
 	// No idle bound declared; the default is the 3600s age cap, which the
 	// 300s playground override tightens.

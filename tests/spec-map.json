@@ -4037,13 +4037,13 @@
         "pkg/gateway/sessionserver/playground_runtime_visible_test.go::TestCreateNonPlaygroundIgnoresAllowedRuntimes_spec_27_5_190",
         "pkg/gateway/sessionserver/playground_runtime_visible_test.go::TestCreatePlaygroundAdmitsVisibleRuntime_spec_27_5_190",
         "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigSkipsWhenDisabled_spec_27_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigDevModeForbidden_F_27_2_5",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigDevTenantRequired_F_27_2_4",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigDevTenantInvalid_F_27_2_4",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigMultiTenantDefaultRejected_F_27_2_6",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigNoLongerEmitsAPIKeyWarning_F_27_9_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigOIDCHappy_F_27_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigUnknownAuthMode_F_27_2"
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigDevModeForbidden_spec_27_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigDevTenantRequired_spec_27_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigDevTenantInvalid_spec_27_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigMultiTenantDefaultRejected_spec_27_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigNoLongerEmitsAPIKeyWarning_spec_27_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigOIDCHappy_spec_27_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundConfigUnknownAuthMode_spec_27_2"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4136,7 +4136,9 @@
         "pkg/gateway/mcpfabric/playground/ui_screens_test.go::TestPlaygroundUIWalksThreeScreensAndExercisesChatControls",
         "tests/tier11_docs/playground_delegation_scope_test.go::TestPlaygroundDelegationGateWordingAgrees",
         "tests/tier11_docs/playground_delegation_scope_test.go::TestPlaygroundDocsDoNotDocumentDelegationGate",
-        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestsCiteOnlyDurableSpecSections"
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestSection27TestsCiteOnlyDurableSpecSections",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestFilesCiteOnlyDurableSpecSections",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestBuildGapIDPatternsMatchBothSpellings"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4154,7 +4156,9 @@
         "tests/tier4_integration/playground_ws_carrier_test.go::TestPlaygroundBearerCarrierRedactedFromAccessLogAndAudit_spec_27_5",
         "tests/tier4_integration/playground_authmode_matrix_test.go::TestPlaygroundWebSocketCodepathIdenticalAcrossAuthModes_spec_27_5",
         "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapReferencesEveryPlaygroundTestFile",
-        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestsCiteOnlyDurableSpecSections"
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestSection27TestsCiteOnlyDurableSpecSections",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestFilesCiteOnlyDurableSpecSections",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestBuildGapIDPatternsMatchBothSpellings"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4193,7 +4197,9 @@
         "pkg/gateway/sessionserver/playground_caps_internal_test.go::TestMinPositiveInt64",
         "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapSectionsClaimPlaygroundCapAndScopePackages",
         "tests/tier0_static/spec_map_playground_test_files_test.go::TestSpecMapReferencesEveryPlaygroundTestFile",
-        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestsCiteOnlyDurableSpecSections"
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestSection27TestsCiteOnlyDurableSpecSections",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestPlaygroundTestFilesCiteOnlyDurableSpecSections",
+        "tests/tier0_static/playground_test_durable_citations_test.go::TestBuildGapIDPatternsMatchBothSpellings"
       ],
       "packages": [
         "pkg/gateway/mcpfabric/playground",
@@ -4282,10 +4288,10 @@
         "tests/tier9_security/playground_test.go::TestPlaygroundSecurityPostureOnLiveCluster",
         "tests/tier9_security/playground_test.go::TestPlaygroundLiveChatSessionOverWebSocket",
         "pkg/gateway/mcpfabric/playground/ui_snippet_test.go::TestSDKSnippetGeneratorNeverEmbedsALiveCredential",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeWarning_F_27_9_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeAckSuppresses_F_27_9_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDevEscape_F_27_9_2",
-        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDisabled_F_27_9_2",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeWarning_spec_27_9",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeAckSuppresses_spec_27_9",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDevEscape_spec_27_9",
+        "pkg/preflight/playground_test.go::TestCheckPlaygroundAPIKeyModeDisabled_spec_27_9",
         "tests/tier0_static/change_graph_playground_selection_test.go::TestChangeGraphPlaygroundPackagesClaimTier4PlaygroundSuite"
       ],
       "packages": [

@@ -130,7 +130,7 @@ func TestNoCapAndMissingRefsYieldZero_spec_11_3_198(t *testing.T) {
 
 // spec: §14 line 154 / §27.6 line 200 — a per-session timeout override (also
 // the carrier for the playground duration cap) tightens the runtime/pool cap,
-// and an unset (zero) override leaves the resolved cap unchanged. F-27.6.2.
+// and an unset (zero) override leaves the resolved cap unchanged.
 func TestPerSessionTimeoutTightensCap_spec_27_6(t *testing.T) {
 	rts := runtimestore.NewMemory()
 	if err := rts.Create(context.Background(), runtimestore.Runtime{
