@@ -556,11 +556,13 @@
     },
     "pkg/gateway/mcpfabric/mcp": {
       "unit": ["pkg/gateway/mcpfabric/mcp/..."],
-      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."]
+      "contract": ["tests/tier3_contract/rest_mcp_consistency/...", "tests/tier3_contract/multiprotocol_journey/..."],
+      "integration": ["tests/tier4_integration/playground_frame_redaction_test.go"]
     },
     "pkg/gateway/mcpfabric/playground": {
       "static": ["tests/tier0_static/playground_no_offline_assets_test.go"],
-      "unit": ["pkg/gateway/mcpfabric/playground/..."]
+      "unit": ["pkg/gateway/mcpfabric/playground/..."],
+      "integration": ["tests/tier4_integration/playground_frame_redaction_test.go"]
     },
     "pkg/ops/auditrate": {
       "unit": ["pkg/ops/auditrate/..."],
