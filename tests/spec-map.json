@@ -2812,7 +2812,9 @@
       "tests": [
         "cmd/lenny-ctl/...",
         "tests/tier6_e2e_cloud/eks_platform_test.go",
-        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache"
+        "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
+        "tests/tier0_static/change_graph_container_image_selection_test.go::TestChangeGraphRootDockerfileSelectsKindEndToEndTier",
+        "tests/tier0_static/change_graph_container_image_selection_test.go::TestChangeGraphRootDockerfileEntryNamesKindSuites"
       ],
       "packages": [
         "charts/lenny",

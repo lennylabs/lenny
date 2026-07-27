@@ -674,9 +674,15 @@ func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
 		"pkg/", "schemas/", "migrations/", "charts/", "cmd/", "tests/", "docs/", "spec/",
 		"sdks/", "scripts/", "compose/", "deploy/", ".github/",
 	}
+	// Root-level packaging and build files sit outside every canonical
+	// root but still reach test tiers: the repo-root Dockerfile builds
+	// every platform container image the Kind suites deploy
+	// (tests/testinfra/kind/install.sh), so it needs a change-graph
+	// entry the same way go.mod and Makefile do.
 	knownFiles := map[string]bool{
 		"buf.yaml": true, "buf.gen.yaml": true, "go.mod": true, "go.sum": true,
 		".golangci.yml": true, "Makefile": true, "TESTING.md": true, "README.md": true,
+		"Dockerfile": true, ".dockerignore": true,
 	}
 	for key := range doc.Globs {
 		if knownFiles[key] {

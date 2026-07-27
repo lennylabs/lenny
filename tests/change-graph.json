@@ -467,6 +467,14 @@
     "buf.yaml": {
       "static": ["tests/tier0_static/schemas_test.go"]
     },
+    "Dockerfile": {
+      "static": ["tests/tier0_static/change_graph_container_image_selection_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/..."]
+    },
+    ".dockerignore": {
+      "static": ["tests/tier0_static/change_graph_container_image_selection_test.go"],
+      "e2e_kind": ["tests/tier5_e2e_kind/..."]
+    },
     "charts/lenny/": {
       "static": [
         "charts/lenny/tests/...",
