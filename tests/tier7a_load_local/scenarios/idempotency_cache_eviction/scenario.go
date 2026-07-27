@@ -89,7 +89,8 @@ func (s *Scenario) Assert(r *loadgen.Result) error {
 		return fmt.Errorf("§11.5 violated: %d failed sessions", s.failures.Load())
 	}
 	// Exactly one session must have been created across the run; every
-	// other POST was an idempotency cache hit.
+	// other POST either replayed the cached response or was rejected as
+	// in-flight.
 	if s.Env().SessionCount() != 1 {
 		return fmt.Errorf("§11.5 violated: %d sessions created for one key", s.Env().SessionCount())
 	}
