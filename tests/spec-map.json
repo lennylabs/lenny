@@ -775,7 +775,8 @@
         "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15",
         "pkg/gateway/mcpfabric/mcptools/messagerouting_mcp_test.go::TestSendMessageRouting_SuspendedImmediateResumesAndDelivers_spec_7_2_path6",
         "pkg/gateway/mcpfabric/mcptools/messagerouting_mcp_test.go::TestSendMessageRouting_SuspendedImmediateResumeFaultBuffers_spec_7_2_path6",
-        "tests/tier3_contract/rest_mcp_consistency/send_message_immediate_resume_test.go::TestSendMessageImmediateResumesSuspendedParity_spec_7_2"
+        "tests/tier3_contract/rest_mcp_consistency/send_message_immediate_resume_test.go::TestSendMessageImmediateResumesSuspendedParity_spec_7_2",
+        "tests/tier4_integration/mcp_immediate_resume_test.go::TestMCPSendMessageImmediateResumesSuspendedSession"
       ],
       "packages": [
         "pkg/session/interactive"
