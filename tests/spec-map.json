@@ -671,7 +671,8 @@
         "tests/tier4_integration/recycle_scrub_path_test.go::TestRecyclePathConcurrentPerReleaseSessionCountDrains_spec_5_2",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
-        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231"
+        "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
+        "tests/tier2_component/watchdog/suspended_pod_release_test.go::TestWatchdogReleasesPodAfterSuspendedHoldWindow_spec_6_2"
       ],
       "packages": [
         "pkg/sandbox/state"
@@ -1520,7 +1521,8 @@
         "pkg/gateway/runtime/watchdog/...",
         "pkg/gateway/session/inputwait/...",
         "pkg/session/state/...",
-        "tests/tier2_component/watchdog/idle_pause_table_test.go::TestWatchdogIdleSweepPauseTable_spec_6_2"
+        "tests/tier2_component/watchdog/idle_pause_table_test.go::TestWatchdogIdleSweepPauseTable_spec_6_2",
+        "tests/tier2_component/watchdog/suspended_pod_release_test.go::TestWatchdogReleasesPodAfterSuspendedHoldWindow_spec_6_2"
       ],
       "packages": [
         "pkg/policy/timeout"
