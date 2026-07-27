@@ -10,12 +10,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	rlredis "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 )
@@ -35,11 +36,11 @@ import (
 //   - pkg/gateway/policy/ratelimit/redisstore backs the §11.1
 //     per-runtime admission counter against the harness's embedded
 //     miniredis, so session creation genuinely transacts with Redis.
-//
-// The session rows live in the in-memory sessionstore adapter
-// (pkg/gateway/session/sessionstore/memstore), which implements the
-// same sessionstore.Store contract the Postgres adapter implements;
-// the handler is store-agnostic.
+//   - pkg/gateway/session/sessionstore/pgstore is the §4.2 SessionStore,
+//     running against the harness's embedded PostgreSQL. Every session
+//     create, read, and state transition is a real SQL transaction
+//     under the §12.3 tenant guard, which is the storage layer
+//     TESTING.md §12.7.a names for this harness.
 type gateway struct {
 	store    sessionstore.Store
 	srv      *sessionserver.Server
@@ -62,13 +63,19 @@ type gateway struct {
 const defaultAdmissionPerRuntimePerMinute = 1_000_000
 
 // newGateway assembles the in-process gateway against the supplied
-// Redis client (the harness's embedded miniredis).
-func newGateway(rdb redis.UniversalClient, cfg Config) *gateway {
+// Redis client (the harness's embedded miniredis) and the supplied
+// session-store pool (a private database on the harness's embedded
+// PostgreSQL).
+func newGateway(rdb redis.UniversalClient, pool *pgxpool.Pool, cfg Config) *gateway {
 	perRuntime := cfg.AdmissionPerRuntimePerMinute
 	if perRuntime <= 0 {
 		perRuntime = defaultAdmissionPerRuntimePerMinute
 	}
-	store := memstore.New()
+	// spec: TESTING.md §12.7.a — the harness boots the embedded
+	// Postgres adapter, so a scenario's concurrency, ordering, and
+	// atomicity results describe the storage layer the shipped gateway
+	// uses.
+	var store sessionstore.Store = newTenantAnchoringStore(pgstore.New(pool), pool)
 	srv := sessionserver.New(store, sessionserver.Options{
 		// spec: §11.1 line 7 — the per-runtime admission counter is the
 		// Redis-backed one, so the harness's miniredis is on the session

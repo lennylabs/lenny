@@ -221,8 +221,9 @@
       "integration": ["tests/tier4_integration/session_lifecycle_test.go"]
     },
     "pkg/gateway/session/sessionstore": {
-      "unit": ["pkg/gateway/session/sessionstore/..."],
-      "contract": ["tests/tier3_contract/rest_sessions/..."]
+      "unit": ["pkg/gateway/session/sessionstore/...", "tests/testinfra/inproc/..."],
+      "contract": ["tests/tier3_contract/rest_sessions/..."],
+      "load_local": ["tests/tier7a_load_local/..."]
     },
     "pkg/gateway/sessionserver": {
       "unit": ["pkg/gateway/sessionserver/..."],
@@ -366,10 +367,12 @@
     },
     "migrations/": {
       "static": ["scripts/lint-schema.sh", "scripts/lint-queries.sh"],
+      "unit": ["tests/testinfra/inproc/..."],
       "component": [
         "tests/tier2_component/migrations/...",
         "tests/tier2_component/stores/..."
-      ]
+      ],
+      "load_local": ["tests/tier7a_load_local/..."]
     },
     "scripts/lint-schema.sh": {
       "static": ["scripts/lint-schema.sh"]

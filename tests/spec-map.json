@@ -173,7 +173,10 @@
         "tests/tier4_integration/idempotency_test.go",
         "tests/tier4_integration/session_lifecycle_test.go",
         "tests/tier4_integration/checkpoint_resume_test.go::TestResumeBumpsRecoveryGenerationDurablyPostgres",
-        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway"
+        "tests/tier4_integration/session_rls_startup_test.go::TestSessionRLSStartupIsolationThroughGateway",
+        "tests/testinfra/inproc/sessionstore_test.go::TestHarnessSessionStoreIsThePostgresAdapter",
+        "tests/testinfra/inproc/sessionstore_test.go::TestEnvsDoNotShareSessionRows",
+        "tests/tier7a_load_local/main_test.go"
       ],
       "packages": [
         "pkg/session",

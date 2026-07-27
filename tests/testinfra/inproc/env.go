@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/alicebob/miniredis/v2"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/tests/testinfra/fakekube"
@@ -54,6 +55,8 @@ type Env struct {
 	started bool
 	redis   *miniredis.Miniredis
 	rdb     *redis.Client
+	pgPool  *pgxpool.Pool
+	pgDSN   string
 	fakeAPI *fakekube.Surface
 	adapter *runtimestub.Stub
 	gw      *gateway
@@ -69,10 +72,16 @@ func New(c Config) *Env {
 // Start brings the environment up. It is an error to call Start more
 // than once on the same Env.
 //
-// Starts miniredis, the fakekube surface, the runtime stub, and the
+// Starts miniredis, a private database on the process-wide embedded
+// PostgreSQL, the fakekube surface, the runtime stub, and the
 // in-process Lenny gateway. The gateway binds to a loopback port
 // reachable via GatewayURL(); session-lifecycle scenarios drive it
 // over HTTP.
+//
+// The embedded PostgreSQL is shared across every Env in the test
+// binary and started on the first call. A binary that starts an Env
+// calls ShutdownSharedPostgres from TestMain so the PostgreSQL child
+// process does not outlive it.
 func (e *Env) Start(ctx context.Context) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -85,13 +94,26 @@ func (e *Env) Start(ctx context.Context) error {
 	}
 	e.redis = mr
 	e.rdb = redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	if _, err := shared.instance(ctx); err != nil {
+		return err
+	}
+	dsn, err := shared.cloneDatabase(ctx)
+	if err != nil {
+		return err
+	}
+	e.pgDSN = dsn
+	pool, err := newSessionPool(ctx, dsn)
+	if err != nil {
+		return err
+	}
+	e.pgPool = pool
 	e.fakeAPI = fakekube.New()
 	e.fakeAPI.SetWatchLag(e.config.WatchLag)
 	e.adapter = runtimestub.New(runtimestub.Config{
 		ResponseLatency: e.config.AdapterLatency,
 		ErrorRate:       e.config.AdapterErrorRate,
 	})
-	e.gw = newGateway(e.rdb, e.config)
+	e.gw = newGateway(e.rdb, pool, e.config)
 	url, err := e.gw.start()
 	if err != nil {
 		return err
@@ -126,8 +148,32 @@ func (e *Env) Stop(ctx context.Context) error {
 		e.redis.Close()
 		e.redis = nil
 	}
+	if e.pgPool != nil {
+		e.pgPool.Close()
+		e.pgPool = nil
+		// The per-Env database is dropped so a tier run does not
+		// accumulate one clone per scenario. A drop that fails leaves
+		// the database in place, which costs disk under the shared
+		// instance's data directory and nothing else: the directory
+		// goes away with ShutdownSharedPostgres. Failing Teardown over
+		// it would turn a housekeeping miss into a scenario failure.
+		if name := databaseNameFromDSN(e.pgDSN); name != "" {
+			_ = shared.dropDatabase(ctx, name)
+		}
+		e.pgDSN = ""
+	}
 	e.started = false
 	return nil
+}
+
+// PostgresDSN returns the connection string for the private database
+// this Env's session store writes through, or "" before Start and
+// after Stop. A test that needs to observe the §4.2 session rows
+// directly in SQL connects with it.
+func (e *Env) PostgresDSN() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.pgDSN
 }
 
 // SessionCount returns how many sessions the gateway created over the
