@@ -769,6 +769,7 @@
         "pkg/gateway/sessionserver/messages_delivery_timeout_test.go::TestDirectDeliveryTimeoutFallsThroughToQueuedInbox",
         "tests/tier7a_load_local/toolapproval_xreplica/xreplica_wake_test.go",
         "tests/tier4_integration/interactive_iteration_test.go::TestInteractiveIterationInterruptThenResumeAndDeliver",
+        "tests/tier4_integration/cross_replica_immediate_message_test.go::TestImmediateMessageOnNonCoordinatorReplicaRoutesToCoordinator",
         "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
         "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
@@ -1181,6 +1182,7 @@
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestCheckpointManifestColumnSetMatchesMigration0178",
         "tests/tier11_docs/checkpoint_pipeline_consistency_test.go::TestManifestReasonAndPartialCounterDomainsAgree",
         "tests/tier4_integration/coordination_fence_split_brain_test.go::TestCoordinationSplitBrainFenceAcrossTwoReplicas_spec_10_1",
+        "tests/tier4_integration/cross_replica_immediate_message_test.go::TestImmediateMessageOnNonCoordinatorReplicaRoutesToCoordinator",
         "tests/tier7a_load_local/coordination_colocation_race_test.go::TestColocationInvariantUnderConcurrentHandoff_spec_10_1",
         "tests/tier8_chaos/coordination_crash_takeover_test.go::TestCoordinatorFailoverCrashTakeover_spec_10_1"
       ],

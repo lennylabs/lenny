@@ -20,6 +20,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -31,6 +32,38 @@ type Process struct {
 	cmd     *exec.Cmd
 	baseURL string
 	stderr  *os.File
+	// done receives the reaper goroutine's cmd.Wait result exactly once.
+	done chan error
+	// logf reports a subprocess that outlived even SIGKILL.
+	logf func(format string, args ...any)
+	// stopOnce keeps Stop idempotent so a test that stops the replica
+	// itself does not race the t.Cleanup stop.
+	stopOnce sync.Once
+}
+
+// Stop terminates the gateway subprocess and waits for it to exit. It is
+// idempotent and is called automatically on test cleanup; a test calls it
+// directly to model a gateway replica going away mid-test (a crashed or
+// unreachable replica).
+func (p *Process) Stop() {
+	p.stopOnce.Do(func() {
+		_ = p.cmd.Process.Signal(os.Interrupt)
+
+		select {
+		case <-p.done:
+			return
+		case <-time.After(3 * time.Second):
+		}
+
+		// SIGINT did not take. Force-kill; WaitDelay still bounds the
+		// final wait if the kernel takes its time reaping.
+		_ = p.cmd.Process.Kill()
+		select {
+		case <-p.done:
+		case <-time.After(p.cmd.WaitDelay + time.Second):
+			p.logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
+		}
+	})
 }
 
 // SkipUnlessAvailable t.Skips when the prerequisites for booting
@@ -137,32 +170,21 @@ func StartWith(t testing.TB, extraArgs ...string) *Process {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start gateway: %v", err)
 	}
-	p := &Process{cmd: cmd, baseURL: "http://" + addr, stderr: stderrFile}
+	// Buffered so the reaper goroutine never blocks if Stop gives up
+	// waiting and returns.
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	p := &Process{
+		cmd:     cmd,
+		baseURL: "http://" + addr,
+		stderr:  stderrFile,
+		done:    done,
+		logf:    t.Logf,
+	}
 
 	t.Cleanup(func() {
 		defer func() { _ = stderrFile.Close() }()
-
-		// Buffered so the goroutine never blocks if cleanup gives up
-		// waiting and returns.
-		done := make(chan error, 1)
-		go func() { done <- cmd.Wait() }()
-
-		_ = cmd.Process.Signal(os.Interrupt)
-
-		select {
-		case <-done:
-			return
-		case <-time.After(3 * time.Second):
-		}
-
-		// SIGINT did not take. Force-kill; WaitDelay still bounds the
-		// final wait if the kernel takes its time reaping.
-		_ = cmd.Process.Kill()
-		select {
-		case <-done:
-		case <-time.After(cmd.WaitDelay + time.Second):
-			t.Logf("gateway subprocess did not exit after SIGKILL; goroutine leaked")
-		}
+		p.Stop()
 	})
 
 	if err := p.waitReady(5 * time.Second); err != nil {
