@@ -772,7 +772,10 @@
         "tests/tier4_integration/cross_replica_immediate_message_test.go::TestImmediateMessageOnNonCoordinatorReplicaRoutesToCoordinator",
         "tests/tier4_integration/streaming_reconnect_test.go::TestStreamingReconnectResumesExactlyFromCursor",
         "tests/tier5_e2e_kind/ha_streaming_replica_test.go::TestHAStreamingReconnectAcrossGatewayReplicas",
-        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15"
+        "pkg/gateway/mcpfabric/mcp/stream_test.go::TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15",
+        "pkg/gateway/mcpfabric/mcptools/messagerouting_mcp_test.go::TestSendMessageRouting_SuspendedImmediateResumesAndDelivers_spec_7_2_path6",
+        "pkg/gateway/mcpfabric/mcptools/messagerouting_mcp_test.go::TestSendMessageRouting_SuspendedImmediateResumeFaultBuffers_spec_7_2_path6",
+        "tests/tier3_contract/rest_mcp_consistency/send_message_immediate_resume_test.go::TestSendMessageImmediateResumesSuspendedParity_spec_7_2"
       ],
       "packages": [
         "pkg/session/interactive"
@@ -2313,7 +2316,8 @@
         "tests/tier3_contract/rest_openai_responses/fidelity_test.go",
         "tests/tier3_contract/multiprotocol_journey/journey_test.go",
         "tests/tier4_integration/multi_protocol_same_deployment_test.go",
-        "tests/tier4_integration/openai_cross_tenant_test.go"
+        "tests/tier4_integration/openai_cross_tenant_test.go",
+        "tests/tier3_contract/rest_mcp_consistency/send_message_immediate_resume_test.go"
       ],
       "packages": [
         "pkg/gateway/rest",
@@ -2351,7 +2355,9 @@
         "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementCanonicalAccepted",
         "tests/tier3_contract/adapter_jsonl/mcp_nonce_wire_test.go::TestMCPNonceWirePlacementSiblingLocationRejected",
         "tests/tier10_conformance/scaffolds_test.go::TestFidelityMatrix",
-        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance"
+        "tests/tier10_conformance/concurrent_slot_conformance_test.go::TestConcurrentSlotDispatchConformance",
+        "pkg/gateway/mcpfabric/mcptools/messagerouting_mcp_test.go::TestSendMessage_InvalidDeliveryValueRejected_spec_15_4",
+        "tests/tier3_contract/rest_mcp_consistency/send_message_immediate_resume_test.go::TestSendMessageInvalidDeliveryValueParity_spec_15_4"
       ],
       "packages": [
         "cmd/runtimes/echo",

@@ -4,6 +4,7 @@ package mcptools_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -78,6 +79,139 @@ func TestSendMessageRouting_SuspendedBuffersInbox_spec_7_2_path6(t *testing.T) {
 	}
 	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 1 {
 		t.Errorf("inbox depth = %d, want 1", n)
+	}
+}
+
+// stubHeldPodResumer stands in for the session server's coordinator-side
+// §7.2 path-6 resume. It records the call and either flips the row to
+// running (the pod-held resume) or returns a fault so the handler's
+// fail-closed buffering runs.
+type stubHeldPodResumer struct {
+	store sessionstore.Store
+	err   error
+	calls int
+}
+
+func (s *stubHeldPodResumer) ResumeHeldPodService(ctx context.Context, tenantID, id string) error {
+	s.calls++
+	if s.err != nil {
+		return s.err
+	}
+	_, err := s.store.Update(ctx, tenantID, id, func(row *sessionstore.Session) error {
+		row.State = session.StateRunning
+		return nil
+	})
+	return err
+}
+
+// newMCPRoutingWithResumer builds the routing harness with a §7.2 path-6
+// resume primitive wired, mirroring the production wiring where the MCP
+// surface and the REST surface share the session server's resume.
+func newMCPRoutingWithResumer(t *testing.T, resumeErr error) (*mcp.Server, sessionstore.Store, *sessioninbox.MemoryInbox, *stubHeldPodResumer) {
+	t.Helper()
+	mr := miniredis.RunT(t)
+	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = rc.Close() })
+	inbox := sessioninbox.NewMemoryInbox(10)
+	coord := sessioninbox.NewCoordinator(sessioninbox.Config{Inbox: inbox, DLQ: sessioninbox.NewDLQ(rc, 10)})
+	store := memstore.New()
+	resumer := &stubHeldPodResumer{store: store, err: resumeErr}
+	srv := mcp.NewServer()
+	mcptools.Register(srv, mcptools.Deps{
+		Store:          store,
+		Executor:       executor.NewEchoExecutor(),
+		InputWaits:     inputwait.NewRegistry(),
+		Messaging:      coord,
+		HeldPodResumer: resumer,
+		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:         func() string { return "msg_fixed" },
+		TenantID:       "acme",
+	})
+	return srv, store, inbox, resumer
+}
+
+// spec: §7.2 path 6 (lines 326-330) — "Pod still held: The gateway
+// atomically resumes the session (`suspended → running`) and delivers the
+// message ... The delivery receipt is `delivered` on successful
+// resume-and-deliver", and path 6 "applies uniformly to all message
+// sources: external client (`POST /v1/sessions/{id}/messages`) and
+// inter-session via `lenny/send_message`".
+func TestSendMessageRouting_SuspendedImmediateResumesAndDelivers_spec_7_2_path6(t *testing.T) {
+	srv, store, inbox, resumer := newMCPRoutingWithResumer(t, nil)
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"to":"sess_sus","message":"now","delivery":"immediate"}`)
+	got := receiptFromResult(t, resp)
+	if got.Status != session.DeliveryStatusDelivered {
+		t.Errorf("status = %q, want delivered", got.Status)
+	}
+	if resumer.calls != 1 {
+		t.Errorf("resume calls = %d, want 1", resumer.calls)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_sus")
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if row.State != session.StateRunning {
+		t.Errorf("target state = %q, want running", row.State)
+	}
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0 (the message was delivered, not buffered)", n)
+	}
+}
+
+// spec: §7.2 path 6 (line 330) — a resume the coordinating replica cannot
+// perform "falls back to inbox buffering with a `queued` delivery receipt
+// status — the message is not silently dropped."
+func TestSendMessageRouting_SuspendedImmediateResumeFaultBuffers_spec_7_2_path6(t *testing.T) {
+	srv, store, inbox, resumer := newMCPRoutingWithResumer(t, errors.New("resume write failed"))
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"to":"sess_sus","message":"now","delivery":"immediate"}`)
+	got := receiptFromResult(t, resp)
+	if got.Status != session.DeliveryStatusQueued {
+		t.Errorf("status = %q, want queued", got.Status)
+	}
+	if resumer.calls != 1 {
+		t.Errorf("resume calls = %d, want 1", resumer.calls)
+	}
+	row, err := store.Get(context.Background(), "acme", "sess_sus")
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if row.State != session.StateSuspended {
+		t.Errorf("target state = %q, want suspended (the resume did not happen)", row.State)
+	}
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 1 {
+		t.Errorf("inbox depth = %d, want 1", n)
+	}
+}
+
+// spec: §15.4 (`delivery` closed enum) — "No other values are valid. The
+// gateway rejects unknown `delivery` values with `400
+// INVALID_DELIVERY_VALUE`."
+func TestSendMessage_InvalidDeliveryValueRejected_spec_15_4(t *testing.T) {
+	srv, store, inbox, resumer := newMCPRoutingWithResumer(t, nil)
+	mkSession(t, store, "sess_sus", session.StateSuspended, "")
+
+	resp := call(t, srv.Handler(), "lenny/send_message",
+		`{"to":"sess_sus","message":"now","delivery":"asap"}`)
+	result, _ := resp["result"].(map[string]any)
+	if result == nil {
+		t.Fatalf("no tool result: %+v", resp)
+	}
+	envelope := readLennyErrorEnvelope(t, result)
+	if envelope["code"] != "INVALID_DELIVERY_VALUE" {
+		t.Errorf("code = %v, want INVALID_DELIVERY_VALUE", envelope["code"])
+	}
+	// The rejection precedes routing: nothing is buffered and no resume runs.
+	if n, _ := inbox.Len(context.Background(), "acme", "sess_sus"); n != 0 {
+		t.Errorf("inbox depth = %d, want 0", n)
+	}
+	if resumer.calls != 0 {
+		t.Errorf("resume calls = %d, want 0", resumer.calls)
 	}
 }
 

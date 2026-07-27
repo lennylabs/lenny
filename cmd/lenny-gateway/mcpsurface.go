@@ -243,7 +243,13 @@ func (w *gatewayWiring) buildMCPSurface(
 		// WorkspacePlan, launch, and transition it to running so the
 		// returned handle is a running child the parent can interact with.
 		// Wired to the same *sessionserver.Server that owns the §4.9 engine.
-		ChildMaterializer:          sessionSrv,
+		ChildMaterializer: sessionSrv,
+		// spec: §7.2 path 6 lines 326-330 — path 6 applies uniformly to
+		// every message source, so an inter-session lenny/send_message
+		// carrying `delivery: "immediate"` drives the same coordinator-side
+		// atomic `suspended → running` resume the REST /messages handler
+		// drives, through the one session-server primitive.
+		HeldPodResumer:             sessionSrv,
 		Executor:                   w.exec,
 		DeadlockTracker:            deadlockTracker,
 		Deadlocks:                  deadlockManager,

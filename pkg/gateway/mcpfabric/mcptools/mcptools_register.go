@@ -246,8 +246,15 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			// MessageEnvelope.input union (bare string or MessagePart[]),
 			// identical to the REST /messages content field under the
 			// §15.2.1 parity rule. F-8.5.16, F-MS5.
-			Message   sessionrecord.MessageContent `json:"message"`
-			InReplyTo string                       `json:"inReplyTo"`
+			Message sessionrecord.MessageContent `json:"message"`
+			// Delivery is the §15.4 MessageEnvelope.delivery closed enum
+			// (`queued` default, or `immediate`). It carries the §7.2 path-6
+			// resume trigger onto the inter-session surface: line 330 binds
+			// path 6 to every message source, so an immediate message to a
+			// suspended target resumes-and-delivers here exactly as it does
+			// on the REST /messages path.
+			Delivery  string `json:"delivery"`
+			InReplyTo string `json:"inReplyTo"`
 			// MessageID is the §15.4 line 1784 sender-supplied id. When
 			// empty the gateway assigns a `msg_` prefix id so every
 			// receipt is correlatable. F-7.2.10.
@@ -264,6 +271,16 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		if in.To == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"to is required (§8.5 line 537)", nil)
+		}
+		// spec: §15.4 (`delivery` closed enum) — "No other values are
+		// valid. The gateway rejects unknown `delivery` values with
+		// `400 INVALID_DELIVERY_VALUE`." The same code the REST
+		// /messages validator returns, so the §15.2.1 rule 5(b)/(d)
+		// (code, category, retryable) triple matches across surfaces.
+		if !validSendMessageDelivery(in.Delivery) {
+			return mcp.ToolResult{}, mcp.NewToolError("INVALID_DELIVERY_VALUE",
+				"message delivery envelope contains an unrecognized `delivery` field value",
+				map[string]any{"delivery": in.Delivery})
 		}
 		row, err := deps.Store.Get(ctx, tenant, in.To)
 		if err != nil {
@@ -351,9 +368,40 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// through to the executor (path 2). The pod-adapter readiness
 		// signal and cross-replica forwarding are gated as in the REST
 		// path. F-7.2.5.
+		//
+		// spec: §7.2 path 6 line 330 — path 6 "applies uniformly to all
+		// message sources: external client (POST /v1/sessions/{id}/messages)
+		// and inter-session via lenny/send_message", so the sender-supplied
+		// `delivery: "immediate"` flag reaches the shared router here exactly
+		// as it does on the REST path.
 		inputRequired := row.State == session.StateInputRequired ||
 			(deps.InputWaits != nil && len(deps.InputWaits.PendingForSession(row.ID)) > 0)
-		decision := messagerouting.Classify(row.State, inputRequired, false, messagerouting.SourceInterSession)
+		immediate := in.Delivery == "immediate"
+		decision := messagerouting.Classify(row.State, inputRequired, immediate, messagerouting.SourceInterSession)
+		if decision.Action == messagerouting.ActionResumeAndDeliver {
+			// spec: §7.2 path 6 pod-held branch (lines 326-327, 330) — an
+			// immediate message to a suspended, pod-held target atomically
+			// resumes the session and then falls through to the delivery path
+			// below, yielding the `delivered` receipt. The resume is a
+			// coordinating-replica operation, so it runs through the shared
+			// session-server primitive rather than a second store write here.
+			// A missing resumer or a failed resume falls closed to inbox
+			// buffering with a `queued` receipt so the message is never
+			// dropped (line 330).
+			resumed := false
+			if deps.HeldPodResumer != nil {
+				if err := deps.HeldPodResumer.ResumeHeldPodService(ctx, tenant, row.ID); err == nil {
+					resumed = true
+				}
+			}
+			if !resumed {
+				decision = messagerouting.Decision{
+					Path:   6,
+					Action: messagerouting.ActionBufferInbox,
+					Status: session.DeliveryStatusQueued,
+				}
+			}
+		}
 		if decision.Action == messagerouting.ActionBufferInbox || decision.Action == messagerouting.ActionBufferDLQ {
 			// spec: §15.4 (MessageEnvelope.input) — buffer the §15.4 union
 			// content in its wire form (a bare string stays a JSON string, a

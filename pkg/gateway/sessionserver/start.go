@@ -3821,6 +3821,24 @@ func (s *Server) resumeHeldPod(ctx context.Context, tenantID, id string) error {
 	return nil
 }
 
+// ResumeHeldPodService exposes the §7.2 path-6 pod-held atomic resume to the
+// platform MCP surface so an inter-session `lenny/send_message` carrying
+// `delivery: "immediate"` reaches the same resume-and-deliver outcome the REST
+// `POST /v1/sessions/{id}/messages` handler reaches. §7.2 line 330 binds path 6
+// to every message source, and the two surfaces must therefore share one
+// coordinator-side resume primitive rather than each writing its own
+// `suspended → running` transition, so the audit row and the status-change
+// event are emitted identically whichever surface drove the resume.
+//
+// The error is returned verbatim; the caller fails closed to inbox buffering
+// with a `queued` receipt, as the REST handler does, so the message is never
+// dropped (§7.2 line 330).
+//
+// spec: §7.2 path 6 (lines 326-330), §15.2.1 rule 1 (shared service layer).
+func (s *Server) ResumeHeldPodService(ctx context.Context, tenantID, id string) error {
+	return s.resumeHeldPod(ctx, tenantID, id)
+}
+
 // resumeOnPod restores a session onto a fresh §5 warm pod. When the
 // session carries a §7.1 WorkspaceSnapshot it is restored from that
 // checkpoint via the adapter Resume RPC. A session that never

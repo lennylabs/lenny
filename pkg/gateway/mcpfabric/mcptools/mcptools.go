@@ -133,12 +133,35 @@ const maxMessagePartBytes = 50 * 1024 * 1024
 // surface and the REST `/messages` body express the identical union under
 // the §15.2.1 parity rule. `to` is the §8.5 line 537 target id, and the
 // `inReplyTo`/`messageId`/`fromSessionId` extensions are unchanged.
-// spec: §8.5 line 537, §15.4 (MessageEnvelope.input), §15.2.1 (REST/MCP
-// parity).
+//
+// `delivery` is the §15.4 `MessageEnvelope.delivery` closed enum. It is on
+// the tool because §7.2 path 6 applies "uniformly to all message sources:
+// external client (POST /v1/sessions/{id}/messages) and inter-session via
+// lenny/send_message", so an inter-session immediate message must be
+// expressible for the path-6 resume-and-deliver to be reachable from the
+// tool at all. The enum is closed: an unrecognized value rejects with
+// INVALID_DELIVERY_VALUE, matching the REST validator.
+//
+// spec: §8.5 line 537, §15.4 (MessageEnvelope.input, `delivery` enum),
+// §7.2 path 6 (line 330), §15.2.1 (REST/MCP parity).
 var sendMessageInputSchema = json.RawMessage(fmt.Sprintf(
-	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":%s,"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
+	`{"type":"object","required":["to","message"],"properties":{"to":{"type":"string","description":"Target taskId / sessionId (§8.5 line 537)."},"message":%s,"delivery":{"type":"string","enum":["queued","immediate"],"description":"§15.4 MessageEnvelope.delivery. `+"`queued`"+` (default) buffers until the runtime next reads; `+"`immediate`"+` interrupts a running target and atomically resumes-and-delivers to a suspended one (§7.2 path 6)."},"inReplyTo":{"type":"string","description":"§8.8 line 951 — when this answers a pending lenny/request_input, the matching requestId."},"messageId":{"type":"string","description":"§15.4 line 1784 sender-supplied id; gateway assigns one when absent."},"fromSessionId":{"type":"string","description":"§7.2 sender session id. When set (or implied by the principal), the gateway enforces the §7.2 line 240 topology constraint: target must be the sender's parent, direct child, or sibling. F-7.2.22."}}}`,
 	sessionrecord.MessageContentJSONSchema,
 ))
+
+// validSendMessageDelivery reports whether v is a §15.4
+// `MessageEnvelope.delivery` enum value. The empty string is the
+// `absent → "queued"` default. It mirrors the REST validator so the same
+// invalid input rejects with the same code on both surfaces (§15.2.1 rule
+// 5(b)). spec: §15.4 ("No other values are valid. The gateway rejects
+// unknown `delivery` values with `400 INVALID_DELIVERY_VALUE`.").
+func validSendMessageDelivery(v string) bool {
+	switch v {
+	case "", "queued", "immediate":
+		return true
+	}
+	return false
+}
 
 // validateMessagePart enforces the two §15.4.1 lines 1542-1548 MessagePart
 // ingress invariants on one `lenny/output` part: `inline` and `ref` are
@@ -328,6 +351,25 @@ type ChildMaterializer interface {
 	MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error)
 }
 
+// HeldPodResumer performs the §7.2 path-6 coordinator-side atomic resume
+// (`suspended → running`) for a suspended session that still holds its pod.
+// *sessionserver.Server implements it via ResumeHeldPodService, so the MCP
+// `lenny/send_message` path and the REST `POST /v1/sessions/{id}/messages`
+// path drive one resume primitive and emit the same lifecycle audit and
+// status-change signals. §7.2 line 330 binds path 6 to every message source,
+// inter-session sends included.
+//
+// A nil resumer (the minimal in-process gateway and the mcptools unit suite)
+// makes the resume unavailable; the handler then fails closed to inbox
+// buffering with a `queued` receipt rather than delivering to a suspended
+// runtime, which §7.2 line 330 sanctions for a resume the coordinating replica
+// cannot perform.
+//
+// spec: §7.2 path 6 (lines 326-330), §15.2.1 rule 1.
+type HeldPodResumer interface {
+	ResumeHeldPodService(ctx context.Context, tenantID, sessionID string) error
+}
+
 // Deps carries the gateway services the MCP tools dispatch to.
 type Deps struct {
 	// Store is the §4.2 session store.
@@ -371,6 +413,16 @@ type Deps struct {
 	// minimal in-process gateway and the mcptools unit suite leave it nil).
 	// Production wires *sessionserver.Server. spec: §8.2 lines 93-97.
 	ChildMaterializer ChildMaterializer
+
+	// HeldPodResumer performs the §7.2 path-6 atomic `suspended → running`
+	// resume when a `lenny/send_message` carrying `delivery: "immediate"`
+	// targets a suspended session that still holds its pod. Optional — a nil
+	// resumer leaves the session suspended and the handler buffers the message
+	// with a `queued` receipt (the fail-closed outcome §7.2 line 330 defines
+	// for a resume the coordinating replica cannot perform). Production wires
+	// *sessionserver.Server so both message sources share one resume
+	// primitive. spec: §7.2 path 6 (lines 326-330).
+	HeldPodResumer HeldPodResumer
 
 	// Executor routes messages to runtimes.
 	Executor executor.Executor
