@@ -9517,6 +9517,7 @@ Counts: 6 High, 18 Medium, 6 Low, 1 Info.
 - **Also observed** (2026-07-26, while closing T-27.2.9, T-27.4.2, T-27.4.5, T-27.2.10, T-27.3.12, T-27.8.3): reproduced again by six independent implementers at commits b87f6304, 5cdd2081, and aed72775, each reporting the same three files and line numbers (`:81`, `:57`, `:54`) as "missing spec"; the files' last-touching commits (`53c6787d`, `90b1eccc`) are ancestors of this batch's start SHA, so tier 0 is red for every finding in the batch.
 - **Also observed** (2026-07-26, while closing T-27.9.4): reproduced again at commit 387a5201 (run_id 82754c18c516b5fd6ab0c9a8), same three files and line numbers; reading the dedup file's lines 70-81 confirms the doc block ends with a `// diagnosis:` paragraph naming §25.5 and carries no `// spec:` line.
 - **Also observed** (2026-07-27, while closing T-27.8.9, T-27.2.11, T-27.3.16, T-27.6.8): reproduced again by four independent implementers, including in a detached worktree at startSha 3bb380e6 and via `lenny-test run --since a65bfdcd`/`25a79ed`, each reporting the same three files and lines (`:81`, `:57`, `:54`) as "missing spec".
+- **Also observed** (2026-07-27, while closing T-27.2.12): reproduced again via `lenny-test run --since 40fd23c8e0674c5891ce03ff9a5bcc61c063207f` (verdict FAIL, "scanned 548 files, 1317 test functions, 3 missing diagnosis"), same three files and lines.
 
 ## §25.6 Diagnostic Endpoints <a id="t-25.6"></a>
 **Spec file:** `spec/25_agent-operability.md`
