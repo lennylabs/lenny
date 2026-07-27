@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: MIT
+
+# Kind cluster configuration for the tier-5 air-gapped install test.
+#
+# One node, created and deleted by the test. The tier-5 suite's own
+# cluster (cluster.yaml) carries a standing Lenny release whose
+# cluster-scoped objects (the lenny-gateway, lenny-controller,
+# lenny-ops, lenny-backup, and lenny-pool-scaling-controller
+# ClusterRoles and their bindings) have fixed names, so a second Helm
+# release cannot be installed beside it. The air-gapped install test
+# therefore brings up a cluster of its own, installs the chart into it
+# from a mirrored registry, and deletes the cluster afterwards.
+#
+# The node image is pinned to the same release cluster.yaml pins so a
+# run on a disconnected host reuses the node image already on disk
+# instead of pulling one.
+#
+# The lenny.dev/role=control-plane label matches the node affinity the
+# Postgres fixture in tests/testinfra/k8s/datastores.yaml prefers.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.31.4
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "lenny.dev/role=control-plane"

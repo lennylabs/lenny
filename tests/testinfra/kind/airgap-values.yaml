@@ -1,0 +1,137 @@
+# SPDX-License-Identifier: MIT
+#
+# Helm values overlay for the tier-5 air-gapped install test
+# (tests/tier5_e2e_kind/airgap_registry_mirror_test.go). It installs the
+# chart onto a disconnected, single-node Kind cluster the test creates
+# and deletes, with every Lenny component image resolved through
+# platform.registry.url.
+#
+# The mirror host itself is not set here. The test passes
+# `--set platform.registry.url=<mirror>` so the overlay stays a
+# registry-agnostic profile and the test owns the mirror identity. Each
+# component pins `image.tag: e2e` and `image.pullPolicy: Never`: the
+# tag matches the images tests/testinfra/kind/install.sh builds, and
+# Never means the kubelet resolves every image from the node's local
+# content store, so the install cannot reach a live registry even if
+# one were routable. That is the state a real air-gapped cluster is in
+# once its mirror has been populated and each image pulled once.
+#
+# preflight.enabled is false because the air-gapped install path relies
+# on the skip: the pre-install preflight Job cannot reach the mirrored
+# registry before it is populated. spec: §17.6, §17.8.6.
+#
+# This overlay is for the air-gapped install test only. It is not the
+# tier-5 suite's cluster profile (that is e2e-values.yaml) and it is not
+# a production profile.
+
+# The registry-composed image reference wins over image.repository, so
+# only the tag and pull policy are pinned per component.
+gateway:
+  image: { tag: e2e, pullPolicy: Never }
+ops:
+  image: { tag: e2e, pullPolicy: Never }
+  # lenny-ops reaches the gateway admin API over the plaintext internal
+  # port on this profile, matching e2e-values.yaml. The internal-TLS
+  # path needs a cert-manager-issued certificate, and cert-manager is
+  # not installed on the disposable cluster.
+  tls:
+    internalEnabled: false
+    certManager:
+      enabled: false
+controller:
+  # One WarmPoolController replica. The chart default of 2 exists for
+  # production leader/standby HA; the standby adds nothing here and
+  # competes for CPU on a single node.
+  replicas: 1
+  image: { tag: e2e, pullPolicy: Never }
+  adapterImage: lenny-adapter:e2e
+poolScalingController:
+  image: { tag: e2e, pullPolicy: Never }
+tokenService:
+  image: { tag: e2e, pullPolicy: Never }
+migrate:
+  image: { tag: e2e, pullPolicy: Never }
+backups:
+  image: { tag: e2e, pullPolicy: Never }
+  # Render the on-demand lenny-backup Job so the install carries the
+  # backup workload §17.8.6 names among the components that resolve
+  # their image from platform.registry.*. The Job runs its binary and
+  # then exits with a configuration error: this fixture deploys no
+  # artifact store for it to write an archive to. The test asserts that
+  # the Job's container starts from the mirrored image rather than that
+  # the backup completes.
+  onDemand:
+    enabled: true
+  # The backup credentials are rendered as Secrets only when supplied,
+  # and the Job mounts them unconditionally, so a Job that renders needs
+  # both values present.
+  postgres:
+    dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+  minio:
+    accessKey: lennyminio
+    secretKey: lennyminio123
+
+# The §4.6.2 PoolScalingController is deployed only when a Postgres DSN
+# is set, because it reconciles the admin API's Postgres pool
+# definitions into CRDs. The DSN names the Postgres fixture the test
+# applies from tests/testinfra/k8s/datastores.yaml before the install;
+# the chart's pre-install migration Job creates the schema against it.
+postgres:
+  dsn: "postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable"
+
+# Dev mode keeps the gateway on its in-memory Redis and artifact-store
+# fall-backs, so the install needs no Redis or object store. The trust
+# domain is a required chart value with no default.
+global:
+  devMode: true
+  spiffeTrustDomain: lenny-airgap-e2e
+
+# No agent namespaces. Without --agent-namespace the gateway serves
+# sessions from its in-memory stores and does not require a
+# presigning artifact store, which this fixture does not provide. The
+# air-gapped install test asserts image origin and component readiness;
+# claiming a warm pod is the subject of the rest of the tier-5 suite,
+# which runs against the suite's own cluster.
+agentNamespaces: []
+
+# The install-time prerequisites below are cluster add-ons the
+# disposable cluster does not carry. Each is disabled so the chart
+# renders no object whose CRD or issuer is absent.
+admissionWebhooks:
+  # The in-tree admission stack is served by cert-manager-issued
+  # certificates. The §17.4 development profile disables it for the
+  # same reason.
+  enabled: false
+mtls:
+  enabled: false
+certmanager:
+  enabled: false
+monitoring:
+  # The alert catalog renders as a PrometheusRule, whose CRD ships with
+  # the Prometheus Operator.
+  bundleRules: false
+  # Acknowledge that lenny-ops runs with no reachable Prometheus.
+  acknowledgeNoPrometheus: true
+runtimeClasses:
+  create: false
+coredns:
+  # The dedicated §13.2 CoreDNS image is not built locally, so it cannot
+  # be mirrored onto a disconnected cluster.
+  deploy: false
+referenceRuntimes:
+  # The §26 reference-runtime catalog pulls from a public registry.
+  enabled: false
+deploymentAudit:
+  # The §16.7 post-install config-sync hook runs lenny-ctl against the
+  # gateway; the tier-5 suite's cluster profile disables it for the same
+  # reason.
+  enabled: false
+bootstrap:
+  # No Day-1 fixture data. This install is exercised for image origin
+  # and component readiness, and the post-install bootstrap hook would
+  # add a gateway round trip to the install path.
+  enabled: false
+preflight:
+  # spec: §17.6, §17.8.6 — air-gapped installs run with preflight
+  # validation skipped.
+  enabled: false

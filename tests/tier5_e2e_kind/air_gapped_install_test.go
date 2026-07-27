@@ -225,11 +225,9 @@ func findRenderedResource(rendered, kind, name string) (string, bool) {
 }
 
 // lennyImageRefs returns every container image reference in a rendered
-// install whose repository names a Lenny component, deduplicated. A
-// reference counts as a Lenny component when its final path segment
-// starts with "lenny-", which is the naming every chart template uses
-// for the platform's own images and which no third-party image in the
-// chart (the MinIO client Job, for example) matches.
+// install whose repository names a Lenny component, deduplicated.
+// isLennyImage (airgap_registry_mirror_test.go) decides which
+// references count.
 func lennyImageRefs(rendered string) []string {
 	seen := map[string]bool{}
 	var refs []string
@@ -239,21 +237,7 @@ func lennyImageRefs(rendered string) []string {
 			continue
 		}
 		ref := strings.Trim(strings.TrimSpace(strings.TrimPrefix(field, "image:")), `"'`)
-		if ref == "" {
-			continue
-		}
-		repo := ref
-		if i := strings.LastIndex(repo, "@"); i >= 0 {
-			repo = repo[:i]
-		}
-		if i := strings.LastIndex(repo, ":"); i > strings.LastIndex(repo, "/") {
-			repo = repo[:i]
-		}
-		segment := repo
-		if i := strings.LastIndex(segment, "/"); i >= 0 {
-			segment = segment[i+1:]
-		}
-		if !strings.HasPrefix(segment, "lenny-") || seen[ref] {
+		if ref == "" || !isLennyImage(ref) || seen[ref] {
 			continue
 		}
 		seen[ref] = true
@@ -326,7 +310,7 @@ spec:
 			"-o", "jsonpath={.status.containerStatuses[0].state.terminated.reason}")
 		wr := strings.TrimSpace(waitReason)
 		switch {
-		case wr == "ImagePullBackOff" || wr == "ErrImagePull" || wr == "ErrImageNeverPull":
+		case isImagePullFailure(wr):
 			t.Logf("§17.8.6: the preflight image %s is refused (%s) while the mirror is unpopulated, "+
 				"which is the condition --skip-preflight exists for", image, wr)
 			return

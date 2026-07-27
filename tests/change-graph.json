@@ -388,7 +388,8 @@
       "unit": ["tests/testinfra/kind/..."],
       "e2e_kind": [
         "tests/tier5_e2e_kind/probe_image_preload_test.go",
-        "tests/tier5_e2e_kind/cluster_debris_test.go"
+        "tests/tier5_e2e_kind/cluster_debris_test.go",
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
       ]
     },
     "tests/testinfra/testcache": {
