@@ -18,11 +18,13 @@ import (
 // propagation accelerator, the user-invalidation fan-out, the
 // mint-time session-record rewrite, the authoritative per-request
 // revocation check on the auth hot path, and the mint and revoke audit
-// events. `lenny-test validate-maps` only walks tests/tier2_component
-// and above for orphaned test files, so an in-package test under pkg/
-// or cmd/ can encode a §27.3 guarantee and still be invisible to the
-// spec map. This list keeps the §27.3 entry honest about what is
-// covered on disk.
+// events. The `lenny-test validate-maps` orphan sweep reaches
+// in-package test files as well as tests/tier2_component and above, but
+// its in-package half is bounded by the packages a section claims and by
+// the waivers in tests/spec-map-inpackage-pending.txt, so a test under a
+// package no section claims (pkg/gateway/middleware/auth, for example)
+// can encode a §27.3 guarantee and still be invisible to the spec map.
+// This list keeps the §27.3 entry honest about what is covered on disk.
 var playgroundAuthTestFiles = []string{
 	"pkg/gateway/mcpfabric/playground/cookie_opaque_test.go",
 	"pkg/gateway/mcpfabric/playground/cross_replica_test.go",
