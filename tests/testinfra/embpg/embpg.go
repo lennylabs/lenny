@@ -20,11 +20,15 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"os"
 	"path/filepath"
+	"runtime"
 	"time"
 
 	embeddedpostgres "github.com/fergusstrange/embedded-postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/lennylabs/lenny/tests/testinfra/testcache"
 )
 
 // Config configures the embedded Postgres instance.
@@ -111,27 +115,108 @@ func (i *Instance) Start() error {
 		}
 		i.cfg.Port = port
 	}
+	binaries, extracted, err := sharedBinaries(filepath.Join(i.cfg.DataDir, "bin"))
+	if err != nil {
+		return fmt.Errorf("embedded postgres: %w", err)
+	}
 	cfg := embeddedpostgres.DefaultConfig().
 		Version(embeddedpostgres.V16).
 		Port(i.cfg.Port).
 		Database(i.cfg.Database).
 		Username(i.cfg.Username).
 		Password(i.cfg.Password).
-		// RuntimePath holds the extracted binaries; DataPath holds the
-		// data directory. BinariesPath holds the downloaded archive.
-		// Keeping all three under DataDir makes teardown a single
-		// directory removal.
+		// BinariesPath holds the extracted PostgreSQL bundle, which is
+		// read-only once extracted and therefore shared between
+		// instances. RuntimePath (the password file and other per-run
+		// scratch) and DataPath (the cluster) stay under DataDir, so
+		// teardown of one instance is still a single directory removal
+		// and two instances never write to the same cluster.
 		RuntimePath(filepath.Join(i.cfg.DataDir, "runtime")).
-		BinariesPath(filepath.Join(i.cfg.DataDir, "bin")).
+		BinariesPath(binaries).
 		DataPath(filepath.Join(i.cfg.DataDir, "data")).
 		StartTimeout(i.cfg.StartTimeout)
 	db := embeddedpostgres.NewDatabase(cfg)
-	if err := db.Start(); err != nil {
-		return fmt.Errorf("embedded postgres: start: %w", err)
+	startErr := db.Start()
+	extracted(startErr)
+	if startErr != nil {
+		return fmt.Errorf("embedded postgres: start: %w", startErr)
 	}
 	i.db = db
 	i.started = true
 	return nil
+}
+
+// bundleKey names the shared cache entry for the extracted PostgreSQL
+// bundle. The bundle is platform-specific, so the key carries the
+// target it was extracted for.
+func bundleKey() string {
+	return filepath.Join("embedded-postgres", fmt.Sprintf("v16-%s-%s", runtime.GOOS, runtime.GOARCH))
+}
+
+// sharedBinaries resolves the directory the PostgreSQL bundle is
+// extracted into, and returns a callback the caller invokes with the
+// outcome of Start.
+//
+// Extraction is the expensive and fragile part of starting an embedded
+// PostgreSQL. It unpacks a 58 MB bundle, and the upstream extractor
+// renames each file from a sibling temp directory into place, so two
+// processes extracting into the same tree, or a temp-directory sweep
+// landing on the tree mid-extraction, produce a rename failure on an
+// arbitrary bundle file. Extracting once into the shared test cache
+// removes both. Before this, every package that starts an embedded
+// PostgreSQL extracted its own copy beside its data directory, and a
+// module-wide run has enough of them to put more than a gigabyte under
+// the system temp directory, which on a tmpfs /tmp is resident memory.
+//
+// The callback holds the host-wide lock until Start returns, so exactly
+// one process extracts and every other one waits for it rather than
+// racing it. A Start that fails leaves no completion marker, so the
+// next caller re-extracts from scratch instead of inheriting a partial
+// tree. When the cache is unavailable the fallback directory is used
+// and no sharing happens, which is the behaviour this had before.
+func sharedBinaries(fallback string) (string, func(error), error) {
+	noop := func(error) {}
+	key := bundleKey()
+	dir, err := testcache.Dir(key)
+	if err != nil {
+		// The shared cache is an optimisation. A host with no writable
+		// cache directory keeps the bundle beside the data directory
+		// and extracts its own copy, which is what every instance did
+		// before, rather than failing the test outright.
+		return fallback, noop, nil
+	}
+	marker := filepath.Join(dir, ".extracted")
+	if _, err := os.Stat(marker); err == nil {
+		return dir, noop, nil
+	}
+	unlock, err := testcache.Lock(key)
+	if err != nil {
+		return "", nil, err
+	}
+	// Another process may have finished the extraction while this one
+	// waited for the lock.
+	if _, err := os.Stat(marker); err == nil {
+		unlock()
+		return dir, noop, nil
+	}
+	// Whatever is there came from an extraction that did not finish.
+	if err := os.RemoveAll(dir); err != nil {
+		unlock()
+		return "", nil, fmt.Errorf("clear partial postgres bundle %s: %w", dir, err)
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		unlock()
+		return "", nil, fmt.Errorf("create postgres bundle dir %s: %w", dir, err)
+	}
+	return dir, func(startErr error) {
+		defer unlock()
+		if startErr != nil {
+			return
+		}
+		if f, err := os.Create(marker); err == nil {
+			_ = f.Close()
+		}
+	}, nil
 }
 
 // Stop terminates the instance. The data directory is left in place so

@@ -17,7 +17,7 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`cloud/`](cloud/) | Tier 6 cloud-provider authentication and cluster acquisition for GKE, EKS, and AKS. |
 | [`compose/`](compose/) | `docker compose` lifecycle wrapper for Tier 4 integration tests (gateway, stores, and mocks on a single host). |
 | [`containers/`](containers/) | Per-test Postgres, Redis, and MinIO container managers. Each test gets a fresh schema or keyspace. |
-| [`embpg/`](embpg/) | In-process embedded PostgreSQL 16 binary bundle for store-package tests (`fergusstrange/embedded-postgres` wrapper). Used where a test needs a real Postgres without a container runtime. |
+| [`embpg/`](embpg/) | In-process embedded PostgreSQL 16 binary bundle for store-package tests (`fergusstrange/embedded-postgres` wrapper). Used where a test needs a real Postgres without a container runtime. The bundle is extracted once into the `testcache/` directory and shared; each instance keeps its own data directory. |
 | [`envtest/`](envtest/) | controller-runtime envtest harness for Tier 2 K8s API-server interactions. |
 | [`fixtures/`](fixtures/) | Seed-data loaders for the canonical tenants, layers, runtimes, and OAuth providers used across tiers. Subpackages: `generators/`, `seed/`. |
 | [`fuzz/`](fuzz/) | Fuzz-harness scaffolding plus the `crashes/` corpus mirror (§19.2). |
@@ -35,6 +35,8 @@ Each entry is a package under `github.com/lennylabs/lenny/tests/testinfra/<name>
 | [`security/`](security/) | SBOM, cosign verification, ZAP scanner driver, trivy, and kube-bench wrappers. Subpackages: `cosign/`, `kubebench/`, `pentest/`, `sbom/`, `zap/`. |
 | [`sessiondriver/`](sessiondriver/) | Live-session test driver (HTTP, SSE, chaos and security bridges) used by Tiers 5+. |
 | [`stubs/`](stubs/) | In-process fault models the gateway must handle gracefully. Subpackages: `kms/`, `llmprovider/`, `oidc/`, `siem/`. |
+| [`testbin/`](testbin/) | Compiles a command from this module once into the shared test cache and hands every test binary that asks for it the same path. The canonical way for a `TestMain` to obtain a reference runtime or CLI it spawns as a child process. |
+| [`testcache/`](testcache/) | Locates a stable cache root outside the system temp directory, and a host-wide advisory lock over it. Test artifacts that outlive a single test (a compiled helper, an extracted database bundle) belong here rather than under `/tmp`, where a sweep during a long run deletes them mid-run. |
 | [`timectl/`](timectl/) | `Clock` interface; tests pass a frozen or advanceable clock where production uses wall time. |
 | [`tokenservice/`](tokenservice/) | Token-service minting helpers for mTLS-bearing client setups. |
 | [`wait/`](wait/) | Polling helpers (`Until`, `WithBackoff`) used by every helper that needs to converge on a ready condition. |

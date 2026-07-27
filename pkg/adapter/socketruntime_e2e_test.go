@@ -6,15 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
+	"github.com/lennylabs/lenny/tests/testinfra/testbin"
 )
 
 // embeddedEchoLoop is the real §15.4.1 echocore loop wired as an
@@ -24,15 +22,14 @@ func embeddedEchoLoop(ctx context.Context, in io.Reader, out io.Writer) error {
 	return echocore.Run(ctx, in, out, io.Discard)
 }
 
-// buildRuntime compiles a cmd/runtimes binary into a temp path once for
-// the test and returns its path.
+// buildRuntime compiles a cmd/runtimes binary into the shared test
+// cache and returns its path. The cache keeps the binary out of the
+// system temp directory, which a long module-wide run cannot rely on
+// still holding a file it wrote when the run started.
 func buildRuntime(t *testing.T, pkg string) string {
 	t.Helper()
-	bin := filepath.Join(t.TempDir(), filepath.Base(pkg))
-	cmd := exec.Command("go", "build", "-o", bin, "./"+pkg)
-	cmd.Dir = repoRootForTest()
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
+	bin, err := testbin.Build("./" + pkg)
+	if err != nil {
 		t.Fatalf("build %s: %v", pkg, err)
 	}
 	return bin

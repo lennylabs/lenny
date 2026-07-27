@@ -5,13 +5,12 @@ package executor_test
 import (
 	"context"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/tests/testinfra/testbin"
 )
 
 // echoBinary is the compiled cmd/runtimes/echo path, built once in
@@ -19,30 +18,12 @@ import (
 var echoBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "executor-echo-*")
-	if err != nil {
-		panic("executor TestMain: mkdtemp: " + err.Error())
-	}
-	defer os.RemoveAll(tmp)
-
-	echoBinary = filepath.Join(tmp, "echo")
-	cmd := exec.Command("go", "build", "-o", echoBinary, "./cmd/runtimes/echo")
-	cmd.Dir = repoRoot()
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		panic("executor TestMain: build echo: " + err.Error())
-	}
+	// testbin keeps one copy of the echo runtime in the shared test
+	// cache, so a module-wide run compiles it once instead of once per
+	// package and keeps it out of the system temp directory, which a
+	// long run cannot rely on still holding a file written at its start.
+	echoBinary = testbin.MustBuild("./cmd/runtimes/echo")
 	os.Exit(m.Run())
-}
-
-func repoRoot() string {
-	wd, _ := os.Getwd()
-	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
-		}
-	}
-	panic("executor test: could not locate repo root")
 }
 
 func TestSubprocessExecutorEchoesMessage(t *testing.T) {

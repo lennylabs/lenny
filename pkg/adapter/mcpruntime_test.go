@@ -6,14 +6,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/tests/testinfra/testbin"
 )
 
 // mcpReferenceBinary is the path to the compiled cmd/runtimes/mcp-
@@ -21,32 +20,13 @@ import (
 var mcpReferenceBinary string
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "mcp-reference-*")
-	if err != nil {
-		panic("adapter TestMain: mkdtemp: " + err.Error())
-	}
-	defer os.RemoveAll(tmp)
-
-	mcpReferenceBinary = filepath.Join(tmp, "mcp-reference")
-	cmd := exec.Command("go", "build", "-o", mcpReferenceBinary, "./cmd/runtimes/mcp-reference")
-	cmd.Dir = repoRootForTest()
-	cmd.Stderr = os.Stderr
-	if err := cmd.Run(); err != nil {
-		panic("adapter TestMain: build mcp-reference: " + err.Error())
-	}
+	// testbin keeps one copy of the reference runtime in the shared
+	// test cache. Building into a temp directory instead left the
+	// binary under the system temp directory for the length of this
+	// package's tests, so a sweep of that directory during the run made
+	// every test that spawns the runtime fail to start its process.
+	mcpReferenceBinary = testbin.MustBuild("./cmd/runtimes/mcp-reference")
 	os.Exit(m.Run())
-}
-
-// repoRootForTest walks up from the test working directory to the
-// module root (the directory holding go.mod).
-func repoRootForTest() string {
-	wd, _ := os.Getwd()
-	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
-		}
-	}
-	return wd
 }
 
 // messageEnvelope builds a §15.4.1 `message` envelope that the type:

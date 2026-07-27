@@ -385,6 +385,15 @@
       "unit": ["tests/testinfra/kind/..."],
       "e2e_kind": ["tests/tier5_e2e_kind/probe_image_preload_test.go"]
     },
+    "tests/testinfra/testcache": {
+      "unit": ["tests/testinfra/testcache/...", "tests/testinfra/testbin/...", "tests/testinfra/embpg/..."]
+    },
+    "tests/testinfra/testbin": {
+      "unit": ["tests/testinfra/testbin/...", "cmd/lenny-compliance/...", "pkg/adapter/...", "pkg/gateway/session/executor/..."]
+    },
+    "tests/testinfra/embpg": {
+      "unit": ["tests/testinfra/embpg/...", "migrations/..."]
+    },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
     },

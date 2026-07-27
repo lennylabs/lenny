@@ -12,10 +12,10 @@ import (
 	"encoding/json"
 	"net"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/tests/testinfra/testbin"
 )
 
 var (
@@ -24,37 +24,16 @@ var (
 )
 
 func TestMain(m *testing.M) {
-	tmp, err := os.MkdirTemp("", "compliance-standard-test-*")
-	if err != nil {
-		panic("standard battery TestMain: mkdtemp: " + err.Error())
-	}
-	defer os.RemoveAll(tmp)
-
-	root := repoRootForTest()
-	build := func(name, pkg string) string {
-		bin := filepath.Join(tmp, name)
-		cmd := exec.Command("go", "build", "-o", bin, pkg)
-		cmd.Dir = root
-		cmd.Stderr = os.Stderr
-		if err := cmd.Run(); err != nil {
-			panic("standard battery TestMain: build " + pkg + ": " + err.Error())
-		}
-		return bin
-	}
-	delegationEchoBinary = build("delegation-echo", "./cmd/runtimes/delegation-echo")
-	echoBinary = build("echo", "./cmd/runtimes/echo")
+	// testbin keeps one copy of each reference runtime in the shared
+	// test cache. Building into a temp directory instead left the
+	// binaries under the system temp directory for the length of this
+	// package's tests, which is minutes, and a sweep of that directory
+	// during the run made every check that spawns a runtime fail with
+	// "fork/exec ...: no such file or directory".
+	delegationEchoBinary = testbin.MustBuild("./cmd/runtimes/delegation-echo")
+	echoBinary = testbin.MustBuild("./cmd/runtimes/echo")
 
 	os.Exit(m.Run())
-}
-
-func repoRootForTest() string {
-	wd, _ := os.Getwd()
-	for d := wd; d != "/" && d != ""; d = filepath.Dir(d) {
-		if _, err := os.Stat(filepath.Join(d, "go.mod")); err == nil {
-			return d
-		}
-	}
-	return wd
 }
 
 // --- battery composition -----------------------------------------------
