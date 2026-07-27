@@ -1219,7 +1219,8 @@
         "tests/tier2_component/stores/userstore_test.go",
         "tests/tier2_component/stores/customrolestore_test.go",
         "tests/tier5_e2e_kind/auth_modes_test.go::TestStandardBearerGatesSessionCreation",
-        "tests/tier5_e2e_kind/prompt_journey_auth_modes_test.go::TestPromptJourneyAcrossAuthModes"
+        "tests/tier5_e2e_kind/prompt_journey_auth_modes_test.go::TestPromptJourneyAcrossAuthModes",
+        "tests/tier5_e2e_kind/mixed_auth_modes_test.go::TestMixedAuthModesShareOneTenantAndSession"
       ],
       "packages": [
         "pkg/auth"
@@ -3287,6 +3288,7 @@
       "spec_file": "spec/25_agent-operability.md",
       "tests": [
         "tests/tier5_e2e_kind/admin_scope_narrowing_test.go::TestScopeNarrowedBearerGatesAdminAPI",
+        "tests/tier5_e2e_kind/mixed_auth_modes_test.go::TestMixedAuthModesShareOneTenantAndSession",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRejectsNarrowedToken_spec_15_1_25_1",
         "tests/tier9_security/admin_scope_enforce_test.go::TestAdminScopeGateRawCanonicalConditional_spec_25_9_3653",
         "tests/tier9_security/ops_agent_pod_boundary_test.go::TestOpsUnreachableFromAgentPod_spec_25_1",
