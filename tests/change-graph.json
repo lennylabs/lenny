@@ -377,6 +377,10 @@
     "tests/testinfra/containers": {
       "component": ["tests/testinfra/containers/postgres_test.go"]
     },
+    "tests/testinfra/inproc": {
+      "unit": ["tests/testinfra/inproc/..."],
+      "load_local": ["tests/tier7a_load_local/..."]
+    },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
     },
