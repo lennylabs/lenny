@@ -2818,7 +2818,8 @@
         "tests/tier6_e2e_cloud/eks_platform_test.go",
         "tests/tier2_component/stores/admintoken_rotation_test.go::TestAdminRotationDurablyRevokesOldTokenAndGatesCache",
         "tests/tier0_static/change_graph_container_image_selection_test.go::TestChangeGraphRootDockerfileSelectsKindEndToEndTier",
-        "tests/tier0_static/change_graph_container_image_selection_test.go::TestChangeGraphRootDockerfileEntryNamesKindSuites"
+        "tests/tier0_static/change_graph_container_image_selection_test.go::TestChangeGraphRootDockerfileEntryNamesKindSuites",
+        "tests/tier5_e2e_kind/air_gapped_install_test.go::TestAirGappedInstallSkipsPreflight"
       ],
       "packages": [
         "charts/lenny",
@@ -2902,6 +2903,7 @@
         "pkg/common/registry/resolver_test.go",
         "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
         "tests/tier5_e2e_kind/airgap_registry_mirror_test.go",
+        "tests/tier5_e2e_kind/air_gapped_install_test.go::TestAirGappedInstallSkipsPreflight",
         "tests/tier5_e2e_kind/probe_image_preload_test.go"
       ],
       "packages": [],
