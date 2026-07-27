@@ -1798,7 +1798,8 @@
         "tests/tier3_contract/cloudevents/cloudevents_test.go",
         "tests/tier3_contract/cloudevents/published_schema_test.go",
         "tests/tier2_component/stores/postgrespodregistry_test.go",
-        "tests/tier11_docs/cloudevents_alias_reconciliation_test.go"
+        "tests/tier11_docs/cloudevents_alias_reconciliation_test.go",
+        "tests/tier7a_load_local/scenarios/pubsub_fanout"
       ],
       "packages": [
         "pkg/store",

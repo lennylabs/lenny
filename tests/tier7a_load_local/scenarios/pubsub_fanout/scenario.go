@@ -2,13 +2,30 @@
 
 //go:build load_local
 
-// Package pubsub_fanout models the §4.8 fan-out pub/sub primitive
-// with a scenario-local broker. The invariant: every subscriber sees
-// every published event in order, exactly once.
+// Package pubsub_fanout models the §12.6 EventBus fan-out primitive
+// with a scenario-local broker: a topic carries every event to every
+// connected subscriber, each subscriber holds its own queue, and
+// delivery is at-most-once so no subscriber sees an event twice.
 //
-// pkg/pubsub does not yet exist in the tree; this scenario uses a
-// scenario-local broker so the documented fan-out invariant is
-// exercised in CI.
+// The scenario drives a scenario-local broker rather than the
+// Redis-backed §12.6 RedisEventBus so the fan-out invariant is
+// exercised in-process at tier-7a rates with the race detector on.
+//
+// The two things the scenario controls make the assertion
+// deterministic rather than timing-dependent:
+//
+//  1. Every subscriber is connected before Setup returns, so no event
+//     is published while a subscriber is absent. Absence is the drop
+//     the §12.6 delivery contract names, and it is not the behavior
+//     this scenario exercises.
+//  2. Teardown drains each subscriber queue to empty before the
+//     consumer goroutine exits. loadgen.Run joins every publisher
+//     before it calls Teardown, so an empty queue after the stop
+//     signal means the fan-out is complete rather than merely quiet.
+//
+// With both in place the delivered set equals the published set on
+// every host, so the assertion carries no throughput-scaled tolerance
+// and no drain sleep.
 //
 // TESTING.md §12.7.a regression scenarios.
 package pubsub_fanout
@@ -25,6 +42,14 @@ import (
 )
 
 const name = "pubsub_fanout"
+
+// subscribers is the fan-out width and subscriberQueue the per-subscriber
+// queue depth. The queue is bounded so publish exerts backpressure
+// instead of growing without limit.
+const (
+	subscribers     = 4
+	subscriberQueue = 1024
+)
 
 func init() {
 	loadgen.Register(name, func() loadgen.Scenario { return &Scenario{counters: scenkit.NewCounters()} })
@@ -55,10 +80,21 @@ func (b *broker) publish(v int64) {
 	}
 }
 
+// subStats is one subscriber's delivery accounting. The consumer
+// goroutine keeps its tallies on the stack and stores them here once,
+// on exit, so the hot receive loop takes no lock and Assert reads a
+// settled value.
+type subStats struct {
+	delivered atomic.Int64
+	duplicate atomic.Int64
+	maxSeq    atomic.Int64
+}
+
 type Scenario struct {
 	counters *scenkit.Counters
 	br       *broker
 	pubSeq   atomic.Int64
+	stats    [subscribers]subStats
 
 	stop chan struct{}
 	done chan struct{}
@@ -73,32 +109,100 @@ func (s *Scenario) Setup(ctx context.Context) error {
 	s.br = &broker{}
 	s.stop = make(chan struct{})
 	s.done = make(chan struct{})
+	// Reset the tallies so a second Setup/Run/Teardown cycle on the
+	// same instance (the capacity-ramp path) compares one run's
+	// deliveries against that same run's publishes.
+	s.counters = scenkit.NewCounters()
+	s.pubSeq.Store(0)
+	for i := range s.stats {
+		s.stats[i].delivered.Store(0)
+		s.stats[i].duplicate.Store(0)
+		s.stats[i].maxSeq.Store(0)
+	}
 
-	// Spin up 4 subscribers, each running in its own goroutine.
-	// §4.8 promises no-drop and no-duplication within a topic across
-	// any publisher set; ordering is only preserved per-publisher
-	// (which the test driver does not control). The assertion below
-	// therefore checks delivery completeness, not strict order.
-	const N = 4
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
-		i := i
+	for i := 0; i < subscribers; i++ {
+		// Subscribe on this goroutine, before Setup returns, so every
+		// subscriber is connected ahead of the first publish. Calling
+		// subscribe inside the consumer goroutine would let the driver
+		// publish into a topic a subscriber has not yet joined, which
+		// costs that subscriber the head of the run for reasons that
+		// have nothing to do with fan-out.
+		sub := s.br.subscribe(subscriberQueue)
 		wg.Add(1)
-		go func() {
+		go func(idx int, ch <-chan int64) {
 			defer wg.Done()
-			sub := s.br.subscribe(1024)
-			for {
-				select {
-				case <-s.stop:
-					return
-				case <-sub:
-					s.counters.Inc(fmt.Sprintf("sub_%d_received", i))
-				}
-			}
-		}()
+			s.consume(idx, ch)
+		}(i, sub)
 	}
 	go func() { wg.Wait(); close(s.done) }()
 	return nil
+}
+
+// consume receives from one subscriber queue until the queue is empty
+// and the stop signal has fired. Queued events always win over stop:
+// a plain select over both would pick uniformly at random whenever
+// both are ready and discard whatever was still queued, which is the
+// shutdown race that made this scenario's delivery count depend on how
+// fast the host ran.
+//
+// spec: §12.6 (EventBus fan-out and at-most-once delivery).
+func (s *Scenario) consume(idx int, ch <-chan int64) {
+	// seen is indexed by sequence number minus one; the consumer owns
+	// it outright, so the exactly-once check costs no synchronization.
+	seen := make([]bool, 0, subscriberQueue)
+	var delivered, duplicate, maxSeq int64
+
+	record := func(v int64) {
+		delivered++
+		if v > maxSeq {
+			maxSeq = v
+		}
+		if v < 1 {
+			return
+		}
+		for int64(len(seen)) < v {
+			seen = append(seen, false)
+		}
+		if seen[v-1] {
+			duplicate++
+			return
+		}
+		seen[v-1] = true
+	}
+
+	publish := func() {
+		s.stats[idx].delivered.Store(delivered)
+		s.stats[idx].duplicate.Store(duplicate)
+		s.stats[idx].maxSeq.Store(maxSeq)
+		s.counters.Add(fmt.Sprintf("sub_%d_received", idx), delivered)
+	}
+
+	for {
+		// Prefer a queued event over the stop signal.
+		select {
+		case v := <-ch:
+			record(v)
+			continue
+		default:
+		}
+		select {
+		case v := <-ch:
+			record(v)
+		case <-s.stop:
+			// Publishers are joined by now, so what remains in the
+			// queue is the whole outstanding tail.
+			for {
+				select {
+				case v := <-ch:
+					record(v)
+				default:
+					publish()
+					return
+				}
+			}
+		}
+	}
 }
 
 func (s *Scenario) Teardown(ctx context.Context) error {
@@ -114,26 +218,30 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	return nil
 }
 
+// Assert checks the §12.6 fan-out contract on settled counts. The
+// driver calls Teardown before Assert, and Teardown returns only once
+// every subscriber has drained its queue, so no sleep or tolerance
+// stands between the run and the assertion.
 func (s *Scenario) Assert(r *loadgen.Result) error {
-	// Drain briefly so subscribers consume the tail.
-	time.Sleep(100 * time.Millisecond)
 	s.counters.EmitTo(r)
 	published := s.counters.Get("published")
 	if published == 0 {
 		return fmt.Errorf("scenario published nothing")
 	}
-	// Tolerate a small tail of events emitted right before Teardown
-	// that the subscriber goroutine had not pumped yet. Express as a
-	// fraction of total published so the bound scales with the
-	// achieved throughput.
-	tolerance := published / 1000
-	if tolerance < 64 {
-		tolerance = 64
+	if seq := s.pubSeq.Load(); seq != published {
+		return fmt.Errorf("scenario accounting broken: %d sequence numbers issued for %d completed publishes", seq, published)
 	}
-	for i := 0; i < 4; i++ {
-		got := s.counters.Get(fmt.Sprintf("sub_%d_received", i))
-		if got < published-tolerance {
-			return fmt.Errorf("§4.8 violated: sub_%d received %d of %d published (drops > tail tolerance %d)", i, got, published, tolerance)
+	for i := range s.stats {
+		st := &s.stats[i]
+		r.AddCustom(fmt.Sprintf("sub_%d_duplicate", i), float64(st.duplicate.Load()))
+		if dup := st.duplicate.Load(); dup != 0 {
+			return fmt.Errorf("§12.6 at-most-once violated: sub_%d received %d duplicate deliveries out of %d published", i, dup, published)
+		}
+		if hi := st.maxSeq.Load(); hi > published {
+			return fmt.Errorf("§12.6 violated: sub_%d received sequence %d beyond the %d events published", i, hi, published)
+		}
+		if got := st.delivered.Load(); got != published {
+			return fmt.Errorf("§12.6 fan-out violated: sub_%d received %d of %d published; a subscriber connected for the whole publish window must receive every event on the topic", i, got, published)
 		}
 	}
 	return nil
