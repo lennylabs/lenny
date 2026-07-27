@@ -2581,6 +2581,67 @@ does not carry. That becomes live the moment agent-pod certificates are wired.
 produces a 404 from the mux. There is also no pod-side proxy client in this repository; that half is a
 contract handed to a runtime the deployer supplies.
 
+#### 6c.9 The proxy dialect is defined by two enums that disagree
+
+Two Go types both enumerate the §4.9 proxy dialect, they hold different value sets, and neither is derived
+from the other.
+
+| Type | Values |
+|:--|:--|
+| `credential.ProxyDialect` (`pkg/credential/lease.go:58-72`) | `anthropic`, `openai`, `google`, `cursor` |
+| `llmproxy.Dialect` (`pkg/gateway/llmproxy/llmproxy/translator.go:25-38`) | `anthropic`, `openai`, `openai_responses` |
+
+The first governs admission. `ProxyDialect.IsValid` (`lease.go:83-90`) is what rejects a credential pool
+with `INVALID_POOL_PROXY_DIALECT`. The second governs routing, because a `Translator` selects on
+`Request.Dialect`. Set arithmetic over the two:
+
+- **Admitted but unroutable: `google` and `cursor`.** A pool carrying either passes admission and can
+  never be served. This is 6c.8 restated, with the cause identified as the enum split rather than a
+  missing route alone.
+- **Routable but unmintable: `openai_responses`.** `OpenAIResponsesTranslator`
+  (`pkg/gateway/llmproxy/llmproxy/openai_responses_translator.go`) is fully implemented and has no
+  production constructor, because no pool can carry the value that would select it. It is UNWIRED, and
+  unreachable by construction rather than by omission.
+- **Usable: `anthropic` and `openai`.** The intersection is the real supported set.
+
+A third divergence sits under both. Only `POST /llm-proxy/v1/messages` is registered
+(`cmd/lenny-gateway/main.go:475`), which is the `anthropic` dialect, so `openai` is admitted, is present in
+the routing enum, and still has no inbound route. The set of dialects that work end to end today is
+`anthropic` alone.
+
+The origin is recorded in the citation on `ProxyDialect` itself (`lease.go:53-55`): `anthropic` and
+`openai` come from §4.9, while `google` and `cursor` were added by the reference runtime catalog
+(§26.5, §26.8, §26.9 for `google`; §26.6 line 297 for `cursor`). Because the dialect is the **inbound**
+wire format a runtime's SDK speaks to the proxy (`translator.go:22-23`), and the lease token is handed to
+that SDK in place of its API key (`spec/04_system-components.md:1289`), every runtime whose SDK speaks a
+new format implies a new dialect. The proxy's inbound surface is therefore a function of the runtime
+catalog, which is an open-ended surface on the component that holds tenant credentials. §26.6 line 303
+states the consequence plainly for `cursor`: the API is proprietary, the dialect implements a public
+subset, and operators must pin runtime and proxy versions together against drift.
+
+#### 6c.10 Open Responses and the OpenAI Responses API are distinct, and the names are used interchangeably
+
+Three concepts share overlapping names across two unrelated layers.
+
+| Concept | Layer | Direction | Artifact |
+|:--|:--|:--|:--|
+| Open Responses Specification | External API surface | client to gateway | `OpenResponsesAdapter`, `POST /v1/responses` (`spec/15_external-api-surface.md:577`) |
+| OpenAI Responses API | External API surface | client to gateway | served by the same adapter, since §15.1 records it as a proper superset (`spec/15:581`) |
+| OpenAI Responses API | LLM proxy | runtime SDK to proxy | `llmproxy.DialectOpenAIResponses` (`translator.go:33-37`) |
+
+The first two are one adapter by deliberate design, and `spec/15:581` states the superset relationship
+that justifies it. The third is a different layer entirely, travelling the opposite direction, and shares
+only a name.
+
+The naming is not held consistently. `spec/18_build-sequence.md:271` writes "OpenAI Open Responses",
+merging the open specification and OpenAI's API into one name that denotes neither. Elsewhere the spec
+alternates between "Open Responses" (`spec/03:7`, `spec/04:47`, `spec/09:40`, `spec/15:567`,
+`spec/23:28`) and "OpenAI Responses API" (`spec/26:281`) without stating which sense is meant at each
+site, and the two differ by three characters.
+
+The practical risk is on the proxy side. A reader who takes `openai_responses` for the external adapter
+concludes the Responses surface is served, when the proxy dialect it names is unreachable per 6c.9.
+
 ---
 
 ## 7. Quick reference

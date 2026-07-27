@@ -1110,20 +1110,88 @@ is documented as interim.
 **Scope.** `credential.ProxyDialect` admits `anthropic`, `openai`, `google`, and `cursor`
 (`pkg/credential/lease.go:58-91`), and the gateway registers exactly one route,
 `POST /llm-proxy/v1/messages` (`cmd/lenny-gateway/main.go:475`), so a pool minted with any other dialect
-produces a 404 from the mux and nothing validates the dialect at mint time. Either register the routes or
-narrow the admitted set. The §28.5.5 card enumerates the served dialects, and the admitted set in code
-derives from or is asserted against it, so the two cannot drift again.
+produces a 404 from the mux and nothing validates the dialect at mint time. The direction is settled by
+decision: the supported set is `anthropic` and `openai`, and R11a narrows the enum to those two before
+this step runs, so R11 registers the inbound route for `openai` and nothing else. The §28.5.5 card
+enumerates the served dialects, and the admitted set in code derives from or is asserted against it, so
+the two cannot drift again.
 
 **Tests.** Tier 3 bijection between the admitted dialect enum and the registered mux routes. Tier 1 on
 mint-time rejection.
 
-**Dependencies.** R2a for the card. R5, because the route registration site is in the composition root
-that R5 restructures. The planning input stated "collides with nothing" while its own code scope named
-"route registration in the carved composition root", which presupposes R5.
+**Dependencies.** R11a, which narrows the set this step routes. R2a for the card. R5, because the route
+registration site is in the composition root that R5 restructures. The planning input stated "collides
+with nothing" while its own code scope named "route registration in the carved composition root", which
+presupposes R5.
 
 **Parallel with.** Every other wave-3 step, given the R5 edge.
 
 **Risk.** Minimal. The only judgement is which direction to take, and the card forces it to be recorded.
+
+**Size.** S.
+
+### R11a. One proxy-dialect enum, narrowed to the supported set, and the Responses naming split
+
+**Closes:** 6c.9 and 6c.10. Prerequisite of R11, which routes what survives.
+
+**The decision this step executes.** The supported LLM proxy dialects are `anthropic` and `openai`.
+That is the intersection of what admission accepts and what routing can serve today, so the narrowing
+removes values that never worked rather than withdrawing a capability anyone has.
+
+**Scope, part one: collapse two enums into one.** `credential.ProxyDialect`
+(`pkg/credential/lease.go:58-72`) governs admission through `IsValid` (`:83-90`), and `llmproxy.Dialect`
+(`pkg/gateway/llmproxy/llmproxy/translator.go:25-38`) governs routing. They hold different value sets and
+neither derives from the other, which is the cause of 6c.8 rather than a missing route alone. One type
+survives and the other aliases it or is deleted. The §28.5.5 card is the normative list, and a tier-0
+gate asserts that the surviving enum, the card, and the registered mux routes agree, so a future runtime
+cannot add a dialect by declaring one in the catalog.
+
+**Scope, part two: retire three values.**
+
+- `google` and `cursor` are removed. Both were added by the reference runtime catalog (§26.5, §26.8, and
+  §26.9 for `google`; §26.6 line 297 for `cursor`) rather than by §4.9, and neither ever reached a route.
+  The catalog entries that declare `credentialCapabilities.proxyDialect: [google]` and `[cursor]` are
+  amended in the same step, because leaving them declares a capability the platform rejects at mint time.
+  §26.6 lines 297 and 303 are rewritten: the runtimes affected register in direct-delivery mode, which
+  §26.6 line 297 already names as the fallback for a deployer with no matching pool.
+- `openai_responses` is removed from the routing enum, and `OpenAIResponsesTranslator`
+  (`pkg/gateway/llmproxy/llmproxy/openai_responses_translator.go`) is deleted. It is fully implemented,
+  has no production constructor, and is unreachable by construction, since no pool can carry the value
+  that selects it. Deleting it is the honest disposition; R24 owns the general dead-path drain, and this
+  one is named here because it is entangled with the enum split.
+
+**Scope, part three: the Responses naming split (6c.10).** Two different things carry nearly the same
+name across two layers. The Open Responses Specification is an external API surface that clients call
+(`spec/15:577`), and §15.1 records that OpenAI's Responses API is a proper superset served by the same
+adapter (`spec/15:581`). The proxy dialect named `openai_responses` was the OpenAI Responses API as an
+inbound proxy format, travelling the opposite direction. Removing the dialect eliminates the collision at
+the code level. The specification still needs the naming settled, because it alternates between the two
+senses without marking which is meant, and `spec/18_build-sequence.md:271` writes "OpenAI Open Responses",
+a name denoting neither. Each site is rewritten to name one sense explicitly, and the reserved-word rule
+N3 from R1a is extended to cover the pair, so a bare "Responses" is not a permitted noun phrase.
+
+**Spec.** The §28.5.5 card carries the two supported dialects, the inbound direction, and the statement
+that the dialect is the wire format a runtime's SDK speaks to the proxy rather than an upstream provider
+format. §4.9 lines 1473 to 1476 are reduced to those two values. §26.5, §26.6, §26.8, and §26.9 lose their
+dialect declarations, and INV-5 applies: each amended catalog entry names the direct-delivery path that
+replaces it.
+
+**Tests.** Tier 0 asserting one dialect enum, and that the card, the enum, and the registered routes agree.
+Tier 1 on mint-time rejection of a retired value, so a stored pool carrying `google` or `cursor` fails
+loudly rather than 404ing at request time. Tier 11 asserting no site uses a bare "Responses" and that
+`spec/18:271` names one sense.
+
+**Migration.** A pool row may already carry `google` or `cursor`. The step ships a startup check that
+reports such rows by tenant and pool rather than failing the gateway, since neither value has ever been
+routable and the pools cannot have served traffic.
+
+**Dependencies.** R2a for the §28.5.5 card, and R1a for the N3 reserved-word rule this step extends.
+
+**Parallel with.** R10, R12, R13, R14, and R20. It touches `pkg/credential`, `pkg/gateway/llmproxy`, and
+catalog sections of `spec/26`, which no wave-3 step edits.
+
+**Risk.** Low. The removed values never reached a route, so no working path changes. The one judgement is
+whether a deployer has a stored pool on a retired dialect, which the startup check surfaces.
 
 **Size.** S.
 
@@ -1670,7 +1738,8 @@ rule S-7 places it before R25 in the wave ordering.
 | R9 | R1b, R5, R3 | Register keyed to post-rename and post-carve symbol names; needs local feedback. |
 | R10a | R5, R7, R2a | Handler split, two-replica harness, and the normative matrix. |
 | R10b | R10a, R20 | The gate wrapper, and the shared `messages.go` and `interactions.go` files R20 rewrites. |
-| R11 | R2a, R5 | The card enumerates dialects; registration is in the composition root. |
+| R11a | R2a, R1a | The card is the normative dialect list, and N3 is extended to the Responses pair. |
+| R11 | R11a, R2a, R5 | R11a narrows the set this step routes; the card enumerates dialects; registration is in the composition root. |
 | R12 | R1b, R2a, R5, R6, R7 | Wire names, contract, wiring, podspec, and the slot dimension. R9 co-requisite. |
 | R13 | R5, R2a, R18 design note | Bind helper split, the register, and the address format. |
 | R14 | R6, R7 | Certificate volumes and a harness that does not disable the PKI. |
@@ -1798,7 +1867,7 @@ Three classes are invisible by construction, and no amount of added behavioral c
 | Class | Records | Why the tiers are blind | The mechanism that catches it |
 |:--|:--|:--|:--|
 | `UNWIRED` | 6a.1, 6a.2, 6a.6, 6a.7, 6b.3, 6b.13, the rows of 6a.5 the register enumerates as reachability defects, and the consumer halves of 6b.4 and 6b.8 | The test is the missing caller. `pkg/adapter/holdstate_test.go:111` calls `s.enterHoldState("s1")` directly, and `go test` cannot distinguish a double standing in for an expensive collaborator from one standing in for a nonexistent one. | Static wiring assertion (tier 0), or boot-surface observation (tier 4, real binary, no test-supplied caller) |
-| `ABSENT` | 6b.1, 6b.2, 6b.5, 6b.6, 6b.7, 6b.10, 6b.11, and 6c.1 through 6c.8 | There is nothing to call. A missing test and a missing feature are the same absence, and the suite has no travel direction from a specification sentence to code. | Normative-claim register (`tests/claim-map.json`), tier-0 gated. The register is what makes the absence visible; the behavioral tier named per record in section 7.2 verifies each closure |
+| `ABSENT` | 6b.1, 6b.2, 6b.5, 6b.6, 6b.7, 6b.10, 6b.11, and 6c.1 through 6c.10 | There is nothing to call. A missing test and a missing feature are the same absence, and the suite has no travel direction from a specification sentence to code. | Normative-claim register (`tests/claim-map.json`), tier-0 gated. The register is what makes the absence visible; the behavioral tier named per record in section 7.2 verifies each closure |
 | Deployment boundary | 6a.2 (post-mortem half), 6a.3, 6b.12, 6c.7 (chart half), the OTLP row of 6a.5, and the PodDisruptionBudget and admission rows of 6a.4 | Every harness synthesizes the precondition. `cmd/lenny-compliance/full.go:98` writes the manifest itself, so Full-level conformance never sees the rendered podspec. | Flag-to-podspec bijection (tier 0) plus the reciprocal host-conformance battery (R8) |
 
 ### 7.2 Per-gap detection
@@ -1838,6 +1907,8 @@ prevents recurrence.
 | 6c.6 | Tier-4 restore onto a concurrent pod | 4 | R22 |
 | 6c.7 | G6 default-values parity (the tier-9 suite must stop skipping), and tier-9 mTLS | 0, 9 | R14, with R6 and R7 |
 | 6c.8 | Tier-3 dialect-to-route bijection | 3 | R11 |
+| 6c.9 | Tier-0 gate: one dialect enum, and every admitted value routable | 0 | R11a |
+| 6c.10 | Tier-11: the two Responses senses named distinctly at every site | 11 | R11a |
 | 8.1 | Full-tier run plus the `UNVERIFIED` verdict state | all | R25, with R3 as prerequisite |
 | 8.2 | Compatibility note plus a register row | 0 | R6, with R17 |
 | 8.3 | `TestAdapterExitsWithinGraceBudget` | 7a | R4 |
@@ -1892,7 +1963,7 @@ which `tests/tier9_security/tls_test.go:84` (R14) and
 
 ### 8.1 The count
 
-Reference section 6 contains 30 numbered records (`gateway-runtime-comms.md:2143-2585`): 6a.1 through
+Reference section 6 contains 32 numbered records (`gateway-runtime-comms.md:2143-2650`): 6a.1 through
 6a.7 (7), 6b.1 through 6b.15 (15), and 6c.1 through 6c.8 (8). The framing figure of 34 matches no heading
 count in the document. Three records are composites over tables: 6a.4 (11 rows at `:1782-1792`), 6a.5
 (18 rows at `:2235-2252`), and 6b.15 (7 rows at `:2490-2496`). Section 8 lists 7 items (`:2693-2710`),
@@ -1934,7 +2005,9 @@ the three composites with their 36 rows gives 71 tracked units, a strict superse
 | 6c.5 | Coordinator cannot reach an unheld pod | R21 | R7, R18, R16, R13 | Tier-4 off-holder drive |
 | 6c.6 | Checkpoint restore onto a concurrent pod | R22 | R7 | Tier-4 restore |
 | 6c.7 | Agent-pod mTLS client identity | R14 | R6 (chart), R7 (defaults) | G6, tier-9 mTLS with no skip |
-| 6c.8 | Non-Anthropic LLM proxy dialects | R11 | R2a | Tier-3 dialect-to-route bijection |
+| 6c.8 | Non-Anthropic LLM proxy dialects | R11 | R2a, R11a | Tier-3 dialect-to-route bijection |
+| 6c.9 | Proxy dialect defined by two disagreeing enums | R11a | R2a | Tier-0 single-source-of-truth gate, tier-3 bijection |
+| 6c.10 | Open Responses and the OpenAI Responses API conflated | R11a | R2a | Tier-11 naming check under N3 |
 | 8.1 | No test tier was run | R25 | R3 | Full-tier run, `UNVERIFIED` verdict |
 | 8.2 | Out-of-tree flag setters | R6 | R4, R17 | Compatibility note plus a register row |
 | 8.3 | `GracefulStop` past the grace deadline | R4 | R16 | Tier-7a grace-budget test |
