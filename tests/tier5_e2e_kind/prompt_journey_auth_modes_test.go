@@ -21,7 +21,6 @@ package tier5_e2e_kind_test
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -58,9 +57,20 @@ func TestPromptJourneyAcrossAuthModes(t *testing.T) {
 				// Baseline: the X-Lenny-* dev-header identity every other
 				// clustered session test uses, driven on a fresh synthetic
 				// tenant so the cell owns its own cleanup.
+				//
+				// BootstrapFreshTenant, rather than BootstrapTenant, because
+				// a tenant that merely exists cannot yet carry this journey's
+				// session: §10.6 resolves an unset tenant-level
+				// noEnvironmentPolicy to deny-all, and the §11.1 environment
+				// admission gate then rejects the environment-less create
+				// with 403 FORBIDDEN (reason
+				// `no_environment_policy_deny_all`) before any §7.1 round-trip
+				// assertion runs. BootstrapFreshTenant mints the per-run id
+				// and sets the policy to allow-all, matching the "bearer"
+				// cell's ensureDefaultTenantAllowsSessionsWithNoEnvironment.
 				d := sessiondriver.New(t)
-				tenant := uniqueAuthJourneyTenant()
-				if err := d.BootstrapTenant(ctx, tenant); err != nil {
+				tenant, err := d.BootstrapFreshTenant(ctx, "auth-journey-tenant")
+				if err != nil {
 					t.Fatalf("bootstrap tenant: %v", err)
 				}
 				runEchoPromptJourney(ctx, t, d, tenant)
@@ -87,13 +97,4 @@ func TestPromptJourneyAcrossAuthModes(t *testing.T) {
 			}
 		},
 	)
-}
-
-// uniqueAuthJourneyTenant returns a per-run synthetic tenant id that
-// satisfies the §10.2 tenant_id format `^[a-zA-Z0-9_-]{1,128}$`. The
-// sessiondriver best-effort deletes it on Close; the nanosecond suffix
-// sidesteps a stale tenant left in the deleted state by a prior run on
-// this persistent e2e cluster, matching promptRoundtripTenant's pattern.
-func uniqueAuthJourneyTenant() string {
-	return fmt.Sprintf("auth-journey-tenant-%d", time.Now().UnixNano())
 }
