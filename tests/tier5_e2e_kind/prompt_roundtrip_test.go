@@ -17,7 +17,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -25,10 +24,11 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/sessiondriver"
 )
 
-// promptRoundtripTenant is the synthetic tenant this test bootstraps.
-// The driver best-effort deletes it on Close; a per-run suffix (below)
-// sidesteps a stale tenant left in the deleted state by a prior run on
-// this persistent e2e cluster, matching the pattern in
+// promptRoundtripTenant is the id prefix for the synthetic tenant this
+// test bootstraps. The driver mints a per-run suffix and best-effort
+// deletes the tenant on Close; the fresh id sidesteps a stale tenant
+// left in the deleted state by a prior run on this persistent e2e
+// cluster, matching the pattern in
 // tests/tier9_security/live_session_test.go.
 const promptRoundtripTenant = "prompt-roundtrip-tenant"
 
@@ -50,8 +50,15 @@ func TestPromptRoundTripsToRealPodAndReturnsContent(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	tenant := fmt.Sprintf("%s-%d", promptRoundtripTenant, time.Now().UnixNano())
-	if err := d.BootstrapTenant(ctx, tenant); err != nil {
+	// BootstrapFreshTenant, rather than BootstrapTenant, because a
+	// tenant that only exists cannot yet carry a session: §10.6 resolves
+	// an unset noEnvironmentPolicy to deny-all, and the §11.1 admission
+	// gate then rejects this journey's environment-less create with 403
+	// FORBIDDEN (reason `no_environment_policy_deny_all`) before any of
+	// the §7.1 round-trip assertions below run. BootstrapFreshTenant
+	// mints the per-run id and sets the policy to allow-all.
+	tenant, err := d.BootstrapFreshTenant(ctx, promptRoundtripTenant)
+	if err != nil {
 		t.Fatalf("bootstrap tenant: %v", err)
 	}
 
