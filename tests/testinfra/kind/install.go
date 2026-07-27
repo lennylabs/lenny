@@ -42,12 +42,20 @@ const agentWorkloadHint = "no Ready agent-pod workload in namespace " + agentNam
 // InstallLenny does NOT build images or run `helm install`; standing
 // up the control plane is the job of tests/testinfra/kind/install.sh.
 // The helper only ensures the cluster exists (via EnsureCluster),
-// confirms the `lenny` Helm release is deployed, and confirms the
-// control-plane pods are Ready. When the release is absent or the pods
-// are not Ready, InstallLenny calls t.Skip with installHint rather
-// than failing: a tier-5 run on a host where the operator has not run
-// the install script skips cleanly instead of reporting a spurious
-// failure.
+// confirms the `lenny` Helm release is deployed, prunes accumulated
+// object debris, and confirms the CNI and the control-plane pods are
+// healthy. When the release is absent or the pods are still settling,
+// InstallLenny calls t.Skip with installHint rather than failing: a
+// tier-5 run on a host where the operator has not run the install
+// script skips cleanly instead of reporting a spurious failure.
+//
+// A deployed control plane or CNI that is in a restart loop is a
+// different case and fails the test instead of skipping it. See
+// RequireHealthyControlPlane and RequireEnforcingCNI in health.go for
+// why: a generic not-Ready skip on a standing cluster hides an
+// actionable cluster defect behind every dependent suite at once, and
+// an unenforced NetworkPolicy can make a deny assertion pass for the
+// wrong reason.
 func InstallLenny(t testing.TB) *Cluster {
 	t.Helper()
 	c := EnsureCluster(t)
@@ -55,9 +63,9 @@ func InstallLenny(t testing.TB) *Cluster {
 	if !releaseDeployed(c) {
 		t.Skip(installHint)
 	}
-	if !controlPlaneReady(c) {
-		t.Skip(installHint + " (Helm release present but control-plane pods are not Ready)")
-	}
+	pruneClusterDebrisOnce(t, c)
+	RequireEnforcingCNI(t, c)
+	RequireHealthyControlPlane(t, c)
 	return c
 }
 
@@ -168,6 +176,11 @@ func releaseDeployed(c *Cluster) bool {
 	return strings.Contains(string(out), `"status":"deployed"`)
 }
 
+// lennyControlPlaneSelector selects every control-plane pod the chart
+// deploys: the controller, gateway, token-service, ops, and every
+// admission-webhook pod carry this label.
+const lennyControlPlaneSelector = "app.kubernetes.io/name=lenny"
+
 // controlPlaneReady reports whether every pod carrying the
 // app.kubernetes.io/name=lenny label in lenny-system is in the Running
 // phase with its Ready condition true. The chart labels the controller,
@@ -181,7 +194,7 @@ func controlPlaneReady(c *Cluster) bool {
 	out, err := c.Kubectl(
 		"-n", lennySystemNamespace,
 		"get", "pods",
-		"-l", "app.kubernetes.io/name=lenny",
+		"-l", lennyControlPlaneSelector,
 		"-o", "jsonpath={range .items[*]}{.status.phase}{\"\\t\"}"+
 			"{.status.conditions[?(@.type==\"Ready\")].status}{\"\\n\"}{end}",
 	).Output()

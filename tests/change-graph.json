@@ -383,7 +383,10 @@
     },
     "tests/testinfra/kind": {
       "unit": ["tests/testinfra/kind/..."],
-      "e2e_kind": ["tests/tier5_e2e_kind/probe_image_preload_test.go"]
+      "e2e_kind": [
+        "tests/tier5_e2e_kind/probe_image_preload_test.go",
+        "tests/tier5_e2e_kind/cluster_debris_test.go"
+      ]
     },
     "tests/testinfra/testcache": {
       "unit": ["tests/testinfra/testcache/...", "tests/testinfra/testbin/...", "tests/testinfra/embpg/..."]
