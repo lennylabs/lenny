@@ -3,9 +3,9 @@
 //go:build load_local
 
 // Package streaming_reconnect_storm exercises the inproc gateway's
-// session lifecycle under a storm of create → terminate → get
-// cycles. The §15.1 invariant: a terminated session stays
-// terminated; no session goroutine leaks under rapid cycling.
+// session lifecycle under a storm of create → delete → get
+// cycles. The §15.1 invariant: a cancelled session stays cancelled;
+// no session goroutine leaks under rapid cycling.
 //
 // TESTING.md §12.7.a multi-component scenarios.
 package streaming_reconnect_storm
@@ -66,30 +66,31 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 		return err
 	}
 
-	// Terminate.
+	// Delete. §15.1 returns 200 with the updated envelope; the row
+	// moves to the terminal `cancelled` state rather than being removed.
 	status, _, err = scenkit.DoJSON(ctx, "DELETE", gw+"/v1/sessions/"+created.ID, nil)
 	if err != nil {
 		s.counters.IncOnError(ctx, "failures", err)
 		return err
 	}
-	if status != http.StatusNoContent {
+	if status != http.StatusOK {
 		s.counters.Inc("failures")
-		return fmt.Errorf("terminate status=%d", status)
+		return fmt.Errorf("delete status=%d", status)
 	}
 
-	// GET — must show terminated.
+	// GET — must show the terminal state.
 	status, body, err = scenkit.DoJSON(ctx, "GET", gw+"/v1/sessions/"+created.ID, nil)
 	if err != nil {
 		s.counters.IncOnError(ctx, "failures", err)
 		return err
 	}
 	var sess struct {
-		Status string `json:"status"`
+		State string `json:"state"`
 	}
 	_ = json.Unmarshal(body, &sess)
-	if sess.Status != "terminated" {
+	if sess.State != "cancelled" {
 		s.counters.Inc("failures")
-		return fmt.Errorf("§15.1 violated: status=%s after DELETE", sess.Status)
+		return fmt.Errorf("§15.1 violated: state=%s after DELETE", sess.State)
 	}
 	s.counters.Inc("cycles")
 	return nil

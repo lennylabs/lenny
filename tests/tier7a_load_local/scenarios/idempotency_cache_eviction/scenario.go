@@ -4,8 +4,11 @@
 
 // Package idempotency_cache_eviction drives the inproc gateway with
 // repeated POSTs sharing the same Idempotency-Key. The §11.5
-// invariant: the gateway returns the cached response for replays;
-// the second-through-Nth call hits the cache.
+// invariants under concurrency: the operation executes exactly once;
+// a retry that arrives while the original is still in flight is
+// rejected with 409 IDEMPOTENCY_KEY_IN_FLIGHT rather than executing in
+// parallel; and a retry that arrives after the original completes
+// replays the cached response.
 //
 // TESTING.md §12.7.a multi-component scenarios.
 package idempotency_cache_eviction
@@ -29,6 +32,7 @@ func init() {
 type Scenario struct {
 	scenkit.InProcMixin
 	hits     atomic.Int64
+	inFlight atomic.Int64
 	failures atomic.Int64
 }
 
@@ -58,16 +62,26 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 		}
 		return err
 	}
-	if status != http.StatusCreated {
+	switch status {
+	case http.StatusCreated:
+		// Either the one execution or a replay of its cached response.
+		s.hits.Add(1)
+	case http.StatusConflict:
+		// spec: §11.5 — a retry that arrives while the original is still
+		// in flight is rejected rather than executed in parallel. Under
+		// concurrent VUs sharing one key this is the expected outcome for
+		// every retry that races the first execution.
+		s.inFlight.Add(1)
+	default:
 		s.failures.Add(1)
 		return fmt.Errorf("status=%d", status)
 	}
-	s.hits.Add(1)
 	return nil
 }
 
 func (s *Scenario) Assert(r *loadgen.Result) error {
 	r.AddCustom("hits", float64(s.hits.Load()))
+	r.AddCustom("in_flight_rejected", float64(s.inFlight.Load()))
 	r.AddCustom("failures", float64(s.failures.Load()))
 	r.AddCustom("idem_hits", float64(s.Env().IdempotencyHits()))
 	r.AddCustom("sessions", float64(s.Env().SessionCount()))

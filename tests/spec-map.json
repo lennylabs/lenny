@@ -1463,7 +1463,8 @@
       "title": "Admission and Fairness",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
-        "tests/tier2_component/ratelimit/..."
+        "tests/tier2_component/ratelimit/...",
+        "tests/testinfra/inproc/realboot_test.go::TestHarnessBootsRealLennyGateway"
       ],
       "packages": [
         "pkg/policy/admission"
@@ -1544,6 +1545,7 @@
       "title": "Idempotency",
       "spec_file": "spec/11_policy-and-controls.md",
       "tests": [
+        "tests/testinfra/inproc/realboot_test.go::TestHarnessEnforcesIdempotencyContract",
         "pkg/idempotency/idempotency_test.go::TestMaxKeyLengthMatchesSpec",
         "pkg/idempotency/idempotency_test.go::TestTTLMatchesSpec",
         "pkg/idempotency/idempotency_test.go::TestKeyValidateAcceptsCanonical",
@@ -2227,6 +2229,7 @@
       "title": "REST API",
       "spec_file": "spec/15_external-api-surface.md",
       "tests": [
+        "tests/testinfra/inproc/realboot_test.go::TestHarnessBootsRealLennyGateway",
         "pkg/api/v1/session/session_test.go::TestAllStatesCountMatchesSpec",
         "pkg/api/v1/session/session_test.go::TestIsTerminalCoversFourStates",
         "pkg/api/v1/session/session_test.go::TestFailureClassEnumIsExhaustive",

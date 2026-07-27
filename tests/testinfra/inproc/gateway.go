@@ -4,60 +4,110 @@ package inproc
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/redis/go-redis/v9"
+
+	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	rlredis "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/idempotency"
 )
 
-// gateway is the minimal in-process HTTP listener tier-7a multi-
-// component scenarios drive. It exposes a tiny subset of the §15.1
-// session lifecycle surface: POST /v1/sessions, GET /v1/sessions/{id},
-// DELETE /v1/sessions/{id}. State is in-memory; the listener binds
-// to an ephemeral loopback port and is reachable via Env.GatewayURL().
+// gateway is the in-process Lenny gateway the tier-7a multi-component
+// scenarios drive. It is assembled from the same packages
+// cmd/lenny-gateway assembles its HTTP surface from, so a scenario
+// exercises Lenny code rather than a harness-local reimplementation:
 //
-// Concurrency invariants the implementation honours:
-//   - POST /v1/sessions with an Idempotency-Key replays cached responses.
-//   - DELETE on a non-existent session returns 404.
-//   - Sessions move through a documented state machine; concurrent
-//     transitions hold a per-session mutex so observers never see
-//     a partial state.
+//   - pkg/gateway/sessionserver serves the §15.1 REST session
+//     lifecycle, including the precondition table and the §15.1 error
+//     envelope.
+//   - pkg/gateway/middleware/idempotency enforces the §11.5
+//     Idempotency-Key contract (claim, replay, in-flight rejection)
+//     around it, mounted on the same §11.5 critical-operation path set
+//     cmd/lenny-gateway mounts it on.
+//   - pkg/gateway/policy/ratelimit/redisstore backs the §11.1
+//     per-runtime admission counter against the harness's embedded
+//     miniredis, so session creation genuinely transacts with Redis.
+//
+// The session rows live in the in-memory sessionstore adapter
+// (pkg/gateway/session/sessionstore/memstore), which implements the
+// same sessionstore.Store contract the Postgres adapter implements;
+// the handler is store-agnostic.
 type gateway struct {
+	store    sessionstore.Store
+	srv      *sessionserver.Server
+	handler  http.Handler
+	idem     *countingIdempotencyStore
+	creates  atomic.Int64
+	redis    redis.UniversalClient
 	mu       sync.Mutex
-	sessions map[string]*session
-
-	mxAtomic atomic.Int64
-	idemHits atomic.Int64
-
-	idem   map[string]idempotentResponse
-	idemMu sync.Mutex
-
 	server   *http.Server
 	listener net.Listener
 }
 
-type session struct {
-	ID      string    `json:"id"`
-	Status  string    `json:"status"`
-	Created time.Time `json:"created_at"`
-	Runtime string    `json:"runtime_ref"`
-}
+// defaultAdmissionPerRuntimePerMinute is the §11.1 per-runtime
+// requests-per-minute admission limit the harness configures when a
+// scenario does not pick one. The load profiles drive far more than a
+// production limit would allow, so the default is set high enough that
+// the counter runs (and writes to the embedded Redis) on every create
+// without rejecting scenario traffic. A scenario that wants to exercise
+// the §11.1 rejection path sets Config.AdmissionPerRuntimePerMinute.
+const defaultAdmissionPerRuntimePerMinute = 1_000_000
 
-type idempotentResponse struct {
-	Status int
-	Body   []byte
-}
-
-func newGateway() *gateway {
-	return &gateway{
-		sessions: make(map[string]*session),
-		idem:     make(map[string]idempotentResponse),
+// newGateway assembles the in-process gateway against the supplied
+// Redis client (the harness's embedded miniredis).
+func newGateway(rdb redis.UniversalClient, cfg Config) *gateway {
+	perRuntime := cfg.AdmissionPerRuntimePerMinute
+	if perRuntime <= 0 {
+		perRuntime = defaultAdmissionPerRuntimePerMinute
 	}
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{
+		// spec: §11.1 line 7 — the per-runtime admission counter is the
+		// Redis-backed one, so the harness's miniredis is on the session
+		// creation path rather than decorative.
+		AdmissionRateLimitCounter: rlredis.New(rdb),
+		PerRuntimePerMinute:       perRuntime,
+	})
+	g := &gateway{store: store, srv: srv, redis: rdb}
+	g.idem = &countingIdempotencyStore{inner: idemmw.NewMemoryStore()}
+
+	// Count session creations at the sessionserver boundary, inside the
+	// §11.5 middleware: a replayed response never reaches the inner
+	// handler, so this counts genuine creates rather than cache hits.
+	counted := &createCounter{inner: srv.Handler(), n: &g.creates}
+
+	g.handler = idemmw.Wrap(counted, g.idem, idemmw.Options{
+		// The harness stands in for the auth middleware that normally
+		// resolves the tenant ahead of §11.5. It mirrors
+		// sessionserver.resolveTenant: the dev X-Lenny-Tenant-ID header,
+		// falling back to the §10.2 single-tenant "default" so both
+		// tenant-scoped and unscoped scenarios reach the handler.
+		TenantFromRequest: func(r *http.Request) string {
+			if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
+				return v
+			}
+			return "default"
+		},
+		// spec: §11.5 line 268 — the critical-operation path set, the
+		// same list cmd/lenny-gateway mounts.
+		AllowedPaths: []string{
+			"/v1/sessions",
+			"/v1/sessions/start",
+			"/v1/sessions/{id}/finalize",
+			"/v1/sessions/{id}/start",
+			"/v1/sessions/{id}/resume",
+			"/v1/sessions/{id}/derive",
+		},
+	})
+	return g
 }
 
 // start binds the gateway to a loopback port and returns the resolved
@@ -69,19 +119,21 @@ func (g *gateway) start() (string, error) {
 		return "http://" + g.listener.Addr().String(), nil
 	}
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/sessions", g.handleSessions)
-	mux.HandleFunc("/v1/sessions/", g.handleSessionDetail)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write([]byte("ok")) })
+	mux.Handle("/", g.handler)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", err
 	}
 	g.listener = ln
-	g.server = &http.Server{
+	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-	go g.server.Serve(ln)
+	g.server = srv
+	// Capture srv locally: stop() clears g.server, and a closure reading
+	// the field would race with (and then nil-deref on) that clear.
+	go func() { _ = srv.Serve(ln) }()
 	return "http://" + ln.Addr().String(), nil
 }
 
@@ -96,133 +148,88 @@ func (g *gateway) stop(ctx context.Context) error {
 	return srv.Shutdown(ctx)
 }
 
-func (g *gateway) handleSessions(w http.ResponseWriter, r *http.Request) {
-	switch r.Method {
-	case http.MethodPost:
-		g.create(w, r)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
+// sessionCount returns how many sessions the gateway created over its
+// lifetime. Terminal sessions stay counted: the §15.1 lifecycle moves a
+// deleted session to `cancelled` rather than removing the row.
+func (g *gateway) sessionCount() int { return int(g.creates.Load()) }
+
+// idempotencyHits returns how many requests the §11.5 middleware served
+// from a completed cache entry instead of re-executing.
+func (g *gateway) idempotencyHits() int64 { return g.idem.replays.Load() }
+
+// createCounter increments n for every 201 the inner handler writes on
+// POST /v1/sessions. It sits inside the §11.5 middleware so replays,
+// which short-circuit before the inner handler, are not counted.
+type createCounter struct {
+	inner http.Handler
+	n     *atomic.Int64
 }
 
-func (g *gateway) handleSessionDetail(w http.ResponseWriter, r *http.Request) {
-	id := strings.TrimPrefix(r.URL.Path, "/v1/sessions/")
-	if id == "" {
-		http.NotFound(w, r)
+func (c *createCounter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost || r.URL.Path != "/v1/sessions" {
+		c.inner.ServeHTTP(w, r)
 		return
 	}
-	switch r.Method {
-	case http.MethodGet:
-		g.get(w, id)
-	case http.MethodDelete:
-		g.delete(w, id)
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	rec := &statusRecorder{ResponseWriter: w}
+	c.inner.ServeHTTP(rec, r)
+	if rec.status == http.StatusCreated {
+		c.n.Add(1)
 	}
 }
 
-type createRequest struct {
-	RuntimeRef string `json:"runtimeRef"`
-	UserID     string `json:"userId"`
+// statusRecorder remembers the status code written through it and
+// forwards everything else to the wrapped ResponseWriter, including
+// Flush so the §11.5 middleware's streamed-response detection still
+// sees the flush it uses to decide replayability.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
 }
 
-func (g *gateway) create(w http.ResponseWriter, r *http.Request) {
-	idemKey := r.Header.Get("Idempotency-Key")
-	if idemKey != "" {
-		// Hold the lock across the full check + create + insert
-		// sequence. Without this window N concurrent POSTs with the
-		// same key all observe "no cached entry" and each creates a
-		// distinct session, violating §11.5.
-		g.idemMu.Lock()
-		defer g.idemMu.Unlock()
-		if cached, ok := g.idem[idemKey]; ok {
-			g.idemHits.Add(1)
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(cached.Status)
-			_, _ = w.Write(cached.Body)
-			return
-		}
-	}
-	var req createRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	id := fmt.Sprintf("sess-%d", time.Now().UnixNano())
-	sess := &session{
-		ID:      id,
-		Status:  "running",
-		Created: time.Now().UTC(),
-		Runtime: req.RuntimeRef,
-	}
-	// Marshal the response body before storing the pointer in the
-	// session map. After the map insert, concurrent delete handlers
-	// may mutate sess.Status; marshaling here against a struct only
-	// this goroutine references is race-free.
-	body, _ := json.Marshal(sess)
-	g.mu.Lock()
-	g.sessions[id] = sess
-	g.mu.Unlock()
-	if idemKey != "" {
-		// idemMu held by the defer above; safe to mutate here.
-		g.idem[idemKey] = idempotentResponse{Status: http.StatusCreated, Body: body}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_, _ = w.Write(body)
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
 }
 
-func (g *gateway) get(w http.ResponseWriter, id string) {
-	// Copy the session under the lock so the JSON serialisation
-	// after the unlock cannot race with a concurrent delete writing
-	// to sess.Status.
-	g.mu.Lock()
-	sess, ok := g.sessions[id]
-	var copy session
-	if ok {
-		copy = *sess
+func (s *statusRecorder) Write(p []byte) (int, error) {
+	if s.status == 0 {
+		s.status = http.StatusOK
 	}
-	g.mu.Unlock()
-	if !ok {
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+	return s.ResponseWriter.Write(p)
+}
+
+func (s *statusRecorder) Flush() {
+	if f, ok := s.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
 	}
-	body, _ := json.Marshal(copy)
-	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(body)
 }
 
-func (g *gateway) delete(w http.ResponseWriter, id string) {
-	g.mu.Lock()
-	sess, ok := g.sessions[id]
-	if !ok {
-		g.mu.Unlock()
-		http.Error(w, "not found", http.StatusNotFound)
-		return
+// countingIdempotencyStore wraps a real §11.5 Store and counts the
+// claims that observed a completed record for the same body — the
+// condition under which the middleware replays the cached response
+// instead of re-executing. Scenarios read the count through
+// Env.IdempotencyHits.
+type countingIdempotencyStore struct {
+	inner   idemmw.Store
+	replays atomic.Int64
+}
+
+func (c *countingIdempotencyStore) Get(ctx context.Context, tenantID, key string) (idempotency.Record, bool, error) {
+	return c.inner.Get(ctx, tenantID, key)
+}
+
+func (c *countingIdempotencyStore) Put(ctx context.Context, rec idempotency.Record) error {
+	return c.inner.Put(ctx, rec)
+}
+
+func (c *countingIdempotencyStore) Claim(ctx context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	rec, claimed, err := c.inner.Claim(ctx, tenantID, key, bodyHash, now)
+	if err == nil && !claimed && rec.Response.StatusCode != 0 && rec.BodyHash == bodyHash {
+		c.replays.Add(1)
 	}
-	// Soft-delete: the session stays in the map marked terminated so a
-	// subsequent GET observes the terminal state (the §15.1 "a terminated
-	// session stays terminated" invariant the streaming_reconnect_storm
-	// scenario asserts). Terminated sessions are retained by design, so a
-	// long-running create/delete loop accumulates one record per cycle;
-	// the memory_leak_long_run scenario bounds its cycle count to keep
-	// that accumulation inside its heap-growth tolerance.
-	sess.Status = "terminated"
-	g.mu.Unlock()
-	w.WriteHeader(http.StatusNoContent)
+	return rec, claimed, err
 }
 
-// SessionCount returns the live session count.
-func (g *gateway) sessionCount() int {
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	return len(g.sessions)
+func (c *countingIdempotencyStore) Release(ctx context.Context, tenantID, key string) error {
+	return c.inner.Release(ctx, tenantID, key)
 }
-
-// IdempotencyHits returns how many cached replays occurred.
-func (g *gateway) idempotencyHits() int64 {
-	return g.idemHits.Load()
-}
-
-// silence the unused atomic field linter if a scenario does not call sessionCount.
-var _ = errors.New
