@@ -48,10 +48,6 @@ exceptions:
     reason: non-normative
     justification: Procedural guidance for adding new reference runtimes. The conformance harness in §15.4 validates whatever runtime is added.
 
-  - section: "27.1"
-    reason: non-normative
-    justification: Web playground purpose and non-goals. Aspirational framing for the feature.
-
   # Wave 0 spec-map reconciliation: non-normative sections (design
   # philosophy, overviews, summaries, examples, reference tables) and
   # deferred sections whose feature is built by a later wave. A

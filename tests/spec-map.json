@@ -4013,6 +4013,22 @@
       "blocked_until_phase": "5",
       "notes": "TestPlaygroundBundleShipsNoOfflineCapableAssets pins the §27.1 non-goal \"No offline mode. The playground requires a live gateway.\" against the embedded SPA bundle: it first confirms assets.go still carries exactly one `//go:embed ui` directive (so enumerating the directory on disk is a faithful reading of what the gateway binary ships), then walks pkg/gateway/mcpfabric/playground/ui asserting the bundle contains no service-worker script, no application-cache manifest, and no web-app manifest, and that no shipped asset references navigator.serviceWorker, applicationCache, the Cache Storage API, IndexedDB, localStorage, or a <link rel=\"manifest\">. The localStorage and IndexedDB legs also pin the §27.4 line \"No conversation persistence. Refresh clears the pane\"; comment-only lines are skipped so app.js's prose stating the bearer is never held in localStorage does not read as a use of it. The tier-5/tier-9 live-cluster tests are currently t.Skip'd: playground.enabled=true crash-loops the live gateway because pkg/gateway/mcpfabric/playground/metrics.go registers the lenny_playground_page_views_total counter with the non-snake_case label \"authMode\", which pkg/observability/metrics's §16.1.1 validator rejects at startup (fatal). §27.8's own metrics table also names that label \"authMode\", so the fix needs a spec/code reconciliation, not a code-only change; see BUILD-GAPS.md §16.1 Metrics Finding 8."
     },
+    "27.1": {
+      "title": "Web Playground — Purpose and Non-Goals",
+      "spec_file": "spec/27_web-playground.md",
+      "tests": [
+        "tests/tier0_static/playground_no_offline_assets_test.go::TestPlaygroundBundleShipsNoOfflineCapableAssets",
+        "tests/tier0_static/playground_offline_non_goal_mapping_test.go::TestSpecStillStatesTheOfflineNonGoalUnderPurposeAndNonGoals",
+        "tests/tier0_static/playground_offline_non_goal_mapping_test.go::TestOfflineNonGoalIsMappedToItsSectionRatherThanExcepted",
+        "tests/tier3_contract/playground/playground_test.go::TestPlaygroundCSPConnectSrcNamesOnlySelfAndTheGatewayWebSocketHost"
+      ],
+      "packages": [
+        "pkg/gateway/mcpfabric/playground",
+        "tests/tier0_static"
+      ],
+      "blocked_until_phase": "5",
+      "notes": "The section's purpose bullets and its first two non-goals (\"Not a general-purpose chat UI\", \"Not a replacement for the admin CLI\") state scope and carry no assertion of their own; the third non-goal, \"No offline mode. The playground requires a live gateway.\", states a property of the shipped artifact and is enforced. tests/spec-map-exceptions.yaml previously excepted this section as non-normative, which under-reported that coverage. TestPlaygroundBundleShipsNoOfflineCapableAssets is the enforcement: it confirms assets.go still carries exactly one `//go:embed ui` directive (so enumerating the directory on disk is a faithful reading of what the gateway binary ships), then walks pkg/gateway/mcpfabric/playground/ui asserting the bundle contains no service-worker script, no application-cache manifest, and no web-app manifest, and that no shipped asset references navigator.serviceWorker, applicationCache, the Cache Storage API, IndexedDB, localStorage, or a <link rel=\"manifest\">. It is listed on the parent \"27\" entry as well, whose notes carry the same description. TestPlaygroundCSPConnectSrcNamesOnlySelfAndTheGatewayWebSocketHost is the runtime counterpart owned by §27.7: with a gateway host configured, connect-src is exactly \"'self' wss://<gateway-host>\", so the SPA reaches the live gateway and no other origin. The two tests in playground_offline_non_goal_mapping_test.go hold this bookkeeping in place: the first fails if §27.1 stops stating the offline non-goal verbatim (which would leave the bundle sweep citing a sentence the spec no longer carries), and the second fails if the section is returned to tests/spec-map-exceptions.yaml or its enforcement is filed only under the §27 chapter id, where `lenny-test --spec 27.1` would select nothing for it."
+    },
     "27.2": {
       "title": "Web Playground — Placement and Gating",
       "spec_file": "spec/27_web-playground.md",
