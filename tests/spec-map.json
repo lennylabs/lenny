@@ -1833,7 +1833,8 @@
         "tests/tier11_docs/audit_gdpr_erasure_reconciliation_test.go",
         "tests/tier4_integration/erasure_job_test.go",
         "tests/tier2_component/legalholdreconciler/reconciler_test.go",
-        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable"
+        "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
+      "tests/testinfra/sessiondriver/freshtenant_internal_test.go"
       ],
       "packages": [
         "pkg/store",

@@ -11,18 +11,19 @@
 // up: the in-cluster gateway honours the X-Lenny-Tenant-ID,
 // X-Lenny-Roles, and X-Lenny-User-ID dev-header identity, so a test
 // drives sessions without minting JWTs. Tests that need a synthetic
-// tenant bootstrap one via POST /v1/admin/bootstrap and clean it up in
-// t.Cleanup.
+// tenant bootstrap one via BootstrapFreshTenant, which mints a per-run
+// id and clears the session-creation preconditions the shared cluster
+// otherwise rejects on; Close removes the tenant afterwards.
 //
 // Usage:
 //
 //	d := sessiondriver.New(t)            // installs + forwards on demand
 //	defer d.Close()
-//	d.BootstrapTenant(ctx, "alice-tenant")
-//	sess := d.CreateAndStart(ctx, "alice-tenant", "echo-runtime-sidecar")
-//	d.SendMessage(ctx, "alice-tenant", sess.ID, "hello")
+//	tenant, err := d.BootstrapFreshTenant(ctx, "alice")
+//	sess := d.CreateAndStart(ctx, tenant, "echo-runtime-sidecar")
+//	d.SendMessage(ctx, tenant, sess.ID, "hello")
 //	// ... chaos action / security probe ...
-//	d.Terminate(ctx, "alice-tenant", sess.ID)
+//	d.Terminate(ctx, tenant, sess.ID)
 //
 // New() calls kind.InstallLenny under the hood, which skips the calling
 // test cleanly when docker / kind / kubectl / the chart / the running
@@ -34,6 +35,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -291,6 +294,129 @@ func (d *Driver) BootstrapTenant(ctx context.Context, tenantID string) error {
 		d.bootstrappedTenants[tenantID] = struct{}{}
 	}
 	d.mu.Unlock()
+	return nil
+}
+
+// noEnvPolicyAllowAll is the §10.6 noEnvironmentPolicy value that lets a
+// session naming no environment pass the §11.1 environment admission
+// gate. A tenant that leaves the policy unset resolves to deny-all.
+const noEnvPolicyAllowAll = "allow-all"
+
+// FreshTenantID returns a tenant id built from prefix plus a random
+// per-call suffix, in the §10.2 tenant-id format `^[a-zA-Z0-9_-]{1,128}$`.
+//
+// Live-session tests mint their tenant ids here rather than hard-coding a
+// constant. The e2e Kind cluster is long-lived and reused across runs, and
+// Driver.Close issues DELETE /v1/admin/tenants/{id} for every tenant the
+// driver bootstrapped. That DELETE only enters the §12.8 tenant-deletion
+// lifecycle: the row leaves `active` for `disabling`, then `deleting`, and
+// the controller finally leaves a `deleted` tombstone that §12.8 retains
+// precisely so the id cannot be reused. POST /v1/admin/bootstrap for an
+// existing id is a no-op, so a run that reuses a previous run's id drives
+// its sessions against a non-active tenant and every create fails with
+// 403 TENANT_NOT_ACTIVE. A fresh id per run keeps each run on its own
+// tenant record.
+//
+// spec: §12.8 (tenant deletion lifecycle; the tenant-record tombstone
+// prevents tenant ID reuse), §10.2 (tenant id format).
+func FreshTenantID(prefix string) string {
+	if prefix == "" {
+		prefix = "sessiondriver"
+	}
+	buf := make([]byte, 8)
+	if _, err := rand.Read(buf); err != nil {
+		// crypto/rand.Read on a supported platform does not fail; fall back
+		// to a clock-derived suffix rather than returning a colliding id.
+		return fmt.Sprintf("%s-%d", prefix, time.Now().UnixNano())
+	}
+	return prefix + "-" + hex.EncodeToString(buf)
+}
+
+// BootstrapFreshTenant bootstraps a tenant under a per-run id minted by
+// FreshTenantID(prefix), makes it accept sessions that name no
+// environment, and returns the id. The driver records the tenant for
+// Close to delete, exactly as BootstrapTenant does.
+//
+// This is the entry point a test should use when it needs a tenant purely
+// to carry a session: it clears both preconditions the shared e2e gateway
+// otherwise fails a session create on. The fresh id avoids the §12.8
+// TENANT_NOT_ACTIVE rejection a reused id inherits from a prior run's
+// teardown, and the allow-all §10.6 noEnvironmentPolicy clears the §11.1
+// environment admission gate that rejects an environment-less create on a
+// tenant left at the deny-all default.
+//
+// spec: §12.8 (tenant deletion lifecycle), §10.6 (noEnvironmentPolicy),
+// §11.1 (environment admission gate).
+func (d *Driver) BootstrapFreshTenant(ctx context.Context, prefix string) (string, error) {
+	tenantID := FreshTenantID(prefix)
+	if err := d.BootstrapTenant(ctx, tenantID); err != nil {
+		return "", err
+	}
+	if err := d.AllowSessionsWithNoEnvironment(ctx, tenantID); err != nil {
+		return "", err
+	}
+	return tenantID, nil
+}
+
+// AllowSessionsWithNoEnvironment sets the tenant's §10.6
+// noEnvironmentPolicy to allow-all through GET/PUT
+// /v1/admin/tenants/{id}/rbac-config, preserving every other field the
+// GET returned and supplying the returned ETag as If-Match. It is a
+// no-op when the tenant already carries allow-all.
+//
+// Without it, a tenant whose policy is unset resolves to deny-all and the
+// §11.1 environment admission gate rejects any session create that names
+// no environment with 403 FORBIDDEN
+// (reason `no_environment_policy_deny_all`).
+//
+// spec: §10.6 (noEnvironmentPolicy), §11.1 (environment admission gate),
+// §15.1 (admin rbac-config endpoint and its If-Match precondition).
+func (d *Driver) AllowSessionsWithNoEnvironment(ctx context.Context, tenantID string) error {
+	path := "/v1/admin/tenants/" + tenantID + "/rbac-config"
+	res, err := d.doRequest(ctx, http.MethodGet, path, platformAdmin(), nil)
+	if err != nil {
+		return fmt.Errorf("read rbac-config for tenant %q: %w", tenantID, err)
+	}
+	raw, _ := io.ReadAll(res.Body)
+	etag := res.Header.Get("ETag")
+	_ = res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("read rbac-config for tenant %q: status %d, body %s",
+			tenantID, res.StatusCode, string(raw))
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return fmt.Errorf("decode rbac-config for tenant %q: %w; body %s",
+			tenantID, err, string(raw))
+	}
+	if policy, _ := payload["noEnvironmentPolicy"].(string); policy == noEnvPolicyAllowAll {
+		return nil
+	}
+	payload["noEnvironmentPolicy"] = noEnvPolicyAllowAll
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("encode rbac-config for tenant %q: %w", tenantID, err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, d.baseURL+path,
+		bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("build rbac-config request for tenant %q: %w", tenantID, err)
+	}
+	addDevHeaders(req, platformAdmin())
+	req.Header.Set("Content-Type", "application/json")
+	if etag != "" {
+		req.Header.Set("If-Match", etag)
+	}
+	putRes, err := d.hc.Do(req)
+	if err != nil {
+		return fmt.Errorf("write rbac-config for tenant %q: %w", tenantID, err)
+	}
+	defer putRes.Body.Close()
+	prb, _ := io.ReadAll(putRes.Body)
+	if putRes.StatusCode != http.StatusOK {
+		return fmt.Errorf("write rbac-config for tenant %q: status %d, body %s",
+			tenantID, putRes.StatusCode, string(prb))
+	}
 	return nil
 }
 
