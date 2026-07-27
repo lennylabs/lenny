@@ -17,6 +17,12 @@
 #   - Every `skip` carries a `reason`.
 #   - Every capability has at least one `validated` provider, graduated
 #     by the `enforcement` field below.
+#   - Every provider in the `providers` list below has at least one
+#     managed-service test written for it (a `managed_*_test.go` in this
+#     directory that reads the provider's env namespace or narrows on its
+#     provider id). The suite runs once per provider and each test narrows
+#     itself to the provider it was written for, so a provider with no
+#     tests of its own would report a green run that asserted nothing.
 #
 # `enforcement` selects how the last invariant is applied:
 #   warn: capabilities with no `validated` cell are counted and named in

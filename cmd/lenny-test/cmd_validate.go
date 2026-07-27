@@ -57,6 +57,7 @@ func runValidateMaps(args []string) int {
 		validateSpecMapExceptionsYAML(exceptionsPath),
 		validateFlakeBudgetYAML(flakeBudgetPath),
 		validateParityMatrixYAML(parityMatrixPath),
+		validateCloudManagedServiceCoverage(parityMatrixPath, filepath.Join(root, cloudTestDir)),
 	}
 
 	failed := 0

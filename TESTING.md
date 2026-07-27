@@ -1120,6 +1120,8 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 
 **Provider parity matrix.** A row in `tests/tier6_e2e_cloud/parity-matrix.yaml` lists every documented capability and the providers it is validated against. CI fails if a capability is claimed in the spec or chart but missing from the matrix. The matrix's `enforcement` field graduates the exercise invariant that every capability has at least one `validated` provider: under `warn` the tier-0 gate names each capability that no provider validates and still passes, and under `fail` each such capability fails the gate. The matrix reads `warn` until the provider clusters described in `tests/tier6_e2e_cloud/README.md` are provisioned, since no suite can reach `validated` without them.
 
+The tier-0 gate also requires every provider in the matrix's `providers` list to have at least one managed-service test written for it, meaning a `managed_*_test.go` under `tests/tier6_e2e_cloud` that reads the provider's env namespace (`LENNY_GCP_`, `LENNY_AWS_`, `LENNY_AZURE_`) or narrows on its provider id. The suite runs once per provider named in `LENNY_CLOUD_PROVIDERS` and each test narrows itself to the provider it was written for, so a provider with no tests of its own would report a green run that asserted nothing.
+
 **Cadence.**
 - Nightly: critical-path subset (`gvisor_isolation`, `cloud_csi`, `cloud_kms` per provider) rotated across providers so each provider runs at least every 48 hours.
 - Weekly: full suite on the canonical provider (GKE).

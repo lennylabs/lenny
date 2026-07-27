@@ -57,4 +57,9 @@ const (
 	// parityMatrixFile lists every cloud capability and the
 	// providers it is validated against.
 	parityMatrixFile = "tests/tier6_e2e_cloud/parity-matrix.yaml"
+
+	// cloudTestDir holds the tier-6 cloud suite. The
+	// managed-service coverage check reads its
+	// managed_*_test.go inventory.
+	cloudTestDir = "tests/tier6_e2e_cloud"
 )
