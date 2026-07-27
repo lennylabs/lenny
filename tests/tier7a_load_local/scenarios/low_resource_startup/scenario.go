@@ -9,10 +9,13 @@
 //
 // spec: §25.4 line 1061 — "**`/healthz`** (permissive): 200 if the
 // process is alive and at least one of {Postgres, K8s API} is
-// reachable. Used by liveness and startup." The permissive probe
-// reports that the process is running and does not fail on a
-// downstream dependency outage, so it must answer without consulting
-// the §25.6 dependency probes.
+// reachable. Used by liveness and startup." The scenario runs the
+// server with the Kubernetes API probe reachable and the Postgres
+// probe failing, which is the configuration the permissive rule names
+// as healthy and the §25.4 strict rule names as degraded. Liveness and
+// startup therefore must keep answering 200 through a single
+// dependency outage, so Kubernetes does not restart a replica that is
+// running.
 //
 // The scenario asserts two properties under CPU pressure:
 //
@@ -31,11 +34,9 @@
 //     ceiling also fails on scheduler jitter that a normally-loaded
 //     host produces regardless of the code under test.
 //
-// The server is built with dependency probes that block until their
-// own §25.6 two-second deadline expires. A permissive probe that
-// consulted them would cost two seconds per call and blow the budget
-// by three orders of magnitude, which is what makes the latency
-// assertion a check on the endpoint rather than on the host.
+// Both dependency probes settle immediately, so the service time the
+// scenario measures is the handler's own cost under CPU saturation
+// rather than a §25.6 probe deadline.
 //
 // TESTING.md §12.7.a resiliency scenarios.
 package low_resource_startup
@@ -43,6 +44,7 @@ package low_resource_startup
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +65,11 @@ const name = "low_resource_startup"
 // leave `timeoutSeconds` unset, so the Kubernetes default applies and a
 // `/healthz` response slower than this counts as a probe failure.
 const probeTimeout = 1 * time.Second
+
+// errPostgresDown is the failure the scenario's Postgres dependency
+// probe reports. It stands in for the §25.6 `SELECT 1` probe failing
+// while the Kubernetes API probe still succeeds.
+var errPostgresDown = errors.New("postgres unreachable")
 
 func init() {
 	loadgen.Register(name, func() loadgen.Scenario { return &Scenario{counters: scenkit.NewCounters()} })
@@ -119,18 +126,17 @@ func (s *Scenario) RampProfiles() []loadgen.Profile {
 }
 
 func (s *Scenario) Setup(ctx context.Context) error {
-	// Probes that never settle on their own. probe.Run bounds each by
-	// the §25.6 two-second deadline, so a permissive /healthz that
-	// consulted its dependencies would take two seconds per request.
-	// The permissive path must not reach them at all.
-	blocking := func(pctx context.Context) error {
-		<-pctx.Done()
-		return pctx.Err()
-	}
+	// spec: §25.4 line 1061 — the permissive probe requires at least one
+	// of {Postgres, K8s API} reachable. One dependency down and the
+	// other up is the boundary the rule names as healthy, and it is the
+	// case the same line's strict counterpart reports as degraded, so it
+	// separates the liveness contract from the readiness contract.
 	s.srv = opsserver.New(opsserver.Options{
 		Probes: map[string]probe.Func{
-			opsserver.ProbePostgresName: blocking,
-			opsserver.ProbeK8sAPIName:   blocking,
+			opsserver.ProbePostgresName: func(context.Context) error {
+				return errPostgresDown
+			},
+			opsserver.ProbeK8sAPIName: func(context.Context) error { return nil },
 		},
 	})
 	s.burner = &burner{stop: make(chan struct{})}

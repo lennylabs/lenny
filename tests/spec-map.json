@@ -3448,6 +3448,7 @@
         "tests/tier6_e2e_cloud/ops_smoke_test.go::TestCloudOpsManagedIngress",
         "tests/tier0_static/ops_rbac_spec_sync_test.go::TestOpsRBACMatchesSpecCanonicalBlock",
         "tests/tier0_static/ops_rbac_test_yaml_citation_test.go::TestOpsRBACHelmTestCitesOnlyDurableSpecSections",
+        "tests/tier7a_load_local/scenarios/low_resource_startup",
         "charts/lenny/tests/ops-rbac_test.yaml"
       ],
       "packages": [
