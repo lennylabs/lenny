@@ -98,6 +98,10 @@ container, and there is more than one protocol on that edge) and a one-line poin
 at `spec/15:1456`, with its channel prose superseded by §28. Sections 4, 7, 10, and 13 keep their
 subjects and link to §28 for the channel contract.
 
+Every section that gave up content names its successor where the content left, so a reader following a
+stale section number lands on a pointer to the owning heading rather than on adjacent prose they might
+mistake for the answer (INV-5).
+
 Two properties hold and are machine-checked. First, every channel is named by exactly one canonical
 identifier, and that identifier resolves in `git grep` across `spec/`, `schemas/`, `pkg/`, `cmd/`,
 `sdks/`, `charts/`, `docs/`, and `tests/`. Second, no specification sentence asserts a mechanism that no
@@ -472,6 +476,28 @@ that does not need re-deriving.
   three normative prose descriptions of the same contract in place (section 4.2).
 - **INV-4.** No `file:line` code evidence in specification prose. Evidence lives in
   `tests/claim-map.json`, which is gated.
+- **INV-5.** A section that gives up content names its successor in prose, at the point the content left.
+  When R2a reduces a section, it leaves a sentence in the source section stating which channel identifiers
+  moved and which `§28` or `§29` heading now owns them. The sentence is normative specification text and
+  survives R2b.
+
+  This is distinct from `tests/spec-anchor-moves.json` and does not overlap it. That map is consumed by
+  the citation resolver, holds only until R2b rewrites the citations that use it, and is then emptied. The
+  prose pointer serves the reader who arrives by a path no tool rewrites: a `// spec:` citation the
+  mechanical pass missed, a section number quoted in a proposal document, a commit message, a code review,
+  or an engineer's recollection. Those references are never migrated, so the destination has to be legible
+  from the source itself.
+
+  The failure this prevents is not a broken link. A reduced section still exists and still discusses
+  adjacent material, so a reader who lands on it can take the remaining prose for the answer and leave
+  with a wrong one. That is the failure mode `gateway-runtime-comms.md` was written to end, and a silent
+  reduction reintroduces it.
+
+  The pointer names the successor heading and the channel identifiers, so it stays useful even when a
+  later change moves the content again, and it is verifiable: tier 0 fails a pointer whose named heading
+  does not resolve, under the same check that gates `tests/spec-anchor-moves.json` entries. R2a writes the
+  pointers for the `spec/04` §4.7 and `spec/15` §15.4 reductions it performs, and every later step that
+  relocates specification content carries the same obligation.
 
 ### 4.2 R2a: the new sections
 
@@ -536,7 +562,11 @@ anchor to its `§28.5.N CH-*` successor. The resolver consults the map, so a cit
 anchor resolves through it and stays green, and the map is a tracked redirect rather than a waiver:
 tier 0 fails an entry whose successor anchor does not exist. Rewriting the 2,450 citations to their
 successors and emptying the map is mechanical text substitution over Go comments, so it is R2b's job under
-rule S-7 rather than a wave-2 change contending with R1b and R5 on the same Go files. `scripts/specshift`
+rule S-7 rather than a wave-2 change contending with R1b and R5 on the same Go files. Because R2b empties
+the map, the map cannot be the durable answer for a reader who arrives at a reduced section by a route no
+tool rewrites. INV-5 covers that case separately: each reduced section carries a prose sentence naming the
+channel identifiers that left and the `§28` heading that now owns them, and that sentence outlives the
+map. `scripts/specshift`
 therefore rewrites anchors as well as line numbers, and R3 builds both halves.
 
 **The claim register.** `tests/claim-map.json`, schema
