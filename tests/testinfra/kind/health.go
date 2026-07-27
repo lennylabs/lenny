@@ -27,9 +27,9 @@ import (
 //
 // The helpers below separate "nothing is deployed" (skip) from "it is
 // deployed and is in a restart loop" (fail with the object counts and
-// the container termination reason), and prune the terminal-phase
-// Sandbox debris whose accumulation drives the informer caches that
-// cause the restart loop in the first place.
+// the container termination reason), and prune the aged Sandbox debris
+// whose accumulation drives the informer caches that cause the restart
+// loop in the first place.
 
 // cniSelectors are the label selectors of the CNI DaemonSets the
 // harness knows about, in the order they are probed. Kind's default CNI
@@ -50,20 +50,36 @@ const kubeSystemNamespace = "kube-system"
 const crashLoopRestartThreshold = 5
 
 // sandboxDebrisMinAge is how long a Sandbox must have existed before the
-// per-run prune deletes it. Terminal-phase Sandboxes younger than this
-// may still be the subject of a test that is running concurrently, and
-// leaving a bounded recent window in place keeps the prune from racing
-// an in-flight assertion.
+// per-run prune deletes it. It serves two purposes: a Sandbox in a
+// prunable phase younger than this may still be the subject of a test
+// that is running concurrently, and, for the `failed` phase, the window
+// is what distinguishes an object the WarmPoolController has not yet
+// reclaimed from one it never will (see prunableSandboxPhases).
 const sandboxDebrisMinAge = time.Hour
 
 // envSkipPrune disables the per-run debris prune. It mirrors
 // install.sh's LENNY_SKIP_PRUNE escape hatch for the image prune.
 const envSkipPrune = "LENNY_KIND_SKIP_PRUNE"
 
-// terminalSandboxPhases are the §6.2 terminal values of
-// Sandbox.status.phase. A Sandbox in either phase serves no session and
-// will never serve another, so its object is debris once it ages out.
-var terminalSandboxPhases = map[string]bool{"failed": true, "terminated": true}
+// prunableSandboxPhases are the Sandbox.status.phase values whose
+// objects the per-run prune removes once they are older than
+// sandboxDebrisMinAge.
+//
+// spec: §6.2 (pod state machine). `terminated` is the end state of the
+// phase machine: the state diagram gives it no outgoing edge, so a
+// terminated Sandbox neither serves a session nor transitions again.
+//
+// `failed` is not an end state, and describing it as one would be wrong:
+// §6.2 carries the edge `failed ──→ draining (failed pod reclaimed and
+// replaced)`, followed by `draining ──→ terminated`. What makes an aged
+// `failed` object prunable is that the transition out of it is not
+// event-dependent. The WarmPoolController is the sole writer of the
+// phase and computes it as a level-triggered projection (§4.6.1), so it
+// re-evaluates a `failed` pod on every reconcile of that pod. A Sandbox
+// still in `failed` a full sandboxDebrisMinAge later was therefore never
+// reclaimed into `draining`; it is stuck debris rather than an object
+// waiting its turn.
+var prunableSandboxPhases = map[string]bool{"failed": true, "terminated": true}
 
 // podStatus is the per-pod health the bootstrap gate reads. Restarts is
 // the highest restart count across the pod's containers; the reason
@@ -301,9 +317,10 @@ func restartLoopDiagnostic(c *Cluster, component string, pods []podStatus) strin
 	}
 	b.WriteString(clusterObjectCounts(c))
 	b.WriteString("An OOMKilled control-plane or CNI pod on a standing cluster is normally " +
-		"informer-cache pressure from accumulated test objects. Prune the terminal-phase " +
-		"Sandboxes (the harness does this per run unless " + envSkipPrune + "=1 is set) and " +
-		"re-run; if the counts above are already small, raise the component's memory limit.\n")
+		"informer-cache pressure from accumulated test objects. Prune the aged failed and " +
+		"terminated Sandboxes (the harness does this per run unless " + envSkipPrune + "=1 " +
+		"is set) and re-run; if the counts above are already small, raise the component's " +
+		"memory limit.\n")
 	return b.String()
 }
 
@@ -394,22 +411,21 @@ type sandboxRecord struct {
 // pruneOnce guards the per-process debris prune.
 var pruneOnce sync.Once
 
-// pruneClusterDebrisOnce prunes aged terminal-phase Sandboxes once per
-// test process. It is best-effort: a prune that cannot reach the API
-// server logs and returns, leaving the health gate to report the real
-// problem.
+// pruneClusterDebrisOnce prunes aged Sandbox debris once per test
+// process. It is best-effort: a prune that cannot reach the API server
+// logs and returns, leaving the health gate to report the real problem.
 func pruneClusterDebrisOnce(t testing.TB, c *Cluster) {
 	t.Helper()
 	if os.Getenv(envSkipPrune) == "1" {
 		return
 	}
 	pruneOnce.Do(func() {
-		res, err := PruneTerminalSandboxes(c, time.Now())
+		res, err := PruneSandboxDebris(c, time.Now())
 		if err != nil {
-			t.Logf("prune terminal Sandboxes: %v", err)
+			t.Logf("prune Sandbox debris: %v", err)
 		}
 		if len(res.Selected) > 0 {
-			t.Logf("pruned %d of %d terminal-phase Sandbox object(s) older than %s from %s",
+			t.Logf("pruned %d of %d aged Sandbox object(s) older than %s from %s",
 				len(res.Selected)-len(res.Survivors), len(res.Selected),
 				sandboxDebrisMinAge, agentNamespace)
 		}
@@ -427,17 +443,19 @@ func pruneClusterDebrisOnce(t testing.TB, c *Cluster) {
 // Survivors is the honest measure: of the objects this pass selected, the
 // ones the delete and the finalizer-clearing pass did not remove.
 type PruneResult struct {
-	// Selected are the Sandbox names the pass chose: §6.2 terminal phase
-	// and older than sandboxDebrisMinAge as of the cutoff instant.
+	// Selected are the Sandbox names the pass chose: a
+	// prunableSandboxPhases phase and older than sandboxDebrisMinAge as
+	// of the cutoff instant.
 	Selected []string
 	// Survivors are the Selected names still present in the cluster when
 	// the pass returned.
 	Survivors []string
 }
 
-// PruneTerminalSandboxes deletes every Sandbox in the agent namespace
-// whose §6.2 phase is terminal (`failed` or `terminated`) and which is
-// older than sandboxDebrisMinAge, returning the number it removed.
+// PruneSandboxDebris deletes every Sandbox in the agent namespace whose
+// §6.2 phase is one of prunableSandboxPhases and which is older than
+// sandboxDebrisMinAge. It returns a PruneResult naming the objects the
+// pass selected and the ones that outlived it.
 //
 // The agent pod carries an ownerReference to its Sandbox, so deleting the
 // Sandbox cascades to the pod and the prune does not have to walk pods
@@ -447,18 +465,19 @@ type PruneResult struct {
 // which the WarmPoolController removes once no claim references the pod.
 // The prune issues an ordinary delete first and gives the controller a
 // window to do that. Objects still holding the finalizer after the window
-// have theirs cleared directly: a terminal-phase Sandbox references no
-// live session, so the invariant the finalizer protects (never delete a
-// pod whose session is still active) does not apply to it, and a cluster
-// whose controller is itself down from this debris cannot otherwise
-// escape the deadlock.
+// have theirs cleared directly. That is safe for exactly the objects
+// prunableSandboxPhases selects: a `terminated` pod has left the state
+// machine and a `failed` pod that outlived sandboxDebrisMinAge was never
+// reclaimed, so in neither case is a live session bound to the pod and
+// the invariant the finalizer protects (never delete a pod whose session
+// is still active) does not apply. A cluster whose controller is itself
+// down from this debris cannot otherwise escape the deadlock.
 //
-// The result names the objects the pass selected and the ones that
-// outlived it. A pass that removes everything it selected returns an empty
-// Survivors list even on a cluster that is producing fresh debris the whole
-// time, which is what makes the result assertable.
-func PruneTerminalSandboxes(c *Cluster, now time.Time) (PruneResult, error) {
-	stale, err := AgedTerminalSandboxes(c, now)
+// A pass that removes everything it selected returns an empty Survivors
+// list even on a cluster that is producing fresh debris the whole time,
+// which is what makes the result assertable.
+func PruneSandboxDebris(c *Cluster, now time.Time) (PruneResult, error) {
+	stale, err := agedSandboxDebris(c, now)
 	if err != nil {
 		return PruneResult{}, err
 	}
@@ -530,19 +549,19 @@ func waitForSandboxesGone(c *Cluster, want map[string]bool, window time.Duration
 // while it waits for the deletes it issued to complete.
 const pruneSettlePollInterval = 2 * time.Second
 
-// AgedTerminalSandboxes returns the names of the Sandboxes in the agent
-// namespace that the per-run prune selects: §6.2 terminal phase
-// (`failed` or `terminated`) and older than sandboxDebrisMinAge. It is
-// the read-only half of PruneTerminalSandboxes, so a test can assert on
-// what a prune would remove without removing it.
-func AgedTerminalSandboxes(c *Cluster, now time.Time) ([]string, error) {
+// agedSandboxDebris returns the names of the Sandboxes in the agent
+// namespace that one prune pass selects: a prunableSandboxPhases phase
+// and older than sandboxDebrisMinAge as of now. Splitting the selection
+// out of PruneSandboxDebris keeps the selection anchored at a single
+// caller-supplied instant, which is what PruneResult.Selected reports.
+func agedSandboxDebris(c *Cluster, now time.Time) ([]string, error) {
 	records, err := listSandboxes(c)
 	if err != nil {
 		return nil, err
 	}
 	var stale []string
 	for _, r := range records {
-		if !terminalSandboxPhases[r.Phase] {
+		if !prunableSandboxPhases[r.Phase] {
 			continue
 		}
 		if now.Sub(r.Created) < sandboxDebrisMinAge {
@@ -574,7 +593,7 @@ func listSandboxes(c *Cluster) ([]sandboxRecord, error) {
 // parseSandboxRecords parses the listSandboxes jsonpath output. A record
 // whose creation timestamp does not parse is reported with a zero time,
 // which the age filter treats as arbitrarily old; the phase filter still
-// gates it, so only a terminal Sandbox can be selected that way.
+// gates it, so only a prunable-phase Sandbox can be selected that way.
 func parseSandboxRecords(out string) []sandboxRecord {
 	var records []sandboxRecord
 	for _, line := range strings.Split(out, "\n") {

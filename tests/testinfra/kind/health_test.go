@@ -199,14 +199,18 @@ func TestParsePodStatusesSkipsMalformedLines(t *testing.T) {
 	}
 }
 
-// spec: 6.2 (pod state machine — terminal Sandbox phases)
+// spec: 6.2 (pod state machine), 4.6.1 (warm pool controller)
 //
-// TestParseSandboxRecordsSelectsAgedTerminalDebris pins which Sandbox
-// objects the per-run prune removes. Terminal-phase Sandboxes are the
-// objects that accumulate without bound on a standing cluster and grow
-// the controller's informer cache until it is OOMKilled; live and recent
-// ones must survive the prune.
-func TestParseSandboxRecordsSelectsAgedTerminalDebris(t *testing.T) {
+// TestParseSandboxRecordsSelectsAgedSandboxDebris pins which Sandbox
+// objects the per-run prune removes. §6.2 gives `terminated` no outgoing
+// edge, and gives `failed` only the reclamation edge
+// `failed ──→ draining` that the §4.6.1 level-triggered projection
+// re-evaluates on every reconcile, so an aged object in either phase is
+// debris. Those objects accumulate without bound on a standing cluster
+// and grow the controller's informer cache until it is OOMKilled. A pod
+// in a live phase, and a recently failed one that the controller may
+// still reclaim, must both survive the prune.
+func TestParseSandboxRecordsSelectsAgedSandboxDebris(t *testing.T) {
 	now := time.Date(2026, 7, 27, 12, 0, 0, 0, time.UTC)
 	old := now.Add(-48 * time.Hour).Format(time.RFC3339)
 	recent := now.Add(-time.Minute).Format(time.RFC3339)
@@ -229,7 +233,7 @@ func TestParseSandboxRecordsSelectsAgedTerminalDebris(t *testing.T) {
 
 	var selected []string
 	for _, r := range records {
-		if terminalSandboxPhases[r.Phase] && now.Sub(r.Created) >= sandboxDebrisMinAge {
+		if prunableSandboxPhases[r.Phase] && now.Sub(r.Created) >= sandboxDebrisMinAge {
 			selected = append(selected, r.Name)
 		}
 	}
@@ -255,7 +259,7 @@ func TestParseSandboxRecordsSelectsAgedTerminalDebris(t *testing.T) {
 	}
 }
 
-// spec: 6.2 (pod state machine — terminal Sandbox phases)
+// spec: 6.2 (pod state machine)
 //
 // TestTallyPhasesCountsUnsetPhase confirms the debris breakdown the
 // failure diagnostic prints counts every object, including one whose

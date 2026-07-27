@@ -311,7 +311,7 @@
         "pkg/gateway/podlifecycle/podsession/binder_test.go::TestFallbackDoubleClaimFencedByDeterministicName",
         "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteResolvesToSurfaces",
         "tests/tier11_docs/eviction_coordinator_route_consistency_test.go::TestEvictionCoordinatorRouteCrossRefsResolve",
-        "tests/tier5_e2e_kind/cluster_debris_test.go::TestTerminalSandboxDebrisIsPruned"
+        "tests/tier5_e2e_kind/cluster_debris_test.go::TestAgedSandboxDebrisIsPruned"
       ],
       "packages": [
         "pkg/controller/warmpool",
@@ -673,7 +673,7 @@
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestLeakedSlotCountingLifetimeAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestPerReleaseSessionCountDrainAgrees_F5231",
         "tests/tier11_docs/concurrent_slot_lifecycle_doc_reconciliation_test.go::TestUptimeDrainMechanismAgrees_F5231",
-        "tests/tier5_e2e_kind/cluster_debris_test.go::TestTerminalSandboxDebrisIsPruned"
+        "tests/tier5_e2e_kind/cluster_debris_test.go::TestAgedSandboxDebrisIsPruned"
       ],
       "packages": [
         "pkg/sandbox/state"
