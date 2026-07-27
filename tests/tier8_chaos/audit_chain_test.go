@@ -226,17 +226,12 @@ func auditVerify(t *testing.T, c *kind.Cluster, pod, gatewayIP, tenant string) a
 // tenant-admin principal; the dev-header auth path supplies one.
 func curlGatewayAuth(t *testing.T, c *kind.Cluster, pod, gatewayIP, path string) httpProbe {
 	t.Helper()
-	url := fmt.Sprintf("http://%s:8080%s", gatewayIP, path)
-	script := fmt.Sprintf(
-		"curl -sS -m 8 -H 'X-Lenny-Tenant-ID: platform' -H 'X-Lenny-Roles: platform-admin' "+
-			"-w '\\nLENNYPROBE status=%%{http_code} exit=%%{exitcode}\\n' %s 2>&1",
-		url,
+	script := gatewayCurlScript(
+		gatewayProbeURL(gatewayIP, path),
+		"X-Lenny-Tenant-ID: platform",
+		"X-Lenny-Roles: platform-admin",
 	)
-	out, _ := c.KubectlOut(
-		t,
-		"-n", lennySystemNamespace, "exec", pod, "--", "sh", "-c", script,
-	)
-	return parseHTTPProbe(out)
+	return runGatewayCurl(t, c, pod, script)
 }
 
 // seedAuditChain INSERTs the chain's rows into audit_log via a one-shot

@@ -3693,7 +3693,9 @@
         "tests/tier4_integration/audit_deferred_reconcile_test.go",
         "tests/tier4_integration/audit_gdpr_query_test.go::TestAuditGDPRDownstreamNotificationQueryable",
         "tests/tier4_integration/ops_loop_operation_correlation_test.go::TestOpsLoopRemediationAuditCarriesOperationID",
-        "tests/tier11_docs/diagnostics_audit_wiring_comment_test.go::TestDiagnosticsAuditWiringCommentsNotStale"
+        "tests/tier11_docs/diagnostics_audit_wiring_comment_test.go::TestDiagnosticsAuditWiringCommentsNotStale",
+        "tests/tier8_chaos/gateway_probe_query_test.go::TestGatewayProbeSendsEveryQueryParameter",
+        "tests/tier8_chaos/gateway_probe_query_test.go::TestGatewayProbeScriptPassesURLAsOneShellWord"
       ],
       "packages": [
         "pkg/gateway/externalapi/admin",

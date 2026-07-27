@@ -445,24 +445,59 @@ func (p httpProbe) ok(wantStatus int) bool {
 	return p.curlExit == 0 && p.statusCode == wantStatus
 }
 
-// curlGateway runs curl inside the probe pod against a gateway path and
-// returns the curl exit code, the HTTP status, and the response body.
-// The -m bound caps how long a dropped connection hangs.
-func curlGateway(t *testing.T, c *kind.Cluster, pod, gatewayIP, path string) httpProbe {
+// shellQuote wraps s in single quotes so `sh -c` treats it as one
+// literal word, escaping any embedded single quote with the standard
+// close-escape-reopen sequence. Probe URLs carry query strings, and an
+// unquoted `&` between two query parameters is a shell background-job
+// separator: the shell would run curl against the URL truncated at the
+// first parameter and discard the rest as separate commands.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// gatewayCurlScript builds the `sh -c` command line a probe pod runs to
+// fetch url from the gateway, with headers supplied as "Name: value"
+// strings. curl writes the body to stdout and the -w format appends a
+// marker line carrying the HTTP status and curl's exit code so both
+// travel out of the exec together. The -m bound caps how long a dropped
+// connection hangs. Both the URL and each header are shell-quoted so
+// every character the caller supplied reaches curl unmodified.
+func gatewayCurlScript(url string, headers ...string) string {
+	var b strings.Builder
+	b.WriteString("curl -sS -m 8")
+	for _, h := range headers {
+		b.WriteString(" -H ")
+		b.WriteString(shellQuote(h))
+	}
+	b.WriteString(" -w '\\nLENNYPROBE status=%{http_code} exit=%{exitcode}\\n' ")
+	b.WriteString(shellQuote(url))
+	b.WriteString(" 2>&1")
+	return b.String()
+}
+
+// runGatewayCurl execs the probe script inside pod and parses the
+// result. A non-zero kubectl exit is not distinguished from a curl
+// failure here; the parsed curl exit code in the marker line carries
+// that signal.
+func runGatewayCurl(t *testing.T, c *kind.Cluster, pod, script string) httpProbe {
 	t.Helper()
-	url := fmt.Sprintf("http://%s:8080%s", gatewayIP, path)
-	// curl writes the body to stdout then the test appends a marker line
-	// carrying the HTTP status and curl's exit code so both travel out
-	// of the exec together.
-	script := fmt.Sprintf(
-		"curl -sS -m 8 -w '\\nLENNYPROBE status=%%{http_code} exit=%%{exitcode}\\n' %s 2>&1",
-		url,
-	)
 	out, _ := c.KubectlOut(
 		t,
 		"-n", lennySystemNamespace, "exec", pod, "--", "sh", "-c", script,
 	)
 	return parseHTTPProbe(out)
+}
+
+// gatewayProbeURL renders the probe URL for a gateway path.
+func gatewayProbeURL(gatewayIP, path string) string {
+	return fmt.Sprintf("http://%s:8080%s", gatewayIP, path)
+}
+
+// curlGateway runs curl inside the probe pod against a gateway path and
+// returns the curl exit code, the HTTP status, and the response body.
+func curlGateway(t *testing.T, c *kind.Cluster, pod, gatewayIP, path string) httpProbe {
+	t.Helper()
+	return runGatewayCurl(t, c, pod, gatewayCurlScript(gatewayProbeURL(gatewayIP, path)))
 }
 
 // parseHTTPProbe extracts the status code, curl exit code, and body

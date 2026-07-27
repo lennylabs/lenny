@@ -29,14 +29,10 @@ import (
 )
 
 // gatewayAuditQueryPath is the §25.9 audit-log query endpoint on the
-// gateway, scoped with a single query parameter. curlGateway/
-// curlGatewayAuth pass the path unquoted into a shell command line, so a
-// path with more than one query parameter joined by an unescaped `&`
-// gets split into separate shell tokens (see the sibling auditQueryPath
-// constant in ops_survives_gateway_outage_test.go, which is safe there
-// only because it is used for curl-exit reachability, never decoded).
-// One parameter avoids the hazard; the default §25.9 24h look-back
-// applies for the time bound.
+// gateway, scoped with a single query parameter. The assertion this
+// constant drives reads the HTTP status rather than the returned rows,
+// so one parameter is enough; the default §25.9 24h look-back applies
+// for the time bound.
 const gatewayAuditQueryPath = "/v1/admin/audit-events?limit=1"
 
 // opsDriftPath is the §25.10 drift-report endpoint on lenny-ops.
