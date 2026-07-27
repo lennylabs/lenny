@@ -46,6 +46,7 @@ const tailDrainBudget = 10 * time.Second
 // promptly, and that every tail goroutine exits once the connections are
 // cancelled.
 //
+// spec: §25.5 (per-connection live tail, independent read cursor).
 // diagnosis: a slow delivery means the live tail is polling rather than
 // blocking inside Redis, so §25.5 SSE delivery latency has become the poll
 // cadence; goroutines that never drain mean a disconnected connection leaks

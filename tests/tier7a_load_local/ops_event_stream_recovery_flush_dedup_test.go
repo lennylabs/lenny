@@ -74,6 +74,7 @@ func (g *gatedStreamClient) XRevRangeN(ctx context.Context, stream, start, stop 
 // the outage window sees the event as absent from the stream, finds it inside
 // the window it then queries, and re-emits it.
 //
+// spec: §25.5 (best-effort recovery flush, eventKey dedup).
 // diagnosis: a failure means the §25.5 recovery flush re-emits an event that
 // already reached ops:events:stream. The webhook worker pages the stream by
 // position and does not deduplicate by eventKey, so the duplicate entry is

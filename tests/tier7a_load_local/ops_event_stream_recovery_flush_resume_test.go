@@ -49,6 +49,8 @@ func newReplicaServer(window *replicaWindow) *httptest.Server {
 // takes the last frame unconditionally rewinds and the switch replays the
 // newer window.
 //
+// spec: §25.5 (best-effort recovery flush, cross-switch no-drop ordering,
+// independent per-connection read cursor).
 // diagnosis: a failure means the §25.5 resume position is not monotonic: an
 // event re-emitted by the recovery flush moved an open connection's cursor
 // backward, and the next source switch re-delivered every event after it, so a
