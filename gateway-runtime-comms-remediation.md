@@ -630,7 +630,10 @@ step, so it sits between wave 7 and R25 in the wave ordering. This is also what 
 contending over one paragraph in §4.6.1.
 
 R2b additionally rewrites the citations that R2a redirected, replacing each `§15.4` and `§4.7` occurrence
-whose subject moved with its `§28.5.N CH-*` successor and emptying `tests/spec-anchor-moves.json`. It also
+whose subject moved with its `§28.5.N CH-*` successor and emptying `tests/spec-anchor-moves.json`. Its
+exit criterion is that every per-file count in `tests/registers/line-citations.yaml` reaches zero, which
+converts R3's line-citation ratchet from a per-file baseline into a flat prohibition and is what stops the
+15,377 citations regrowing after this one rewrite. It also
 breaks the 3,778-character six-contract paragraph at `spec/04:489` into five unnumbered bolded paragraphs.
 That paragraph alone anchors 6b.2, 6b.3, 6b.6, 6b.7, and 6c.5.
 
@@ -661,9 +664,16 @@ Four mechanisms, in the order they engage:
 4. **The heading walker** (R3) fails a numbered heading with no `tests/spec-map.json` entry. Its
    enablement is sequenced after R1a so R1a's own new headings are seeded rather than reported.
 
+5. **The line-citation ratchet** (R3, tier 0) fails a new `§X.Y line N` citation. The resolver in
+   mechanism 2 checks that an existing line citation still resolves; the ratchet is what stops new ones
+   being written. Its per-file baseline in `tests/registers/line-citations.yaml` keeps the 15,377 existing
+   citations legal where they already sit until R2b rewrites them, while failing any file that acquires
+   one. R2b drives every count to zero and R25 asserts the register is empty.
+
 The forward-looking convention, stated in §28.1 and in `.claude/rules/`, is that a new citation names an
 anchor rather than a line. The 15,377 existing line citations are retired by R2b, which is the one job
-that both adds the anchors and rewrites the citations, done once.
+that both adds the anchors and rewrites the citations, done once. Mechanism 5 is what keeps the count at
+zero afterwards, since a convention with no gate regrows the population R2b just retired.
 
 ---
 
@@ -678,8 +688,9 @@ and L (multiple weeks), for one worker.
 **Closes:** 8.1 as a standing mechanism (R25 discharges the item itself). Prerequisite tooling for R2b and
 the feedback loop for every later gate.
 
-**Scope.** The citation resolver, `scripts/specshift`, the heading walker, change-graph completeness, an
-`UNVERIFIED` verdict state, the shared register contract, and the gate-integrity meta-gate.
+**Scope.** The citation resolver, the line-citation ratchet, `scripts/specshift`, the heading walker,
+change-graph completeness, an `UNVERIFIED` verdict state, the shared register contract, and the
+gate-integrity meta-gate.
 
 Six facts about the current harness set the design and were verified:
 
@@ -714,8 +725,32 @@ violation fails; a passed `eta` fails; and a `blocker` that does not resolve to 
 third rule is the escalation channel that `tests/tier5_e2e_kind/node_drain_checkpoint_test.go:67` lacked
 for months.
 
+**The line-citation ratchet.** The resolver above validates that an existing `§X.Y line N` citation still
+points inside section X.Y. It does not stop a new one being written, so without a second gate the
+forward-looking convention in §28.1 is documentation, R2b retires 15,377 citations once, and the count
+grows back. The ratchet is the gate that makes the convention binding.
+
+It is a `tests/tier0_static` Go test rather than a linter rule or a `scripts/` entry, because fact 1 above
+records that `golangci-lint` runs only through a downgraded invocation and fact 2 records that a check
+whose script is absent passes silently. The baseline is `tests/registers/line-citations.yaml`, carrying a
+per-file count of the `§X.Y line N` citations present when R3 lands, under the shared register schema. Two
+ratchet rules: a file absent from the register fails on its first line citation, and a file present in the
+register fails when its count rises. A count that falls rewrites the register downward, so retirement is
+recorded rather than merely permitted.
+
+The transitional period is what the per-file baseline buys. The 15,377 existing citations stay legal in
+the files that already carry them until R2b rewrites them, while any new file, and any new citation in a
+touched file, fails immediately. R2b's exit criterion is that every count reaches zero, at which point the
+register is empty and the gate reduces to a flat prohibition: an anchor citation is the only form the tree
+accepts. R25 asserts the register is empty rather than merely valid, so an abandoned R2b cannot leave the
+ratchet permanently half-open.
+
+The gate reads `// spec:` comment text, so it accepts `§28.5.2 CH-EVENTSTREAM` and rejects
+`§4.7 line 656`. Line references inside `tests/claim-map.json` are out of its scope, since INV-4 already
+bars `file:line` evidence from specification prose and the claim register carries symbol references.
+
 **Code.** `cmd/lenny-test` (validator, verdict state, and change-graph resolution), `scripts/specshift`,
-`tests/tier0_static` citation and heading tests, and the seeded registers. Also the three new fields on
+`tests/tier0_static` citation, ratchet, and heading tests, and the seeded registers. Also the three new fields on
 `tests/spec-map-exceptions.yaml` and the `pending-implementation` reason class R2a needs.
 
 **Tests.** `run_test.go` for `specshift`. Self-tests for the resolver and the walker. A gate-integrity
@@ -1528,7 +1563,9 @@ converting the roughly forty reconciliation files that grep source as text away 
 which runs after R2b's freeze and therefore writes anchor citations only, never a `§X line N` form,
 since that is exactly what gave the dead eviction route a green light
 (`eviction_coordinator_route_consistency_test.go:97-108`, four substring probes, all present, all
-unreachable); and running every tier, which is 8.1's actual discharge.
+unreachable); asserting that `tests/registers/line-citations.yaml` is empty rather than merely valid, which
+converts R3's ratchet from a per-file baseline into a flat prohibition and is the check that an abandoned
+or partial R2b cannot leave half-open; and running every tier, which is 8.1's actual discharge.
 
 **Dependencies.** R9, R24, and every capability step.
 
@@ -1830,6 +1867,7 @@ prevents recurrence.
 | G10 test-double honesty register | `validate-diagnosis` | A double standing in for a collaborator that does not exist | R24 |
 | G11 new-route coverage ratchet | Tier 4 plus a register | The next 6c.1 | R10 |
 | G12 gate integrity | `tests/tier0_static/gate_integrity_test.go` | A gate disabled by deleting a script | R3 |
+| G13 line-citation ratchet | `tests/tier0_static` plus `tests/registers/line-citations.yaml` | A new `§X.Y line N` citation, which is how the 15,377 R2b retires would regrow | R3, driven to zero by R2b, asserted empty by R25 |
 
 ### 7.4 Structural changes to how the suite certifies wiring
 
