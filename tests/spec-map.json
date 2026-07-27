@@ -2891,7 +2891,8 @@
       "tests": [
         "pkg/common/registry/resolver_test.go",
         "tests/tier0_static/airgap_registry_render_test.go::TestAirgapRegistrySingleSourceRender",
-        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go"
+        "tests/tier5_e2e_kind/airgap_registry_mirror_test.go",
+        "tests/tier5_e2e_kind/probe_image_preload_test.go"
       ],
       "packages": [],
       "blocked_until_phase": "14",

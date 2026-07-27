@@ -381,6 +381,10 @@
       "unit": ["tests/testinfra/inproc/..."],
       "load_local": ["tests/tier7a_load_local/..."]
     },
+    "tests/testinfra/kind": {
+      "unit": ["tests/testinfra/kind/..."],
+      "e2e_kind": ["tests/tier5_e2e_kind/probe_image_preload_test.go"]
+    },
     "tests/testinfra/fixtures/expand_contract_migration": {
       "integration": ["tests/tier4_integration/schema_migration_journey_test.go"]
     },

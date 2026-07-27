@@ -307,9 +307,19 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   done
   log "loading ${#images[@]} images onto cluster ${CLUSTER}"
   kind load docker-image --name "${CLUSTER}" "${images[@]}"
-  # External prebuilt images the chart references that install.sh does not
-  # build: the MinIO client the bucket lifecycle Job runs. Pull and load it
-  # so the offline cluster's pullPolicy: Never resolves.
+  # External prebuilt images the cluster needs that install.sh does not
+  # build. Pull and load each one so the offline cluster's pullPolicy:
+  # Never resolves.
+  #
+  #   minio/mc          the MinIO client the bucket lifecycle Job runs.
+  #   curlimages/curl   the tier-5, tier-8, and tier-9 probe-pod image.
+  #                     The shared bootstrap probe fixture
+  #                     (tests/tier5_e2e_kind/gateway_probe_test.go and
+  #                     its tier-8/tier-9 counterparts) pins its pod to a
+  #                     node with imagePullPolicy: Never, so an absent
+  #                     image fails every suite that starts a probe with
+  #                     ErrImageNeverPull rather than failing in the
+  #                     fixture that owns the image.
   #
   # The §13.2 dedicated CoreDNS image (ghcr.io/lennylabs/lenny-coredns) is
   # deliberately absent: e2e-values sets coredns.deploy=false, so the chart
@@ -319,6 +329,7 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   # and the private ghcr image cannot be pulled by the air-gapped kubelet.
   EXTERNAL_IMAGES=(
     "minio/mc:latest"
+    "curlimages/curl:8.11.0"
   )
   for img in "${EXTERNAL_IMAGES[@]}"; do
     if ! docker image inspect "${img}" >/dev/null 2>&1; then

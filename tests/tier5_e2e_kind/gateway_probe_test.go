@@ -90,6 +90,16 @@ metadata:
 // misreport a scheduling failure as a gateway or NetworkPolicy result.
 func t5CreateProbePod(t *testing.T, c *kind.Cluster, name, namespace string, labels map[string]string) {
 	t.Helper()
+	// Fail fast, and with the cause, when the probe node cannot serve
+	// the image. Without this the pod sits in ErrImageNeverPull for the
+	// full Ready timeout and the failure lands in whichever suite
+	// happened to call the shared fixture, which reads as a defect in
+	// that suite rather than in the cluster bootstrap.
+	if err := t5NodeHasImage(c, t5ProbeNode, t5ProbeImage); err != nil {
+		t.Fatalf("probe pod %s in %s cannot start: %v; "+
+			"re-run tests/testinfra/kind/install.sh to side-load it",
+			name, namespace, err)
+	}
 	manifest := t5ProbePodManifest(name, namespace, labels)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, manifest) })
 	if out, err := c.ApplyStdin(t, manifest); err != nil {
