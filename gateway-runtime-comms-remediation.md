@@ -1135,8 +1135,21 @@ presupposes R5.
 **Closes:** 6c.9 and 6c.10. Prerequisite of R11, which routes what survives.
 
 **The decision this step executes.** The supported LLM proxy dialects are `anthropic` and `openai`.
-That is the intersection of what admission accepts and what routing can serve today, so the narrowing
-removes values that never worked rather than withdrawing a capability anyone has.
+
+This restores conformance rather than narrowing the platform. §4.9 already permits exactly those two, in
+three places: the `proxyDialect` lease field is typed "`openai` | `anthropic`"
+(`spec/04_system-components.md:1288`), the proxy-mode delivery step repeats it (`:1488`), and the pool
+example comments it (`:1533`). `credential.ProxyDialect` added `google` and `cursor` beyond that set, and
+`spec/26` declared them on four runtimes, with `spec/26:297` asserting that "Lenny's LLM proxy gains a
+`cursor` dialect (§4.9)" when §4.9 grants no such thing. So §26 contradicts §4.9, and the code follows
+§26. The two values are also the intersection of what admission accepts and what routing can serve, so no
+working path changes.
+
+**A stale citation to correct while here.** `pkg/credential/lease.go:53` cites "§4.9 lines 1473-1476" for
+the dialect rules. Those lines are the rotation-mode resolution prose and say nothing about dialects; the
+governing text is at `:1288`, `:1488`, `:1496`, `:1501`, and `:1533`. The citation is retargeted as part
+of this step rather than left for R2b, because R11a rewrites the surrounding declaration anyway. It is
+also a worked example of why G13 exists.
 
 **Scope, part one: collapse two enums into one.** `credential.ProxyDialect`
 (`pkg/credential/lease.go:58-72`) governs admission through `IsValid` (`:83-90`), and `llmproxy.Dialect`
@@ -1172,9 +1185,11 @@ N3 from R1a is extended to cover the pair, so a bare "Responses" is not a permit
 
 **Spec.** The §28.5.5 card carries the two supported dialects, the inbound direction, and the statement
 that the dialect is the wire format a runtime's SDK speaks to the proxy rather than an upstream provider
-format. §4.9 lines 1473 to 1476 are reduced to those two values. §26.5, §26.6, §26.8, and §26.9 lose their
-dialect declarations, and INV-5 applies: each amended catalog entry names the direct-delivery path that
-replaces it.
+format. §4.9 needs no narrowing, since `spec/04:1288`, `:1488`, and `:1533` already permit `openai` and
+`anthropic` alone; it gains only a cross-reference to the §28.5.5 card as the normative list. §26.5,
+§26.6, §26.8, and §26.9 lose their dialect declarations, which is where the actual contradiction lives,
+and `spec/26:297`'s claim that the proxy "gains a `cursor` dialect (§4.9)" is deleted rather than
+softened. INV-5 applies: each amended catalog entry names the direct-delivery path that replaces it.
 
 **Tests.** Tier 0 asserting one dialect enum, and that the card, the enum, and the registered routes agree.
 Tier 1 on mint-time rejection of a retired value, so a stored pool carrying `google` or `cursor` fails

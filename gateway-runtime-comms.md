@@ -2609,9 +2609,15 @@ A third divergence sits under both. Only `POST /llm-proxy/v1/messages` is regist
 the routing enum, and still has no inbound route. The set of dialects that work end to end today is
 `anthropic` alone.
 
-The origin is recorded in the citation on `ProxyDialect` itself (`lease.go:53-55`): `anthropic` and
-`openai` come from §4.9, while `google` and `cursor` were added by the reference runtime catalog
-(§26.5, §26.8, §26.9 for `google`; §26.6 line 297 for `cursor`). Because the dialect is the **inbound**
+§4.9 permits two values and no more. The `proxyDialect` lease field is typed "`openai` | `anthropic`"
+(`spec/04_system-components.md:1288`), the proxy-mode delivery step repeats it (`:1488`), and the pool
+example comments it (`:1533`). `google` and `cursor` therefore exceed the specification that governs them.
+They were introduced by the reference runtime catalog (§26.5, §26.8, and §26.9 for `google`; §26.6 line
+297 for `cursor`), and `spec/26:297` states that "Lenny's LLM proxy gains a `cursor` dialect (§4.9)",
+which §4.9 does not grant. The catalog contradicts §4.9, and the code follows the catalog.
+
+The citation on `ProxyDialect` itself is also stale. `lease.go:53` cites "§4.9 lines 1473-1476" for the
+dialect rules, and those lines are the rotation-mode resolution prose, which says nothing about dialects. Because the dialect is the **inbound**
 wire format a runtime's SDK speaks to the proxy (`translator.go:22-23`), and the lease token is handed to
 that SDK in place of its API key (`spec/04_system-components.md:1289`), every runtime whose SDK speaks a
 new format implies a new dialect. The proxy's inbound surface is therefore a function of the runtime
