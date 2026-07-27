@@ -39,33 +39,39 @@ func TestClusterCNIEnforcesNetworkPolicy(t *testing.T) {
 
 // spec: 6.2 (pod state machine — terminal Sandbox phases), 4.6.1 (warm
 // pool controller)
-// diagnosis: terminal-phase Sandbox objects have accumulated in the
-// agent namespace beyond the window the harness prunes. §6.2 makes
-// `failed` and `terminated` terminal, so those objects serve no session
-// and will never serve another, but they stay in etcd and in every
-// controller's informer cache. Unbounded accumulation is what OOM-kills
-// the WarmPoolController against its chart memory limit, which in turn
-// stops the controller that would have released them. InstallLenny runs
-// the prune once per test process, so a failure here means the prune did
-// not remove them: either the API server rejected the deletes, or the
-// §4.6.1 `lenny.dev/session-cleanup` finalizer is being re-added faster
-// than the prune clears it. Set LENNY_KIND_SKIP_PRUNE=1 to inspect the
-// objects before they are removed.
+// diagnosis: the per-run debris prune left objects it had selected behind.
+// §6.2 makes `failed` and `terminated` terminal, so those objects serve no
+// session and will never serve another, but they stay in etcd and in every
+// controller's informer cache. Unbounded accumulation is what OOM-kills the
+// WarmPoolController against its chart memory limit, which in turn stops the
+// controller that would have released them. A failure here means the prune
+// selected objects and could not remove them: either the API server rejected
+// the deletes, or the §4.6.1 `lenny.dev/session-cleanup` finalizer is being
+// re-added faster than the prune clears it. The assertion is on the prune's
+// own selection rather than on a fresh listing, because a pool that is
+// churning retires more pods while the prune runs and those objects age into
+// the debris window moments later; treating them as prune failures would
+// fail this test on every busy cluster. Set LENNY_KIND_SKIP_PRUNE=1 to
+// inspect the objects before they are removed.
 func TestTerminalSandboxDebrisIsPruned(t *testing.T) {
 	c := kind.InstallLenny(t)
 
-	stale, err := kind.AgedTerminalSandboxes(c, time.Now())
+	// InstallLenny prunes once per test process. This pass re-runs it with
+	// its own cutoff so the assertion reads the selection and the outcome
+	// from the same instant.
+	res, err := kind.PruneTerminalSandboxes(c, time.Now())
 	if err != nil {
-		t.Fatalf("list aged terminal Sandboxes: %v", err)
+		t.Fatalf("prune aged terminal Sandboxes: %v", err)
 	}
-	if len(stale) > 0 {
-		sample := stale
+	t.Logf("prune selected %d aged terminal-phase Sandbox object(s)", len(res.Selected))
+	if len(res.Survivors) > 0 {
+		sample := res.Survivors
 		if len(sample) > 10 {
 			sample = sample[:10]
 		}
-		t.Errorf("%d aged terminal-phase Sandbox object(s) survived the per-run prune "+
+		t.Errorf("%d of %d selected terminal-phase Sandbox object(s) survived the prune "+
 			"(first %d: %v); accumulated Sandbox objects grow the controller informer "+
 			"caches until the controller is OOMKilled against its chart memory limit",
-			len(stale), len(sample), sample)
+			len(res.Survivors), len(res.Selected), len(sample), sample)
 	}
 }

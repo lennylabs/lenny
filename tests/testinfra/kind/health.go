@@ -404,15 +404,35 @@ func pruneClusterDebrisOnce(t testing.TB, c *Cluster) {
 		return
 	}
 	pruneOnce.Do(func() {
-		pruned, err := PruneTerminalSandboxes(c, time.Now())
+		res, err := PruneTerminalSandboxes(c, time.Now())
 		if err != nil {
 			t.Logf("prune terminal Sandboxes: %v", err)
 		}
-		if pruned > 0 {
-			t.Logf("pruned %d terminal-phase Sandbox object(s) older than %s from %s",
-				pruned, sandboxDebrisMinAge, agentNamespace)
+		if len(res.Selected) > 0 {
+			t.Logf("pruned %d of %d terminal-phase Sandbox object(s) older than %s from %s",
+				len(res.Selected)-len(res.Survivors), len(res.Selected),
+				sandboxDebrisMinAge, agentNamespace)
 		}
 	})
+}
+
+// PruneResult reports what one prune pass selected and what outlived it.
+//
+// The two are reported separately because the selection is anchored at the
+// cutoff instant the caller passes in, while the cluster keeps moving: a
+// pool that is churning retires more pods while the prune runs, and those
+// objects age past sandboxDebrisMinAge moments later. Re-listing the
+// cluster after a prune and treating whatever is aged by then as a prune
+// failure therefore reports a failure on every actively-churning cluster.
+// Survivors is the honest measure: of the objects this pass selected, the
+// ones the delete and the finalizer-clearing pass did not remove.
+type PruneResult struct {
+	// Selected are the Sandbox names the pass chose: §6.2 terminal phase
+	// and older than sandboxDebrisMinAge as of the cutoff instant.
+	Selected []string
+	// Survivors are the Selected names still present in the cluster when
+	// the pass returned.
+	Survivors []string
 }
 
 // PruneTerminalSandboxes deletes every Sandbox in the agent namespace
@@ -433,16 +453,18 @@ func pruneClusterDebrisOnce(t testing.TB, c *Cluster) {
 // whose controller is itself down from this debris cannot otherwise
 // escape the deadlock.
 //
-// The returned count is how many objects the prune selected and issued a
-// delete for. Callers that need to know what actually went away re-read
-// the cluster with AgedTerminalSandboxes.
-func PruneTerminalSandboxes(c *Cluster, now time.Time) (int, error) {
+// The result names the objects the pass selected and the ones that
+// outlived it. A pass that removes everything it selected returns an empty
+// Survivors list even on a cluster that is producing fresh debris the whole
+// time, which is what makes the result assertable.
+func PruneTerminalSandboxes(c *Cluster, now time.Time) (PruneResult, error) {
 	stale, err := AgedTerminalSandboxes(c, now)
 	if err != nil {
-		return 0, err
+		return PruneResult{}, err
 	}
+	res := PruneResult{Selected: stale}
 	if len(stale) == 0 {
-		return 0, nil
+		return res, nil
 	}
 	staleSet := make(map[string]bool, len(stale))
 	for _, name := range stale {
@@ -452,27 +474,61 @@ func PruneTerminalSandboxes(c *Cluster, now time.Time) (int, error) {
 
 	// Give the controller its normal finalizer-removal window before
 	// clearing finalizers directly.
-	deadline := time.Now().Add(finalizerGrace)
-	for time.Now().Before(deadline) {
-		remaining, err := listSandboxes(c)
-		if err != nil || countNamed(remaining, staleSet) == 0 {
-			break
-		}
-		time.Sleep(2 * time.Second)
-	}
-	remaining, err := listSandboxes(c)
+	remaining, err := waitForSandboxesGone(c, staleSet, finalizerGrace)
 	if err != nil {
-		return len(stale), err
+		return res, err
+	}
+	if len(remaining) == 0 {
+		return res, nil
 	}
 	var stuck []string
 	for _, r := range remaining {
-		if r.Deleting && staleSet[r.Name] {
+		if r.Deleting {
 			stuck = append(stuck, r.Name)
 		}
 	}
 	clearSandboxFinalizers(c, stuck)
-	return len(stale), nil
+
+	// Clearing a finalizer lets the API server finish a delete that was
+	// already accepted, so the objects go away asynchronously; poll once
+	// more before declaring what survived.
+	remaining, err = waitForSandboxesGone(c, staleSet, finalizerGrace)
+	if err != nil {
+		return res, err
+	}
+	for _, r := range remaining {
+		res.Survivors = append(res.Survivors, r.Name)
+	}
+	return res, nil
 }
+
+// waitForSandboxesGone polls the agent namespace until none of the wanted
+// Sandboxes remain or the window elapses, returning the records still
+// present. A list error is returned rather than swallowed: the caller
+// cannot distinguish "nothing left" from "could not look" otherwise.
+func waitForSandboxesGone(c *Cluster, want map[string]bool, window time.Duration) ([]sandboxRecord, error) {
+	deadline := time.Now().Add(window)
+	for {
+		records, err := listSandboxes(c)
+		if err != nil {
+			return nil, err
+		}
+		var remaining []sandboxRecord
+		for _, r := range records {
+			if want[r.Name] {
+				remaining = append(remaining, r)
+			}
+		}
+		if len(remaining) == 0 || !time.Now().Before(deadline) {
+			return remaining, nil
+		}
+		time.Sleep(pruneSettlePollInterval)
+	}
+}
+
+// pruneSettlePollInterval is how often the prune re-lists the namespace
+// while it waits for the deletes it issued to complete.
+const pruneSettlePollInterval = 2 * time.Second
 
 // AgedTerminalSandboxes returns the names of the Sandboxes in the agent
 // namespace that the per-run prune selects: §6.2 terminal phase
@@ -500,17 +556,6 @@ func AgedTerminalSandboxes(c *Cluster, now time.Time) ([]string, error) {
 // finalizerGrace is how long the prune waits for the WarmPoolController
 // to remove the session-cleanup finalizer before clearing it directly.
 const finalizerGrace = 30 * time.Second
-
-// countNamed returns how many records carry one of the wanted names.
-func countNamed(records []sandboxRecord, want map[string]bool) int {
-	n := 0
-	for _, r := range records {
-		if want[r.Name] {
-			n++
-		}
-	}
-	return n
-}
 
 // listSandboxes reads every Sandbox in the agent namespace with the
 // fields the prune keys on.
