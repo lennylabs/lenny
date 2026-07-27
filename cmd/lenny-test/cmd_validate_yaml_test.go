@@ -392,3 +392,132 @@ func TestValidateParityMatrixAbsent(t *testing.T) {
 	r := validateParityMatrixYAML(filepath.Join(t.TempDir(), "missing.yaml"))
 	expectPass(t, r)
 }
+
+// A capability whose every provider cell is `planned` is exercised
+// against no provider at all. The matrix's documented invariant is
+// that every capability has at least one `validated` provider, so the
+// validator surfaces the shortfall in its detail instead of reporting
+// an unqualified pass.
+//
+// spec: TESTING.md §12.6 (tier 6 provider parity matrix)
+func TestValidateParityMatrixAllPlannedIsReported(t *testing.T) {
+	path := writeYAML(t, "parity-matrix.yaml", `
+version: 1
+providers: [gke, eks, aks]
+capabilities:
+  - name: cloud_kms
+    spec_section: "13"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+  - name: cloud_csi
+    spec_section: "12.5"
+    status:
+      gke: planned
+      eks: planned
+      aks: planned
+`)
+	r := validateParityMatrixYAML(path)
+	expectPass(t, r)
+	for _, want := range []string{"not validated against any provider", "cloud_kms", "cloud_csi"} {
+		if !strings.Contains(r.detail, want) {
+			t.Errorf("detail missing %q: %s", want, r.detail)
+		}
+	}
+}
+
+// A capability validated on at least one provider is not reported as a
+// shortfall, and the remaining `planned` and `skip` cells on the same
+// row do not make it one.
+//
+// spec: TESTING.md §12.6 (tier 6 provider parity matrix)
+func TestValidateParityMatrixValidatedRowNotReported(t *testing.T) {
+	path := writeYAML(t, "parity-matrix.yaml", `
+version: 1
+providers: [gke, eks, aks]
+capabilities:
+  - name: cloud_kms
+    spec_section: "13"
+    status:
+      gke: validated
+      eks: planned
+      aks:
+        state: skip
+        reason: Azure Key Vault binding still being scoped.
+`)
+	r := validateParityMatrixYAML(path)
+	expectPass(t, r)
+	if strings.Contains(r.detail, "not validated against any provider") {
+		t.Errorf("fully planned report fired on a validated row: %s", r.detail)
+	}
+}
+
+// Once provider clusters exist the matrix flips `enforcement` to
+// `fail`, and the same shortfall becomes a hard tier-0 failure rather
+// than a report.
+//
+// spec: TESTING.md §12.6 (tier 6 provider parity matrix)
+func TestValidateParityMatrixEnforcementFailRejectsUnvalidated(t *testing.T) {
+	path := writeYAML(t, "parity-matrix.yaml", `
+version: 1
+enforcement: fail
+providers: [gke, eks]
+capabilities:
+  - name: cloud_kms
+    status:
+      gke: validated
+      eks: planned
+  - name: cloud_csi
+    status:
+      gke: planned
+      eks:
+        state: skip
+        reason: EKS object storage covered by aws_resources.
+`)
+	expectFail(t, validateParityMatrixYAML(path), "cloud_csi", "validated")
+}
+
+// Under `enforcement: fail` a matrix in which every capability is
+// validated somewhere still passes.
+//
+// spec: TESTING.md §12.6 (tier 6 provider parity matrix)
+func TestValidateParityMatrixEnforcementFailAcceptsValidated(t *testing.T) {
+	path := writeYAML(t, "parity-matrix.yaml", `
+version: 1
+enforcement: fail
+providers: [gke, eks]
+capabilities:
+  - name: cloud_kms
+    status:
+      gke: validated
+      eks: planned
+`)
+	expectPass(t, validateParityMatrixYAML(path))
+}
+
+// An enforcement value outside the documented set is a typo that would
+// otherwise silently disable the gate.
+//
+// spec: TESTING.md §12.6 (tier 6 provider parity matrix)
+func TestValidateParityMatrixUnknownEnforcement(t *testing.T) {
+	path := writeYAML(t, "parity-matrix.yaml", `
+version: 1
+enforcement: strict
+providers: [gke]
+capabilities:
+  - name: cloud_kms
+    status:
+      gke: validated
+`)
+	expectFail(t, validateParityMatrixYAML(path), "strict")
+}
+
+// The checked-in matrix satisfies whichever enforcement level it
+// declares, so the tier-0 gate stays green on a clean tree.
+//
+// spec: TESTING.md §12.6 (tier 6 provider parity matrix)
+func TestValidateParityMatrixRepoFileSelfConsistent(t *testing.T) {
+	_, _, _, _, parityMatrix := yamlPaths(repoRoot())
+	expectPass(t, validateParityMatrixYAML(parityMatrix))
+}

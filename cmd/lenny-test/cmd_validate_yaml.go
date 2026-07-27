@@ -303,10 +303,24 @@ func validateFlakeBudgetYAML(path string) checkResult {
 }
 
 // validateParityMatrixYAML enforces TESTING.md §12.6 on
-// tests/tier6_e2e_cloud/parity-matrix.yaml. Every capability has
-// at least one `validated` provider, every provider in a row is
-// listed under the top-level providers block, and every `skip`
-// status carries a reason.
+// tests/tier6_e2e_cloud/parity-matrix.yaml: every provider in a row is
+// listed under the top-level providers block, every `skip` status
+// carries a reason, and every capability is exercised against at least
+// one provider (a row with no `validated` cell is exercised nowhere).
+//
+// The exercise invariant is graduated by the matrix's own
+// `enforcement` field, because a hard gate cannot pass until provider
+// clusters exist to run the suites against:
+//
+//	warn (default): capabilities with no `validated` cell are counted
+//	  and named in the check detail, and the check still passes.
+//	fail: the same capabilities are hard tier-0 failures. The matrix
+//	  flips to this once the provider clusters described in
+//	  tests/tier6_e2e_cloud/README.md are provisioned.
+//
+// Reporting under `warn` keeps the shortfall visible in every tier-0
+// run instead of letting an all-`planned` matrix report an unqualified
+// pass forever.
 func validateParityMatrixYAML(path string) checkResult {
 	body, err := os.ReadFile(path)
 	if err != nil {
@@ -317,6 +331,7 @@ func validateParityMatrixYAML(path string) checkResult {
 	}
 	var doc struct {
 		Version      int      `yaml:"version"`
+		Enforcement  string   `yaml:"enforcement"`
 		Providers    []string `yaml:"providers"`
 		Capabilities []struct {
 			Name        string               `yaml:"name"`
@@ -330,6 +345,14 @@ func validateParityMatrixYAML(path string) checkResult {
 	if doc.Version != 1 {
 		return newResult("parity-matrix.yaml", false, fmt.Sprintf("expected version 1, got %d", doc.Version))
 	}
+	enforcement := doc.Enforcement
+	if enforcement == "" {
+		enforcement = "warn"
+	}
+	if enforcement != "warn" && enforcement != "fail" {
+		return newResult("parity-matrix.yaml", false,
+			fmt.Sprintf("unknown enforcement %q; want warn or fail", doc.Enforcement))
+	}
 	known := map[string]bool{}
 	for _, p := range doc.Providers {
 		known[p] = true
@@ -339,6 +362,7 @@ func validateParityMatrixYAML(path string) checkResult {
 	}
 	allowed := map[string]bool{"validated": true, "planned": true, "skip": true}
 	var problems []string
+	var unvalidated []string
 	for i, c := range doc.Capabilities {
 		if strings.TrimSpace(c.Name) == "" {
 			problems = append(problems, fmt.Sprintf("capability[%d]: missing name", i))
@@ -369,16 +393,35 @@ func validateParityMatrixYAML(path string) checkResult {
 				hasValidated = true
 			}
 		}
-		// "planned" everywhere is acceptable today (no real cloud tests
-		// have landed yet); a capability with zero providers listed at
-		// all is the failure mode this check guards against.
-		_ = hasValidated
+		if !hasValidated {
+			unvalidated = append(unvalidated, c.Name)
+		}
+	}
+	if enforcement == "fail" {
+		for _, name := range unvalidated {
+			problems = append(problems,
+				fmt.Sprintf("%s: no provider in state validated", name))
+		}
 	}
 	if len(problems) > 0 {
 		return newResult("parity-matrix.yaml", false, summarizeProblems(problems))
 	}
-	return newResult("parity-matrix.yaml", true,
-		fmt.Sprintf("%d capability/provider cell(s) across %d providers", countCells(doc.Capabilities), len(doc.Providers)))
+	detail := fmt.Sprintf("%d capability/provider cell(s) across %d providers",
+		countCells(doc.Capabilities), len(doc.Providers))
+	if len(unvalidated) > 0 {
+		detail += fmt.Sprintf("; %d capability row(s) not validated against any provider: %s",
+			len(unvalidated), previewNames(unvalidated, 8))
+	}
+	return newResult("parity-matrix.yaml", true, detail)
+}
+
+// previewNames joins names for a check detail, truncating past limit
+// so a long list does not swamp the line.
+func previewNames(names []string, limit int) string {
+	if len(names) <= limit {
+		return strings.Join(names, ", ")
+	}
+	return fmt.Sprintf("%s (+%d more)", strings.Join(names[:limit], ", "), len(names)-limit)
 }
 
 func parityCellState(node yaml.Node) string {

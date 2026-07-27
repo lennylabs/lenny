@@ -1118,7 +1118,7 @@ For each provider the harness brings up two cluster shapes: `cloud-small-<provid
 | cloud_observability | OTLP delivery to the provider-native collector (Cloud Trace and Cloud Logging on GCP, X-Ray and CloudWatch on AWS, Application Insights and Log Analytics on Azure) |
 | cloud_billing_export | Per-tenant usage events flow to the provider's billing-export sink (BigQuery, Athena, Azure Data Lake) in the documented format |
 
-**Provider parity matrix.** A row in `tests/tier6_e2e_cloud/parity-matrix.yaml` lists every documented capability and the providers it is validated against. CI fails if a capability is claimed in the spec or chart but missing from the matrix.
+**Provider parity matrix.** A row in `tests/tier6_e2e_cloud/parity-matrix.yaml` lists every documented capability and the providers it is validated against. CI fails if a capability is claimed in the spec or chart but missing from the matrix. The matrix's `enforcement` field graduates the exercise invariant that every capability has at least one `validated` provider: under `warn` the tier-0 gate names each capability that no provider validates and still passes, and under `fail` each such capability fails the gate. The matrix reads `warn` until the provider clusters described in `tests/tier6_e2e_cloud/README.md` are provisioned, since no suite can reach `validated` without them.
 
 **Cadence.**
 - Nightly: critical-path subset (`gvisor_isolation`, `cloud_csi`, `cloud_kms` per provider) rotated across providers so each provider runs at least every 48 hours.

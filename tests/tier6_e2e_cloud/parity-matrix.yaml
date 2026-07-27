@@ -13,11 +13,23 @@
 #   skip: capability is intentionally not validated against the provider (with reason)
 #
 # Validation invariants (enforced by cmd/lenny-test validate-maps):
-#   - Every capability has at least one `validated` provider.
 #   - Every provider listed across rows is in the allow-list (gke, eks, aks).
 #   - Every `skip` carries a `reason`.
+#   - Every capability has at least one `validated` provider, graduated
+#     by the `enforcement` field below.
+#
+# `enforcement` selects how the last invariant is applied:
+#   warn: capabilities with no `validated` cell are counted and named in
+#         the Tier 0 check detail, and the gate still passes.
+#   fail: those capabilities fail the Tier 0 static gate.
+#
+# It reads `warn` until the provider clusters described in README.md are
+# provisioned, because no suite can reach `validated` without them. Flip
+# it to `fail` with the first provider cluster so the matrix cannot
+# regress back to all-`planned`.
 
 version: 1
+enforcement: warn
 
 providers:
   - gke
