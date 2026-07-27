@@ -129,20 +129,6 @@ type Options struct {
 	// then falls back entirely to the in-memory lease cache. spec: §10.1
 	// line 165.
 	Mirror coordlease.Store
-	// InterReplicaAddress is this replica's dialable inter-replica address
-	// (POD_IP plus the inter-replica gRPC port). The sweep records it as
-	// the mirror row's coordinator_address alongside ReplicaID, so a
-	// cross-replica lease handoff overwrites both the coordinator identity
-	// and its dialable address and the §4.6.1 eviction-forward hop can dial
-	// the current coordinator. The composition root supplies it. Empty
-	// leaves coordinator_address unset (the mirror still records identity).
-	//
-	// Co-location makes the coordinator the binding holder, so the forward
-	// hop this address serves is needed only where one pod's control stream
-	// is consumed by a replica that does not coordinate every session on the
-	// pod: a concurrent-session pod (maxConcurrentSessions > 1) whose slots
-	// are bound on different replicas. spec: §4.6.1.
-	InterReplicaAddress string
 	// Bindings is the consumer-side view of this replica's live pod
 	// bindings. The Sweeper renews the lease for the sessions this replica
 	// binds, and on a bound session whose held gateway-to-pod channel has
@@ -172,18 +158,17 @@ type Options struct {
 
 // Sweeper renews the coordination leases for a gateway replica.
 type Sweeper struct {
-	tenants             TenantLister
-	sessions            sessionstore.Store
-	leases              leasestore.LeaseStore
-	mirror              coordlease.Store
-	bindings            BindingRegistry
-	readopter           Readopter
-	replicaID           string
-	interReplicaAddress string
-	ttl                 time.Duration
-	interval            time.Duration
-	adoptionBackoff     time.Duration
-	now                 func() time.Time
+	tenants         TenantLister
+	sessions        sessionstore.Store
+	leases          leasestore.LeaseStore
+	mirror          coordlease.Store
+	bindings        BindingRegistry
+	readopter       Readopter
+	replicaID       string
+	ttl             time.Duration
+	interval        time.Duration
+	adoptionBackoff time.Duration
+	now             func() time.Time
 
 	// mu guards backoffUntil, the per-session adoption-backoff window a
 	// relinquished crash-takeover records so the fixed sweep interval does
@@ -208,19 +193,18 @@ func NewSweeper(tenants TenantLister, sessions sessionstore.Store, leases leases
 		now = time.Now
 	}
 	return &Sweeper{
-		tenants:             tenants,
-		sessions:            sessions,
-		leases:              leases,
-		mirror:              opts.Mirror,
-		bindings:            opts.Bindings,
-		readopter:           opts.Readopter,
-		replicaID:           opts.ReplicaID,
-		interReplicaAddress: opts.InterReplicaAddress,
-		ttl:                 ttl,
-		interval:            interval,
-		adoptionBackoff:     opts.AdoptionBackoff,
-		now:                 now,
-		backoffUntil:        map[string]time.Time{},
+		tenants:         tenants,
+		sessions:        sessions,
+		leases:          leases,
+		mirror:          opts.Mirror,
+		bindings:        opts.Bindings,
+		readopter:       opts.Readopter,
+		replicaID:       opts.ReplicaID,
+		ttl:             ttl,
+		interval:        interval,
+		adoptionBackoff: opts.AdoptionBackoff,
+		now:             now,
+		backoffUntil:    map[string]time.Time{},
 	}
 }
 
@@ -554,14 +538,10 @@ func (s *Sweeper) nextBackoff() time.Duration {
 }
 
 // upsertMirror records the §10.1 line 165 barrier-target row for a lease
-// this replica holds. It stamps both the coordinator identity and this
-// replica's dialable inter-replica coordinator_address, so a cross-replica
-// handoff overwrites both and the §4.6.1 eviction-forward hop resolves a
-// routable target for the current coordinator. Best-effort: a transient
-// mirror error is logged but does not fail the sweep — the next sweep cycle
-// re-upserts, and the barrier coordinator falls back to the in-memory lease
-// cache when the Postgres read fails anyway.
-// spec: §10.1 line 165; §4.6.1.
+// this replica holds. Best-effort: a transient mirror error is logged but
+// does not fail the sweep — the next sweep cycle re-upserts, and the
+// barrier coordinator falls back to the in-memory lease cache when the
+// Postgres read fails anyway.
 func (s *Sweeper) upsertMirror(ctx context.Context, tenantID, sessionID string, generation int64) {
 	if s.mirror == nil {
 		return
@@ -570,7 +550,6 @@ func (s *Sweeper) upsertMirror(ctx context.Context, tenantID, sessionID string, 
 		TenantID:               tenantID,
 		SessionID:              sessionID,
 		CoordinatorReplica:     s.replicaID,
-		CoordinatorAddress:     s.interReplicaAddress,
 		CoordinationGeneration: generation,
 	}); err != nil {
 		log.Printf("coordination: mirror upsert for session %s: %v", sessionID, err)

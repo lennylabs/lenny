@@ -19,16 +19,6 @@
 -- handoff overwrites coordinator_replica with the new holder, and it
 -- marks released_at when the session reaches a terminal state.
 --
--- The session server is a second writer: it seeds this row at session
--- bind with the binding replica as the initial coordinator_replica. In
--- the window before the first coordination sweep the seeded replica holds
--- no coordination lease yet, so coordinator_replica can name a
--- non-lease-holding binding replica until the next sweep overwrites it
--- with the lease holder. The seed lets the §4.6.1 individual agent-pod
--- eviction drive resolve a session's coordinator before it can be evicted.
--- Migration 0180 adds the coordinator_address column the mirror now
--- carries alongside coordinator_replica for the eviction-forward hop.
---
 -- This is platform-operational coordination state, not tenant data: a
 -- single gateway replica coordinates sessions across every tenant, so
 -- the barrier-target query is cross-tenant and there is no
@@ -44,13 +34,8 @@ CREATE TABLE coordination_lease (
     tenant_id               TEXT        NOT NULL,
     session_id              TEXT        NOT NULL,
     -- coordinator_replica is the OTel service.instance.id of the gateway
-    -- replica recorded as the session's coordinator. It names either the
-    -- replica that currently holds the session-coordination lease (written
-    -- by the Sweeper on every sweep) or, in the pre-first-sweep window, the
-    -- binding replica the session server seeded at bind, which holds no
-    -- coordination lease yet and which the next sweep overwrites with the
-    -- lease holder. The value is therefore not always the current lease
-    -- holder. The §10.1 line 165 barrier-target query filters on it.
+    -- replica that currently holds the session-coordination lease. The
+    -- §10.1 line 165 barrier-target query filters on it.
     coordinator_replica     TEXT        NOT NULL,
     -- coordination_generation is the §4.2 fenced generation the holder
     -- last observed for the session. The CheckpointBarrier message
