@@ -188,7 +188,7 @@ makes necessary.
 |:--|:--|:--|
 | 1a. Dial direction | Which participant opens the connection | The gateway dials `Adapter/LifecycleChannel` |
 | 1b. Authority direction | Which participant originates the messages | The adapter produces every event on that same stream |
-| 2. Plane | Control, content, or state | Distinguishes `CH-ATTACH` from `CH-EVENTSTREAM` |
+| 2. Plane | Control, content, or state | Distinguishes `CH-ATTACH` from `CH-ADAPTEREVENTS` |
 | 3. Transport | gRPC, Unix socket JSONL, JSON-RPC, HTTP, SQL, Redis, or Kubernetes API | Closed set; a new value requires a specification change |
 | 4. Boundary | `intra-pod`, `gateway-to-pod`, `pod-to-gateway`, `pod-egress`, `gateway-to-store`, `inter-replica`, or `control-plane` | Groups the contract cards. The same closed set names the §28.5 card groups and the Boundary column in §3.4, so a channel's boundary value and its card subsection are the same string. |
 | 5. Exclusivity | Granularity plus the enforcing guard, or the missing guard named | Reference §1.5 vocabulary, made a required field |
@@ -203,7 +203,7 @@ Seven rules, normative in §28.1.
 
 - **N1.** A channel's canonical name states the endpoint pair and the plane, in that order. It never
   states the transport, because the transport is a column.
-- **N2.** Identifiers are mnemonic, uppercase, and hyphenated: `CH-EVENTSTREAM`, `LNK-POD-GRPC`,
+- **N2.** Identifiers are mnemonic, uppercase, and hyphenated: `CH-ADAPTEREVENTS`, `LNK-POD-GRPC`,
   `REG-COORDLEASE`. Positional identifiers are not used, because a channel added between two others must
   not renumber its neighbours, and because an engineer says the identifier out loud.
 - **N3.** The words `lifecycle` and `control` are reserved. Neither may appear as a bare noun phrase
@@ -235,7 +235,7 @@ were folded into.
 | C3 | `CH-CHECKPOINT` | `Adapter/Checkpoint` stream | Channel | gateway-to-pod | WIRED | `spec/28`. No code change. |
 | C4 | `CH-FENCE` | `Adapter/CoordinatorFence` | Channel | gateway-to-pod | WIRED | `spec/28`. No code change. |
 | C5 | `CH-BARRIER` | `Adapter/CheckpointBarrier` | Channel | gateway-to-pod | WIRED | `spec/28`. Proto comment at `schemas/lenny-adapter.proto:170-172` corrected in R1b. |
-| C6 | `CH-EVENTSTREAM` | `Adapter/LifecycleChannel` gRPC control stream | Channel | pod-to-gateway | server WIRED, client UNWIRED | Proto RPC and both message types, `pkg/adapter/controlchannel.go` file and symbols, metric names, `spec/04` §4.7, `spec/10`, and `docs/`. |
+| C6 | `CH-ADAPTEREVENTS` | `Adapter/LifecycleChannel` gRPC control stream | Channel | pod-to-gateway | server WIRED, client UNWIRED | Proto RPC and both message types, `pkg/adapter/controlchannel.go` file and symbols, metric names, `spec/04` §4.7, `spec/10`, and `docs/`. |
 | C7 | `LNK-GWCONTROL` | `GatewayControl` gRPC service | Link | pod-to-gateway | WIRED | `spec/28`. The proto service name is kept. |
 | C8 | `CH-MSGSOCK` | Runtime message socket, `@lenny-runtime` | Channel | intra-pod | WIRED | `spec/28`, and the title and description of `schemas/lenny-adapter-jsonl.schema.json`. The socket name is kept. |
 | C9 | `CH-RUNTIMEOPS` | Runtime lifecycle channel | Channel | intra-pod | WIRED in-binary, UNWIRED at the deployment boundary | `pkg/adapter/lifecyclechannel.go` file and symbols, `schemas/lifecycle-events.schema.json`, manifest key `lifecycleChannel`, socket `@lenny-lifecycle`, flag `--lifecycle-socket`, three runtime SDKs, `spec/04` §4.7 Part B, `spec/15` §15.4.6, and `docs/`. |
@@ -253,12 +253,19 @@ were folded into.
 | C21 | `REG-PODSTATE` | Postgres `agent_pod_state` mirror | Register | gateway-to-store | WIRED | `spec/28`. No code change. |
 | C22 | `CH-ADMISSION` | Admission webhook to gateway internal HTTP | Channel | control-plane | WIRED, disabled by chart default | `spec/28`. No code change. |
 
+**Provenance note on C6.** This table originally gave C6 the identifier `CH-EVENTSTREAM`. Proposal 0064,
+which implements this step, renamed it to `CH-ADAPTEREVENTS` during its adversarial review, because the
+stem "event stream" reuses a term the specification already binds elsewhere and therefore fails N3, the
+very rule this step introduces. The table above carries the corrected identifier. Any later step that
+names this channel uses `CH-ADAPTEREVENTS`; `CH-EVENTSTREAM` appears nowhere in the plan and must not be
+reintroduced.
+
 Two rows, C6 and C9, carry a code and wire rename. Two more, C5 and C8, carry a text correction inside a
 shipped wire artifact. Every other row is a specification and documentation change only.
 
 ### 3.5 Disambiguating the two lifecycle channels
 
-`CH-EVENTSTREAM` and `CH-RUNTIMEOPS` are the collision. After R1:
+`CH-ADAPTEREVENTS` and `CH-RUNTIMEOPS` are the collision. After R1:
 
 ```
     +-----------------------------------------------------------+
@@ -272,15 +279,15 @@ shipped wire artifact. Every other row is a specification and documentation chan
     |                                                           |
     |  +------------------ adapter container ----------------+  |
     |  |                                                     |  |
-    |  |  CH-EVENTSTREAM : adapter-authored control events   |  |
+    |  |  CH-ADAPTEREVENTS : adapter-authored control events |  |
     |  |    gateway dials, adapter pushes                    |  |
     |  |    rpc AdapterEventStream, bidi gRPC                |  |
     |  |                                                     |  |
-    |  |  CH-RUNTIMEOPS  : adapter-to-runtime operations     |  |
+    |  |  CH-RUNTIMEOPS    : adapter-to-runtime operations   |  |
     |  |    adapter listens, runtime dials                   |  |
     |  |    unix @lenny-runtime-ops, JSON Lines              |  |
     |  |                                                     |  |
-    |  |  CH-MSGSOCK     : agent message plane               |  |
+    |  |  CH-MSGSOCK       : agent message plane             |  |
     |  |    adapter listens, runtime dials                   |  |
     |  |    unix @lenny-runtime, JSON Lines                  |  |
     |  +----+---------------------------+--------------------+  |
@@ -295,15 +302,15 @@ shipped wire artifact. Every other row is a specification and documentation chan
 ASCII fallback for the diagram above (channel disambiguation):
 Gateway replica ===(LNK-POD-GRPC, dials pod IP 50051)==> Agent pod.
 Inside the agent pod, the adapter container hosts three distinct channels:
-  CH-EVENTSTREAM  : gateway dials, adapter authors the events, bidi gRPC on LNK-POD-GRPC
-  CH-RUNTIMEOPS   : adapter listens, runtime dials, unix socket @lenny-runtime-ops, JSON Lines
-  CH-MSGSOCK      : adapter listens, runtime dials, unix socket @lenny-runtime, JSON Lines
+  CH-ADAPTEREVENTS : gateway dials, adapter authors the events, bidi gRPC on LNK-POD-GRPC
+  CH-RUNTIMEOPS    : adapter listens, runtime dials, unix socket @lenny-runtime-ops, JSON Lines
+  CH-MSGSOCK       : adapter listens, runtime dials, unix socket @lenny-runtime, JSON Lines
 CH-RUNTIMEOPS and CH-MSGSOCK both terminate in the runtime container.
 -->
 
 The three properties that distinguish them, stated once so they never have to be re-derived:
 
-| Property | `CH-EVENTSTREAM` | `CH-RUNTIMEOPS` | `CH-MSGSOCK` |
+| Property | `CH-ADAPTEREVENTS` | `CH-RUNTIMEOPS` | `CH-MSGSOCK` |
 |:--|:--|:--|:--|
 | Boundary | crosses the pod boundary | intra-pod | intra-pod |
 | Transport | gRPC bidirectional stream | Unix socket, JSON Lines | Unix socket, JSON Lines |
@@ -499,6 +506,21 @@ that does not need re-deriving.
   pointers for the `spec/04` §4.7 and `spec/15` §15.4 reductions it performs, and every later step that
   relocates specification content carries the same obligation.
 
+
+- **INV-6.** `BUILD-GAPS.md` and `TEST-GAPS.md` are out of scope for every mechanical pass in this plan.
+  No `specshift` pass opens them, the citation resolver and the line-citation ratchet skip them, and no
+  register carries a per-file count for either. They hold roughly 2,168 citations between them, which is
+  the largest non-Go population in the tree, so excluding them is a deliberate and load-bearing scoping
+  decision rather than an oversight.
+
+  The reason is what they are. Both are historical audit records: they state what was found, and when.
+  Rewriting their citations would edit the record of a finding rather than the text the finding was
+  about. A citation in either that points into a range a step shifts therefore goes stale and stays
+  stale, and that outcome is accepted rather than remedied. A reader who follows one resolves it through
+  the successor pointer INV-5 requires in the reduced section.
+
+  This binds every step, not only the citation retirement. A later step that performs its own mechanical
+  rewrite inherits the same exclusion and must not quietly widen its scope to include them.
 ### 4.2 R2a: the new sections
 
 **Closes:** the specification half of 6b.14, which is `spec/15:1462-1464` framing the adapter contract as
@@ -519,7 +541,7 @@ supersedes that list. Substrate for every capability step.
   opens with a one-edge ASCII figure and holds its cards as bolded blocks under a fixed eight-field
   template, capped at 25 lines per card. Grouping by edge is what makes the unbuilt adapter-to-gateway
   direction a visible block (§28.5.2, status `UNWIRED` end to end) rather than two rows in a twenty-two
-  row table. The citable handle is `§28.5.2 CH-EVENTSTREAM`, a stable mnemonic anchor.
+  row table. The citable handle is `§28.5.2 CH-ADAPTEREVENTS`, a stable mnemonic anchor.
 - **28.6 Exclusivity and concurrency model.** Reference §1.5 vocabulary made normative, with the missing
   guard named per channel.
 - **28.7 Wire-contract artifact register.** Derived mechanically from `ls schemas/**` rather than
@@ -745,7 +767,7 @@ register is empty and the gate reduces to a flat prohibition: an anchor citation
 accepts. R25 asserts the register is empty rather than merely valid, so an abandoned R2b cannot leave the
 ratchet permanently half-open.
 
-The gate reads `// spec:` comment text, so it accepts `§28.5.2 CH-EVENTSTREAM` and rejects
+The gate reads `// spec:` comment text, so it accepts `§28.5.2 CH-ADAPTEREVENTS` and rejects
 `§4.7 line 656`. Line references inside `tests/claim-map.json` are out of its scope, since INV-4 already
 bars `file:line` evidence from specification prose and the claim register carries symbol references.
 
@@ -1395,7 +1417,7 @@ best-effort-eviction-snapshot, and preStop rows of 6a.4. Verdict owner for 6a.4,
 additionally requires R6, R12, R13, and R18. R16 also settles the three kubelet-path SIGTERM comments
 R1a left in place, either by making them true or by deleting them, and clears their claim-register rows.
 
-**Scope.** The adapter emits `AdapterEvicting` on kubelet-driven termination over `CH-EVENTSTREAM`. The
+**Scope.** The adapter emits `AdapterEvicting` on kubelet-driven termination over `CH-ADAPTEREVENTS`. The
 preStop hook drives a checkpoint (`cmd/lenny-adapter/prestop.go:68-94` contains no checkpoint logic
 today). `setEvicting` gains a production caller, which arms the two best-effort branches at
 `pkg/adapter/checkpoint.go:179` and `:192`. The replica holding the binding drives
