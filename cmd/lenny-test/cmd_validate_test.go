@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -351,5 +352,75 @@ func TestHasAnnotationBefore(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s: hasAnnotationBefore(%q) = %v; want %v", c.name, c.marker, got, c.want)
 		}
+	}
+}
+
+// changeGraphPathsFixture writes a change-graph.json carrying the given
+// glob keys into a temp repo root and returns the check result.
+func changeGraphPathsFixture(t *testing.T, keys ...string) checkResult {
+	t.Helper()
+	root := t.TempDir()
+	globs := map[string]any{}
+	for _, k := range keys {
+		globs[k] = map[string]any{"unit": []string{"pkg/foo/..."}}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": globs})
+	if err != nil {
+		t.Fatalf("marshal change-graph: %v", err)
+	}
+	path := filepath.Join(root, "change-graph.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write change-graph: %v", err)
+	}
+	return validateChangeGraphPaths(path, root)
+}
+
+// TestValidateChangeGraphPaths pins the change-graph glob-key location
+// gate: a key under a canonical source root is accepted, a repo-root
+// packaging or build file on the known-files list is accepted even
+// though it sits under no root, and any other bare root-level key is
+// reported.
+//
+// The repo-root Dockerfile is on the known-files list because
+// tests/testinfra/kind/install.sh builds every platform container image
+// from it and loads them into the Kind cluster the tier-5 suites deploy
+// onto, so a Dockerfile-only diff has to resolve to those suites.
+//
+// spec: 17.6 (packaging and installation — the platform container
+// images the chart deploys); TESTING.md §5 ("`tests/change-graph.json`
+// maps source packages, schemas, migrations, and chart templates to the
+// tests that exercise them.")
+func TestValidateChangeGraphPaths(t *testing.T) {
+	// Canonical roots pass.
+	if r := changeGraphPathsFixture(t, "pkg/gateway/...", "charts/lenny/templates/x.yaml"); !r.OK {
+		t.Errorf("globs under canonical roots were rejected: %s", r.Detail)
+	}
+
+	// Root-level packaging and build files pass.
+	for _, key := range []string{"Dockerfile", ".dockerignore", "go.mod", "Makefile"} {
+		if r := changeGraphPathsFixture(t, key); !r.OK {
+			t.Errorf("root-level known file %q was rejected: %s", key, r.Detail)
+		}
+	}
+
+	// An unknown root-level key is reported.
+	r := changeGraphPathsFixture(t, "NOTICE.txt")
+	if r.OK {
+		t.Error("a bare root-level glob key outside the known-files list was accepted; it must be reported so the change graph cannot silently reference a file no tier resolution handles")
+	}
+	if !strings.Contains(r.Detail, "NOTICE.txt") {
+		t.Errorf("failure detail %q does not name the offending glob key", r.Detail)
+	}
+
+	// A missing or malformed file is a failure rather than a pass.
+	if r := validateChangeGraphPaths(filepath.Join(t.TempDir(), "absent.json"), t.TempDir()); r.OK {
+		t.Error("a missing change-graph.json was reported as OK")
+	}
+	bad := filepath.Join(t.TempDir(), "change-graph.json")
+	if err := os.WriteFile(bad, []byte("{not json"), 0o644); err != nil {
+		t.Fatalf("write malformed change-graph: %v", err)
+	}
+	if r := validateChangeGraphPaths(bad, t.TempDir()); r.OK {
+		t.Error("a malformed change-graph.json was reported as OK")
 	}
 }
