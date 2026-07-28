@@ -54,6 +54,8 @@ func newReplicaServer(window *replicaWindow) *httptest.Server {
 // backward, and the next source switch re-delivered every event after it, so a
 // consumer receives duplicate operational events after every Redis recovery it
 // straddles.
+// spec: 25.5 (Operational Event Stream) — resume-position monotonicity
+// across a recovery flush and a source switch.
 func TestOpsEventStreamResumeDoesNotRewindOnRecoveryFlush(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()
