@@ -749,7 +749,7 @@ declares it generated, or whose top-level document metadata declares it generate
 no comment syntax, or which is a member of the output set of a producer named below, is read by the
 resolver and the ratchet and is never written by a pass. Excluding a
 directory that mixes derived and authored content is what makes the ratchet's zero end state unreachable,
-so the rule is applied per file. The third disjunct is load-bearing rather than redundant, because the
+so the rule is applied per file. The third disjunct is necessary rather than redundant, because the
 five CRDs in `charts/lenny/crds/` and their five copies in `pkg/embedded/crds/` are controller-gen and
 copy output that carries no header generation declaration and no document-metadata declaration
 (`charts/lenny/crds/lenny.dev_runtimes.yaml` lines 1 through 6, whose first content after the document
@@ -3387,7 +3387,7 @@ and registers a claim, none of which exist today.
   example `pkg/adapter/workspace/materialize.go` line 203 citing `§7.4 line 433` when §7.4 begins at
   `spec/07_session-lifecycle.md` line 437, and `pkg/gateway/externalapi/admin/erasure.go` line 356 citing
   `§12.8 line 764` when §12.8 begins at `spec/12_storage-architecture.md` line 774. TOOL-1 could not
-  deliver a green gate, and the shared exception register does not fit, because a stale citation is retired
+  produce a green gate, and the shared exception register does not fit, because a stale citation is retired
   by SPEC-4 rather than owned and dated, which is the argument TEST-1 already makes for the heading walker.
   SPEC-3's exit criterion was also unusable, since a resolver failing on a thousand pre-existing citations
   cannot distinguish one the reduction broke. §4.6 records the measurement and states the baseline
@@ -4874,7 +4874,7 @@ Corrections to this pass, found by review of its own edits:
   (`charts/lenny/crds/lenny.dev_runtimes.yaml` lines 1 through 6), so a marker-keyed predicate would both
   direct a pass to write them and leave the residual gate unable to select a future producer output with
   no marker, which is the member the residual exists to catch. §4.6's rule now states the same union
-  TOOL-1 and §4.7 state, with the producer-output-set disjunct named as load-bearing and the output sets
+  TOOL-1 and §4.7 state, with the producer-output-set disjunct named as necessary and the output sets
   read from the producer list §4.6 already carries rather than by running a producer, so the residual
   scan, the write exclusion, and the `scripts/specshift` denylist range over one predicate. TOOL-1's
   class list is restated so the predicate explanation follows the list rather than interrupting it, and
@@ -4936,7 +4936,7 @@ Corrections to this pass, found by review of its own edits:
   as `unverified` and which `cmd/lenny-test/verdict.go` line 68 serializes as `status`. `TESTING.md` line
   522, in the same §7 field-semantics list, states that `tiers.<name>.status` is one of `pass`, `fail`,
   `skipped`, and `not-selected`, so after the proposal's edits that sentence would state a closed set for
-  the field the new state actually lands on, and no gate reads a prose enumeration. TOOL-1's `UNVERIFIED`
+  the field the new state lands on, and no gate reads a prose enumeration. TOOL-1's `UNVERIFIED`
   bullet now amends line 522 as well, the §3.4 class row is restated as every §7 field-semantics sentence
   closing an enum the producer widens plus the §21.3 sentence rather than as two named sentences, TOOL-1's
   Target names both enums, and §11 lists all three `TESTING.md` sentences with their lines.
