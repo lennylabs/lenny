@@ -1,6 +1,6 @@
 # Proposal: Name the communication channels, move their contract into the specification, and rewrite every reference by script
 
-- **Status:** Verified (2026-07-29). Converged after 11 adversarial review rounds (15 findings fixed); awaiting sign-off.
+- **Status:** **Approved (2026-07-29) by jaf sign-off.** All open decisions are ratified as staged: the tooling ships in this proposal rather than as its own; the wire-contract rename is in scope now, accepting that it breaks the runtime author contract, because deferring it costs more with every later step that lands first; and `spec/29` is a separate file from `spec/28`. The §28 and §29 line budgets the plan states are sizing indicators and are left as written. Verified (2026-07-29). Converged after 11 adversarial review rounds (15 findings fixed) across 4 full-pool sweeps, the certifying sweep running every lens complete with zero confirmed findings.
 - **Date:** 2026-07-27.
 - **Scope:** The first three steps of `gateway-runtime-comms-remediation.md`, which are the foundation
   every later remediation step depends on. The plan's tooling step is included whole rather than split,
@@ -4768,12 +4768,14 @@ Corrections to this pass, found by review of its own edits:
 
 ## 10. Open decisions for review
 
-1. **Whether the tooling ships in this proposal or as its own.** It is included here because the three
+**All decisions below are RATIFIED on sign-off (2026-07-29). None is open.** They are retained as the record of what was decided and why, so a later step does not reopen a settled question.
+
+1. **RATIFIED: the tooling ships in this proposal.** It is included here because the three
    migration sub-steps cannot run without it and because splitting it puts a hard dependency across a
    sign-off boundary. The argument for splitting is that the tooling is testable on its own and touches no
    specification text.
 
-2. **Whether the wire-contract rename is in scope now.** Renaming later costs more with every step that
+2. **RATIFIED: the wire-contract rename is in scope now.** Renaming later costs more with every step that
    lands first. Renaming now makes this proposal a breaking change to the runtime author contract. The
    planning material treated the deferral as the more expensive option, and this proposal follows it.
 
@@ -4783,7 +4785,7 @@ Corrections to this pass, found by review of its own edits:
    number, and a card that reads as unclear is a signal to rewrite the card rather than evidence that the
    budget was correct.
 
-4. **Whether `spec/29` is a separate file or a subsection of `spec/28`.** Separate keeps each file
+4. **RATIFIED: `spec/29` is a separate file.** Separate keeps each file
    scannable and matches the modularity goal. Combined keeps one file to consult.
 
 ## 11. Files touched on application
