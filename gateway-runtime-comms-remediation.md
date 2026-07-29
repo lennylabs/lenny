@@ -142,6 +142,13 @@ expiry, and never by widening the gate's scope or by suppression. The registers 
 
 ## 3. Step 1: channel identification and naming (R1)
 
+**Implemented by an approved proposal.** `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`
+stages R1a, R1b, R2a, R2b, and R3 together and was approved on 2026-07-29. Where that proposal and this
+plan differ, the proposal is the authority for those five sub-steps, because it was converged against the
+tree after this plan was written; this section remains the statement of intent and the source of the
+naming table. Two differences are already reconciled here: C6's identifier and its rename targets, and the
+audit-record exclusion at INV-6. Do not re-propose these sub-steps.
+
 This is the user's mandated first step and the root of the plan. It runs before anything else because
 every later step names a channel.
 
@@ -281,7 +288,7 @@ shipped wire artifact. Every other row is a specification and documentation chan
     |  |                                                     |  |
     |  |  CH-ADAPTEREVENTS : adapter-authored control events |  |
     |  |    gateway dials, adapter pushes                    |  |
-    |  |    rpc AdapterEventStream, bidi gRPC                |  |
+    |  |    rpc AdapterEvents, bidi gRPC                     |  |
     |  |                                                     |  |
     |  |  CH-RUNTIMEOPS    : adapter-to-runtime operations   |  |
     |  |    adapter listens, runtime dials                   |  |
@@ -415,12 +422,12 @@ compatibility: the platform is pre-deployment and has no deployments in the wild
 
 | Surface | Today | After |
 |:--|:--|:--|
-| Proto RPC and messages | `rpc LifecycleChannel(stream LifecycleChannelRequest) returns (stream LifecycleChannelResponse)` | `rpc AdapterEventStream(stream AdapterEventStreamRequest) returns (stream AdapterEventStreamResponse)` |
+| Proto RPC and messages | `rpc LifecycleChannel(stream LifecycleChannelRequest) returns (stream LifecycleChannelResponse)` | `rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse)` |
 | Manifest key | `lifecycleChannel` | `runtimeOps` |
 | Socket | `@lenny-lifecycle` | `@lenny-runtime-ops` |
 | Adapter flag | `--lifecycle-socket` | `--runtime-ops-socket` |
 | Go file and type | `pkg/adapter/lifecyclechannel.go`, `LifecycleChannel` | `pkg/adapter/runtimeops.go`, `RuntimeOps` |
-| Go file | `pkg/adapter/controlchannel.go` | `pkg/adapter/eventstream.go` |
+| Go file | `pkg/adapter/controlchannel.go` | `pkg/adapter/adapterevents.go` (with its test sibling) |
 | Runtime-ops schema file | `schemas/lifecycle-events.schema.json` | `schemas/runtime-ops-events.schema.json` |
 | JSONL schema description | "gateway-adapter lifecycle channel ... the gRPC LifecycleChannel stream" | the corrected `CH-MSGSOCK` description |
 | `CheckpointBarrier` doc comment (`schemas/lenny-adapter.proto:170-172`) | "the control-stream emit is the canonical surface for the gateway's barrier-target reconciler" | the unary `CheckpointBarrierResponse` named as the canonical surface, with no reconciler claim |
@@ -521,6 +528,25 @@ that does not need re-deriving.
 
   This binds every step, not only the citation retirement. A later step that performs its own mechanical
   rewrite inherits the same exclusion and must not quietly widen its scope to include them.
+
+- **INV-7.** A step that enumerates a class of edit sites carries a residual, and states no count that
+  anything depends on. This generalizes what proposal 0064 had to learn the expensive way, and it binds
+  every later step that performs a mechanical rewrite rather than only that one.
+
+  Two rules. First, a measured population is a scale indicator: a count or file list carries the commit it
+  was measured at and the command that reproduces it, and no gate, exit criterion, or register baseline
+  may key off a number stated in prose, because each computes what it needs when it runs. Second, an
+  enumeration lists the members known at writing and seeds its class register, while the class itself is
+  defined by a deliberately broad predicate; anything matching that predicate and absent from both the
+  enumeration and the register is a residual that fails tier 0 by name, and is closed by registering the
+  member as in-class or as an explicit exclusion with a reason, never by narrowing the predicate.
+
+  The reason is a measured one. Reviewing 0064 without this, nine rounds each discovered another citation
+  spelling its stated forms missed, and later rounds turned to re-measuring counts that had drifted since
+  they were written. Both were the same defect: the proposal asserted hand-measured facts about a moving
+  tree, those facts were normative, so every drift was a genuine finding and there was no end to them. With
+  the rule in place the next review of the same proposal converged in eleven rounds with fifteen findings,
+  none of them about a count. A later step that enumerates without a residual will pay the same cost.
 ### 4.2 R2a: the new sections
 
 **Closes:** the specification half of 6b.14, which is `spec/15:1462-1464` framing the adapter contract as
