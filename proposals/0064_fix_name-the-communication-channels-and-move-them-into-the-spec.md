@@ -1,6 +1,18 @@
 # Proposal: Name the communication channels, move their contract into the specification, and rewrite every reference by script
 
-- **Status:** **Approved (2026-07-29) by jaf sign-off.** All open decisions are ratified as staged: the tooling ships in this proposal rather than as its own; the wire-contract rename is in scope now, accepting that it breaks the runtime author contract, because deferring it costs more with every later step that lands first; and `spec/29` is a separate file from `spec/28`. The §28 and §29 line budgets the plan states are sizing indicators and are left as written. Verified (2026-07-29). Converged after 11 adversarial review rounds (15 findings fixed) across 4 full-pool sweeps, the certifying sweep running every lens complete with zero confirmed findings.
+- **Status:** **Draft for review.** The earlier sign-off (2026-07-29) is withdrawn, because the
+  application attempt that followed it did not converge and the review that followed that attempt found
+  defects material enough that the signed-off text is not the text that would land. Two staged edits
+  could not be applied at all, several relocations deleted content rather than moving it, and the
+  proposal omitted deliverables the remediation plan assigns to the steps this proposal claims. The
+  decisions the sign-off ratified are unchanged and still stand as staged: the tooling ships in this
+  proposal rather than as its own; the wire-contract rename is in scope now, accepting that it breaks the
+  runtime author contract, because deferring it costs more with every later step that lands first; and
+  `spec/29` is a separate file from `spec/28`. The §28 and §29 line budgets the plan states are sizing
+  indicators and are left as written. The convergence record below (11 rounds, 15 findings, 4 full-pool
+  sweeps) describes the review that preceded the withdrawn sign-off. That review read the proposal
+  against the repository and never against the plan, and no lens attempted to apply it in order, which is
+  why both classes of defect survived it.
 - **Date:** 2026-07-27.
 - **Scope:** The first three steps of `gateway-runtime-comms-remediation.md`, which are the foundation
   every later remediation step depends on. The plan's tooling step is included whole rather than split,
@@ -174,12 +186,18 @@ This proposal lands two new specification files, one naming law, three registers
 migrates every reference to them.
 
 `spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
-three registers, the contract cards grouped by participant edge, the exclusivity model, and the
-wire-contract artifact register. Grouping the cards by edge is what makes the unbuilt adapter-to-gateway
-direction a visible block rather than two rows lost in a twenty-two row table.
+three registers, the contract cards grouped by participant edge, the exclusivity model, the wire-contract
+artifact register, and the failure and degradation matrix. Grouping the cards by edge is what makes the
+unbuilt adapter-to-gateway direction a visible block rather than two rows lost in a twenty-two row table.
+The artifact register is also what supersedes the partial artifact enumerations elsewhere in the
+specification, one of which today prevents the shipped compliance suite from validating the runtime-ops
+channel. The degradation matrix is the one subsection with no antecedent in the tree, so it is authored here
+rather than relocated. §4.8 fixes every heading in both files, with the anchor each title produces, because
+three separate obligations in this proposal need those anchors before the sections that carry them exist.
 
 `spec/29_communication-scenarios.md` carries the end-to-end traces, each written as a numbered step list
-naming channels by identifier.
+naming channels by identifier, together with the off-holder matrix stating what happens when a replica
+receives an operational request for a pod whose control stream another replica holds.
 
 Existing sections keep their subjects and link to `spec/28` for the channel contract. `spec/03` keeps its
 diagram with the collapsed protocol line corrected and a pointer added. `spec/15` §15.4 gives up its
@@ -282,8 +300,13 @@ The sub-steps below are applied in order. The tooling comes first because the ot
    identifier-resolution gate and the `coordinatorHoldAllowedMethods` assertion land here, because this is
    the sub-step that collapses each retired spelling to one canonical identifier.
 4. **The new sections, and the anchor and citation rewrite.** `spec/28` and `spec/29`, the reductions with
-   their successor pointers, and the mechanical retirement of the redirected anchors and the line
-   citations. The heading walker, the tier-11 successor-pointer check, and the claim register's
+   their successor pointers, the numbered subsection headings inserted into `spec/04`, `spec/10`, and
+   `spec/13`, and the mechanical retirement of the redirected anchors and the line
+   citations. The heading insertion runs first inside this step and the citation pass second, because an
+   inserted heading shifts every line below it and the pass has to read the shifted line numbers; putting
+   both in one exclusive change is what keeps the shift from invalidating a population no pass is running
+   over. The freeze of `gateway-runtime-comms.md` lands here as well, since it is the point at which §28 and
+   §29 supersede it. The heading walker, the tier-11 successor-pointer check, and the claim register's
    schema-only validator land with the new sections, the reductions, and the seeded register, and the
    fragment-link gate lands with the anchor pass that rewrites the links into the
    retired anchors. The gate-integrity meta-gate lands here too, because it ranges over the gates this
@@ -375,8 +398,8 @@ missing. That last field is what turns the reference's exclusivity findings into
 ### 4.3 The registers and the contract cards
 
 The three registers carry one row per entry with a provenance column. The contract cards sit in §28.5,
-grouped by boundary, one subsection per boundary value, each opening with a one-edge figure and holding
-its cards under a fixed field template. The template fixes which fields a card states and in what order,
+grouped by boundary, one subsection per boundary value in the order §4.8 fixes, each opening with a
+one-edge figure and holding its cards under a fixed field template. The template fixes which fields a card states and in what order,
 so a reader can compare two cards field by field. It sets no line budget, because a card states the
 contract its channel has, and a channel whose contract is genuinely long is described in full
 rather than truncated to meet a number.
@@ -944,6 +967,68 @@ This is why the enumerations stay. They make the common case fast, they document
 seed each residual register so the gate lands green on a real population rather than on an empty one. The
 residual is what makes them safe to be incomplete.
 
+### 4.8 The heading set, and the anchors every index row resolves to
+
+Every heading `spec/28` and `spec/29` land is fixed here, with its exact title and the anchor that title
+produces. This subsection exists because three separate obligations in this proposal need the anchors
+before the sections that carry them are written: the `spec/README.md` index rows, the
+`tests/spec-map.json` keys, and the heading walker's predicate that a row's anchor resolves. SPEC-1 writes
+index rows for §28.1 through §28.4 while SPEC-3 is the sub-step that creates the file, so without a stated
+title the row's link text and its anchor would both have to be invented at application time, and an
+invented anchor resolves to nothing. Fixing the titles once, here, is what makes those rows writable in
+the order §3.5 sets.
+
+The anchor is derived from the title by the convention `spec/README.md` already uses throughout: the
+section number with its dots removed, then the title lowercased with each run of non-alphanumeric
+characters replaced by a single hyphen. `spec/README.md` line 147 is the worked example, where
+`24.19.1 Image Management` carries `#24191-image-management`. The titles below are chosen to survive that
+derivation without ambiguity, so no two anchors in either file collide.
+
+| Heading | Anchor | Level |
+|:--|:--|:--|
+| `28. Communication Channels` | `#28-communication-channels` | 2 |
+| `28.1 Naming law` | `#281-naming-law` | 3 |
+| `28.2 Taxonomy and axes` | `#282-taxonomy-and-axes` | 3 |
+| `28.3 Registers` | `#283-registers` | 3 |
+| `28.4 Claim register` | `#284-claim-register` | 3 |
+| `28.5 Contract cards` | `#285-contract-cards` | 3 |
+| `28.5.1 Gateway-to-pod` | `#2851-gateway-to-pod` | 4 |
+| `28.5.2 Pod-to-gateway` | `#2852-pod-to-gateway` | 4 |
+| `28.5.3 Intra-pod` | `#2853-intra-pod` | 4 |
+| `28.5.4 Inter-replica` | `#2854-inter-replica` | 4 |
+| `28.5.5 Pod-egress` | `#2855-pod-egress` | 4 |
+| `28.5.6 Control-plane` | `#2856-control-plane` | 4 |
+| `28.5.7 Gateway-to-store` | `#2857-gateway-to-store` | 4 |
+| `28.6 Exclusivity and concurrency model` | `#286-exclusivity-and-concurrency-model` | 3 |
+| `28.7 Wire-contract artifact register` | `#287-wire-contract-artifact-register` | 3 |
+| `28.8 Failure and degradation matrix` | `#288-failure-and-degradation-matrix` | 3 |
+| `29. Communication Scenarios` | `#29-communication-scenarios` | 2 |
+| `29.1 Participants and trace notation` | `#291-participants-and-trace-notation` | 3 |
+| `29.2 Session start` | `#292-session-start` | 3 |
+| `29.3 Interactive message send` | `#293-interactive-message-send` | 3 |
+| `29.4 Interrupt, terminate, and delete` | `#294-interrupt-terminate-and-delete` | 3 |
+| `29.5 Checkpoint capture` | `#295-checkpoint-capture` | 3 |
+| `29.6 Restore and resume` | `#296-restore-and-resume` | 3 |
+| `29.7 Gateway drain` | `#297-gateway-drain` | 3 |
+| `29.8 Coordinator handoff and crash takeover` | `#298-coordinator-handoff-and-crash-takeover` | 3 |
+| `29.9 Agent pod eviction` | `#299-agent-pod-eviction` | 3 |
+| `29.10 The concurrent-session pod` | `#2910-the-concurrent-session-pod` | 3 |
+
+The §28.5.1 through §28.5.7 order is the boundary order §3.2 fixes, and it is normative here rather than
+incidental. Later remediation steps and this proposal's own worked example cite a card by its subsection
+number, so a different order silently redirects every such citation to the wrong card. §4.3's worked
+handle `§28.5.2 CH-ADAPTEREVENTS` resolves against this table, and it is the check that the order landed
+as stated: `CH-ADAPTEREVENTS` carries the pod-to-gateway boundary, so a §28.5.2 that is not pod-to-gateway
+means the order drifted.
+
+§28.8 is the one subsection with no antecedent anywhere in the tree. Every other §28 subsection relocates
+or restates material that exists today, so its content is carried in by a reduction. The failure and
+degradation matrix has no source section to carry, so SPEC-3 authors it from the per-channel degradation
+behavior the contract cards state: one row per channel identifier, naming what the channel does when its
+peer is absent, when its transport fails mid-stream, and when the holder of its exclusivity constraint
+changes, plus the observable the operator sees in each case. It is authored rather than relocated, and the
+completeness check is that every identifier in the §28.3 channel register has exactly one row.
+
 ## 5. Edge cases and accepted failure modes
 
 | Case | Observable outcome | Where it is documented |
@@ -1338,9 +1423,18 @@ channel" is exactly the phrase N3 bans, and
 `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 asserts that clause verbatim.
 
 Add the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4 subsections, at
-the depth the existing entries use, and write for each of those headings the other half of the walker's
-predicate as well, which is a `tests/spec-map.json` key or a `tests/spec-map-exceptions.yaml` entry under
-the `pending-implementation` reason class TOOL-1 adds with its `blocker` and `opened_at` fields. The file is hand-maintained and has no generator, and its last
+the depth the existing entries use. Take the link text and the anchor for each row from the heading table
+in §4.8, which fixes the title and the derived anchor of every §28 and §29 heading, so these rows carry
+`28. Communication Channels`, `28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, and
+`28.4 Claim register` with the anchors that table states. The rows land here while SPEC-3 is the sub-step
+that creates `spec/28_communication-channels.md`, which is the one place in this proposal where an index
+row precedes its target file; §4.8 exists so that ordering costs nothing, because the anchor a row must
+resolve to is stated before either sub-step runs. Write for each of those headings the other half of the
+walker's predicate as well, which is a `tests/spec-map.json` key or a `tests/spec-map-exceptions.yaml`
+entry under the `pending-implementation` reason class TOOL-1 adds with its `blocker` and `opened_at`
+fields. Every §28 heading qualifies for that reason class while its section is unwritten, and the
+`blocker` resolves to SPEC-3, so the exceptions entries retire when SPEC-3 lands the sections. The file is
+hand-maintained and has no generator, and its last
 numbered entry today is §27.10 at line 190, so an appended section is invisible to a reader scanning the
 index until the rows are written.
 
@@ -1582,6 +1676,37 @@ mechanism, because a spelling substitution preserves a wrong sentence:
   identifier pass produces a glossary asserting that `CH-ADAPTEREVENTS` carries checkpoint requests, and
   both gates pass it.
 
+Add, in the same change and therefore inside the same `make generate-proto` run, the request-message
+fields that later remediation steps read. Every operational gateway-to-pod request message gains
+`coordination_generation`, which is the fence a stale coordinator's request is rejected on.
+`InterruptRequest`, `SignalDeadlineRequest`, `ReportUsageRequest`, and `CheckpointBarrierRequest` each gain
+a slot identifier, because a pod serving concurrent sessions receives these per slot rather than per pod.
+`ResumeRequest` gains `slot_id` for the same reason. The fields land unread: no handler branches on them at
+this sub-step, and each gets a claim-register row with status `UNWIRED` naming the later step that reads
+it, so a field that exists and is ignored is tracked rather than mistaken for a delivered capability.
+
+They land here rather than in the steps that read them because a `.proto` change costs one regeneration of
+`pkg/proto/` and one breaking-change disposition, and this sub-step already pays both. Deferring them makes
+each later step pay again on a package that is already stable-versioned, and each of those regenerations is
+a second chance to leave `pkg/proto/` drifted from `schemas/`.
+
+**The breaking-change gate, and the decision this sub-step records.** `cmd/lenny-test/cmd_run.go` lines 499
+through 536 run `buf breaking schemas/ --against .git#branch=main`. Off `main` the finding is advisory; on
+`main` it hard-fails. `buf.yaml` sets `ignore_unstable_packages: true`, which does not exempt this change,
+because the package is `lenny.adapter.v1` and a stable version suffix is not an unstable package. Renaming
+an RPC and two message types in that package is a breaking change by the gate's definition, so this
+sub-step cannot land green without a recorded disposition, and the standing rule forbids widening the gate
+or suppressing the finding.
+
+The disposition is an enumerated exception in the shared exception register TOOL-1 adds, one entry per
+renamed RPC and message type, each naming this sub-step as its origin and carrying an expiry. The expiry is
+what makes the exception a decision rather than a permanent hole: it falls due once the baseline ref has
+advanced past this change, at which point `buf breaking` compares against a `main` that already carries the
+rename and the entries are removed. Advancing the baseline ref instead was considered and rejected, because
+the ref is read by every proto change in the tree and moving it to accommodate one sub-step suppresses
+breaking-change detection for every other change in flight. The exception is scoped to the identifiers this
+sub-step renames and expires; a moved ref is scoped to nothing and does not.
+
 Apply as one exclusive change on a quiesced tree. While it is in flight no other change edits an adapter
 handler file or the adapter proto, because a rename and a concurrent edit to the same file produce a
 conflict that resolves silently in the wrong direction.
@@ -1632,9 +1757,10 @@ which for the tier-4 assertions is the `CH-RUNTIMEOPS` card.
 
 ### SPEC-3. The new sections, the reductions, and the successor pointers
 
-**Target:** `spec/28_communication-channels.md` §28.5 through §28.7 (new),
+**Target:** `spec/28_communication-channels.md` §28.5 through §28.8 (new),
 `spec/29_communication-scenarios.md` (new), `spec/15_external-api-surface.md` §15.3, §15.4, §15.4.5, and
-§15.7, `spec/04_system-components.md` §4.7,
+§15.7, `spec/18_build-sequence.md` and `spec/24_lenny-ctl-command-reference.md` (for the two artifact
+lists §28.7 supersedes), `spec/04_system-components.md` §4.7,
 `schemas/runtime-ops-events.schema.json`, `schemas/messagepart.schema.json`, and
 `schemas/lenny-adapter-jsonl.schema.json` (post-SPEC-2 names, for the
 hand-corrected `description` pointers), `docs/api/internal.md` (for the hand-split binary-protocol
@@ -1655,13 +1781,38 @@ sub-step writes, and the validator reads the register this sub-step seeds.
 section keeps a successor pointer so a reader arriving by a stale reference lands on a pointer rather than
 on adjacent text.
 
-**Change (staged description).** Write the contract cards grouped by participant edge, the exclusivity and
+**Change (staged description).** Write the contract cards grouped by participant edge under the §28.5.1
+through §28.5.7 boundary subsections §4.8 fixes, in the order that table states, the exclusivity and
 concurrency model, and the wire-contract artifact register derived mechanically from the schemas directory
-rather than hand-enumerated. Write §29 as end-to-end traces naming channels by identifier.
+rather than hand-enumerated. Write §28.8 as the failure and degradation matrix §4.8 describes, authored
+from the per-channel degradation behavior the cards state rather than relocated, with one row per
+identifier in the §28.3 channel register. Write §29 as end-to-end traces naming channels by identifier,
+including the off-holder matrix §29 owes: for every operational request the gateway can make of a pod, the
+row states what happens when the replica that receives the request is not the replica holding that pod's
+control stream, which is the case the co-located binding makes reachable and which no section states
+today.
 
 Reduce `spec/15` §15.4 to the wire-artifact pointer it already claims to be, and reduce the `spec/04` §4.7
 channel prose, in both cases leaving a successor pointer naming the identifiers that moved and the heading
 that now owns them.
+
+Every reduction in this sub-step is a relocation, and a relocation lands only when both of its legs land in
+the same change: the source's removal, and the destination text in `spec/28` that carries what the source
+held. The reduction of a table, a tool set, a message-schema list, or a rule set is not authorized by this
+proposal unless the destination card or register states that content, so a reduction whose destination
+staging is absent is a defect in this proposal rather than an instruction to delete. Where a source
+statement has no destination because it belongs to a different concern, the statement is carved out of the
+reduction and left in place rather than removed; §15.4's third-party compatibility sentences are the worked
+case, and they are carved out below for exactly that reason.
+
+The §28.7 wire-contract artifact register supersedes the two artifact lists outside `spec/15` that
+enumerate the same set and are incomplete. `spec/24_lenny-ctl-command-reference.md` line 114 describes the
+external-adapter compliance suite as schema-driven and names three artifacts, omitting the runtime-ops
+events schema, and that sentence is the one that gates a third-party adapter from `pending_validation` to
+`active`, so as written the shipped suite is structurally unable to validate `CH-RUNTIMEOPS`. Replace the
+enumeration in both that sentence and the list at `spec/18_build-sequence.md` line 92 with a reference to
+§28.7, so one register states the artifact set and neither list can drift from it again. `spec/15`'s own
+pointer is carved out of the §15.4 reduction rather than superseded, for the reason stated below.
 
 Restate the §15.3 sentence at `spec/15_external-api-surface.md` line 1456 by hand in the same change,
 because the reduction makes it false. It reads "The wire contract is published as machine-readable
@@ -2084,9 +2235,12 @@ entry for each of those anchors with its §28 successor, and no other anchor of 
 `translation-fidelity-matrix` and `messageenvelope--unified-message-format` are absent from the map,
 because both headings survive the carve-outs above.
 
-Add the `spec/README.md` rows for `spec/29`, for §28.5 through §28.7, and for the §28.5.1 through §28.5.7
+Add the `spec/README.md` rows for `spec/29`, for §28.5 through §28.8, and for the §28.5.1 through §28.5.7
 card headings, and revise the §4.7 and §15.4 rows so the index describes what those sections contain after
-the reduction. The card headings are level-4 and the index carries only one level-4 row today, so they are
+the reduction. Take the link text and the anchor for every one of those rows from the heading table in
+§4.8, which fixes the title and the derived anchor of each heading, including the boundary order the
+§28.5.1 through §28.5.7 card headings land in. The card headings are level-4 and the index carries only one
+level-4 row today, so they are
 an explicit addition rather than a consequence of the depth convention: they are the citable handles every
 later remediation step uses, and the heading walker's predicate names them for that reason. Neither §4.7
 nor §15.4 has a subsection row in the index, and §4.7 has no numbered subsections at all, so there are no
@@ -2095,8 +2249,11 @@ subsection rows to revise for either.
 Write, in the same change as those rows, the other half of the heading walker's predicate for every
 heading this sub-step creates: a `tests/spec-map.json` key, or an entry in `tests/spec-map-exceptions.yaml`
 under the `pending-implementation` reason class TOOL-1 adds, carrying the `blocker` and `opened_at` fields
-that class requires. The headings are §28.5, §28.6, §28.7, the §28.5.1 through §28.5.7 card headings,
-`## 29`, and each `### N.M` subsection of `spec/29`. Without this the walker is red at the exit of the
+that class requires. The headings are §28.5, §28.6, §28.7, §28.8, the §28.5.1 through §28.5.7 card
+headings, `## 29`, and each `### N.M` subsection of `spec/29`, all of them named in §4.8. Retire in the
+same change the `pending-implementation` exceptions entries SPEC-1 wrote for §28.1 through §28.4, whose
+`blocker` names this sub-step, because the sections they stood in for now exist and a spec-map key
+replaces each entry. Without this the walker is red at the exit of the
 sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
 existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193
 and the validator runs inside the hard-failing `validate-maps` tier-0 check
@@ -2137,8 +2294,10 @@ hand-corrected; the six authored path-form citations naming the nonexistent
 `11_security-trust-model.md` that §4.6 enumerates, hand-corrected; the paragraph at `spec/04_system-components.md` line 489;
 `tests/tier11_docs/eviction_coordinator_route_consistency_test.go`; and
 `tests/tier0_static/degradation_lock_line_citation_test.go`, whose predicate requires the retired citation
-form to be present and which is hand-rewritten here; and the seven markdown fragment links enumerated below
-whose target heading does not exist today. The fragment-link gate lands in this sub-step, because this is
+form to be present and which is hand-rewritten here; the seven markdown fragment links enumerated below
+whose target heading does not exist today; `spec/04_system-components.md` §4.4 and §4.7,
+`spec/10_gateway-internals.md` §10.1, and `spec/13_security-model.md` §13.2, for the numbered subsection
+headings inserted below; and `gateway-runtime-comms.md`, for the point-in-time header that freezes it. The fragment-link gate lands in this sub-step, because this is
 the sub-step whose anchor pass rewrites the links into the retired `15.4.1` and `15.4.2` anchors.
 
 **Rationale:** The citation and link rewrite is a large diff with no judgement in it, and its risk is
@@ -2348,6 +2507,49 @@ list checked against the tier-0 registration
 fails on a name that is not yet registered in exactly the way it fails on a deleted one, so any earlier
 landing point would leave tier 0 red. It is green on introduction here, because every gate it names is
 registered at the point it lands, and TEST-1 names its cases.
+
+**The numbered headings the retirement depends on.** Insert numbered subsection headings into the three
+sections that today carry the densest line citations and the fewest anchors: `spec/04_system-components.md`
+gains §4.4.1 through §4.4.5 and §4.7.1 through §4.7.11, `spec/10_gateway-internals.md` gains §10.1.1
+through §10.1.8, and `spec/13_security-model.md` gains §13.2.1 through §13.2.7. The titles are authored from
+the existing paragraph subjects in each section, so the insertion adds headings without rewriting the prose
+under them.
+
+This is what makes the retirement a rewrite rather than a downgrade. Retiring a line citation into a
+300-line section leaves an anchor citation naming the whole section, which is markedly less precise than the
+line it replaced, and a reader following it has to search the section for the sentence the citation meant.
+Adding the subsections first gives each of those citations an anchor at roughly paragraph granularity, so
+the retired precision is preserved rather than lost. Without the headings the retirement still passes every
+gate, which is why the insertion has to be stated as a deliverable rather than left to follow from the
+ratchet.
+
+The insertion belongs in this sub-step, and last within it, for the reason that makes it expensive: an
+inserted heading shifts every line below it, so it invalidates line citations into those files. `spec/10`
+§10.1 begins at line 3, so a heading inserted there shifts essentially every citation into the file. Doing
+the insertion here, inside the one exclusive change that is already rewriting every line citation in the
+tree, means the shift is absorbed by the same pass rather than invalidating a population no pass is running
+over. Ordering inside the sub-step is therefore fixed: insert the headings first, then run the citation
+pass over the shifted tree, so the pass reads the final line numbers. Running the pass first and inserting
+afterwards would leave every rewritten citation into these three files stale on landing.
+
+The new headings enter the heading walker's domain as they are created, so each one lands with a
+`spec/README.md` row whose anchor resolves and a `tests/spec-map.json` key, written in this same change.
+There is no `pending-implementation` case here, because the section the heading names is already written;
+the heading is being added over existing prose.
+
+**Freeze the reference document.** Add a header to `gateway-runtime-comms.md` stating that it is a
+point-in-time reading of the working tree at `fcda83e3`, and that §28 and §29 supersede it for all current
+behavior. Leave its body unchanged. Land a tier-11 test asserting both halves: the header is present, and
+the body below it matches the committed text.
+
+The document is the source this proposal's §28 and §29 content is derived from, and on landing it becomes a
+second, unmarked description of the same contract. That is the exact failure mode this proposal exists to
+end, reproduced one level up: a reader who finds the reference first reads a description that was accurate
+when it was written and drifts from that moment on, and §28's provenance column points at it as a source
+without saying it is superseded. Freezing it costs one header and one test, and it is the difference between
+a superseded document and a competing one. The test pins the body as well as the header because an
+unfrozen reference invites incremental correction, and a corrected reference is a maintained second source
+rather than a historical record.
 
 Apply as one exclusive change, scheduled after the wire-contract sub-step, executed by `scripts/specshift`
 with a proven dry run as the entry criterion. No other change's output depends on this one, because every
@@ -2860,7 +3062,28 @@ neither a blocker nor an expiry. The naming lint and the identifier-resolution g
 content changes SPEC-1 and SPEC-2 make, which remove every site each one reads. The fragment-link gate
 lands green through the seven hand-authored link corrections SPEC-4 enumerates, because a link that points
 at a heading that never existed resolves to no open remediation item and so cannot hold a shared-register
-entry with a blocker and an expiry. The gate-integrity meta-gate is green on introduction in SPEC-4, which
+entry with a blocker and an expiry.
+
+Four gates cover the deliverables added above, each in the tier `.claude/rules/test-coverage.md` maps its
+surface to. **The §28.8 matrix completeness check** is a tier-0 test asserting a bijection between the
+channel identifiers in the §28.3 register and the rows of the §28.8 matrix, so an identifier with no
+degradation row fails by name and a matrix row naming no registered identifier fails the same way. Its
+non-happy cases are an identifier added to the register with no matrix row, a matrix row for a retired
+identifier, and a duplicate row for one identifier. **The reference-document freeze check** is a tier-11
+test asserting that `gateway-runtime-comms.md` carries the point-in-time header naming the commit and the
+superseding sections, and that its body below the header matches the committed text; its non-happy cases
+are a missing header, a header naming a different commit, and any body edit. **The artifact-register
+supersession check** is a tier-11 test asserting that no artifact enumeration outside §28.7 names a subset
+of the register, which is what stops `spec/18` and `spec/24` from drifting back to a hand-written list; its
+non-happy cases are a re-added partial enumeration in either file and an artifact present in the register
+and absent from the schemas directory. **The unread-field claim rows** are covered by the claim register's
+existing schema-only validator, whose cases TEST-1 already states, extended with one case per field added
+by SPEC-2: a request-message field with no `UNWIRED` claim row fails, and an `UNWIRED` row naming no later
+step fails. The `buf breaking` exception entries are covered by the shared exception register's validator on
+its existing owner-and-expiry cases, plus one case asserting that an entry whose expiry has passed fails
+rather than renewing silently.
+
+The gate-integrity meta-gate is green on introduction in SPEC-4, which
 is the sub-step at whose exit every gate on its fixed list is registered at tier 0. The residual gate
 lands green through the per-class residual registers, which carry the entry schema §4.7 states, because an
 explicit exclusion is a permanent statement about the tree and an in-class entry is either retired by the
@@ -4766,9 +4989,70 @@ Corrections to this pass, found by review of its own edits:
   register self-reference case and the read-exclusion case, and the §5 row and §11 now name the residual
   scan alongside the resolver and the ratchet.
 
+### Pass 35 (2026-07-29, hand-authored after the failed application)
+
+The application attempt following the withdrawn sign-off did not converge, and the review of that failure
+found two classes of defect that all 34 automated passes above had missed. Both classes were structural
+rather than incidental. The first is that no lens ever attempted to APPLY the proposal in its stated order,
+so an edit that cannot be carried out reads as sound prose. The second is that every lens checked the
+proposal against the repository and none against the remediation plan, so a deliverable the plan assigns to
+a claimed step and the proposal never mentions was invisible to all of them. The convergence record above
+certifies internal consistency and accuracy against the tree, and neither of those properties implies
+applicability or plan coverage.
+
+- **Two staged edits could not be applied at all.** SPEC-1 stages `spec/README.md` rows for §28.1 through
+  §28.4 and SPEC-3 stages rows for §28.5 through §28.7 and the card headings, and every such row needs link
+  text plus an anchor that resolves. The proposal stated no heading titles for §28 anywhere, and SPEC-3 is
+  the sub-step that creates the file, so applying SPEC-1 meant inventing titles and guessing their slugs.
+  §4.8 now fixes the title and the derived anchor of every §28 and §29 heading in one table, both sub-steps
+  take their link text and anchors from it, and SPEC-1 records that its rows precede their target file
+  deliberately along with the `pending-implementation` exceptions entries that keep the walker green until
+  SPEC-3 lands.
+- **The §28.5 boundary order was unstated while the proposal's own example depended on it.** §4.3 said only
+  "one subsection per boundary value" and fixed no order, yet §4.6 uses `§28.5.2 CH-ADAPTEREVENTS` as the
+  worked citable handle. §4.8 now fixes the order, §4.3 points at it, and §4.8 states the check that the
+  order landed as written: `CH-ADAPTEREVENTS` carries the pod-to-gateway boundary, so a §28.5.2 that is not
+  pod-to-gateway means the order drifted.
+- **§28.8 was absent.** The failure and degradation matrix is one of the §28 subsections the plan requires,
+  and the plan flags it as the only one with no owner anywhere in the tree, so nothing else supplies it.
+  §4.8 states what it holds and why it is authored rather than relocated, SPEC-3 writes it, and TEST-1 adds
+  the tier-0 bijection against the §28.3 register.
+- **The §29 off-holder matrix was absent.** SPEC-3 now states it: one row per operational request the
+  gateway can make of a pod, giving the outcome when the receiving replica is not the replica holding that
+  pod's control stream. That case is reachable under the co-located binding and no section states it today.
+- **The proto field additions were absent, which lost the single-regeneration property.** SPEC-2 now adds
+  `coordination_generation` to every operational gateway-to-pod request message, a slot identifier to the
+  four per-slot request messages, and `ResumeRequest.slot_id`, all inside the one `make generate-proto` run
+  this sub-step already pays for, each with an `UNWIRED` claim row naming the later step that reads it.
+- **The breaking-change gate had no recorded disposition.** SPEC-2 renames an RPC and two message types in
+  `lenny.adapter.v1`, and `buf breaking` hard-fails on `main` with `ignore_unstable_packages` giving no
+  exemption for a stable version suffix, so the sub-step could not have landed green. SPEC-2 now records the
+  disposition as enumerated exception entries with expiries, and states why advancing the baseline ref was
+  rejected.
+- **The two incomplete artifact enumerations outside `spec/15` were not superseded.** SPEC-3 now replaces
+  the lists at `spec/18` line 92 and `spec/24` line 114 with a reference to §28.7. The `spec/24` sentence is
+  the one that gates a third-party adapter to `active`, and its list omits the runtime-ops events schema, so
+  until it is corrected the shipped compliance suite cannot validate `CH-RUNTIMEOPS`.
+- **The numbered-heading insertion was absent, which made the citation retirement a downgrade.** Retiring a
+  line citation into a 300-line section leaves a whole-section anchor. SPEC-4 now inserts §4.4.1 through
+  §4.4.5, §4.7.1 through §4.7.11, §10.1.1 through §10.1.8, and §13.2.1 through §13.2.7, ordered before the
+  citation pass inside the same exclusive change so the shift is absorbed by the pass already running.
+- **The reference document was never frozen.** SPEC-4 now adds the point-in-time header to
+  `gateway-runtime-comms.md` and TEST-1 adds the tier-11 test pinning the header and the body, so the
+  document §28 derives from does not survive as a competing description of the same contract.
+- **Several reductions deleted content rather than relocating it.** The application attempt removed the
+  §15.4.1 and §15.4.2 material, the `CH-RUNTIMEOPS` message-schema table, and the §4.7 platform MCP tool
+  set and operating rules without staging them into `spec/28`. SPEC-3 now states the rule that authorizes a
+  reduction only when both legs land in the same change, and that a source statement with no destination is
+  carved out and left in place rather than removed.
+
 ## 10. Open decisions for review
 
-**All decisions below are RATIFIED on sign-off (2026-07-29). None is open.** They are retained as the record of what was decided and why, so a later step does not reopen a settled question.
+**All decisions below were RATIFIED on the 2026-07-29 sign-off and remain settled. None is open.** The
+sign-off itself is withdrawn, for the reasons the Status line states, and none of those reasons touches
+these decisions: each concerns a missing deliverable or an unappliable edit rather than a choice made here.
+They are retained as the record of what was decided and why, so a later step does not reopen a settled
+question, and the re-review that follows treats them as closed.
 
 1. **RATIFIED: the tooling ships in this proposal.** It is included here because the three
    migration sub-steps cannot run without it and because splitting it puts a hard dependency across a
@@ -4947,6 +5231,23 @@ Corrections to this pass, found by review of its own edits:
 - `.claude/rules/channel-naming.md`, new: N1 through N8, plus the two banned spellings verbatim as the
   specimen §28.1's N3 points to. The file is outside the naming lint's domain, so the specimen does not
   trip it.
+- `spec/18_build-sequence.md` line 92 and `spec/24_lenny-ctl-command-reference.md` line 114, for the two
+  artifact enumerations §28.7 supersedes, replaced by hand with a reference to the register. The `spec/24`
+  sentence is the one that gates a third-party adapter from `pending_validation` to `active`, and its
+  three-artifact list omits the runtime-ops events schema today, so the correction is what makes the
+  shipped compliance suite able to validate `CH-RUNTIMEOPS`. `spec/18_build-sequence.md` is already listed
+  above for its reserved-phrase occurrences at lines 164, 165, and 408, which SPEC-1's name pass rewrites;
+  this is a separate hand-authored edit in SPEC-3.
+- `spec/10_gateway-internals.md` §10.1 and `spec/13_security-model.md` §13.2, together with
+  `spec/04_system-components.md` §4.4 and §4.7, for the numbered subsection headings SPEC-4 inserts so the
+  retired line citations into those sections land on anchors at paragraph granularity rather than on a
+  whole-section anchor. Each new heading also lands a `spec/README.md` row and a `tests/spec-map.json` key
+  in the same change. `spec/10_gateway-internals.md` is listed above for a hand-corrected participant
+  sentence, and `spec/04_system-components.md` for the §4.7 reduction; these are separate edits in SPEC-4.
+- `gateway-runtime-comms.md`, for the point-in-time header naming the working-tree commit and the sections
+  that supersede it. The body is unchanged, and a tier-11 test pins both the header and the body so the
+  document stays a historical record rather than becoming a maintained second description of the same
+  contract.
 
 The specific files inside each script-driven class are the script's output rather than this document's
 content, and the gates in TEST-1 are what prove the class is complete.

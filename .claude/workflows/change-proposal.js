@@ -59,6 +59,18 @@ const maxRounds = input.maxReviewRounds || 16;
 //              Use it when a lens's domain is genuinely out of scope for a
 //              proposal; note that convergence then certifies nothing about that
 //              domain, so the exclusion is recorded in the returned result.
+// planPath is the optional path to a remediation or implementation plan the
+// proposal implements one or more steps of. When present it enables the
+// plan-conformance lens, which is the only lens that reads anything outside the
+// repository's current state. When absent that lens is removed from the pool
+// entirely, because a conformance lens with nothing to conform to would either
+// invent a standard or certify vacuously.
+const planPath = (() => {
+  if (typeof input.planPath !== "string" || !input.planPath.trim()) return "";
+  const p = input.planPath.trim();
+  return p.startsWith("/") ? p : repo + "/" + p;
+})();
+
 const lensPrompt =
   typeof input.lensPrompt === "string" && input.lensPrompt.trim()
     ? input.lensPrompt.trim()
@@ -633,6 +645,16 @@ const LENSES = [
     text: "Lens: documentation alignment. Always run. The docs/ tree is downstream of the spec and the implementation: docs follow the spec and the code and are never the source of truth for a spec or core-product decision. Identify every behavior the proposal changes — a spec edit, a code change, a renamed, removed, or added identifier, a changed default, error code, endpoint, flag, metric, alert, or lifecycle step — and verify it is reflected in a staged docs/ edit wherever docs/ currently describes that behavior, and that the staged docs edits leave docs/ internally consistent and consistent with the post-change spec. The docs surfaces are the concept and guide pages (docs/, docs/api/, docs/client-guide/, docs/runtime-author-guide/), the reference pages (docs/reference/, notably docs/reference/metrics.md), and the docs/runbooks/ pages that tests/tier11_docs resolves (alert-to-runbook slug resolution and examples). A docs/ page left describing superseded behavior, an added alert or metric missing its docs/runbooks or docs/reference companion, or a staged docs edit that contradicts the post-change spec, is a finding. Two categories beyond mirroring a changed behavior are also findings under this lens, because an approved edge case is made of exactly the categories that do not register as a change. First, an edge case or failure mode the proposal ACCEPTS or DEFERS whose observable outcome appears only in the proposal's reasoning (Problem, Detailed design, Non-goals) and in neither the staged spec text nor the docs/ page that owns it — including when adversarial review deferred the mechanism to a later proposal but left the resulting accepted behavior undocumented in the text that lands now. Deferring the fix does not defer documenting the accepted behavior, so the fix is a staged spec and/or doc edit stating the outcome the reader or operator observes, never a request to build the deferred mechanism now. Second, a new operator-facing failure mode, or a new CAUSE of an existing failure or data-loss path, absent from the narrative operator docs (docs/operator-guide/, docs/runbooks/) that enumerate that failure's causes — this is the failure narrative itself (why the failure happens and what an operator observes), distinct from the companion-row check (a metric or alert companion), and it must gain the new cause. Cross-check the proposal's 'Edge cases and accepted failure modes' section against the staged edits: every row must resolve to landing spec or doc text rather than to reasoning alone, and an accepted or deferred failure mode named elsewhere in the proposal but missing from that section is itself a finding. Two hard guardrails on this lens: (1) never raise a finding that asks the spec or the implementation to change to match an existing doc; when a doc and the spec disagree the doc is the defect and is reconciled toward the spec, so a finding here is always a missing or wrong docs edit, never a spec or code edit. (2) A doc-described scenario may be cited as a candidate test case only after that doc has been verified against the spec, never as evidence for what the product should do.",
   },
   {
+    key: "applicability",
+    text: "Lens: applicability and sequencing. Always run. Every other lens reads the proposal as a document; this lens is the only one that reads it as an executable procedure. Simulate applying the proposal end to end, in the order it states, and report anything that would stop or corrupt that application. Do not evaluate whether a change is correct or worthwhile; evaluate only whether it can be carried out as written.\n\nWork through the staged changes in their stated order and maintain a running model of the tree: which files exist, which headings and anchors exist, which identifiers are defined. For each staged edit, ask whether an implementor with only this proposal and the current tree could apply it without inventing anything. Findings are:\n" +
+      "(1) FORWARD REFERENCE. An edit references an artifact that a LATER sub-step of the same proposal creates: a file that does not exist yet, a heading, anchor, section number, identifier, register, rule file, or test that a later sub-step introduces. Applying the proposal in its stated order would fail at this edit. Name the referencing sub-step, the referenced artifact, and the sub-step that creates it.\n" +
+      "(2) UNDERSPECIFIED TARGET. An edit's content cannot be written deterministically because the proposal never states something the edit requires. The clearest case is a cross-reference, link, table row, or index entry that needs link text plus a resolving anchor, where the proposal stages the referring row but never states the target's heading title or anchor anywhere. An implementor would have to invent a title and guess its slug. Also count an edit whose anchor instruction does not identify a unique location in the target file, an edit that says to update a surface without stating the new value, and a rename whose derived forms (file stems, type names, constants, generated artifacts) are left to be inferred.\n" +
+      "(3) RELOCATION THAT LOSES CONTENT. For every edit described as a move, relocation, carve-out, reduction, or supersession, verify BOTH legs are staged: the source's removal AND the destination's full replacement text. A reduction that deletes a table, tool list, schema, or rule set whose text appears nowhere in the destination staging is content loss rather than relocation, and it is a finding even when the proposal calls it a move. Also check that the destination text carries every element the source held, and that anything still pointing at the source is redirected.\n" +
+      "(4) ORDERING AND GATE STATE. An edit whose sub-step ordering contradicts its dependencies, a step that leaves the tree in a state where an EXISTING gate hard-fails with no recorded disposition (a schema breaking-change check against a baseline ref, a lint, a no-drift test, a citation ratchet, a coverage floor), or a proposal that adds a gate which its own staged text would fail. State the gate, the command or test that runs it, and why it fails.\n" +
+      "(5) UNRESOLVABLE ANCHOR. An anchor instruction quoting surrounding text that does not match the current file, or that matches in more than one place so the edit site is ambiguous.\n\n" +
+      "Method: read the proposal's staged-changes section in full and in order, then open the actual target files to confirm each anchor and each referenced artifact. Build the existence model as you go; a forward reference is only visible if you track what each sub-step creates. Do not report an edit as unappliable because you would have written it differently, and do not report ordinary implementation judgment (choosing a variable name, formatting a table) as underspecification. The test is whether a competent implementor would be forced to guess at something the proposal was responsible for stating.",
+  },
+  {
     key: "test-coverage",
     text: "Lens: test coverage. Always run. A proposal must list the specific, insightful, relevant new tests to add during implementation for the behavior it changes, not a vague 'add tests' note. Read the proposal's Testing section against .claude/rules/test-coverage.md and .claude/rules/spec-driven-development.md. For every behavior the staged changes add or change (a new field, default, error code, endpoint, flag, condition, metric, alert, lifecycle step, sequence or ordering rule, security or isolation control, or recovery/failover path), verify the Testing section names a concrete test that pins that behavior, mapped to the tier(s) the change actually reaches: tier 1 pure logic; tier 2 a controller or anything reading or writing the kube-apiserver; tier 3 a wire contract (proto, JSONL, HTTP, CRD schema); tier 4 a multi-service flow; tier 5 a cluster behavior (pod lifecycle, NetworkPolicy, admission, mTLS, drain); tier 7 concurrency, ordering, atomicity, or rate; tier 8 a failure or recovery path; tier 9 auth, isolation, egress, or credential handling; tier 10 a runtime-adapter contract; tier 11 docs, alerts, or runbooks. The listed tests must cover the non-happy-path the spec names (empty, error, concurrent, boundary, and spec-named-failure), not the happy path alone, and each should carry a // spec: tie to the section it exercises. A finding is: no Testing section; a Testing section that omits a tier the change plainly reaches; a behavior the proposal changes with no listed test; a listed test that exercises only the happy path where the change introduces an obvious error, concurrent, boundary, or spec-named-failure path (for a security, isolation, or fail-closed change, no test asserting the deny/fail-closed path; for a recovery, idempotency, or dedup change, no test asserting the replay/crash/failover path); or a Testing section so vague it names no concrete test. Do NOT report additional nice-to-have tests beyond the coverage the changed behavior requires, a preference between equivalent test framings, or an absent coverage percentage. This lens owns test-listing adequacy; do not re-file docs, edit-site, or mechanism findings here.",
   },
@@ -649,12 +671,55 @@ const EXTRAS = [
   },
 ];
 
+// plan-conformance is defined separately because its prompt embeds the plan path
+// and it joins the pool only when the caller supplied one. It is the only lens
+// that measures the proposal against a document rather than against the tree,
+// which is exactly the blind spot it exists to close: a proposal can be perfectly
+// self-consistent and perfectly accurate about the code while silently dropping
+// half of what the plan asked it to deliver, and no tree-facing lens can see that.
+//
+// The lens carries a deliberate escape valve. A plan is a design document written
+// earlier than the proposal, so some of its instructions will be stale, refuted by
+// the tree, or simply wrong. Without an escape valve such an instruction produces a
+// finding the fixer cannot satisfy: it cannot edit the plan (the loop's hard
+// constraint is proposal-only), and staging a deliverable the tree contradicts
+// would introduce a defect the other lenses would then report, so the loop would
+// oscillate or stall. The valve is that EVERY finding under this lens has two
+// acceptable resolutions, staging the deliverable or recording a reasoned
+// divergence, and a recorded divergence closes the finding permanently. That keeps
+// every finding actionable in one edit and makes the lens terminate.
+const PLAN_LENS = {
+  key: "plan-conformance",
+  text:
+    "Lens: plan conformance. This proposal implements one or more steps of the plan at " +
+    planPath +
+    ". Your job is to find deliverables that plan assigns to the steps this proposal claims, which the proposal neither stages nor consciously declines. This is the one lens that reads a document outside the current tree, and the one blind spot no other lens covers: every other reviewer checks the proposal against the repository, so a deliverable the plan required and the proposal simply never mentions is invisible to all of them.\n\n" +
+    "Method. First read the proposal to determine exactly which plan steps it claims to implement, and treat that claim as the scope boundary. Then read those steps in the plan, plus any plan-wide invariants, gates, or naming rules the plan states apply to every step, and enumerate the concrete deliverables: files to create, sections or subsections to write, registers, tests, gates, schema or proto fields, scripts, rules files, and named decisions the plan says must be recorded. For each enumerated deliverable, search the proposal for it. Search by the deliverable's own identifiers rather than by the plan's phrasing, because the proposal may name the same thing differently.\n\n" +
+    "A finding is a deliverable the plan assigns to a claimed step where the proposal does BOTH of the following: it stages nothing that produces the deliverable, and it records no decision to omit or defer it. Report the plan location that assigns it, the identifiers you searched the proposal for, and the consequence of its absence. Weight a deliverable the plan itself flags as having no other owner in the tree most heavily, since nothing else will supply it.\n\n" +
+    "Also report a MISMATCH: a deliverable the proposal does stage, but in a form the plan's other steps or its own worked examples would then cite incorrectly. Ordering and identity matter here. When the plan fixes an order, a numbering, or a citable handle that later steps or the plan's examples depend on, and the proposal fixes a different one without saying so, every citation written from either document resolves to the wrong target. Verify the plan's own worked examples still resolve against the proposal's version.\n\n" +
+    "HOW A FINDING IS RESOLVED, and the hard limits on this lens. Every finding you raise has exactly two acceptable resolutions, and both are edits to the proposal alone:\n" +
+    "(a) the proposal stages the missing deliverable, or\n" +
+    "(b) the proposal records an explicit, reasoned divergence from the plan for it.\n" +
+    "You do not get to choose which. State the gap and let the author choose.\n\n" +
+    "Four limits follow from that, and breaking any of them makes this lens a source of unresolvable findings:\n" +
+    "1. A DIVERGENCE ALREADY RECORDED IS NOT A FINDING. When the proposal states that it departs from the plan on a point and gives a reason, that point is closed, EVEN IF YOU DISAGREE WITH THE REASON. This lens checks that the decision was made and written down, and never that it was decided your way. A recorded divergence you find unpersuasive is a matter for the human reviewer, so do not re-file it as a conformance gap in any round, under any phrasing.\n" +
+    "2. THE PLAN IS NOT AUTHORITATIVE OVER THE TREE. The spec and the code are the source of truth; the plan is an earlier design document and parts of it will be stale or wrong. When a plan instruction is contradicted by the current tree, or would introduce a defect another lens would rightly report, the gap is that the proposal has not RECORDED the divergence, and resolution (b) is the only correct one. Never raise a finding whose only resolution is to change the plan, and never ask the proposal to stage something the tree shows is wrong. Say plainly that the plan appears stale on the point and that the proposal should record why it departs.\n" +
+    "3. STAY INSIDE THE CLAIMED STEPS. A deliverable the plan assigns to a step this proposal does not claim is out of scope and is not a finding, however important it looks. Deferred work belongs to the step that owns it.\n" +
+    "4. NO PARAPHRASE POLICING. Different wording, different section ordering within the proposal, a different level of detail, or a different but equivalent mechanism that delivers what the plan asked for, are all conformant. Report a missing or miscited DELIVERABLE, never a difference in how the proposal describes one. A count, a line budget, or a measured population stated in the plan's prose is a scale indicator rather than a deliverable, so a divergence in a number is not a finding unless a gate or a citation actually keys off it.",
+};
+
 // Resolve the caller's lens selections against the real pool. An unknown key is a
 // hard error rather than a silent no-op: a typo in excludeLenses would otherwise
 // quietly leave the lens running, and a typo in startLenses would quietly widen
 // the first round, in both cases producing a run that did not do what the caller
 // asked while reporting success.
-const ALL_LENS_KEYS = LENSES.concat(EXTRAS).map((l) => l.key);
+// plan-conformance is a valid key whether or not a plan was supplied, so naming it
+// in excludeLenses is never a typo error. Selecting it in startLenses without a
+// plan IS an error, checked below: the caller asked to lead with a lens that has
+// nothing to read.
+const ALL_LENS_KEYS = LENSES.concat(EXTRAS)
+  .map((l) => l.key)
+  .concat([PLAN_LENS.key]);
 for (const [argName, keys] of [
   ["startLenses", startLensKeys || []],
   ["excludeLenses", excludeLensKeys],
@@ -678,7 +743,22 @@ const startSet = startLensKeys ? new Set(startLensKeys) : null;
 // POOL_* are the lens pools this run actually uses. Every later reference goes
 // through them rather than through LENSES/EXTRAS, so an excluded lens is absent
 // from normal rounds AND from the sweep, and cannot silently certify its domain.
-const POOL_FIXED = LENSES.filter((l) => !excludeSet.has(l.key));
+if (!planPath && startSet && startSet.has(PLAN_LENS.key)) {
+  throw new Error(
+    "args.startLenses selects plan-conformance but args.planPath is not set; that lens has no plan to read",
+  );
+}
+const POOL_FIXED = LENSES.concat(
+  planPath && !excludeSet.has(PLAN_LENS.key) ? [PLAN_LENS] : [],
+).filter((l) => !excludeSet.has(l.key));
+if (planPath) {
+  log(
+    excludeSet.has(PLAN_LENS.key)
+      ? "Plan supplied but plan-conformance is excluded; no lens will check the proposal against " +
+          planPath
+      : "Plan-conformance enabled against " + planPath,
+  );
+}
 const POOL_EXTRA = EXTRAS.filter((l) => !excludeSet.has(l.key));
 if (POOL_FIXED.length === 0 && POOL_EXTRA.length === 0) {
   throw new Error("args.excludeLenses excludes every lens; nothing would review");
