@@ -87,7 +87,13 @@ The lens prompts in the script enumerate these. They are the classes that have p
    - `lensPrompt` (optional): text appended verbatim to every review lens's prompt. Use it to carry standing context the lenses would otherwise rediscover, or to put one surface in front of every lens for a run. It reaches the lenses only. The dedup, verifier, fixer, and post-fix agents never see it, because those have narrow mandates that caller text must not reshape; a verifier told what to conclude is not a verifier. It adds context and focus and never lowers the finding bar.
    - `startLenses` (optional): array of lens keys the loop starts with. Every other lens begins **retired**, so it does not run while the starting lenses are still finding defects, and it first reads the proposal in the sweep, over text those lenses have already driven clean. A held-back lens rejoins the active set the moment it finds something in that sweep. Use it to lead with the lenses most likely to find structural defects, so the expensive pool reads corrected text once rather than draft text repeatedly. It costs no guarantee: convergence still requires a complete sweep of every pool lens.
    - `excludeLenses` (optional): array of lens keys removed from the pool entirely, including from sweeps. Convergence then certifies nothing about those domains, so the run echoes `excludedLenses` in its result. An unknown key in either array is a hard error rather than a silent no-op.
-   - Valid lens keys, for both arrays: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage` (the always-on set), plus `operational` and `fresh` (the rotating extras).
+   - `planPath` (optional): path to a remediation or implementation plan the proposal implements one or more steps of. Supplying it enables the `plan-conformance` lens, which is the only lens that measures the proposal against a document rather than against the repository. Omit it and that lens is removed from the pool, because a conformance lens with nothing to conform to would either invent a standard or certify vacuously. Set it whenever the proposal implements part of a larger plan: every other lens reads the proposal against the tree, so a deliverable the plan required and the proposal never mentions is invisible to all of them.
+   - Valid lens keys, for both arrays: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage`, `applicability` (the always-on set), plus `operational` and `fresh` (the rotating extras), plus `plan-conformance` when `planPath` is set. `plan-conformance` is always a valid key in `excludeLenses`, so naming it without a plan is not an error; naming it in `startLenses` without a plan is, because it would lead with a lens that has nothing to read.
+
+   Two lenses read the proposal differently from the rest, and both exist because a proposal converged 34 review passes and a full sweep and then failed to apply:
+
+   - `applicability` reads the proposal as an executable procedure rather than as a document, simulating application in the stated order while tracking which files, headings, anchors, and identifiers exist at each point. It catches forward references to artifacts a later sub-step creates, edits whose target the proposal never states precisely enough to write, relocations that stage the removal but not the destination text, an existing gate left hard-failing with no recorded disposition, and unresolvable or ambiguous anchors. It is the most expensive lens in the pool, because simulating application means reading every staged edit in order and opening each target.
+   - `plan-conformance` reports **absence, never incompleteness**. A deliverable the proposal never mentions is invisible to every tree-facing lens; a deliverable it does stage is better judged against the repository by those lenses. So it reports only what is missing entirely, at the grain of things that must exist in the delivered system, and it excludes requirements about how the work is carried out and differences in wording. Every finding states its consequence in the repository rather than as a mismatch with the plan, which is both the bar the materiality judge applies and a filter against findings that have drifted below the grain. Each finding has two acceptable resolutions, staging the deliverable or recording a reasoned divergence, and a recorded divergence closes it permanently even if the lens disagrees with the reason, so a stale plan cannot produce a finding the fixer is unable to satisfy.
 3. New mode only:
    - Read the spec sections and code paths the problem names so the dossier carries concrete citations rather than paraphrase.
    - `problem`: a problem dossier of one to three paragraphs stating the problem.
@@ -111,6 +117,7 @@ The workflow script lives at `.claude/workflows/change-proposal.js` and is invok
   "exemplar": "proposals/<highest-numbered proposal>.md",
   "repoRoot": "<absolute repo root>",
   "maxReviewRounds": 16,
+  "planPath": "<optional: plan this proposal implements steps of; enables plan-conformance>",
   "lensPrompt": "<optional: appended to every review lens prompt>",
   "startLenses": ["<optional: lens keys for round 1 only>"],
   "excludeLenses": ["<optional: lens keys never run>"]
@@ -126,6 +133,7 @@ The workflow script lives at `.claude/workflows/change-proposal.js` and is invok
   "exemplar": "proposals/<highest-numbered other proposal>.md",
   "repoRoot": "<absolute repo root>",
   "maxReviewRounds": 16,
+  "planPath": "<optional: plan this proposal implements steps of; enables plan-conformance>",
   "lensPrompt": "<optional: appended to every review lens prompt>",
   "startLenses": ["<optional: lens keys for round 1 only>"],
   "excludeLenses": ["<optional: lens keys never run>"]
