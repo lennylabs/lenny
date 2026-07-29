@@ -138,12 +138,10 @@ stale.
 - **C6 is `CH-ADAPTEREVENTS`.** The naming table in `gateway-runtime-comms-remediation.md` §3.4
   originally gave C6 the identifier `CH-EVENTSTREAM`. This proposal's review renamed it, and the plan's
   naming table now carries `CH-ADAPTEREVENTS` together with a provenance note recording the rename and
-  prohibiting the retired stem. The plan's R1b scope table was written against the retired identifier and
-  still spells the rename targets from it, at `gateway-runtime-comms-remediation.md` line 418 for the
-  proto RPC and its two message types and line 423 for the Go file stem. Those spellings are superseded:
-  SPEC-2 states the carrier spellings for `CH-ADAPTEREVENTS` under N4 and they govern, and SPEC-2 stages
-  the correction of those two rows in the same change so the retired stem is not reintroduced through
-  them. The rename was made because
+  prohibiting the retired stem. The plan's R1b scope table also carries the current stem, so no plan row
+  is corrected here. SPEC-2 states the carrier spellings for `CH-ADAPTEREVENTS` under N3 and N4 so that
+  every carrier of the identifier is spelled from the rules rather than inferred. The rename was made
+  because
   "event stream"
   is already bound in this specification to the operational event stream (`spec/README.md:154`,
   `spec/25_agent-operability.md` §25.5), to the per-session event stream (`spec/07_session-lifecycle.md`
@@ -263,7 +261,7 @@ from the source the passes rewrite rather than edited, and its gate is the exist
 |:--|:--|:--|:--|
 | Reserved-word removal from prose | `tests/registers/reserved-phrase-senses.yaml`, keyed by file and occurrence, which maps each reserved-phrase site to the canonical identifier that replaces it, drawn from the whole §28 identifier space of links, channels, and registers rather than from the channel register alone | `scripts/specshift` name pass, which fails a site with no register entry rather than substituting a default and which excludes markdown anchor identifiers per N3 | the naming lint, which fails on any bare reserved noun phrase outside a markdown anchor identifier, reading the same exclusion the pass reads |
 | Identifier rename across code, schemas, SDKs, charts, and docs | the naming table in §28.3, plus `tests/registers/identifier-senses.yaml`, keyed by file and occurrence, carrying an entry for every occurrence of a retired spelling whose site the pass cannot prove is the channel, which covers both a spelling the table maps to more than one channel and a single-channel spelling appearing at a site that is not a channel | `scripts/specshift` identifier pass, which fails a site with no register entry rather than substituting a default | the identifier-resolution gate, which fails when an identifier resolves to more than one spelling and which reads a retired spelling per context so an occurrence the register records as not a channel does not fail it, and the tier-0 assertion over the `coordinatorHoldAllowedMethods` entries in `pkg/adapter/holdstate.go`, that an entry whose service part is `lenny.adapter.v1.Adapter` names a method or stream `Adapter_ServiceDesc` declares and an entry whose service part is another service names a method of a service the adapter registers |
-| Section-anchor redirect in spec citations | `tests/spec-anchor-moves.json` | the citation resolver, then the `specshift` anchor pass | tier 0 fails an entry whose successor anchor does not exist |
+| Section-anchor redirect in spec citations | `tests/spec-anchor-moves.json` | the citation resolver, then the `specshift` anchor pass | the anchor pass itself, which aborts non-zero before any write on a citation naming a retired anchor with no map entry and on a map entry whose successor heading does not exist, with those cases in TEST-1, and the anchor class's residual check, which fails tier 0 on a retired anchor left in the tree with no residual-register entry |
 | Markdown cross-reference redirect in `spec/` and `docs/` | `tests/spec-anchor-moves.json` | the `specshift` anchor pass, extended to every intra-repo markdown fragment link the fragment-link gate reads, which is a link whose target is a tracked `.md` file or the citing page itself, so the same-page `[...](#anchor)` form is inside the pass as well as the file-qualified `[...](NN_file.md#anchor)` form | the fragment-link gate, which fails any intra-repo markdown fragment link that resolves to neither an existing heading slug nor an existing explicit kramdown anchor attribute |
 | Line-citation retirement wherever the retired citation form §4.6 states appears, in every spelling that form covers, which includes the section-level spelling (`§10 line 437`), the multi-member spellings whatever separates the members (`§4.8 lines 1057-1058, 1077`, `§10.7 line 694 / line 743`, `§10 line 437 ("...") + line 443 ("...")`, and `§10.6 line 601, line 629`), the qualified spelling (`§11.7 item 3 line 364`) and the trailing-gloss spelling (`§7.3 line 408 step (e)`), the en-dash and em-dash range spellings (`§4.4 lines 263–291`), the path-form spelling (`spec/04_system-components.md line 1145`), the colon spelling in both its variants (`§17.6:404` and `spec/15_external-api-surface.md:1315`), and any of those spellings wrapped across two comment lines, each consumed whole | `tests/registers/line-citations.yaml`, keyed per file | `scripts/specshift` line pass, with the straddling range citations §4.6 enumerates hand-corrected in SPEC-4 because the pass fails them rather than guessing an anchor | the line-citation ratchet, which fails a file whose count rises |
 | Regeneration of a derived artifact whose source the passes rewrite | the generated-artifact denylist in `scripts/specshift` | `make generate`, `make generate-proto`, `go generate ./pkg/gateway/mcpfabric/mcptools/...`, `go run ./cmd/lenny-chart-schema-gen`, `go run ./cmd/lenny-ocsf-mapping-gen`, the hand-applied CRD post-generation re-application, and the chart-to-embedded CRD re-copy, run as the exit criterion of the pass that touched the source | `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4`, `TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437`, `TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437`, `TestEmbeddedCRDsPreserveUnknownFields_spec_10_437`, the new tier-0 proto no-drift test, `TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386`, `TestGeneratedToolsMatchOpenAPI_spec_25_12`, `TestSchemaIsCommitted_spec_17_6_655`, and `TestMappingYAMLInSync`, each of which fails on drift between a derived file and its source |
@@ -306,10 +304,11 @@ The sub-steps below are applied in order. The tooling comes first because the ot
    inserted heading shifts every line below it and the pass has to read the shifted line numbers; putting
    both in one exclusive change is what keeps the shift from invalidating a population no pass is running
    over. The freeze of `gateway-runtime-comms.md` lands here as well, since it is the point at which §28 and
-   §29 supersede it. The heading walker, the tier-11 successor-pointer check, and the claim register's
-   schema-only validator land with the new sections, the reductions, and the seeded register, and the
+   §29 supersede it. The heading walker, the tier-11 successor-pointer check, the claim register's
+   schema-only validator, the §28.8 matrix completeness check, and the artifact-register supersession
+   check land with the new sections, the reductions, and the seeded register, the
    fragment-link gate lands with the anchor pass that rewrites the links into the
-   retired anchors. The gate-integrity meta-gate lands here too, because it ranges over the gates this
+   retired anchors, and the reference-document freeze check lands with the freeze header it reads. The gate-integrity meta-gate lands here too, because it ranges over the gates this
    proposal registers and the fragment-link gate is the last of them, so this is the first sub-step at
    whose exit every name on its fixed list is registered.
 5. **The gate cases.** The accept, reject, and boundary cases for every gate the four sub-steps above
@@ -1474,9 +1473,7 @@ external-adapter compliance harness, the three runtime SDKs, the adapter flag, t
 `tests/change-graph.json`, and `tests/spec-map.json`, for the file
 keys and path entries of the renamed files and for the `::<symbol>` references naming symbols the pass
 renames, and the gRPC full-method string
-literals in `pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go`. It also targets the two R1b
-scope-table rows in `gateway-runtime-comms-remediation.md` at line 418 and line 423, which still spell
-the `CH-ADAPTEREVENTS` rename targets from the retired stem. The identifier-resolution gate
+literals in `pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go`. The identifier-resolution gate
 and the `coordinatorHoldAllowedMethods` assertion land in this sub-step, because this is the sub-step that
 collapses each retired spelling to one canonical identifier and therefore the first at whose exit the gate
 can be green.
@@ -1495,22 +1492,18 @@ The §28.3 table records the spelling each carrier takes, per N7. The adapter ma
 plan's scope table, because that table predates N7 and states a target for the key without stating the
 form rule it follows.
 
-The `CH-ADAPTEREVENTS` carrier spellings are stated here for the same reason and for a stronger one. The
-plan's R1b scope table was written while C6 still carried the retired identifier `CH-EVENTSTREAM`, and
-its rows at `gateway-runtime-comms-remediation.md` line 418 and line 423 still spell the rename targets
-from that stem, as `rpc AdapterEventStream(stream AdapterEventStreamRequest) returns (stream
-AdapterEventStreamResponse)` and `pkg/adapter/eventstream.go`. Both spellings fail N3, which forbids an
-identifier stem that reuses a bound term, and N4, which requires the proto RPC name stem and the Go file
-name stem to be the channel's identifier. Under N4 the RPC at `schemas/lenny-adapter.proto` line 227
-becomes `rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse)`, the two
-message types become `AdapterEventsRequest` and `AdapterEventsResponse`, the gRPC full-method literal in
-`pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go` becomes
+The `CH-ADAPTEREVENTS` carrier spellings are stated here for the same reason, which is that each one is
+derived from a naming rule and the derivation has to be written down once. N3 forbids an identifier stem
+that reuses a bound term, and N4 requires the proto RPC name stem and the Go file name stem to be the
+channel's identifier. Under N4 the RPC at `schemas/lenny-adapter.proto` line 227 becomes
+`rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse)`, the two
+message types become `AdapterEventsRequest` and `AdapterEventsResponse`, the gRPC full-method literal at
+`pkg/adapter/holdstate.go` line 57 and `pkg/adapter/holdstate_test.go` line 292 becomes
 `/lenny.adapter.v1.Adapter/AdapterEvents`, and `pkg/adapter/controlchannel.go` and its test sibling
 become `pkg/adapter/adapterevents.go` and `pkg/adapter/adapterevents_test.go`. The §28.3 table records
-these spellings, and this sub-step corrects the two plan rows in the same change so the retired stem is
-not reintroduced through them. Without the correction an implementor driving the rename from the plan
-produces a gRPC method name, two message type names, and a Go file stem that contradict §28.1, and the
-identifier-resolution gate sees `CH-ADAPTEREVENTS` resolving to more than one spelling.
+these spellings. Without them stated, an implementor deriving the rename from the identifier alone can
+publish a gRPC method name, two message type names, and a Go file stem that contradict §28.1, and the
+identifier-resolution gate then sees `CH-ADAPTEREVENTS` resolving to more than one spelling.
 
 The retired spelling `LifecycleChannel` is two-valued at the identifier level, not only in prose, so the
 identifier pass is driven by a per-occurrence register in the same way the name pass is. Both channels
@@ -1812,7 +1805,20 @@ events schema, and that sentence is the one that gates a third-party adapter fro
 `active`, so as written the shipped suite is structurally unable to validate `CH-RUNTIMEOPS`. Replace the
 enumeration in both that sentence and the list at `spec/18_build-sequence.md` line 92 with a reference to
 §28.7, so one register states the artifact set and neither list can drift from it again. `spec/15`'s own
-pointer is carved out of the §15.4 reduction rather than superseded, for the reason stated below.
+pointer is carved out of the §15.4 reduction rather than superseded, for the reason stated below, and it is
+named as exempt in the supersession check's predicate: it enumerates the artifacts §15.4's prose documents
+rather than standing for the register's artifact set, and SPEC-2's hand correction to line 1463 sends the
+runtime-operations frames to `schemas/runtime-ops-events.schema.json`, so the surviving pointer states where
+the frames it does not schematize are schematized.
+
+Two gates land in this sub-step under §3.5, because this is the sub-step that supplies each one's route to
+green. The §28.8 matrix completeness check is a tier-0 gate, and it lands here because §28.8 is written
+here while the §28.3 register its bijection reads already exists from SPEC-1, so the bijection first holds
+at this sub-step's exit. The artifact-register supersession check is a tier-11 gate, and it lands here
+because the `spec/18` and `spec/24` enumerations it forbids are replaced here, and the one further artifact
+enumeration outside §28.7 is the §15.4 wire-artifact pointer, which the paragraph above exempts from the
+check, so at this sub-step's exit no enumeration in the check's domain names a subset of the register.
+TEST-1 states each gate's predicate and adds its cases.
 
 Restate the §15.3 sentence at `spec/15_external-api-surface.md` line 1456 by hand in the same change,
 because the reduction makes it false. It reads "The wire contract is published as machine-readable
@@ -2494,15 +2500,18 @@ this proposal registers at tier 0 is reachable as a Go test under `tests/tier0_s
 inside `runValidateMaps`, which are the two channels the repository hard-gates, and that none of them is
 invoked through a shell script under `scripts/` whose absence or non-zero exit is tolerated. Its predicate
 is a fixed list of those gate names, checked against the tier-0 registration, so deleting a gate's file
-fails the meta-gate rather than silently removing the gate. Its domain is the tier-0 gates alone. The two
-gates this proposal registers elsewhere are outside it and are named as such: the tier-11
-successor-pointer check, which SPEC-3 lands in `tests/tier11_docs/`, and the tier-3 assertion SPEC-3 lands
-with the served OpenAPI document and the generated MCP tool schemas. The harness runs both suites as Go
+fails the meta-gate rather than silently removing the gate. Its domain is the tier-0 gates alone. The gates
+this proposal registers outside tier 0 are outside it and are named as such: the tier-11
+successor-pointer check and the tier-11 artifact-register supersession check, which SPEC-3 lands in
+`tests/tier11_docs/`, the tier-11 reference-document freeze check, which this sub-step lands in the same
+package, and the tier-3 assertion SPEC-3 lands
+with the served OpenAPI document and the generated MCP tool schemas. The harness runs those suites as Go
 test packages and fails the tier on a failing test, so each is registered through the channel its tier
 uses rather than through `tests/tier0_static/`, and the meta-gate's fixed list and its accepted-channel
 set name the same population. The meta-gate lands here rather than in TOOL-1 because several of the gates it
 names are registered by SPEC-1 through SPEC-4, among them the naming lint, the identifier-resolution gate,
-the heading walker, the claim register's schema-only validator, and the fragment-link gate, and a fixed
+the heading walker, the claim register's schema-only validator, the §28.8 matrix completeness check, and
+the fragment-link gate, and a fixed
 list checked against the tier-0 registration
 fails on a name that is not yet registered in exactly the way it fails on a deleted one, so any earlier
 landing point would leave tier 0 red. It is green on introduction here, because every gate it names is
@@ -2602,8 +2611,10 @@ several-thousand-site mechanical change rests on review, which cannot verify it.
 The gates themselves land in the sub-step §3.5 assigns them, which is the sub-step that supplies the
 route to green: the naming lint in SPEC-1, the identifier-resolution gate and the
 `coordinatorHoldAllowedMethods` assertion in SPEC-2, the heading walker, the tier-11 successor-pointer
-check, and the claim register's schema-only validator in SPEC-3, the fragment-link gate, the
-gate-integrity meta-gate, and the rewritten §25.4 freshness gate in SPEC-4, and the gates TOOL-1
+check, the claim register's schema-only validator, the §28.8 matrix completeness check, and the
+artifact-register supersession check in SPEC-3, the fragment-link gate, the
+gate-integrity meta-gate, the reference-document freeze check, and the rewritten §25.4 freshness gate in
+SPEC-4, and the gates TOOL-1
 seeds a baseline for in TOOL-1.
 Stating the predicate here and landing the gate there keeps one landing point per gate, so no gate
 reaches tier 0 before the sub-step that makes it green.
@@ -2801,9 +2812,9 @@ before the identifier pass runs, and the two health entries need no register ent
 they could never retire against.
 
 Add the anchor pass's own cases in the same `run_test.go`, for the same reason the other three passes have
-them. The two gates §3.4 names for its classes do not distinguish a correct run from a silent no-op or a
-destructive one: the row-3 gate validates the entries in `tests/spec-anchor-moves.json` rather than
-observing whether any citation in the tree was rewritten, and the row-4 fragment-link gate reads markdown
+them. No gate over the anchor classes distinguishes a correct run from a silent no-op or a
+destructive one. §3.4 row 3 names this pass's own abort behavior as its proof for exactly that reason, and
+the row-4 fragment-link gate reads markdown
 links only and passes a link redirected to the wrong existing heading. A bare `§15.4.1`-style anchor
 citation in a comment or in prose is read by neither, because the citation resolver and the ratchet match
 the retired line-citation form alone. SPEC-4 then empties
@@ -2980,8 +2991,9 @@ Add the gate-integrity meta-gate's own cases in the same package: a gate registe
 `tests/tier0_static/` Go test or as a `runValidateMaps` check passes; a gate whose file is deleted fails
 and names the gate; a gate reached only through a shell script under `scripts/` fails, which is the
 condition the meta-gate exists to detect; and the fixed list names exactly the gates this proposal
-registers at tier 0, so a name added to the list without a tier-0 registration fails and the tier-11
-successor-pointer check and the tier-3 no-line-citation assertion are absent from the list rather than
+registers at tier 0, so a name added to the list without a tier-0 registration fails and the three tier-11
+checks (the successor-pointer check, the artifact-register supersession check, and the reference-document
+freeze check) and the tier-3 no-line-citation assertion are absent from the list rather than
 unsatisfiable entries on it. The cases carry no `// spec:` tie, for the same reason.
 
 Add the cases for the claim register's schema-only tier-0 validator over `tests/claim-map.json`, which
@@ -3064,8 +3076,11 @@ lands green through the seven hand-authored link corrections SPEC-4 enumerates, 
 at a heading that never existed resolves to no open remediation item and so cannot hold a shared-register
 entry with a blocker and an expiry.
 
-Four gates cover the deliverables added above, each in the tier `.claude/rules/test-coverage.md` maps its
-surface to. **The §28.8 matrix completeness check** is a tier-0 test asserting a bijection between the
+The deliverables added above are covered by three gates and by cases on two existing gates, each in the
+tier `.claude/rules/test-coverage.md` maps its surface to. TEST-1 states each predicate and adds each set
+of cases, while the gate itself lands in the sub-step §3.5 assigns it: the §28.8 matrix completeness check
+and the artifact-register supersession check in SPEC-3, and the reference-document freeze check in SPEC-4.
+**The §28.8 matrix completeness check** is a tier-0 test asserting a bijection between the
 channel identifiers in the §28.3 register and the rows of the §28.8 matrix, so an identifier with no
 degradation row fails by name and a matrix row naming no registered identifier fails the same way. Its
 non-happy cases are an identifier added to the register with no matrix row, a matrix row for a retired
@@ -3073,10 +3088,12 @@ identifier, and a duplicate row for one identifier. **The reference-document fre
 test asserting that `gateway-runtime-comms.md` carries the point-in-time header naming the commit and the
 superseding sections, and that its body below the header matches the committed text; its non-happy cases
 are a missing header, a header naming a different commit, and any body edit. **The artifact-register
-supersession check** is a tier-11 test asserting that no artifact enumeration outside §28.7 names a subset
-of the register, which is what stops `spec/18` and `spec/24` from drifting back to a hand-written list; its
-non-happy cases are a re-added partial enumeration in either file and an artifact present in the register
-and absent from the schemas directory. **The unread-field claim rows** are covered by the claim register's
+supersession check** is a tier-11 test asserting that no enumeration outside §28.7 that stands for the
+register's artifact set names a subset of it, which is what stops `spec/18` and `spec/24` from drifting back
+to a hand-written list. The `spec/15` §15.4 wire-artifact pointer is named as exempt in the predicate, on the
+ground SPEC-3's carve-out states, so the check is green at the sub-step that lands it. Its
+non-happy cases are a re-added partial enumeration in either file, a further section adding an enumeration
+that stands for the set, and an artifact present in the register and absent from the schemas directory. **The unread-field claim rows** are covered by the claim register's
 existing schema-only validator, whose cases TEST-1 already states, extended with one case per field added
 by SPEC-2: a request-message field with no `UNWIRED` claim row fails, and an `UNWIRED` row naming no later
 step fails. The `buf breaking` exception entries are covered by the shared exception register's validator on
@@ -5046,6 +5063,56 @@ applicability or plan coverage.
   reduction only when both legs land in the same change, and that a source statement with no destination is
   carved out and left in place rather than removed.
 
+### Pass 36 (2026-07-29, automated)
+
+- **SPEC-2 staged a correction to two plan rows the plan no longer contains, anchored to line numbers
+  holding other text.** Commit `cc7614b8` already reconciled the plan with this proposal's rename: the R1b
+  scope table now reads `rpc AdapterEvents(stream AdapterEventsRequest) returns (stream
+  AdapterEventsResponse)` at `gateway-runtime-comms-remediation.md` line 425 and
+  `pkg/adapter/adapterevents.go` at line 430, and the provenance note at line 263 states that
+  `CH-EVENTSTREAM` appears nowhere in the plan. Line 418 holds a quotation of
+  `.claude/rules/code-best-practices.md` and line 423 holds the scope table's header row, so the staged
+  edit had no resolvable anchor and would have rewritten unrelated text. The staged correction is dropped
+  from SPEC-2's Target, from the §2 `CH-ADAPTEREVENTS` bullet, and from §11, and SPEC-2 now justifies
+  stating the `CH-ADAPTEREVENTS` carrier spellings as N3 and N4 conformance rather than as a correction of
+  the plan. The Pass 29 record is left as written, because it records what the plan held at the time.
+- **The gates covering the Pass 35 deliverables had no landing sub-step, and the tier-0 one contradicted
+  the gate-integrity meta-gate.** §3.5 requires exactly one landing sub-step per gate, and the meta-gate's
+  fixed list has to name exactly the tier-0 gates this proposal registers while being green at SPEC-4's
+  exit. The §28.8 matrix completeness check now lands in SPEC-3, which writes §28.8 against the §28.3
+  register SPEC-1 already staged, so it is registered before SPEC-4 and the meta-gate names it. The
+  artifact-register supersession check lands in SPEC-3, which replaces the `spec/18` and `spec/24`
+  enumerations it forbids. The reference-document freeze check lands in SPEC-4 with the freeze header it
+  reads. §3.5 step 4, SPEC-3, SPEC-4's meta-gate paragraph, TEST-1's gate-to-sub-step list, TEST-1's
+  meta-gate case, and TEST-1's paragraph on these deliverables all carry the same assignment, and SPEC-4
+  now enumerates the tier-11 successor-pointer check, the tier-11 artifact-register supersession check, the
+  tier-11 reference-document freeze check, and the tier-3 assertion as the gates outside the meta-gate's
+  domain.
+- **The §3.4 row-3 anchor-map gate had no owner, no landing sub-step, and no cases.** Row 3 named a tier-0
+  check over `tests/spec-anchor-moves.json` that TOOL-1 does not build, TEST-1 does not land, and no
+  sub-step owns. The register also does not exist before SPEC-3 and is emptied by SPEC-4, so a gate over
+  its entries would be vacuous at the proposal's exit. Rather than add a gate for it, row 3's proof is
+  restated as the mechanisms that already land: the anchor pass aborts non-zero before any write on a
+  citation naming a retired anchor with no map entry and on a map entry whose successor heading does not
+  exist, with those cases already stated in TEST-1, and the anchor class's residual check fails tier 0 on a
+  retired anchor left in the tree with no residual-register entry. TEST-1's paragraph on the anchor pass's
+  cases no longer refers to a row-3 gate.
+- **The §28.8 gate's landing justification claimed SPEC-3 writes the §28.3 register.** SPEC-1's Target
+  covers §28.1 through §28.4 and its change text writes the three registers, and SPEC-3's Target is limited
+  to §28.5 through §28.8, so the earlier sentence asserted a duplicate staging of the channel register that
+  §3.5's one-landing-sub-step rule forbids. SPEC-3 and this record now state the correct premise: §28.8 is
+  written in SPEC-3 against the §28.3 register SPEC-1 already staged, so the bijection first holds at
+  SPEC-3's exit.
+- **The artifact-register supersession check had no route to green at SPEC-3, because SPEC-3 leaves the
+  §15.4 wire-artifact pointer standing.** That pointer names `schemas/lenny-adapter.proto`,
+  `schemas/lenny-adapter-jsonl.schema.json`, and `schemas/messagepart.schema.json`, and the register §28.7
+  derives from the schemas directory carries more than those, so a predicate reading every enumeration
+  outside §28.7 was red on introduction. The predicate now covers enumerations that stand for the register's
+  artifact set and names the §15.4 pointer as exempt, because that pointer enumerates the artifacts §15.4's
+  prose documents and, after SPEC-2's correction to line 1463, states where the runtime-operations frames
+  are schematized. SPEC-3's carve-out paragraph, SPEC-3's route-to-green paragraph, and TEST-1's predicate
+  and cases carry the same exemption.
+
 ## 10. Open decisions for review
 
 **All decisions below were RATIFIED on the 2026-07-29 sign-off and remain settled. None is open.** The
@@ -5147,8 +5214,6 @@ question, and the re-review that follows treats them as closed.
   `pkg/adapter/adapterevents.go` and `pkg/adapter/adapterevents_test.go` under N4, with the RPC and its
   two message types in `schemas/lenny-adapter.proto` renamed to `AdapterEvents`, `AdapterEventsRequest`,
   and `AdapterEventsResponse`.
-- `gateway-runtime-comms-remediation.md`, for the two R1b scope-table rows at line 418 and line 423 that
-  still spell the rename targets from the retired `CH-EVENTSTREAM` stem, corrected by hand in SPEC-2.
 - `pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go`, whose gRPC full-method string literals
   name the renamed RPC and are resolved from the proto RPC row rather than from the Go type row.
 - `cmd/lenny-compliance/full.go` and `tests/tier4_integration/credential_lifecycle_test.go`, the second
