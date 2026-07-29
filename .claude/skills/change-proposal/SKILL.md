@@ -12,7 +12,7 @@ This skill produces a reviewed proposal document in `proposals/` and converges i
 - **new**: the input is a problem statement. The workflow validates the problem's premises, drafts a change set, adversarially challenges each change, writes the proposal file, and then enters the review loop.
 - **review**: the input is the path of an existing proposal under `proposals/`. The workflow enters the review loop directly.
 
-The review loop is shared: rounds of multi-lens adversarial review, two-skeptic verification of every finding, and fixes, repeated until two consecutive rounds confirm zero findings.
+The review loop is shared: rounds of multi-lens adversarial review, two-skeptic verification of every finding, and fixes. A lens that finds nothing retires; when every lens has retired, a full sweep of the whole pool runs over the final text, and a clean sweep converges.
 
 ## Hard constraints
 
@@ -40,7 +40,12 @@ The writer and reviewer agents receive these conventions. They are derived from 
 
 These design points come from convergence runs on prior proposals in this repository. Keep them when editing the script.
 
-- **Two consecutive clean rounds, not one.** Fix rounds introduce their own errors: fixers add predicate text that drifts from the design's invariants, and clean rounds have been followed by rounds with confirmed findings in fixer-written text. A single clean round demonstrates nothing about the text the previous fixer wrote.
+- **Lens retirement, then a full sweep.** A lens retires when none of its findings survive verification, which covers both the lens that found nothing and the lens whose every finding two skeptics refuted; a lens that reliably cries wolf is not earning the tokens it costs, and it stops running; when every lens has retired, one sweep round runs the whole pool again over the final text. A lens that finds something in the sweep is reactivated and the loop continues, and when the active set drains again another sweep runs. Convergence requires a complete sweep of every lens with zero confirmed findings. Re-running a satisfied lens against text its own domain did not change was the loop's largest avoidable cost, and retirement removes it while the sweep keeps the guarantee.
+- **Convergence is always certified over final text, never over text a lens has not seen.** This is what the earlier two-consecutive-clean-rounds rule protected, and the sweep preserves it. That rule existed because fixers introduce their own errors: fixers add predicate text that drifts from the design's invariants, and clean rounds have been followed by rounds with confirmed findings in fixer-written text. A retirement is therefore provisional. Every lens re-reads the final text in the sweep before the proposal is certified, so no lens ever certifies text it never saw. Keep this property when editing the loop; it is the reason the sweep exists rather than accepting the first all-retired state as convergence.
+- **Retirement is credited per lens, through the dedup merge.** The script stamps each finding with the lens that produced it before any model sees it, and the dedup step must return a `lenses` union for every merged entry, because a merge collapses several reviewers' findings into one and the loop has to credit a survivor back to all of them. If dedup drops the union, the round falls back to the weaker rule of retiring only a lens that reported nothing, and logs that it did; retiring on an empty survivor set would otherwise retire the whole pool on a round that confirmed real defects.
+- **Retirement is keyed on a genuine result, never on a failure.** A lens dropped by a transient API failure contributes zero findings and is indistinguishable from a satisfied lens, so retiring on failure would let an outage certify a proposal. A failed lens keeps its prior state and runs again.
+- **The fixer's own edits get a narrow review, then at most one follow-up fix.** Fix-stage text is the newest and least-examined text in the proposal, and this loop's history records that fixers introduce their own errors. Before this step the only scrutiny it received was the next round's whole-document lenses, which are told the TITLES of what was fixed but never what the fixer actually wrote; under lens retirement that gap widens, because a retired lens does not re-read anything until the sweep. The post-fix reviewer asks exactly three questions: did each fix land, did any edit leave a parallel statement stale (drift, the highest-yield check), and is every newly written citation real. Its scope is the edit plus its blast radius rather than the edit alone, because drift is by definition an inconsistency between changed text and text that did not change. The follow-up is capped at one pass: this is a correction on fresh text, not a second convergence loop, and an unbounded cycle here would bury a contested edit inside a round instead of surfacing it to the next round's lenses and to the sweep.
+- **Reviewers are told to be exhaustive in one pass.** Because a lens may not run again before certification, a withheld finding costs an entire extra round for every other reviewer. The finding bar is unchanged: exhaustiveness applies within it, and a speculative finding still wastes two verifiers and pollutes the refuted list.
 - **Two skeptics per finding, both must confirm.** One re-derives the evidence from the files; one judges materiality assuming the evidence is true, with instructions to default to refuted. The split kills plausible-but-wrong findings and nitpicks separately.
 - **Refuted findings are remembered and injected into later rounds.** Without the memory, a refuted finding resurfaces in a later round, wastes verification, and can block convergence.
 - **Dedup before verification.** Independent lenses converge on the same root error under different phrasings; verifying duplicates multiplies cost for nothing.
@@ -78,7 +83,11 @@ The lens prompts in the script enumerate these. They are the classes that have p
    - `date`: today's date as `YYYY-MM-DD` (workflow scripts cannot call Date).
    - `repoRoot`: the absolute repository root.
    - `exemplar`: the path of the highest-numbered existing proposal (in review mode, excluding the proposal under review).
-   - `maxReviewRounds`: default 12.
+   - `maxReviewRounds`: default 16. Sweeps spend rounds from this budget, so leave headroom above the number of review cycles you expect.
+   - `lensPrompt` (optional): text appended verbatim to every review lens's prompt. Use it to carry standing context the lenses would otherwise rediscover, or to put one surface in front of every lens for a run. It reaches the lenses only. The dedup, verifier, fixer, and post-fix agents never see it, because those have narrow mandates that caller text must not reshape; a verifier told what to conclude is not a verifier. It adds context and focus and never lowers the finding bar.
+   - `startLenses` (optional): array of lens keys the loop starts with. Every other lens begins **retired**, so it does not run while the starting lenses are still finding defects, and it first reads the proposal in the sweep, over text those lenses have already driven clean. A held-back lens rejoins the active set the moment it finds something in that sweep. Use it to lead with the lenses most likely to find structural defects, so the expensive pool reads corrected text once rather than draft text repeatedly. It costs no guarantee: convergence still requires a complete sweep of every pool lens.
+   - `excludeLenses` (optional): array of lens keys removed from the pool entirely, including from sweeps. Convergence then certifies nothing about those domains, so the run echoes `excludedLenses` in its result. An unknown key in either array is a hard error rather than a silent no-op.
+   - Valid lens keys, for both arrays: `citations`, `feasibility`, `edit-sites`, `mechanism`, `security`, `kubernetes`, `performance`, `reliability`, `client-surface`, `docs-alignment`, `test-coverage` (the always-on set), plus `operational` and `fresh` (the rotating extras).
 3. New mode only:
    - Read the spec sections and code paths the problem names so the dossier carries concrete citations rather than paraphrase.
    - `problem`: a problem dossier of one to three paragraphs stating the problem.
@@ -101,7 +110,10 @@ The workflow script lives at `.claude/workflows/change-proposal.js` and is invok
   "nextNumber": "<NNNN>",
   "exemplar": "proposals/<highest-numbered proposal>.md",
   "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 12
+  "maxReviewRounds": 16,
+  "lensPrompt": "<optional: appended to every review lens prompt>",
+  "startLenses": ["<optional: lens keys for round 1 only>"],
+  "excludeLenses": ["<optional: lens keys never run>"]
 }
 ```
 
@@ -113,7 +125,10 @@ The workflow script lives at `.claude/workflows/change-proposal.js` and is invok
   "date": "<YYYY-MM-DD>",
   "exemplar": "proposals/<highest-numbered other proposal>.md",
   "repoRoot": "<absolute repo root>",
-  "maxReviewRounds": 12
+  "maxReviewRounds": 16,
+  "lensPrompt": "<optional: appended to every review lens prompt>",
+  "startLenses": ["<optional: lens keys for round 1 only>"],
+  "excludeLenses": ["<optional: lens keys never run>"]
 }
 ```
 
@@ -124,7 +139,7 @@ Agents inherit the session model and effort level. Run this skill with the stron
 ### Step 3: Interruptions and non-convergence
 
 - On interruption (auth expiry, crash): stop the stale task with TaskStop, then relaunch with `{scriptPath, resumeFromRunId}` from the original tool result. Completed agents replay from the journal cache and the run continues live from the cut point.
-- On hitting `maxReviewRounds` without two consecutive clean rounds: inspect the trajectory in the returned `review.history`. If the confirmed-finding counts are decreasing and the last round was clean, raise `maxReviewRounds` in the persisted script file's default or pass a larger value, and resume with `{scriptPath, resumeFromRunId}`; the edit does not invalidate the cached prefix. If counts are flat or oscillating, stop and report the recurring findings for a human decision instead of burning rounds.
+- On hitting `maxReviewRounds` without a clean sweep: inspect the trajectory in the returned `review.history`, where each entry records whether it was a `sweep`, which `lenses` ran, and the `retiredAfter` set. Sweeps consume rounds, so a run that was draining steadily can exhaust the budget mid-cycle; if the confirmed-finding counts are decreasing and the retired set is growing, raise `maxReviewRounds` and resume with `{scriptPath, resumeFromRunId}`; the edit does not invalidate the cached prefix. If counts are flat or oscillating, or the same lens keeps reviving on each sweep, stop and report the recurring findings for a human decision instead of burning rounds: a lens that revives every sweep is usually pointing at a design contradiction the loop cannot fix by editing prose.
 
 ### Step 4: Report
 

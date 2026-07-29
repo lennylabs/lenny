@@ -1,7 +1,7 @@
 export const meta = {
   name: "change-proposal",
   description:
-    "Validate a problem, draft and write a change proposal — spec edits and/or core-product or test-infra code changes (new mode) — then adversarially review and fix it until two consecutive clean rounds",
+    "Validate a problem, draft and write a change proposal — spec edits and/or core-product or test-infra code changes (new mode) — then adversarially review and fix it until a full sweep of every lens is clean",
   whenToUse:
     "Write a change proposal (spec and/or implementation: core product or test infra) from a problem statement, or converge an existing proposals/*.md before sign-off",
 };
@@ -36,8 +36,40 @@ const repo = input.repoRoot;
 const date = input.date;
 const exemplar = input.exemplar;
 const context = input.context || "none provided";
-const maxRounds = input.maxReviewRounds || 12;
-const CLEAN_TARGET = 2;
+// Default 16 rather than 12: lens retirement made each round much cheaper but not
+// fewer, and every sweep spends a round of the budget. A run that is draining
+// steadily can otherwise exhaust the budget mid-cycle, one revive short of a clean
+// sweep, and be reported as non-converged when it was in fact converging.
+const maxRounds = input.maxReviewRounds || 16;
+
+// Optional caller controls over the review loop. All three are optional and the
+// loop behaves exactly as before when they are absent.
+//
+// lensPrompt   appended verbatim to every review lens's prompt. Use it to carry
+//              standing context the lenses would otherwise rediscover, or to put a
+//              specific surface in front of every lens for one run. It reaches the
+//              lenses only, not the dedup, verifier, fixer, or post-fix agents,
+//              because those have narrow mandates that caller text should not
+//              reshape: a verifier told what to conclude is not a verifier.
+// startLenses  restricts the FIRST round to these lens keys. Every other lens is
+//              untouched rather than excluded, so it joins from round two. Use it
+//              to lead with the lenses most likely to find the structural defects,
+//              so the first fix lands before the rest of the pool reads the text.
+// excludeLenses removes lens keys from the pool entirely, including from sweeps.
+//              Use it when a lens's domain is genuinely out of scope for a
+//              proposal; note that convergence then certifies nothing about that
+//              domain, so the exclusion is recorded in the returned result.
+const lensPrompt =
+  typeof input.lensPrompt === "string" && input.lensPrompt.trim()
+    ? input.lensPrompt.trim()
+    : "";
+const startLensKeys =
+  Array.isArray(input.startLenses) && input.startLenses.length > 0
+    ? input.startLenses
+    : null;
+const excludeLensKeys = Array.isArray(input.excludeLenses)
+  ? input.excludeLenses
+  : [];
 
 const READ_ONLY =
   "You are a read-only investigator. Do not create, edit, or delete any file. Cite evidence as file:line.";
@@ -180,6 +212,52 @@ const FINDINGS = {
           },
           suggested_fix: { type: "string" },
         },
+      },
+    },
+  },
+};
+
+// REVIEW_FINDINGS is FINDINGS plus a required coverage self-report, used only for
+// the review lenses. Requiring a reviewer to state what it swept before it returns
+// is a second, stronger lever than the prompt instruction alone: a model that must
+// name the sections it examined actually walks them, and one that must name what it
+// could not verify surfaces a blind spot instead of returning a quiet empty list.
+// The field costs a few dozen output tokens per lens and pays for itself the moment
+// it prevents one extra round. It is deliberately NOT on the plain FINDINGS schema,
+// which the dedup agent reuses and for which a coverage report is meaningless.
+const REVIEW_FINDINGS = {
+  type: "object",
+  required: ["coverage", "findings"],
+  properties: {
+    coverage: {
+      type: "string",
+      description:
+        "Before listing findings: name the proposal sections you examined under this lens, and anything your lens covers that you could NOT verify and why. If you are returning an empty findings list, this is the evidence that the list is empty because the proposal is clean rather than because you stopped early.",
+    },
+    findings: FINDINGS.properties.findings,
+  },
+};
+
+// DEDUP_FINDINGS is FINDINGS with the lens union added, used only for the dedup
+// step. The union is what lets retirement credit a surviving finding back to the
+// reviewers that produced it after a merge has collapsed several into one.
+const DEDUP_FINDINGS = {
+  type: "object",
+  required: ["findings"],
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        required: FINDINGS.properties.findings.items.required.concat(["lenses"]),
+        properties: Object.assign({}, FINDINGS.properties.findings.items.properties, {
+          lenses: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Every lens value from the input findings merged into this entry. Required on every entry, including one that merged nothing.",
+          },
+        }),
       },
     },
   },
@@ -509,7 +587,9 @@ const BAR =
   "(f) The proposal changes behavior but does not list the tests that behavior requires: the Testing section is absent, omits a tier the change plainly reaches, names no concrete test for a behavior the proposal changes, or lists only a happy-path test where the change introduces an error, concurrent, boundary, security or fail-closed, or spec-named-failure path (see .claude/rules/test-coverage.md). A proposal must list the specific, insightful, relevant new tests to add during implementation.\n\n" +
   "DO NOT report: style or wording, documentation polish, optional improvements, additional nice-to-have tests beyond the coverage the change requires, hypothetical hardening, redundancy, preferences between workable designs, or anything whose absence does not make the applied spec or implementation wrong. If you are unsure whether something meets the bar, do not report it. An empty findings list is a fully acceptable answer and is the expected answer for a converged proposal.\n\n" +
   'The proposal\'s "Resolved in adversarial review" section is a historical record of earlier passes; its descriptions of earlier drafts are not findings. Sections recording deliberately open decisions for the human reviewer are not findings.\n\n' +
-  "Every finding MUST carry evidence: exact file paths with line numbers and short quotes for both the proposal's claim and the contradicting source. Read the files to verify line numbers; never cite from memory.";
+  "Every finding MUST carry evidence: exact file paths with line numbers and short quotes for both the proposal's claim and the contradicting source. Read the files to verify line numbers; never cite from memory.\n\n" +
+  "BE EXHAUSTIVE IN THIS ONE PASS. Report every finding that meets the bar now, in this single response. This loop retires a lens once it returns nothing, so your lens may not run again before the proposal is certified: a finding you hold back is not caught by a later pass of your own lens, and it costs an entire extra round for every other reviewer. Before returning, walk the proposal section by section and ask, for each section, whether your lens has anything on it; do not stop at the first finding or at the most severe one, and do not withhold a substantiated finding because the proposal reads as polished elsewhere or because you have already reported several. There is no cap on how many findings you may return.\n\n" +
+  "Exhaustiveness does NOT relax the bar. Each finding still costs two verification agents, and one that fails verification wastes them and pollutes the refuted list, so a speculative finding is worse than no finding. The target is: everything that meets the bar, nothing that does not.";
 
 const LENSES = [
   {
@@ -569,6 +649,61 @@ const EXTRAS = [
   },
 ];
 
+// Resolve the caller's lens selections against the real pool. An unknown key is a
+// hard error rather than a silent no-op: a typo in excludeLenses would otherwise
+// quietly leave the lens running, and a typo in startLenses would quietly widen
+// the first round, in both cases producing a run that did not do what the caller
+// asked while reporting success.
+const ALL_LENS_KEYS = LENSES.concat(EXTRAS).map((l) => l.key);
+for (const [argName, keys] of [
+  ["startLenses", startLensKeys || []],
+  ["excludeLenses", excludeLensKeys],
+]) {
+  for (const k of keys) {
+    if (!ALL_LENS_KEYS.includes(k)) {
+      throw new Error(
+        "args." +
+          argName +
+          ' names an unknown lens "' +
+          k +
+          '". Valid keys: ' +
+          ALL_LENS_KEYS.join(", "),
+      );
+    }
+  }
+}
+const excludeSet = new Set(excludeLensKeys);
+const startSet = startLensKeys ? new Set(startLensKeys) : null;
+
+// POOL_* are the lens pools this run actually uses. Every later reference goes
+// through them rather than through LENSES/EXTRAS, so an excluded lens is absent
+// from normal rounds AND from the sweep, and cannot silently certify its domain.
+const POOL_FIXED = LENSES.filter((l) => !excludeSet.has(l.key));
+const POOL_EXTRA = EXTRAS.filter((l) => !excludeSet.has(l.key));
+if (POOL_FIXED.length === 0 && POOL_EXTRA.length === 0) {
+  throw new Error("args.excludeLenses excludes every lens; nothing would review");
+}
+if (excludeSet.size > 0) {
+  log(
+    "Excluding " +
+      [...excludeSet].join(", ") +
+      " for this run; convergence will certify nothing about those domains",
+  );
+}
+if (startSet) {
+  const startable = [...startSet].filter((k) => !excludeSet.has(k));
+  if (startable.length === 0) {
+    throw new Error(
+      "args.startLenses names only lenses that args.excludeLenses removes",
+    );
+  }
+  log(
+    "Starting with " +
+      startable.join(", ") +
+      "; every other lens begins retired and first reads the proposal in the sweep",
+  );
+}
+
 function reviewPrompt(lens, round, fixedTitles, rejected) {
   let history = "";
   if (fixedTitles.length > 0) {
@@ -596,13 +731,19 @@ function reviewPrompt(lens, round, fixedTitles, rejected) {
     "\n\n" +
     lens.text +
     history +
+    (lensPrompt
+      ? "\n\nAdditional instruction from the caller of this run. It adds context or " +
+        "focus; it does not lower the finding bar above, and it does not make " +
+        "something a finding that the bar excludes:\n" +
+        lensPrompt
+      : "") +
     "\n\nWork method: read the proposal fully, then investigate the repository with Grep and targeted Reads to verify or refute its claims under your lens. Report your findings via the structured output (empty array if you find nothing that meets the bar)."
   );
 }
 
 function dedupPrompt(findings) {
   return (
-    "You merge duplicate review findings. Below is a JSON array of findings from several independent reviewers examining the same proposal. Merge entries that describe the same root error (even if phrased differently or found at different citation points): keep one entry per root error, choose the clearest title, and combine the strongest evidence. Do not drop distinct errors. Do not add new findings. Do not judge validity. Return the merged list.\n\nFindings:\n" +
+    "You merge duplicate review findings. Below is a JSON array of findings from several independent reviewers examining the same proposal. Merge entries that describe the same root error (even if phrased differently or found at different citation points): keep one entry per root error, choose the clearest title, and combine the strongest evidence. Do not drop distinct errors. Do not add new findings. Do not judge validity. Return the merged list.\n\nEach input finding carries a `lens` field naming the reviewer that produced it. Every entry you return MUST carry a `lenses` array holding the lens values of every input finding you merged into it, so a merge of three reviewers' findings returns all three. This is not cosmetic: the loop decides which reviewers keep running from which of their findings survive verification, and an entry returned without its `lenses` array makes that decision impossible.\n\nFindings:\n" +
     JSON.stringify(findings, null, 2)
   );
 }
@@ -659,6 +800,63 @@ function fixPrompt(confirmed, round) {
   );
 }
 
+// postFixPrompt is the narrow review of what the fixer just wrote. It exists
+// because fix-stage text is the newest and least-examined text in the proposal,
+// and the loop's own history records that fixers introduce their own errors:
+// predicate text that drifts from the design's invariants, corrected sections that
+// leave a parallel statement stale, and fresh citations that were never verified.
+// Before this step the only scrutiny that text received was the next round's
+// whole-document lenses, which are told the TITLES of what was fixed but never
+// what the fixer actually wrote. Under lens retirement that gap widens, because a
+// retired lens does not re-read anything until the sweep.
+//
+// The scope is deliberately the edit PLUS its blast radius rather than the edit
+// alone. Predicate drift is by definition an inconsistency between changed text
+// and text that did not change, so a reviewer confined to the edit cannot see it.
+function postFixPrompt(confirmed, fixSummary, round) {
+  return (
+    "You are the post-fix reviewer for round " +
+    round +
+    ". A fixer has just edited the proposal " +
+    path +
+    " to correct the confirmed findings below. Your job is narrow: verify the fixer's own work.\n\n" +
+    CONTEXT +
+    "\n\n" +
+    READ_ONLY +
+    "\n\nAnswer exactly three questions about the edits, and report only what fails:\n" +
+    "1. LANDED. For each confirmed finding, does the current text actually correct it? A fix that restates the problem, corrects one of two occurrences, or edits a neighbouring sentence instead of the wrong one has not landed.\n" +
+    "2. DRIFT. Did any edit introduce an inconsistency with text it did not touch? When the fix changed a predicate, an identifier, a count, a rule, or a decision, grep the proposal for every other place that states the same thing and confirm they now agree. This is the highest-yield check: the fixer edits one site and the parallel statements go stale.\n" +
+    "3. CITATIONS. Is every file:line citation in the newly written text real, and does the cited location say what the new text claims? Open them. A fixer under time pressure invents plausible line numbers.\n\n" +
+    "Locating the edits: the fixer's summary below names them. `git diff -- " +
+    path +
+    "` also shows changed regions, though it spans every uncommitted round rather than this one alone, so treat it as a locator and not as this round's diff.\n\n" +
+    "Report a failure of 1, 2, or 3 as a finding, with file:line evidence you personally read. Do NOT re-review the proposal at large, do NOT re-litigate the findings themselves or whether they were worth fixing, and do NOT report style. If the fixer's work is sound, return an empty findings list; that is the expected answer.\n\n" +
+    "Findings the fixer was asked to correct (JSON):\n" +
+    JSON.stringify(confirmed, null, 2) +
+    "\n\nThe fixer's own summary of the edits it made:\n" +
+    (fixSummary || "(the fixer returned no summary)")
+  );
+}
+
+function followUpFixPrompt(findings, round) {
+  return (
+    "You are the follow-up fixer for round " +
+    round +
+    ". A post-fix review of the previous fixer's edits to " +
+    path +
+    " found the defects below in that fixer's own work.\n\n" +
+    CONTEXT +
+    "\n\nHARD CONSTRAINT: the only file you may edit is " +
+    path +
+    ". Never modify anything under spec/, docs/, pkg/, charts/, or schemas/.\n\n" +
+    "Correct each defect with the smallest edit that fixes it. Re-verify every citation you touch with Grep or Read before writing it. When a defect is drift between a changed statement and its parallels, make every statement agree rather than reverting the original fix. Append your corrections as bullets to the SAME numbered pass subsection the previous fixer created in the proposal's adversarial-review-history section, rather than opening a new pass, because these are corrections to that pass and not a separate round. Follow " +
+    repo +
+    "/.claude/rules/doc-style.md.\n\nDefects to correct (JSON):\n" +
+    JSON.stringify(findings, null, 2) +
+    "\n\nReturn a short summary of each edit you made."
+  );
+}
+
 phase("Review");
 
 // robustAgent wraps agent() with script-level retries so a transient API failure
@@ -708,23 +906,135 @@ async function robustAgent(prompt, opts, attempts = 4) {
 const fixedTitles = [];
 const rejected = [];
 const history = [];
-let cleanStreak = 0;
 let round = 0;
 let reviewersFailed = false;
 
-while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
+// Lens retirement. Re-running a lens that just found nothing, over text its own
+// domain did not change, is the loop's largest avoidable cost: on a long run it
+// is the difference between every lens paying for every round and each lens
+// paying until it is satisfied. A lens that returns zero findings is retired and
+// stops running. When every lens has retired, one SWEEP round runs the entire
+// pool again over the final text. A lens that finds something in the sweep is
+// reactivated and the loop continues; when the active set drains again, another
+// sweep runs. Convergence requires a complete sweep of every lens, with zero
+// confirmed findings, over text nobody has changed since.
+//
+// This preserves what the two-consecutive-clean-rounds rule protected. That rule
+// existed because fixers introduce their own errors, so a clean round says
+// nothing about text the previous fixer wrote. Here every retirement is provisional
+// until the sweep re-reads the final text, so no lens certifies text it never saw.
+// Retirement is keyed on a genuine zero-finding return; a lens that FAILED after
+// robustAgent's retries is never retired, because a dropped lens contributes zero
+// findings and would otherwise retire itself by failing.
+const retired = new Set();
+let converged = false;
+let sweeps = 0;
+
+// startLenses is implemented by seeding the retired set rather than by narrowing
+// round one. A held-back lens is therefore treated exactly as a lens that has
+// already returned nothing: it does not run while the starting lenses are still
+// finding defects, and it first reads the proposal in the sweep, over text those
+// lenses have already driven clean. It rejoins the active set the moment it finds
+// something in that sweep, and from then on behaves like any other lens.
+//
+// This is strictly cheaper than deferring the held-back lenses to round two, and
+// it costs no guarantee, because convergence still requires a complete sweep of
+// every pool lens. The seeded state is provisional in exactly the way an earned
+// retirement is: no lens certifies text it never read.
+if (startSet) {
+  for (const l of POOL_FIXED.concat(POOL_EXTRA)) {
+    if (!startSet.has(l.key)) retired.add(l.key);
+  }
+}
+
+// applyRetirement closes out a round. A lens retires when NONE of its findings
+// survived verification, which covers two cases that cost the same and mean the
+// same thing for the loop: the lens that found nothing, and the lens whose every
+// finding two independent skeptics refuted. A lens that reliably produces findings
+// the verifiers reject is not earning the tokens it costs, and retiring it is safe
+// because the sweep re-runs every lens over the final text before anything is
+// certified.
+//
+// survivors is the set of lens keys credited with at least one confirmed finding.
+// A lens with a survivor is (re)activated, which on a sweep is what puts a lens
+// back to work after it finds a real defect in text it had previously cleared.
+//
+// A lens whose agent FAILED is left exactly as it was: a dropped lens contributes
+// no findings and is indistinguishable from a satisfied one, so retiring on
+// failure would let an outage retire the pool and certify a proposal.
+function applyRetirement(lenses, lensResults, survivors, round, note) {
+  const out = [];
+  const back = [];
+  lenses.forEach((l, i) => {
+    if (!lensResults[i]) return;
+    if (survivors.has(l.key)) {
+      if (retired.delete(l.key)) back.push(l.key);
+    } else if (!retired.has(l.key)) {
+      retired.add(l.key);
+      out.push(l.key);
+    }
+  });
+  if (out.length > 0) {
+    log(
+      "Round " +
+        round +
+        ": retiring " +
+        out.join(", ") +
+        " (" +
+        note +
+        "; re-runs only in the sweep)",
+    );
+  }
+  if (back.length > 0) {
+    log(
+      "Round " +
+        round +
+        ": reactivating " +
+        back.join(", ") +
+        " (a finding of its own survived verification)",
+    );
+  }
+}
+
+while (round < maxRounds && !converged) {
   round++;
-  const lenses = LENSES.concat([EXTRAS[(round - 1) % EXTRAS.length]]);
+  const activeFixed = POOL_FIXED.filter((l) => !retired.has(l.key));
+  const activeExtras = POOL_EXTRA.filter((l) => !retired.has(l.key));
+  const isSweep = activeFixed.length === 0 && activeExtras.length === 0;
+
+  let lenses;
+  if (isSweep) {
+    lenses = POOL_FIXED.concat(POOL_EXTRA);
+    sweeps++;
+  } else if (activeFixed.length === 0) {
+    // The fixed lenses are satisfied and only extras remain. Run every remaining
+    // extra in one round rather than rotating one per round, so the sweep is
+    // reached immediately instead of after one round per surviving extra.
+    lenses = activeExtras;
+  } else if (activeExtras.length === 0) {
+    lenses = activeFixed;
+  } else {
+    lenses = activeFixed.concat([
+      activeExtras[(round - 1) % activeExtras.length],
+    ]);
+  }
+
   log(
     "Round " +
       round +
-      ": launching " +
-      lenses.length +
-      " reviewers (clean streak " +
-      cleanStreak +
-      "/" +
-      CLEAN_TARGET +
-      ")",
+      (isSweep
+        ? ": FULL SWEEP " +
+          sweeps +
+          " over all " +
+          lenses.length +
+          " lenses (every lens had retired; a clean sweep converges)"
+        : ": launching " +
+          lenses.length +
+          " reviewers (" +
+          retired.size +
+          "/" +
+          (POOL_FIXED.length + POOL_EXTRA.length) +
+          " lenses retired)"),
   );
 
   // Barrier: the dedup step needs every reviewer's findings at once.
@@ -734,12 +1044,30 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
         robustAgent(reviewPrompt(l, round, fixedTitles, rejected), {
           label: "r" + round + ":review:" + l.key,
           phase: "Round " + round + ": review",
-          schema: FINDINGS,
+          schema: REVIEW_FINDINGS,
         }),
     ),
   );
   const failedLenses = lensResults.filter((r) => !r).length;
   const results = lensResults.filter(Boolean);
+
+  // Retire every lens that genuinely ran and found nothing; reactivate every lens
+  // that found something. On a normal round the reactivation arm is a no-op (an
+  // active lens is not in the set). On a sweep it is the mechanism that puts a
+  // lens back to work after it finds a defect in text it had previously cleared.
+  // A failed lens (r is null) is left exactly as it was, so a transient API
+  // failure can neither retire a lens nor resurrect one.
+  // Stamp every finding with the lens that produced it. Retirement is decided by
+  // which findings SURVIVE verification, and the dedup step merges findings across
+  // lenses, so this association must be recorded here, by the script, before any
+  // model has a chance to lose it.
+  lenses.forEach((l, i) => {
+    const r = lensResults[i];
+    if (r)
+      r.findings.forEach((f) => {
+        f.lens = l.key;
+      });
+  });
 
   if (results.length === 0) {
     log("Round " + round + ": every reviewer failed; stopping");
@@ -768,19 +1096,28 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
   log("Round " + round + ": " + raw.length + " raw findings");
 
   if (raw.length === 0) {
-    if (roundComplete) cleanStreak++;
-    else
+    // Nobody found anything, so nobody has a survivor: every lens that genuinely
+    // ran retires.
+    applyRetirement(lenses, lensResults, new Set(), round, "found nothing");
+    if (isSweep && roundComplete) {
+      converged = true;
+      log("Round " + round + ": full sweep found nothing; CONVERGED");
+    } else if (isSweep) {
       log(
         "Round " +
           round +
-          ": zero findings but round incomplete; NOT counting as clean",
+          ": sweep found nothing but was incomplete; NOT converging (the failed lenses stay active and re-run)",
       );
+    }
     history.push({
       round,
+      sweep: isSweep,
+      lenses: lenses.map((l) => l.key),
       raw: 0,
       deduped: 0,
       confirmed: 0,
       complete: roundComplete,
+      retiredAfter: [...retired],
     });
     continue;
   }
@@ -790,7 +1127,7 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
     const d = await robustAgent(dedupPrompt(raw), {
       label: "r" + round + ":dedup",
       phase: "Round " + round + ": review",
-      schema: FINDINGS,
+      schema: DEDUP_FINDINGS,
     });
     if (d && d.findings.length > 0) deduped = d.findings;
   }
@@ -860,26 +1197,72 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
       deduped.length +
       " findings confirmed",
   );
+
+  // Credit each surviving finding back to the lens or lenses that produced it.
+  // A finding carries `lens` from the stamping above; a merged finding carries
+  // `lenses`, the union the dedup step was asked to preserve.
+  const survivors = new Set();
+  for (const f of confirmed) {
+    const tags =
+      Array.isArray(f.lenses) && f.lenses.length > 0
+        ? f.lenses
+        : f.lens
+          ? [f.lens]
+          : [];
+    tags.forEach((t) => survivors.add(t));
+  }
+  // Attribution can only fail one way: the dedup model dropped the tags while
+  // merging. Retiring on an empty survivor set would then retire every lens on a
+  // round that actually confirmed defects, so fall back to the weaker but safe
+  // rule (retire only a lens that reported nothing) and say so.
+  if (confirmed.length > 0 && survivors.size === 0) {
+    log(
+      "Round " +
+        round +
+        ": dedup dropped the lens attribution; falling back to retiring only lenses that reported nothing",
+    );
+    lenses.forEach((l, i) => {
+      const r = lensResults[i];
+      if (r && r.findings.length > 0) survivors.add(l.key);
+    });
+  }
+  applyRetirement(
+    lenses,
+    lensResults,
+    survivors,
+    round,
+    "no finding of its own survived verification",
+  );
+
   history.push({
     round,
+    sweep: isSweep,
+    lenses: lenses.map((l) => l.key),
     raw: raw.length,
     deduped: deduped.length,
     confirmed: confirmed.length,
     confirmedTitles: confirmed.map((f) => f.title),
     complete: roundComplete,
+    retiredAfter: [...retired],
   });
 
   if (confirmed.length === 0) {
-    if (roundComplete) cleanStreak++;
-    else
+    if (isSweep && roundComplete) {
+      converged = true;
       log(
         "Round " +
           round +
-          ": zero confirmed findings but round incomplete (reviewer/verifier failures); NOT counting as clean",
+          ": full sweep produced no confirmed findings; CONVERGED",
       );
+    } else if (isSweep) {
+      log(
+        "Round " +
+          round +
+          ": sweep incomplete (reviewer or verifier failures); NOT converging",
+      );
+    }
     continue;
   }
-  cleanStreak = 0;
 
   const fixSummary = await robustAgent(fixPrompt(confirmed, round), {
     label: "r" + round + ":fix",
@@ -887,9 +1270,50 @@ while (round < maxRounds && cleanStreak < CLEAN_TARGET) {
   });
   confirmed.forEach((f) => fixedTitles.push(f.title));
   history[history.length - 1].fixSummary = fixSummary || "fixer unavailable";
+
+  // Narrow post-fix review of the fixer's own edits, then at most ONE follow-up
+  // fix. The cap is deliberate: this is a correction pass on fresh text, not a
+  // second convergence loop, and an unbounded review-fix cycle here would hide a
+  // genuinely contested edit inside a round instead of surfacing it to the next
+  // round's lenses and, ultimately, to the sweep.
+  const postFix = await robustAgent(
+    postFixPrompt(confirmed, fixSummary, round),
+    {
+      label: "r" + round + ":post-fix-review",
+      phase: "Round " + round + ": fix",
+      schema: FINDINGS,
+    },
+  );
+  if (!postFix) {
+    log("Round " + round + ": post-fix review unavailable after retries");
+    history[history.length - 1].postFixReview = "unavailable";
+  } else if (postFix.findings.length === 0) {
+    log("Round " + round + ": post-fix review found no defect in the fixer's work");
+    history[history.length - 1].postFixReview = "clean";
+  } else {
+    log(
+      "Round " +
+        round +
+        ": post-fix review found " +
+        postFix.findings.length +
+        " defect(s) in the fixer's own edits; correcting",
+    );
+    const followUp = await robustAgent(
+      followUpFixPrompt(postFix.findings, round),
+      { label: "r" + round + ":follow-up-fix", phase: "Round " + round + ": fix" },
+    );
+    // Recorded in fixedTitles so later rounds do not re-litigate them, and in
+    // history so a run where the fixer repeatedly needed correction is visible.
+    postFix.findings.forEach((f) => fixedTitles.push(f.title));
+    history[history.length - 1].postFixReview = postFix.findings.map(
+      (f) => f.title,
+    );
+    history[history.length - 1].followUpFixSummary =
+      followUp || "follow-up fixer unavailable";
+  }
 }
 
-const converged = cleanStreak >= CLEAN_TARGET && !reviewersFailed;
+converged = converged && !reviewersFailed;
 if (converged) {
   await robustAgent(
     "Update one proposal's Status bullet to record verification.\n\n" +
@@ -924,7 +1348,13 @@ return {
     converged,
     reviewersFailed,
     rounds: round,
-    cleanStreak,
+    sweeps,
+    retiredLenses: [...retired],
+    // Echo the caller's lens controls. An excluded lens certifies nothing, so a
+    // reader of this result must be able to see what the run did not review.
+    excludedLenses: [...excludeSet],
+    startLenses: startSet ? [...startSet] : null,
+    lensPromptApplied: lensPrompt.length > 0,
     totalFixed: fixedTitles.length,
     fixedTitles,
     rejectedTitles: rejected.map((r) => r.title),
