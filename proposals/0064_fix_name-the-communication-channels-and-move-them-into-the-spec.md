@@ -1,6 +1,6 @@
 # Proposal: Name the communication channels, move their contract into the specification, and rewrite every reference by script
 
-- **Status:** Draft for review.
+- **Status:** Verified (2026-07-29). Converged after 11 adversarial review rounds (15 findings fixed); awaiting sign-off.
 - **Date:** 2026-07-27.
 - **Scope:** The first three steps of `gateway-runtime-comms-remediation.md`, which are the foundation
   every later remediation step depends on. The plan's tooling step is included whole rather than split,
@@ -21,13 +21,13 @@ code, or doc file. Apply the changes in the "Proposed changes" section after sig
 ## 0. Context an implementor should read first
 
 Two documents at the repository root are the source material, and an implementor should read both before
-starting. This proposal is deliberately shorter than either, and it does not restate them.
+starting. This proposal is shorter than either, and it does not restate them.
 
 **`gateway-runtime-comms.md`** maps every communication channel between the gateway, the agent pod, the
 adapter, and the runtime, traces each end-to-end scenario, and records thirty-two verified gaps. It was
 built from independent per-surface and per-scenario derivations and then adversarially verified, and
-seventeen of twenty load-bearing claims required correction during that pass. Its status vocabulary is
-load-bearing and this proposal adopts it: `WIRED` means reachable from production code, `UNWIRED` means
+seventeen of twenty claims the analysis rests on required correction during that pass. Its status
+vocabulary carries exact meanings and this proposal adopts it: `WIRED` means reachable from production code, `UNWIRED` means
 implemented with no production caller, and `ABSENT` means specified and not implemented. Section 3 is the
 channel inventory this proposal names, section 6 holds the gap records, and section 8 records what the
 analysis could not establish.
@@ -43,14 +43,14 @@ lives.
 **Why these steps come first.** Every one of the remaining twenty-two steps names a channel, cites a
 contract card, and registers a claim. None of those exist today. The plan's critical path begins here for
 that reason, and the concurrency it later sustains depends on the decomposition and the gates this
-proposal delivers. A rename performed after later steps land costs more with each one, because the
+proposal adds. A rename performed after later steps land costs more with each one, because the
 identifier spreads into new packages, new services, new flags, and their tests at every tier.
 
-**What this proposal deliberately does not do.** It closes no capability gap and changes no runtime
+**What this proposal does not do.** It closes no capability gap and changes no runtime
 behavior. Its output is a vocabulary, a normative home for the contract, and the tooling and gates that
 keep both true. Judged on its own it looks like overhead. Judged as the substrate for twenty-two steps
-that would otherwise each pay the re-derivation cost that produced the reference document, it is the
-cheapest part of the sequence.
+that would otherwise each pay the re-derivation cost that produced the reference document, it costs less
+than the alternative.
 
 ## 1. Problem
 
@@ -68,21 +68,34 @@ column cannot mean one thing across those three kinds.
 **2. Two unrelated mechanisms share a name.** The adapter-to-runtime Unix-socket JSON Lines channel
 (`pkg/adapter/lifecyclechannel.go`) and the gateway-to-adapter gRPC streaming RPC
 (`schemas/lenny-adapter.proto`, handler `pkg/adapter/controlchannel.go`) are both called a lifecycle
-channel. They run between different participants, in different directions, over different transports. The
-collision has already produced incorrect normative text: the shipped
+channel. They run between different participants, in different directions, and over different transports.
+The collision has already produced incorrect normative text: the shipped
 `schemas/lenny-adapter-jsonl.schema.json` describes intra-pod frames as riding the gRPC stream, and both
-halves of that description are wrong. This proposal's own analysis had to correct the same conflation
-twice before it held.
+halves of that description are wrong. The glossary entry that owns the term
+(`docs/reference/glossary.md:206-209`) carries the same conflation, and it is the page a reader consults
+to resolve the ambiguity. This proposal's own analysis had to correct the same conflation twice before it
+held.
 
-**3. The contract is scattered, and one authoritative sentence is false.** Answering how the gateway talks
+**3. The contract is scattered, and one authoritative line collapses it.** Answering how the gateway talks
 to the pod requires reading across `spec/04`, `spec/07`, `spec/10`, `spec/13`, and `spec/15`. The
-architecture diagram at `spec/03_high-level-architecture.md` renders the whole surface as
-`Gateway <--mTLS--> Pods (gRPC control protocol)`, which names one protocol where several run and asserts
-mTLS the rendered podspec does not provide on either container.
+architecture diagram at `spec/03_high-level-architecture.md` line 29 renders the whole surface as
+`Gateway ←──mTLS──→ Pods (gRPC control protocol)`, which names one protocol where several run and one
+arrow where several channels do. The mTLS half of that line is a normative requirement the specification
+states elsewhere and this proposal keeps: `spec/10_gateway-internals.md` line 190 lists the gateway-to-pod
+hop as mTLS plus a projected service account token, NET-060 at `spec/10_gateway-internals.md` line 321
+requires symmetric SAN validation in both directions, `spec/15_external-api-surface.md` line 1456 states
+gateway-to-pod communication over gRPC and mTLS, and `spec/04_system-components.md` line 641 titles the
+adapter contract as an mTLS API. The agent podspec does not yet mount the certificate material those rules
+require, which is an implementation gap the reference document records and a later remediation step closes,
+so it becomes a claim-register row with status `ABSENT` rather than a specification edit here.
 
-A fourth problem constrains how the first three can be fixed. The repository carries **15,377
-`§X line N` citations across 2,353 Go files**. Any specification change that shifts a line invalidates
-them, and `spec/10` §10.1 begins at line 3, so inserting a heading near the top of that file moves almost
+A fourth problem constrains how the first three can be fixed. The repository carries **15,376 citations
+of the `§X line N` and `§X lines N-M` forms across 2,353 Go files**, and a further **3,666 across 264
+non-Go files**, which sit
+mostly under `charts/` (103 files) and `migrations/` (110 files) and appear in the SQL (`-- spec:`) and
+YAML (`# spec:`) comment dialects, in YAML block scalars, and in JSON string values. Any specification
+change that shifts a line invalidates them wherever they are carried,
+and `spec/10` §10.1 begins at line 3, so inserting a heading near the top of that file moves almost
 every citation into it. Hand-editing is not available at this scale, and neither is leaving the citations
 stale.
 
@@ -97,24 +110,58 @@ stale.
   stream while the adapter originates every message on it. Collapsing those into one "direction" column is
   the root of the naming collision rather than a symptom of it, so the register carries both.
 
-- **Identifiers are mnemonic, never positional.** `CH-EVENTSTREAM`, not `C6`. A channel inserted between
-  two others must not renumber its neighbours, and an engineer has to be able to say the identifier out
-  loud.
+- **Identifiers are mnemonic rather than positional.** A channel is named `CH-ADAPTEREVENTS` instead of
+  `C6`. A channel inserted between two others must not renumber its neighbours, and an engineer has to be
+  able to say the identifier out loud. The identifier is a mnemonic for the conversation, and the endpoint
+  pair, the plane, the two directions, and the transport are register columns, so an identifier is never
+  read as the authoritative statement of any of them.
 
-- **Two words are reserved.** Neither `lifecycle` nor `control` may appear as a bare noun phrase anywhere
-  in `spec/`, `docs/`, `schemas/`, or a Go doc comment. Both may appear inside a canonical identifier.
-  This is the rule that prevents the collision from reforming.
+- **Two words are reserved, and no identifier reuses a bound term.** Neither `lifecycle` nor `control` may
+  appear as a bare noun phrase anywhere in `spec/`, `docs/`, `schemas/`, or a Go doc comment. Both may
+  appear inside a canonical identifier and inside a markdown anchor identifier, which is an addressable
+  link target rather than prose. Separately, an identifier stem may not reuse a term the
+  specification already binds to an unrelated mechanism. Together these are the rules that prevent the
+  collision from reforming.
+
+- **C6 is `CH-ADAPTEREVENTS`.** The naming table in `gateway-runtime-comms-remediation.md` §3.4
+  originally gave C6 the identifier `CH-EVENTSTREAM`. This proposal's review renamed it, and the plan's
+  naming table now carries `CH-ADAPTEREVENTS` together with a provenance note recording the rename and
+  prohibiting the retired stem. The plan's R1b scope table was written against the retired identifier and
+  still spells the rename targets from it, at `gateway-runtime-comms-remediation.md` line 418 for the
+  proto RPC and its two message types and line 423 for the Go file stem. Those spellings are superseded:
+  SPEC-2 states the carrier spellings for `CH-ADAPTEREVENTS` under N4 and they govern, and SPEC-2 stages
+  the correction of those two rows in the same change so the retired stem is not reintroduced through
+  them. The rename was made because
+  "event stream"
+  is already bound in this specification to the operational event stream (`spec/README.md:154`,
+  `spec/25_agent-operability.md` §25.5), to the per-session event stream (`spec/07_session-lifecycle.md`
+  line 286), and to `pkg/ops/events/service.go`. Under N4 the identifier becomes a Go file stem and a
+  metric label value, so adopting it would seed a second collision of the class this proposal exists to
+  retire. `CH-ADAPTEREVENTS` names the author of the messages and is unbound in the tree. Every other row
+  of the plan's naming table is adopted unchanged.
 
 - **New specification sections append; nothing is renumbered.** `spec/` ends at `27_web-playground.md`, so
-  `spec/28` and `spec/29` are additive and no existing section number changes.
+  `spec/28` and `spec/29` are additive and no existing section number changes. `spec/README.md` is a
+  hand-maintained table of contents with no generator, so it gains top-level and subsection rows for
+  `spec/28` and `spec/29` and revised rows for the reduced sections in the same change.
 
 - **Every reference is rewritten by script, and completeness is proven by a gate.** This proposal names no
   edit sites. For each class of change it specifies the script, the register that drives it, and the gate
   that fails if a reference is missed. Measured counts appear only to convey scale.
 
 - **Line citations are retired in favour of anchors.** The forward-looking citation form names a heading
-  (`§28.5.2 CH-EVENTSTREAM`) rather than a line. An anchor survives an insertion above it; a line number
-  does not. A ratchet gate keeps the retired population from regrowing.
+  (`§28.5.2 CH-ADAPTEREVENTS`) rather than a line. An anchor survives an insertion above it; a line number
+  does not. A ratchet gate keeps the retired population from regrowing. The convention is normative as
+  N8 in §28.1, so the gates and their tests cite a rule the specification states.
+
+- **Measured populations are scale indicators, and every enumerated class carries a residual.** A count
+  or a file list in this proposal states what was measured, at a commit, with a reproducing command. It
+  does not define a class and nothing keys off it: every gate, exit criterion, and register baseline
+  computes the number it needs when it runs. An enumeration lists the members known at writing and seeds
+  the class's residual register; the class itself is defined by a deliberately broad predicate, and
+  anything matching that predicate which is in neither the enumeration nor that register is a residual
+  that fails tier 0 by name. A residual is closed by registering the member as in-class or as an explicit
+  exclusion with a reason, never by widening a gate. See §4.7.
 
 - **A section that gives up content names its successor in prose.** A reader arriving at a reduced section
   by a stale reference lands on a pointer rather than on adjacent text they might mistake for the answer.
@@ -123,8 +170,8 @@ stale.
 
 ### 3.1 What lands
 
-Two new specification files, one naming law, three registers, and the tooling that migrates every
-reference to them.
+This proposal lands two new specification files, one naming law, three registers, and the tooling that
+migrates every reference to them.
 
 `spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
 three registers, the contract cards grouped by participant edge, the exclusivity model, and the
@@ -135,21 +182,49 @@ direction a visible block rather than two rows lost in a twenty-two row table.
 naming channels by identifier.
 
 Existing sections keep their subjects and link to `spec/28` for the channel contract. `spec/03` keeps its
-diagram with the false line corrected and a pointer added. `spec/15` §15.4 is reduced to the wire-artifact
-pointer it already claims to be.
+diagram with the collapsed protocol line corrected and a pointer added. `spec/15` §15.4 gives up its
+channel-contract prose, which is the normative-ownership sentence in the §15.4 preamble, and the
+§15.4.1 and §15.4.2 subsections, and keeps the
+wire-artifact pointer it already claims to be, which is the artifact list the preamble opens with together
+with the release-tag versioning, breaking-change, and reference-implementation sentences that state the
+compatibility contract for those same artifacts. The SDK-warm demotion contract states an obligation on the
+runtime author's adapter, so it stays in §15.4 with the subsections below it. Its remaining subsections keep their subjects, because
+§15.4.3 Runtime Integration Levels, §15.4.4 Sample Echo Runtime, §15.4.5 Runtime Author Roadmap, and
+§15.4.6 Conformance Test Suite state the runtime-author contract rather than a channel contract, and §28
+has no heading that owns a runtime-author contract. Those four headings, their anchors, and their subjects
+survive the reduction, and no content moves out of them. Their prose is still rewritten in place by the
+name pass, the identifier pass, and the anchor pass, as SPEC-3 states.
 
 ### 3.2 The two forced renames
 
 Of the twenty-two entries in the reference inventory, twenty are a specification and documentation change
-only. Two carry a code and wire rename, because the colliding word is load-bearing on machine-readable
+only. Two carry a code and wire rename, because the colliding word is embedded in machine-readable
 surfaces that prose cannot reach: normative field tables, the adapter manifest emitter, three runtime SDK
 public APIs, an adapter flag, a gRPC method name, and the third-party runtime author contract.
 
-`CH-EVENTSTREAM` is the adapter-authored control event stream, which the gateway dials and the adapter
-pushes on. `CH-RUNTIMEOPS` is the adapter-to-runtime operations channel, which the adapter listens on and
-the runtime dials. Naming both makes the direction and the participants legible from the identifier alone.
+`CH-ADAPTEREVENTS` is the adapter-authored event stream on the gRPC control plane, which the gateway
+dials and the adapter pushes on. `CH-RUNTIMEOPS` is the adapter-to-runtime operations channel, which the
+adapter listens on and the runtime dials. Each identifier is a mnemonic that distinguishes the two
+conversations. The participants, the dial direction, and the authority direction are read from the
+register rows in §28.3 rather than from the identifier.
 
-Two further entries carry a text correction inside a shipped wire artifact without a rename.
+Two further entries carry a text correction inside a shipped wire artifact without a rename, and the
+glossary entry that owns the colliding term states the wrong mechanism. SPEC-2 stages those three by hand,
+together with the artifact-scope sentence at `spec/15_external-api-surface.md` line 1463, which describes
+one of the same artifacts from the specification side and makes the mirrored error.
+The wrong-mechanism class is not bounded, and this proposal no longer claims it is. The colliding
+phrase is two-valued inside `spec/` as well, and a set of normative sentences already attribute the
+intra-pod channel's frames to the gateway. `spec/07_session-lifecycle.md` line 324 and
+`spec/15_external-api-surface.md` line 1755 both say the gateway "sends an interrupt signal on the
+lifecycle channel" and waits for `interrupt_acknowledged`, while `spec/04_system-components.md` line 702
+defines that channel as an abstract Unix socket the runtime dials and the adapter listens on, and the
+gateway's actual hop is the unary `Adapter.Interrupt` RPC with the adapter then writing `interrupt_request`
+on the intra-pod socket. `spec/05_runtime-registry-and-pool-model.md` line 540 says "The gateway is
+notified via the lifecycle channel" for slot failure, which is an adapter-to-gateway event. One paragraph
+at `spec/10_gateway-internals.md` line 50 uses the phrase in both senses two clauses apart. These
+sentences are tolerable today because the phrase is ambiguous, and a substitution makes each of them
+precise and false. They are corrected by hand in SPEC-1, and the class the naming register must resolve is
+every prose site rather than a fixed list.
 
 ### 3.3 Why the renames must happen now
 
@@ -160,57 +235,137 @@ the first of the sequence rather than a cleanup at the end.
 
 ### 3.4 The migration is script-driven
 
-This is the load-bearing design decision, and it follows from scale. The changes divide into four classes,
-each with a script, a register that drives it, and a gate that proves completeness.
+This design decision follows from scale. The changes divide into the classes
+below. Each script-driven class names a script, a register that drives it, and a gate that proves
+completeness. The hand-authored classes are those where no substitution rule produces the content, and
+each of those names its edit sites explicitly. One class is neither: a derived artifact is regenerated
+from the source the passes rewrite rather than edited, and its gate is the existing no-drift test.
 
 | Class | Driven by | Performed by | Proven by |
 |:--|:--|:--|:--|
-| Reserved-word removal from prose | the naming law | `scripts/specshift` name pass | the naming lint, which fails on any bare reserved noun phrase |
-| Identifier rename across code, schemas, SDKs, charts, and docs | the naming table in §28.3 | `scripts/specshift` identifier pass | the identifier-resolution gate, which fails when an identifier resolves to more than one spelling |
-| Section-anchor redirect for relocated content | `tests/spec-anchor-moves.json` | the citation resolver, then the `specshift` anchor pass | tier 0 fails an entry whose successor anchor does not exist |
-| Line-citation retirement | `tests/registers/line-citations.yaml` | `scripts/specshift` line pass | the line-citation ratchet, which fails a file whose count rises |
+| Reserved-word removal from prose | `tests/registers/reserved-phrase-senses.yaml`, keyed by file and occurrence, which maps each reserved-phrase site to the canonical identifier that replaces it, drawn from the whole §28 identifier space of links, channels, and registers rather than from the channel register alone | `scripts/specshift` name pass, which fails a site with no register entry rather than substituting a default and which excludes markdown anchor identifiers per N3 | the naming lint, which fails on any bare reserved noun phrase outside a markdown anchor identifier, reading the same exclusion the pass reads |
+| Identifier rename across code, schemas, SDKs, charts, and docs | the naming table in §28.3, plus `tests/registers/identifier-senses.yaml`, keyed by file and occurrence, carrying an entry for every occurrence of a retired spelling whose site the pass cannot prove is the channel, which covers both a spelling the table maps to more than one channel and a single-channel spelling appearing at a site that is not a channel | `scripts/specshift` identifier pass, which fails a site with no register entry rather than substituting a default | the identifier-resolution gate, which fails when an identifier resolves to more than one spelling and which reads a retired spelling per context so an occurrence the register records as not a channel does not fail it, and the tier-0 assertion over the `coordinatorHoldAllowedMethods` entries in `pkg/adapter/holdstate.go`, that an entry whose service part is `lenny.adapter.v1.Adapter` names a method or stream `Adapter_ServiceDesc` declares and an entry whose service part is another service names a method of a service the adapter registers |
+| Section-anchor redirect in spec citations | `tests/spec-anchor-moves.json` | the citation resolver, then the `specshift` anchor pass | tier 0 fails an entry whose successor anchor does not exist |
+| Markdown cross-reference redirect in `spec/` and `docs/` | `tests/spec-anchor-moves.json` | the `specshift` anchor pass, extended to every intra-repo markdown fragment link the fragment-link gate reads, which is a link whose target is a tracked `.md` file or the citing page itself, so the same-page `[...](#anchor)` form is inside the pass as well as the file-qualified `[...](NN_file.md#anchor)` form | the fragment-link gate, which fails any intra-repo markdown fragment link that resolves to neither an existing heading slug nor an existing explicit kramdown anchor attribute |
+| Line-citation retirement wherever the retired citation form §4.6 states appears, in every spelling that form covers, which includes the section-level spelling (`§10 line 437`), the multi-member spellings whatever separates the members (`§4.8 lines 1057-1058, 1077`, `§10.7 line 694 / line 743`, `§10 line 437 ("...") + line 443 ("...")`, and `§10.6 line 601, line 629`), the qualified spelling (`§11.7 item 3 line 364`) and the trailing-gloss spelling (`§7.3 line 408 step (e)`), the en-dash and em-dash range spellings (`§4.4 lines 263–291`), the path-form spelling (`spec/04_system-components.md line 1145`), the colon spelling in both its variants (`§17.6:404` and `spec/15_external-api-surface.md:1315`), and any of those spellings wrapped across two comment lines, each consumed whole | `tests/registers/line-citations.yaml`, keyed per file | `scripts/specshift` line pass, with the straddling range citations §4.6 enumerates hand-corrected in SPEC-4 because the pass fails them rather than guessing an anchor | the line-citation ratchet, which fails a file whose count rises |
+| Regeneration of a derived artifact whose source the passes rewrite | the generated-artifact denylist in `scripts/specshift` | `make generate`, `make generate-proto`, `go generate ./pkg/gateway/mcpfabric/mcptools/...`, `go run ./cmd/lenny-chart-schema-gen`, `go run ./cmd/lenny-ocsf-mapping-gen`, the hand-applied CRD post-generation re-application, and the chart-to-embedded CRD re-copy, run as the exit criterion of the pass that touched the source | `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4`, `TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437`, `TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437`, `TestEmbeddedCRDsPreserveUnknownFields_spec_10_437`, the new tier-0 proto no-drift test, `TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386`, `TestGeneratedToolsMatchOpenAPI_spec_25_12`, `TestSchemaIsCommitted_spec_17_6_655`, and `TestMappingYAMLInSync`, each of which fails on drift between a derived file and its source |
+| Specification prose, heading slugs, and intra-spec links pinned as Go string literals in a `tests/tier11_docs/` reconciliation test | the register of every Go string literal under `tests/tier11_docs/` that names a spec heading slug, an intra-spec markdown link, or pinned spec prose, which includes but is not limited to the `specSection`, `requireLine`, and `requireAllContain` literals | the `specshift` name pass and the reduction sub-steps, extended to those literals | tier 11, run as the exit criterion of every sub-step that edits pinned prose |
+| Specification index entries in `spec/README.md` | the `## N` and `### N.M` headings under `spec/`, the deeper headings the index already carries, and the §28.5 card headings | hand-authored in the same change as the heading | the heading walker, which fails an in-scope heading with no index entry whose anchor resolves |
+| Test-harness contract prose in `TESTING.md` that enumerates a value the tooling changes, which is every §7 field-semantics sentence closing an enum the producer widens plus the §21.3 infrastructure-failure sentence | the `UNVERIFIED` verdict state and the `unverified` tier status TOOL-1 adds | hand-authored in the same change as the constant, because no substitution rule produces the sentence | review, because no gate reads a prose enumeration; those sentences are outside every pass's scope even though the rest of the file is not, and TOOL-1 names them and the change that stages them |
+| Reserved noun phrases and retired channel identifiers in the tracked root-level contract documents `README.md` and `TESTING.md` | `tests/registers/reserved-phrase-senses.yaml` and `tests/registers/identifier-senses.yaml`, on the same per-occurrence terms as the `spec/` and `docs/` sites | the `specshift` name and identifier passes, whose walk covers tracked root-level markdown under the exclusion list N3 states | the naming lint and the identifier-resolution gate, whose scope is the same walk, so the gate that reads the whole tree has a pass that can write every file it reads |
+| Correcting a description the collision made wrong | `tests/registers/reserved-phrase-senses.yaml` | hand-authored | review, because no gate reads meaning; the naming lint and the identifier gate both pass a semantically wrong sentence that carries a canonical spelling |
+| A sentence that a reduction falsifies, where no pass repairs its meaning, because the sentence carries no line citation and no moved anchor, and any reserved phrase it carries is rewritten to the current spelling while the false statement stands | the reductions SPEC-3 lands | hand-authored in the same change as the reduction, and enumerated there; the members are the `spec/15` §15.3, §15.7, and §15.4.5 sentences, the three shipped schema descriptions, and the `docs/api/internal.md` binary-protocol pointer SPEC-3 lists | review, plus the tier-11 successor-pointer check where the rewritten sentence names a successor heading |
+| An inbound reference into a retired anchor whose cited material is carved out of the reduction and stays where it is, so the anchor map's single successor for that anchor would send the reference to the wrong heading. The class is every reference into a retired anchor whose cited material stays where it is, in any carrier the anchor pass writes, which is the markdown link form and the bare `§X.Y`-form section citation in a comment or in prose alike | the carve-outs SPEC-3 states with the links it enumerates there, plus `tests/registers/anchor-senses.yaml`, keyed by file and occurrence, which records the destination anchor of every occurrence of a retired anchor the map alone cannot decide, and which SPEC-4 retires with the map | hand-authored in the same change as the split for the markdown-link members, before any anchor pass runs, which today are the seven `spec/07_session-lifecycle.md` links into `1541-adapterbinary-protocol` that cite `MessageEnvelope` material, the six same-page links into the same anchor inside `spec/15_external-api-surface.md` that cite it, and the absolute GitHub URL at `docs/reference/adapter-contract.md` line 371 that cites the same anchor for the Translation Fidelity Matrix; the `specshift` anchor pass for the bare section-citation members, driven per occurrence by the sense register and failing an occurrence with no entry rather than substituting the map's single successor | review, plus the fragment-link gate, which confirms the hand-written target resolves for the intra-repo link members; the absolute-URL member is covered by review alone, because the gate does not read an absolute URL; and TEST-1's anchor-pass cases, which pin the fail-closed path for a bare citation with no register entry and pin that a citation of carved-out material resolves to the surviving heading |
+| A same-page markdown fragment link carried inside a block a reduction relocates to another file, whose target heading stays behind, so the link breaks although neither it nor its target changed | the blocks SPEC-3 relocates, and the links it enumerates there | hand-authored in the same change that moves the block, rewritten to the file-qualified form against the file the block left; the anchor pass cannot reach them because the map is keyed by retired anchor and these targets survive | the fragment-link gate, which is red on a same-page fragment that no longer resolves against its new page |
+| A pre-existing intra-repo markdown fragment link whose target heading does not exist | the seven links SPEC-4 enumerates | hand-authored in the same change as the fragment-link gate | the fragment-link gate, which is green on introduction once they are corrected |
 
-No list of edit sites appears in this proposal, and none should appear in the applied change. A list is
-stale the moment a step merges, and a reviewer cannot verify one at this scale. A gate can.
+No list of edit sites appears in this proposal for the script-driven classes, and none should appear in
+the applied change. A list is stale the moment a step merges, and a reviewer cannot verify one at this
+scale, while a gate can. The hand-authored classes are bounded and are enumerated where they land, and the
+few sites the script-driven classes name explicitly are named because a gate or a served artifact depends
+on them rather than as an attempt at enumeration.
 
 ### 3.5 Sequencing inside the proposal
 
-Four sub-steps, in order. The tooling is first because the later three depend on it.
+The sub-steps below are applied in order. The tooling comes first because the others depend on it.
 
-1. **Tooling.** `scripts/specshift`, the citation resolver, the heading walker, the naming lint, the
-   line-citation ratchet, and the register contract they share.
+1. **Tooling.** `scripts/specshift`, the citation resolver, the line-citation ratchet, the proto no-drift
+   test, the change-graph completeness check, the skip-reason classifier,
+   the register contract they share, and the residual gate §4.7 defines together with its checks for the
+   classes whose registers this sub-step seeds. These are the gates TOOL-1 seeds a baseline for or that
+   are green on the unmodified tree, so each one lands green in this sub-step.
 2. **Naming law, registers, and prose.** The law, the three registers, the reserved-word removal, and the
-   `spec/03` correction. No wire surface changes.
+   `spec/03` correction. No wire surface changes. The naming lint lands here, because this is the sub-step
+   that removes the reserved phrases the lint reads.
 3. **The wire contract change.** The two renames that reach the proto, the manifest, the SDKs, the flag,
-   and the runtime author contract, applied as one exclusive change so no other work contends with it.
+   and the runtime author contract, applied as one exclusive change so no other work contends with it. The
+   identifier-resolution gate and the `coordinatorHoldAllowedMethods` assertion land here, because this is
+   the sub-step that collapses each retired spelling to one canonical identifier.
 4. **The new sections, and the anchor and citation rewrite.** `spec/28` and `spec/29`, the reductions with
    their successor pointers, and the mechanical retirement of the redirected anchors and the line
-   citations.
+   citations. The heading walker, the tier-11 successor-pointer check, and the claim register's
+   schema-only validator land with the new sections, the reductions, and the seeded register, and the
+   fragment-link gate lands with the anchor pass that rewrites the links into the
+   retired anchors. The gate-integrity meta-gate lands here too, because it ranges over the gates this
+   proposal registers and the fragment-link gate is the last of them, so this is the first sub-step at
+   whose exit every name on its fixed list is registered.
+5. **The gate cases.** The accept, reject, and boundary cases for every gate the four sub-steps above
+   land, plus the register-contract and validator batteries.
+
+Each gate has exactly one landing sub-step, and it is the sub-step that supplies its route to green. A
+gate whose route to green is a baseline TOOL-1 seeds lands in step 1; a gate whose route to green is a
+content change lands with that content. TEST-1 adds the cases rather than the gates, so no gate is staged
+twice and none lands at tier 0 before the sub-step that makes it green.
+
+The residual gate is the one gate whose landing is stated per class. §4.7 gives each enumerated class its
+own residual check over that class's residual register, and each check lands with the sub-step that seeds
+that register: the line-citation, generated-artifact, change-graph-coverage, and skip-reason classes in step 1,
+the reserved-phrase class in step 2, the identifier class in step 3, and the anchor class in step 4. Each
+check therefore has exactly one landing sub-step under the same rule, and none reaches tier 0 before the
+register that makes it green exists.
 
 ## 4. Detailed design
 
 ### 4.1 The naming law
 
-Seven rules, normative in §28.1.
+The rules below are normative in §28.1.
 
-- **N1.** A channel's canonical name states the endpoint pair and the plane, in that order. It never
-  states the transport, because the transport is a column in the register.
+- **N1.** A channel's canonical identifier is a mnemonic for the conversation it carries, chosen so that
+  no two channels on the same boundary share a stem. The endpoint pair, the plane, the dial direction, the
+  authority direction, and the transport are register columns in §28.3, so an identifier is not required
+  to encode any of them and is never read as the authoritative statement of one. N1 is a review-time rule
+  and carries no gate, because a mnemonic's fitness is a judgement.
 - **N2.** Identifiers are mnemonic, uppercase, and hyphenated. Positional identifiers are not used.
-- **N3.** `lifecycle` and `control` are reserved and may not appear as bare noun phrases in `spec/`,
-  `docs/`, `schemas/`, or a Go doc comment.
-- **N4.** One identifier per channel, everywhere: the Go package or file name stem, the proto RPC name
-  stem, the metric label value, and the test name fragment for a test scoped to one channel. A gate or a
-  test spanning channels is named for the invariant it enforces and carries no channel identifier.
+- **N3.** `lifecycle` and `control` are reserved and may not appear as bare noun phrases, in either the
+  space-separated spelling or the hyphenated compound spelling, in `spec/`,
+  `docs/`, `schemas/`, a Go doc comment in a tracked Go file, or a tracked root-level markdown document
+  the exclusion list below leaves in scope, of which `README.md` and `TESTING.md` are the two that carry
+  the phrase today. N3 describes the two banned spellings rather than reproducing them, because §28.1 is
+  itself under `spec/` and the naming lint reads it like any other file in the domain, so a quoted
+  specimen would fail the lint in the section that states the rule. The literal spellings are carried in
+  `.claude/rules/channel-naming.md` and in the lint's own matcher, both of which sit outside the domain
+  N3 names. The excluded root-level files are the historical audit records
+  `BUILD-GAPS.md` and `TEST-GAPS.md`, the two root planning documents, and the build and queue records
+  `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, excluded in the same way `proposals/` is,
+  because each records findings, plans, and decisions as they were written rather than the current
+  contract. That exclusion list is the one the name pass, the identifier pass, the naming lint, and the
+  identifier-resolution gate all read, so every file those gates read has a pass that can write it. A
+  markdown anchor identifier is outside the reserved-phrase matcher in both spellings: a kramdown `{: #id }`
+  attribute value and the fragment of an intra-repo markdown link are addressable link targets rather than
+  prose, and rewriting one breaks every inbound link, including the untracked links this repository cannot
+  see. `{: #lifecycle-channel }` at `docs/reference/glossary.md` line 207 is the worked accept case. An
+  anchor that has to change moves through the anchor class in §3.4 with an entry in
+  `tests/spec-anchor-moves.json`, so a redirect exists for every inbound link, rather than through the name
+  pass. An identifier stem may not reuse a term the specification
+  already binds to an unrelated mechanism, which is why C6 is `CH-ADAPTEREVENTS` rather than the
+  `CH-EVENTSTREAM` the plan's table originally carried.
+- **N4.** Each channel uses one identifier everywhere: the Go package or file name stem, the proto RPC
+  name stem, the metric label value, and the test name fragment for a test scoped to one channel. A gate
+  or a test spanning channels is named for the invariant it enforces and carries no channel identifier.
 - **N5.** A link identifier and the channel identifiers it carries share no stem, so a search for one
   never returns the other.
-- **N6.** A register names the store and the key, never a verb.
-- **N7.** A flag, environment variable, or manifest key naming a channel uses that channel's identifier in
-  lowercase kebab or snake form.
+- **N6.** A register is named for the store and the key rather than for a verb.
+- **N7.** A flag, environment variable, or manifest key naming a channel carries that channel's identifier
+  in the form its carrier already fixes: a flag uses lowercase kebab, an environment variable uses upper
+  snake, and a manifest key uses the camelCase convention the §4.7 adapter manifest field set establishes.
+  The rule names the carrier's form rather than one form for all three because the manifest is a
+  client-facing JSON document whose every other key is camelCase, and a kebab or snake key would put the
+  naming law and the §4.7 field reference in disagreement on a surface third-party runtimes parse.
+- **N8.** A specification citation names a heading rather than a line. Citing a specification line number
+  is retired and may not be written, in any spelling. The prohibition is on the line number rather than on
+  one form of words, so a spelling the current matcher does not recognize is a gap in the matcher rather
+  than a permitted citation, and §4.6 states the matcher and the spellings the tree carries today. A
+  section that gives up content carries a permanent successor pointer naming the heading that now owns the content
+  and the identifiers that moved. N8 is the rule the citation resolver, the line-citation ratchet, and the
+  successor-pointer check enforce, and it is the section every test those gates carry cites.
 
+N8 sits with N1 through N7 because the §28 card headings are the citable handles the naming law creates,
+so the rule that citations name a heading is the same rule that makes an identifier's contract findable.
 `.claude/rules/channel-naming.md` states the same rules for future agents, so a conforming name is the
-default rather than a lint finding after the fact.
+default rather than a lint finding after the fact, and the standing prohibition on line numbers in a
+`// spec:` citation (`.claude/rules/code-best-practices.md` line 57) is the code-side half of N8.
 
-### 4.2 The five axes
+### 4.2 The axes
 
 Each channel records: dial direction, authority direction, plane, transport, boundary, and exclusivity.
 Transport and boundary are closed sets, so a new value requires a specification change rather than an
@@ -221,20 +376,28 @@ missing. That last field is what turns the reference's exclusivity findings into
 
 The three registers carry one row per entry with a provenance column. The contract cards sit in §28.5,
 grouped by boundary, one subsection per boundary value, each opening with a one-edge figure and holding
-its cards under a fixed field template with a per-card line cap. The cap is deliberate: a card that cannot
-state its contract in the budget is a signal the contract is unclear, not a reason to widen the budget.
+its cards under a fixed field template. The template fixes which fields a card states and in what order,
+so a reader can compare two cards field by field. It sets no line budget, because a card states the
+contract its channel has, and a channel whose contract is genuinely long is described in full
+rather than truncated to meet a number.
 
 The citable handle is the card heading plus the identifier, which is stable across insertions.
 
 ### 4.4 The claim register
 
-Every normative statement about this surface carries a row in a claim register with a status drawn from
+Every normative statement about this surface carries a row in a claim register, `tests/claim-map.json`, with a status drawn from
 the reference's vocabulary: `WIRED` for a mechanism reachable from production code, `UNWIRED` for one
 implemented with no production caller, and `ABSENT` for one specified and not implemented. A `WIRED` row
 names the production surface. A row that is not `WIRED` names the step that will close it.
 
 This is what stops the specification asserting mechanisms that do not run, which is the defect class
 behind a third of the reference's records. It also gives the later steps their work queue.
+
+The claim register carries its own schema rather than the shared register contract's entry schema, because
+a `WIRED` row is a permanent statement about the tree and has no expiry, while the shared contract requires
+one and fails an entry whose expiry has passed. What lands here is that schema, the seed rows, and the
+tier-0 validator SPEC-3 lands with them, whose predicate and cases TEST-1 states. The join from a `WIRED` row to a surface a reachability gate reports
+reachable needs a gate this proposal does not build and lands with it.
 
 ### 4.5 Successor pointers
 
@@ -253,44 +416,663 @@ The resolver validates that an existing line citation still points inside its se
 new one being written. Without a second gate the anchor convention is documentation, the retirement
 happens once, and the population regrows.
 
+The resolver is red on introduction, so it ships with a baseline of its own rather than as a bare
+predicate. A large population of in-tree citations already fails its rule before any content moves. A
+measurement over the tracked tree, computing each section's range from the `##` through `######` headings
+under `spec/` and applying the read exclusion stated below, finds on the order of 1,500
+citations across roughly 500 files that do not resolve inside the section they name; the exact figure
+depends on how a section's end line is computed, so TOOL-1 records the count its own resolver produces.
+Two verified examples: `pkg/adapter/workspace/materialize.go` line 203 cites `§7.4 line 433`, while §7.4
+begins at `spec/07_session-lifecycle.md` line 437 and line 433 sits in §7.3; and
+`pkg/gateway/externalapi/admin/erasure.go` line 356 cites `§12.8 line 764`, while §12.8 begins at
+`spec/12_storage-architecture.md` line 774. TOOL-1 therefore seeds
+`tests/registers/line-citation-resolution.yaml` with today's non-resolving citations, keyed by file and
+citation text, and the gate fails a citation that neither resolves nor appears in that baseline. This is
+the same transitional machinery the ratchet gets, and it is used instead of the shared exception register
+because a stale citation's correct disposition is retirement in SPEC-4 rather than an entry with an owner
+and an expiry, which is the argument TEST-1 already makes for the heading walker at a tenth of this scale.
+The baseline shrinks as the line pass retires citations, and SPEC-4 empties it when every per-file count
+reaches zero.
+
 The ratchet is a tier-0 Go test rather than a linter rule, because the repository's lint invocation is
 downgraded to a warning and a check whose script is absent passes silently. Its baseline is a per-file
 count. A file absent from the register fails on its first line citation, and a file present fails when its
 count rises. A count that falls rewrites the register downward, so retirement is recorded. When every
 count reaches zero the register is empty and the gate becomes a flat prohibition.
 
+Both baselines are keyed by file path, and SPEC-2 moves files that carry line citations before the line
+pass retires them, so `scripts/specshift`'s identifier pass rewrites the keys of any file it renames in
+the same run, in every path-keyed test-infrastructure register the move invalidates, which today is
+`tests/registers/line-citations.yaml`, `tests/registers/line-citation-resolution.yaml`,
+`tests/change-graph.json`, and `tests/spec-map.json`, per SPEC-2. The same run also rewrites every
+`::<symbol>` reference in `tests/spec-map.json` that names a symbol the pass renames, because those
+references are keyed by symbol rather than by path and a tier-0 check resolves each one against its
+declaring file, per SPEC-2. Without that the ratchet's own rule fires on a rename
+that changed no citation, because the new path is absent from the register and fails on its first
+citation, and every baselined non-resolving citation under the old path reappears as a new resolver
+failure. The population is concrete: `pkg/adapter/lifecyclechannel.go` carries nine citations of the
+matched form and `pkg/adapter/controlchannel.go` carries five, with their test siblings
+`pkg/adapter/lifecyclechannel_test.go` and `pkg/adapter/controlchannel_test.go` carrying five and four.
+Neither of the two escapes the proposal otherwise permits is available, because the ratchet never widens
+and suppression is not used.
+
+The resolver, the ratchet, and the line pass all match one citation form, stated below, wherever it
+appears in a tracked file, rather than matching a
+comment dialect. The one place a carrier's comment marker enters the matcher is the continuation join
+stated below, which is what lets a citation wrapped across two comment lines be read as one citation. They
+walk the whole tree with an explicit
+exclusion list rather than an inclusion list of directories.
+
+That exclusion list has two levels, because a pass writes and a gate only reads. The read exclusion, which
+the resolver and the ratchet share, is `proposals/`, the historical audit records `BUILD-GAPS.md` and
+`TEST-GAPS.md`, the two root planning documents `gateway-runtime-comms.md` and
+`gateway-runtime-comms-remediation.md`, and the two citation registers the two gates themselves consume,
+`tests/registers/line-citation-resolution.yaml` and `tests/registers/line-citations.yaml`. The first four
+groups are excluded for the reason N3 gives, which is
+that they record findings as they were written rather than the current contract. The two registers are
+excluded because a gate cannot read its own baseline as tree content. The resolution baseline is keyed by
+file and citation text, so it holds a copy of the text of every non-resolving citation in the tree. Inside
+the resolver's read domain each copy is a second occurrence of that citation, filed under the register's
+own path rather than under the file the citation was written for, and it is non-resolving by construction,
+which is exactly the outcome TEST-1 pins as a failure when it requires that a baseline entry does not
+travel between files. Seeding an entry for such a copy would add a further copy of the same citation text
+to the register, so the seeding would not converge. The ratchet excludes the same pair for the same
+reason: the register would otherwise enter its population as a file with no per-file count and fail on its
+first line citation. Excluding the pair from both gates is what lets TOOL-1 land them green, per §3.5 step
+1. The write exclusion,
+which the line pass reads, is those groups plus every file the per-file generated-artifact rule
+stated at the end of this section covers. A generated artifact is therefore inside the resolver's and the
+ratchet's read domain and carries a per-file count, and its route to zero is the regeneration of its
+source rather than a write, which is what makes the ratchet's flat prohibition reach `pkg/proto/`,
+`charts/lenny/crds/`, `pkg/embedded/manifests/`, `charts/lenny/values.schema.json`, and
+`schemas/ocsf-mapping.yaml`. Every measurement in this section, every baseline the gates seed, SPEC-4's
+Target, and §11 are stated against the read domain, so the zero end state is measured over the population
+the gates observe and no file outside that domain is ever opened for a per-file count.
+
+The citation list is narrower than the naming list N3 states, which additionally excludes `BUILD-PLAN.md`,
+`BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`. The two lists differ because the subjects differ. A reserved
+phrase in a build or queue record is part of what was written at the time and rewriting it would edit the
+record, while a line citation in the same file is a pointer that has to keep resolving, and N8 bans the
+form wherever it is written. The population the difference covers is four citations across two files: the
+keyword-form citation at `BUILD-PROGRESS.md` line 34 and the three colon-form citations at
+`PROPOSAL-QUEUE.md` lines 459 and 477 (`§8.3:470`, `§8.8:879`, and `§15.1:630`).
+
+A citation of the retired form has three parts. It names a specification section, either by section number
+as `§X` with any number of dotted subsection components or by file path as `spec/NN_<file>.md` with the
+`spec/` prefix optional. It may then carry a short qualifier naming a sub-element of that section, such as
+`item 3`, `rule 4`, `table`, `preamble`, `step 2`, or `NET-063`. It then carries either the word `line` or
+`lines`, or a colon standing in for that keyword and written directly against the reference
+(`§17.6:404`, `spec/15_external-api-surface.md:1315`), followed by one or more members. A member is a single line number or a range of two line numbers
+separated by an ASCII hyphen, an en dash (U+2013), or an em dash (U+2014). Members are separated by a
+comma, a slash, a plus sign, or the word `and`; a continuation member repeats neither the section reference
+nor the qualifier and may repeat the word `line`. A member may carry a short trailing gloss naming what
+the line says, written as a parenthesized phrase, a quoted fragment, or a bare word or two, as in
+`line 437 ("`lenny.dev/schema-version` annotation on the CRD object")`, `line 408 step (e)`,
+`line 240 messagingScope`, and `line 1779 audit event`; the gloss is consumed with its member rather than
+terminating the match. The matcher consumes every member of a citation rather than its
+head, and the pass converts the whole citation to a single anchor rather than leaving a residue.
+
+A citation may be wrapped across two consecutive comment lines, and the matcher joins the continuation
+before it applies the form. The join consumes the newline together with the carrier's comment marker
+(`//`, `#`, `--`, or the leading `*` of a block comment) and the whitespace on either side of it, and
+reads what follows as the continuation of the same citation. All three wrap positions are covered, which
+are a wrap between the section reference and the `line` or `lines` keyword, a wrap between the keyword and
+its first member, and a wrap inside a member list. Without the join a line-oriented scan sees a section
+reference with no line-number token on the first line and a line-number token with no section reference on
+the second, so neither the form stated above nor the residual predicate §4.7 states reads the citation,
+the resolver does not resolve it, the ratchet does not count it, and the file reaches count zero while a
+stale pointer survives. Measured over `git ls-files` under the read exclusion stated above at commit
+`668deca8`, the wrapped population is 768 occurrences across 436 files, of which 45 across 32 files cite
+§4.7, §4.8, §4.9, §15.4, or §15.5, which are the ranges the SPEC-3 reduction shifts.
+`pkg/gateway/sessionserver/messages.go` lines 156 and 157 wrap between the keyword and its first member
+(`spec: §15.4 lines` then `1672-1721.`) and point into a shifted range;
+`pkg/gateway/policy/interceptor/immutability.go` lines 14 and 15 (`(spec: §4.8` then `line 1060)`),
+`cmd/lenny-gateway/main.go` lines 1775 and 1776 (`spec: §10.1` then `line 51. F-10.1.5.`), and
+`pkg/alerting/rules/slo.go` lines 99 and 100 (`§16.10` then `lines 732-736`) wrap between the section
+reference and the keyword; and `charts/lenny/values.yaml` lines 892 and 893 (`spec: §17.9.1` then
+`line 1350`) carry the same wrap in the `#` dialect. The resolver baseline and the per-file ratchet
+baseline TOOL-1 seeds are measured with the join applied, so a wrapped citation is counted and resolved
+from the first run rather than surfacing after SPEC-4 reports every count zero. The in-tree precedent
+`tests/tier0_static/degradation_lock_line_citation_test.go` line 38 is single-line by construction, so the
+join is one of the ways the resolver widens it.
+
+A range citation resolves as valid only when
+both endpoints fall inside the cited section, a multi-member citation resolves as valid only when every
+member resolves, a section-level citation resolves against the whole of
+the section it names, a qualified citation resolves against the section it names with the qualifier
+carried through the conversion, and a path-form citation resolves against the section of the file it names
+that contains the cited line. The form is
+stated this widely because the prohibition N8 ends in is on the line number rather than on one spelling,
+and each spelling below is a measured population in the tree today rather than a hypothetical one.
+
+The multi-member comma spelling is the first of them: 617 occurrences across 341 files
+carry one `§X(.Y)* line(s)` prefix followed by two or more comma-separated line numbers or ranges, 86 of
+them across 57 files naming §4.7, §4.8, §4.9, §15.4, or §15.4.x, which are the ranges the SPEC-3 reduction
+shifts. A matcher that stops at the first comma converts the head of each of those citations and leaves
+the remaining line numbers in place, where the resolver does not read them, the ratchet does not count
+them, and the converted comment reads as an anchor followed by orphan integers, so the file reaches count
+zero while a stale pointer survives. `cmd/lenny-gateway/adminrouter.go` line 205
+(`§4.8 lines 1057-1058, 1077`), `pkg/gateway/sessionserver/taskrecord.go` line 29
+(`§8.8 lines 806-823, 897-917; §4.2 line 157`), and `cmd/lenny-gateway/stores.go` line 764
+(`§12.5 line 315, 321-325`, which uses the singular `line` before a list) are verified instances.
+
+The slash and `and` separators carry the same failure. Measured over `git ls-files` under the read
+exclusion stated above, 50 occurrences across 42 files separate their members
+with a slash and 2 more separate them with the word `and`, and the continuation member repeats the word
+`line` without the `§` prefix. `pkg/experiment/experiment.go` line 184 and
+`pkg/controller/poolscaling/variants.go` line 98 both carry `§10.7 line 694 / line 743`,
+`cmd/lenny-gateway/httpsurface.go` line 144 carries `§25.3 line 441 / lines 527-528`,
+`pkg/gateway/sessionserver/create.go` line 170 carries `§7.1 line 18 / line 75`,
+`pkg/gateway/storage/pgtenant/pgtenant.go` line 177 carries `§4.2 line 163 / line 177`, and
+`cmd/lenny-controller/setup.go` line 110 and `pkg/embedded/crds/crds_test.go` line 90 carry
+`§10 line 437 / line 443`, which is the same section-level family SPEC-4 hand-edits in the chart CRD
+annotation blocks. A member list whose separator is a comma is also written with the word `line` repeated,
+as at `pkg/gateway/mcpfabric/mcptools/mcptools.go` lines 1445 and 1503 (`§10.6 line 601, line 629`), which
+is why a member is allowed to repeat the keyword.
+
+The plus sign is the fourth separator and carries the same failure as the other three. Measured over
+`git ls-files` under the read exclusion stated above, a
+`+`-separated continuation member appears in 11 files. One instance ties a fail-closed
+security control: `pkg/preflight/crdschema.go` lines 22 through 25 carry
+`§10 line 437 ("...") + line 443 ("...")` on `CRDSchemaVersionAnnotation`, and
+`CRDSchemaVersionCheck` at line 51 is the preflight comparison that aborts an upgrade fail-closed when a
+CRD's `lenny.dev/schema-version` annotation does not match. That is the same `§10 line 437 / §10 line 443`
+family SPEC-4 hand-edits in the chart CRD annotation blocks. The other instances are
+`pkg/adapter/checkpoint.go` line 25 (`§7.3 line 408 step (e) (replay workspace checkpoint) + line 409`),
+`pkg/adapter/resume.go` line 86, `pkg/adapter/connectormcp_test.go` line 48,
+`pkg/gateway/mcpfabric/mcptools/mcptools_register.go` line 286
+(`§7.2 line 240 messagingScope + line 373 parent`), `pkg/gateway/sessionserver/events_test.go` line 192,
+`pkg/ops/opsserver/operations.go` line 58 (`§25.4 line 1779 audit event + line 1769 error code`),
+`pkg/ops/opsserver/event_subscriptions_test.go` line 181, `cmd/lenny-gateway/flags.go` line 1188,
+`tests/tier2_component/migrations/phase3_gate_test.go` line 36, and
+`charts/lenny/tests/backend-invariants_test.yaml` line 105. Several of them also carry the trailing gloss
+the form admits, which is why a gloss does not terminate a member.
+
+The qualified spelling interposes a short sub-element name between the section reference and the word
+`line`. Measured over `pkg`, `cmd`, `tests`, `sdks`, `spec`, `docs`, `schemas`, `charts`, and
+`migrations`, and excluding the slash and comma continuations already counted, 136 occurrences sit across
+68 files. `pkg/audit/jcs/jcs.go` lines 15 and 39 carry `§11.7 item 3 line 364`,
+`pkg/gateway/mcpfabric/mcptools/mcptools.go` line 28 and
+`pkg/gateway/mcpfabric/mcptools/generated_schemas.go` lines 9 and 16 carry `§15.2.1 rule 4 line 1386`,
+which is inside a served MCP tool schema, `sdks/client/go/lenny/client.go` lines 332, 345, 363, and 380
+carry `§7.2 table line 124` inside a shipped client SDK, and `charts/lenny/templates/mtls-pki.yaml` line
+104 carries `§10.3 NET-063 (spec line 327`. A matcher requiring `line` to follow the section reference
+immediately leaves every one of them unconverted, unread by the resolver, uncounted by the ratchet, and
+free to regrow after retirement.
+
+The en-dash range spelling is a fourth population: 65 occurrences across 38 files under `pkg`, `cmd`,
+`tests`, `sdks`, `schemas`, `charts`, `migrations`, `docs`, `spec`, `scripts`, `build`, `compose`, and
+`.github` separate a range's endpoints with U+2013 rather than with an ASCII hyphen, including
+`pkg/gateway/storage/evictionfallback/evictionfallback.go` lines 3, 31, and 377 (`§4.4 lines 263–291`),
+`pkg/gateway/mcpfabric/mcptools/elicitation.go` line 93 (`§9.2 lines 58–64`), and
+`pkg/gateway/policy/policy/authevaluator.go` line 47 (`§4.8 lines 1025–1028`), which points into a
+section the SPEC-3 reduction shifts. The range separator is therefore a character class covering the
+ASCII hyphen, the en dash, and the em dash.
+
+The path-form spelling names the specification file rather than the section number, so it carries no `§`
+at all: 123 occurrences across 59 files under `pkg`, `cmd`, `tests`, `charts`, `migrations`, `docs`,
+`schemas`, `sdks`, and `scripts`, of which 39 point at or below `spec/04_system-components.md` line 637 or
+`spec/15_external-api-surface.md` line 1458, which are the ranges the SPEC-3 reduction shifts.
+`pkg/adapter/metrics.go` line 12 cites `spec/04_system-components.md lines 870-888`, a range inside §4.7
+itself; `pkg/credential/lease.go` line 150 cites `spec/04_system-components.md line 1145`;
+`pkg/controller/poolscaling/capacityplanning.go` line 95 cites `spec/04_system-components.md line 523`;
+and `pkg/audit/ocsf/catalog.go` line 149 carries the same form in a `# spec:` line as
+`11_security-trust-model.md line 414`. Leaving the path form out of the matcher would satisfy SPEC-3's
+exit criterion while 39 citations point at the wrong lines, so it is inside the class rather than given a
+separate disposition.
+
+A path-form citation naming a file that does not resolve under `spec/` has the same disposition as the
+straddling range, which is that the line pass fails it and reports it rather than guessing an anchor. The
+stated resolution rule computes the section from the file the citation names, so a citation naming no
+tracked specification file has no section to resolve against, and left alone it holds its file above count
+zero and makes SPEC-4's zero exit criterion unmeetable. The population today is one nonexistent file name,
+`11_security-trust-model.md`, carried at seven sites: `pkg/audit/ocsf/catalog.go` line 149,
+`pkg/audit/ocsf/catalog_test.go` lines 26, 44, 75, and 113, `cmd/lenny-ocsf-mapping-gen/main.go` line 10,
+and the generated `schemas/ocsf-mapping.yaml` line 3, which mirrors the const at
+`pkg/audit/ocsf/catalog.go` lines 147 through 150. `spec/11_security-trust-model.md` is not a tracked file;
+the OCSF mapping table those citations mean sits at `spec/11_policy-and-controls.md` line 414 and the
+`line 365` citation at `pkg/audit/ocsf/catalog_test.go` line 113 sits in the same file, and both lines fall
+inside `### 11.7 Audit Logging` at `spec/11_policy-and-controls.md` line 341. SPEC-4 hand-corrects the six
+authored sites to that heading before the final line-pass run, and `schemas/ocsf-mapping.yaml` follows
+through the regeneration §4.6 already stages for it.
+
+The colon spelling replaces the `line` or `lines` keyword with a colon written directly against the
+reference, and it is carried in both the section-number and the file-path variants. Measured over
+`git ls-files` under the read exclusion stated above, the section-number variant appears 18 times across
+10 files and the file-path variant appears 11 times across 7 files. One of the 18 sits inside `spec/`
+itself, at `spec/17_deployment-topology.md` line 450 (`the bootstrap Job's readiness poll (§17.6:404)`),
+so a matcher requiring the keyword would leave a specification line citation standing in the file the
+naming law governs and would let SPEC-4 report every count zero while it stands. Others sit in shipped Go:
+`pkg/adapter/usage.go` lines 52, 62, 152, and 259 carry `§11.2:46`, and
+`pkg/gateway/externalapi/admin/me.go` lines 78, 92, 103, and 109 carry `§15.1:778-780`, `§15.1:798-800`,
+`§15.1:802`, and `§15.1:805-812, 876-878`, the last of which shows the colon spelling taking the comma
+member list, so the two spellings compose rather than partition. The file-path variant reaches
+`charts/lenny/tests/ops-rbac_test.yaml`, `tests/tier0_static/ops_rbac_spec_sync_test.go`,
+`pkg/gateway/externalapi/errorclassify/errorclassify.go`
+(`15_external-api-surface.md:976-1099`, which omits the `spec/` prefix), and
+`tests/tier3_contract/rest_mcp_consistency/published_schema_test.go`
+(`spec/15_external-api-surface.md:1315`). `tests/tier0_static/degradation_lock_line_citation_test.go`
+carries it at lines 74 and 77 (`spec/25_agent-operability.md:2057` and
+`spec/25_agent-operability.md:2215`), so the file SPEC-4 hand-rewrites for its `§25.4 line N` predicate
+carries two further citations in this spelling, and the same hand rewrite covers them.
+
+The section-level spelling is a measured population: 556 occurrences across 148
+files carry `§X line N` or `§X lines N-M` with no subsection component, in the same carriers the dotted
+spelling uses. Three of them point into the §15.4 block SPEC-3 reduces
+(`pkg/gateway/sessionserver/expiry_warning.go` lines 32 and 50 and
+`pkg/gateway/runtime/adapterclient/client.go` line 484 all cite `§15 line 2141`, and §15.4 runs from
+`spec/15_external-api-surface.md` line 1458 to line 2459), and 31 of them are the `§10 line 437` sites the
+chart CRD annotation blocks and `tests/tier0_static/crds_test.go` carry, which SPEC-4 rewrites. A matcher
+requiring the subsection component would leave all 556 unconverted, unchecked by the resolver, and free to
+regrow. The resolver baseline and the per-file ratchet baseline are both measured under this widened
+predicate. The range spelling is a measured population rather than a
+hypothetical one: 3,606 range citations sit across 1,198 files, 294 of them pointing into §4.7, §4.8,
+§4.9, §15.4, and §15.5, which are the sections the SPEC-3 reduction shifts, and the §1 magnitude counts
+every spelling. Matching a subset would leave the rest free to regrow without limit, so the
+prohibition the ratchet ends in would not be flat. The in-tree precedent matches the hyphenated range form
+for one section: `tests/tier0_static/degradation_lock_line_citation_test.go` line 38 compiles
+`§25\.4 lines? (\d+)(?:-(\d+))?`. That expression is the starting point rather than the target, because it
+pins one section number, accepts an ASCII hyphen alone, and stops at the first member, so generalizing it
+into the resolver means widening all three. That file is also a running tier-0 gate rather than only a
+precedent, and its predicate requires the retired form to be present, so SPEC-4 rewrites it in the same
+change as the line pass over `pkg/ops/`. Each of these scopings is a correction of an earlier
+draft, and each is forced by the same measurement. The form is carried outside every comment dialect:
+`pkg/gateway/externalapi/openapi/openapi.json` holds twenty citations inside served JSON values, nineteen
+of them in a `description` and one in the `summary` that `openapi-to-mcp` copies into the generated tool
+inventory, `pkg/gateway/mcpfabric/mcptools/mcptools.go` holds them inside the Go string literals that
+become the served MCP tool schemas, twenty-nine of the thirty-four citations under `charts/lenny/crds/` sit in
+`description:` block scalars rather than on a `# spec:` line, and `schemas/workspaceplan-v1.json` and
+`tests/tier9_security/pentest/v1-baseline-bundle.json` carry the same form in JSON values. The population is 3,666 citations across 264 non-Go files, of which 1,218 across
+230 files sit under `migrations/`, `charts/`, `sdks/`, `tests/`, and `build/`, roughly 2,168 sit in the
+historical audit records `BUILD-GAPS.md` and `TEST-GAPS.md` at the repository root, and the remainder sit
+under `pkg/`, `schemas/`, `scripts/`, `docs/`, `compose/`, `.github/`, and `dist/`. The two root-level
+audit records are outside every pass, so their citations are outside the writable population and outside
+every per-file count in the line-citation register; the two root planning documents carry seven citations
+between them and are excluded on the same rule. The excluded figure is stated so the writable population
+is not read as larger than it is. An inclusion list of directories is what leaves a carrier
+ungated, and an ungated carrier means the prohibition the ratchet ends in is not flat.
+
+A range whose endpoints straddle a section boundary has a disposition rather than a fail-and-stop. The
+line pass fails such a citation instead of guessing an anchor, and the tree already carries seventeen of
+them across fifteen files, measured by computing each section's range from the `##` through `######`
+headings under `spec/` and testing both endpoints of every hyphenated `lines N-M` citation under the
+read exclusion stated above. That measurement is re-run under the widened predicate
+before the hand correction, because a range written with an en dash or reached through the qualified or
+path-form spelling can straddle a boundary in the same way and the seventeen are the hyphen-only figure.
+Left alone, a straddling range holds its file above count zero, so the ratchet's
+flat-prohibition end state would be unreachable and SPEC-4's exit criterion unmeetable. The pass therefore
+reports every straddling range it finds, and the sub-step running the pass hand-corrects each citation to
+the section that contains the content it cites before the pass is re-run. The population is:
+`pkg/alerting/rules/openslo.go`, `pkg/alerting/rules/openslo_test.go`, and
+`tests/tier0_static/openslo_export_test.go` (`§16.10 lines 742-746`, while §16.10 begins at
+`spec/16_observability.md` line 743); `pkg/delegation/lease/lease.go`,
+`pkg/delegation/lease/lease_test.go`, and `pkg/gateway/mcpfabric/delegation/service.go`
+(`§8.4 lines 515-521`, while §8.4 begins at `spec/08_recursive-delegation.md` line 517);
+`pkg/gateway/externalapi/admin/audit_query.go` and
+`tests/tier2_component/auditstore/admin_query_test.go` (`§25.9 lines 3653-3710`, while §25.9 begins at
+`spec/25_agent-operability.md` line 3655);
+`pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go` and
+`pkg/gateway/sessionserver/sessionserver.go` (`§8.10 lines 1014-1027`, while §8.10 begins at line 1016);
+`pkg/gateway/sessionserver/sessionserver.go`, `pkg/gateway/sessionserver/taskrecord.go`,
+`pkg/gateway/sessionserver/taskrecord_test.go`, `pkg/sessionrecord/record.go`, and
+`pkg/sessionrecord/record_test.go` (`§8.8 lines 806-823` and `§8.8 lines 804-940`, while §8.8 begins at
+line 808); and `pkg/platform/store/types.go` (`§12.6 lines 363-415`, while §12.6 begins at
+`spec/12_storage-architecture.md` line 369). The resolver baseline does not substitute for the hand
+correction, because a baselined citation still has to be retired for the per-file count to fall.
+
+The generated-artifact half of the exclusion list is stated as a rule rather than as a fixed set of
+directories, and the rule is the union §4.7 states for this class: a file whose header
+declares it generated, or whose top-level document metadata declares it generated when the format carries
+no comment syntax, or which is a member of the output set of a producer named below, is read by the
+resolver and the ratchet and is never written by a pass. Excluding a
+directory that mixes derived and authored content is what makes the ratchet's zero end state unreachable,
+so the rule is applied per file. The third disjunct is load-bearing rather than redundant, because the
+five CRDs in `charts/lenny/crds/` and their five copies in `pkg/embedded/crds/` are controller-gen and
+copy output that carries no header generation declaration and no document-metadata declaration
+(`charts/lenny/crds/lenny.dev_runtimes.yaml` lines 1 through 6, whose first content after the document
+marker is `apiVersion`). A marker-only rule would classify all ten as ordinary carriers and direct a pass
+to write them, and it would leave the residual gate for this class unable to select any future producer
+output that carries no marker. The output sets are read from the producer list stated immediately below
+rather than by running a producer, so the rule is decidable at tier 0. The generated artifacts carrying the citation form today are
+`pkg/embedded/manifests/manifests.yaml`, `pkg/embedded/crds/`, `charts/lenny/crds/`, `pkg/proto/`,
+`pkg/gateway/mcpfabric/mcptools/generated_schemas.go`, `pkg/ops/mcp/generated_tools.go`,
+`charts/lenny/values.schema.json`, `docs/alerting/rules.yaml`,
+`docs/alerting/routing-recommendations.md`, and
+`schemas/ocsf-mapping.yaml`. `charts/lenny/values.schema.json` is the case the second half
+of the rule covers: it is JSON, it carries no header comment, and its generation notice sits in the
+top-level `description` value at `charts/lenny/values.schema.json` line 5, which reads "generated from
+pkg/chart/values". A rule keyed only on a header comment would classify it as an ordinary carrier and
+direct a pass to write it. Each artifact has a distinct producer, and the sub-step that rewrites a
+producer's source runs that producer and takes its no-drift test as an exit criterion:
+
+- `make generate` produces `pkg/embedded/manifests/manifests.yaml` from the chart templates and
+  `charts/lenny/crds/` from the doc comments on `pkg/apis/lenny/v1alpha1/*.go`, and it also refreshes
+  `pkg/ops/mcp/generated_tools.go`, `docs/alerting/rules.yaml`, and
+  `docs/alerting/routing-recommendations.md`.
+- `make generate-proto` (`buf generate`) produces `pkg/proto/` from `schemas/*.proto`. It is a separate
+  target and is not reached by `make generate`, so a sub-step that rewrites a `.proto` file runs it
+  explicitly.
+- `go generate ./pkg/gateway/mcpfabric/mcptools/...` produces
+  `pkg/gateway/mcpfabric/mcptools/generated_schemas.go` from
+  `pkg/gateway/externalapi/openapi/openapi.json`. It is also outside `make generate`, so a sub-step that
+  rewrites `openapi.json` runs it explicitly.
+- `go run ./cmd/lenny-chart-schema-gen` produces `charts/lenny/values.schema.json` from the `desc:` struct
+  tags on `pkg/chart/values/values.go`, whose text it copies verbatim into the JSON `description` values.
+  `TestSchemaIsCommitted_spec_17_6_655` in `pkg/chart/values/schema_test.go` requires the committed file to
+  byte-match a fresh `Generate()`. The producer is reached by neither `make generate` nor
+  `make generate-proto`, and `Makefile` carries no target for it, so a sub-step that rewrites those tags
+  runs it explicitly. The seven citations the schema carries are stripped from the `desc:` tags rather than
+  converted to anchors, under the same rule SPEC-3 applies to the other served client artifacts, and the
+  spec tie is kept in the Go doc comment above the field. A citation is stripped from a `desc:` tag only
+  where the field's doc comment already carries the same tie, which holds for four of the seven fields:
+  `Cluster` (`pkg/chart/values/values.go` lines 56 through 62), `IsolationProfile` (lines 63 through 69),
+  `MaintenanceMode` (lines 129 through 131), and `NoEnvironmentPolicy` (lines 132 through 135). The line
+  pass converts those doc comments to the anchor form like any other Go comment. The remaining three fields
+  have no doc comment at all, so their `desc:` tag is today the only carrier of the tie:
+  `SpiffeTrustDomain` at line 136 carries `§10.3 line 316`, `TraceSamplingRate` at line 137 carries
+  `§16.3 line 359`, and `SaTokenAudience` at line 138 carries `§10.3 line 334`. The type-level comment on
+  `Global` (lines 119 through 122) carries neither of the two `§10.3` line citations nor any `§16.3`
+  citation, so it is not a surviving tie for them. The sub-step that strips those three tags adds an
+  anchor-form `// spec:` doc comment above each of the three fields in the same edit, because stripping the
+  only carrier would delete the spec tie the standing rule requires
+  (`.claude/rules/code-best-practices.md` line 57) rather than relocate it, and both the ratchet and the
+  resolver read a deleted citation as a retirement.
+- `go run ./cmd/lenny-ocsf-mapping-gen` produces `schemas/ocsf-mapping.yaml` from the Go catalog in
+  `pkg/audit/ocsf`, whose `mappingHeader` const at `pkg/audit/ocsf/catalog.go` lines 147 through 150 is the
+  authoring source of the committed file's `# spec: 11_security-trust-model.md line 414` header line, which
+  §4.6 names above as a path-form citation whose named file does not resolve, so the line pass fails it and
+  SPEC-4 hand-corrects the const to the `spec/11_policy-and-controls.md` §11.7 anchor.
+  `TestMappingYAMLInSync` in `pkg/audit/ocsf/catalog_test.go` requires the committed file to byte-match a
+  fresh `MarshalMappingYAML()`, so a run that rewrites the const without regenerating turns it red and a
+  run that skips regeneration leaves the committed file above count zero in the line-citation register,
+  which makes SPEC-4's zero exit criterion unmeetable. As with `cmd/lenny-chart-schema-gen`, no `make`
+  target reaches this producer, so a sub-step that rewrites the const runs it explicitly.
+- The chart-to-embedded copy produces `pkg/embedded/crds/` from `charts/lenny/crds/`.
+
+`charts/lenny/crds/` is controller-gen output plus two hand-applied post-generation layers that no Go doc
+comment and no chart template produces, which are the `lenny.dev/schema-version` annotation with its
+explanatory comment block and the top-level spec and status `x-kubernetes-preserve-unknown-fields: true`
+markers. `make generate` overwrites the directory with raw controller-gen output and deletes both layers,
+and the losses are behavioral: the schema-version annotation is the fail-closed CRD currency check the
+controllers read at startup and `lenny-preflight` reads at upgrade
+(`pkg/preflight/crdschema.go` lines 26 through 54), and the preserve-unknown markers stop a stale CRD
+pruning fields a newer controller writes. `TestCRDManifestsInSyncWithGoTypes` strips exactly those lines
+from both sides before comparing (`tests/tier0_static/crds_test.go` lines 162 through 192), so it goes
+green on a regeneration that dropped them. Regeneration of that directory therefore has a re-application
+step, and its exit criteria include the two tests that read the hand-applied layers rather than strip
+them, which are `TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437` and
+`TestEmbeddedCRDsPreserveUnknownFields_spec_10_437` in `pkg/embedded/crds/crds_test.go`. Both read the
+embedded copies, which the chart-to-embedded copy keeps byte-identical to the chart CRDs, so they cover
+the chart side once the re-copy has run.
+
+Two of the three directory exclusions an earlier draft stated are corrected here.
+`pkg/embedded/localcli/`, `pkg/embedded/stack/`, and `pkg/embedded/k3s/` are hand-written Go packages with
+no generator and no `go:generate` directive, and they carry 132 line citations, so the line pass rewrites
+them like any other Go source and only `pkg/embedded/manifests/` and `pkg/embedded/crds/` are excluded.
+`pkg/proto/` carries 60 line citations mirrored by protoc from the 48 in `schemas/*.proto`, and it reaches
+zero only through `make generate-proto`, which is why that target is named above rather than folded into
+`make generate`. The ten hand-applied citations in the five chart CRD annotation blocks, which carry the
+section-level spelling `§10 line 437 / §10 line 443`, reach zero through the
+hand edit SPEC-4 stages, described there, rather than through regeneration.
+
+A no-drift test is durable only when it is a Go test. `scripts/check-proto-generated.sh` exits 0 both when
+`buf` is absent and whenever `schemas/buf.gen.yaml` carries no active `remote:` plugin line, which is the
+repository's current state, so it is the non-durable shell gate this proposal argues against. TOOL-1
+therefore adds a tier-0 Go test that regenerates the proto bindings into a temporary directory and diffs
+them against the committed stubs.
+
+The producer the test must reproduce is the whole `make generate-proto` target rather than `buf generate`
+alone. That target runs `buf generate` and then applies two post-generation steps the plugins do not
+perform: it prepends `// SPDX-License-Identifier: MIT` to every file that lacks the header, and it runs
+`goimports -w -local github.com/lennylabs/lenny ./pkg/proto`, which regroups the import block
+(`Makefile` lines 91 through 100; `schemas/buf.gen.yaml` lines 6 and 7 record the same fact). A test that diffs
+raw `buf generate` output against the committed stubs reports drift on every generated file with no drift
+present, which was confirmed by running `buf generate` into a temporary directory and diffing all six
+committed stubs. The test therefore applies the same SPDX prepend and the same `goimports` normalization
+before it compares.
+
+The target's `PATH="$(go env GOPATH)/bin:$PATH"` prepend is part of the producer as well, so the test
+reproduces it before invoking `buf` (`Makefile` line 94, with `GOPATH_BIN` defined at `Makefile` line 20).
+`schemas/buf.gen.yaml` lines 16 through 21 declare `protoc-gen-go` and `protoc-gen-go-grpc` as `local:`
+plugins, which `buf generate` resolves from `PATH`, and `scripts/setup-dev.sh` lines 390 and 391 install
+both into `GOPATH/bin` while `buf` itself is installed as a system package at line 308. The producer
+therefore depends on four external binaries, which are `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, and
+`goimports`, and the absence of any one of them is the condition TEST-1 requires the test to record as
+`UNVERIFIED`. Without the prepend, a tree whose plugins live only in `GOPATH/bin` would fail the test
+while `make generate-proto` succeeds there.
+
+### 4.7 Measured populations, and the residual that catches what they miss
+
+This sub-section governs every place this proposal states a measured fact about the tree: a count of
+occurrences, a list of files, or an enumeration of the spellings and directories a class covers. Those
+statements are the product of repeated measurement and they are worth keeping. What follows changes their
+status rather than their content, because a measured fact about a moving tree is true on the day it is
+written and drifts afterwards, and the drift is unbounded.
+
+**Measured populations are not normative.** Every count and file list in this proposal is a scale
+indicator. It tells a reader the order of magnitude of a class so the reader can judge whether a
+mechanism is proportionate, and it carries the commit it was measured at and the command that
+reproduces it. It does not define the class, and it is not a claim the implementation must preserve.
+
+**No gate, exit criterion, or register baseline may key off a number stated in prose.** Each computes the
+number it needs at the moment it runs. A sub-step whose exit criterion is "the register is empty"
+computes emptiness; it never compares against a figure written here. While a gate or an exit criterion
+depends on a stated count, a count that has drifted is a genuine defect, and there is no end to
+finding them. Once nothing depends on the prose figure, a drifted figure is a documentation nit that
+changes no behavior.
+
+**Every enumerated class carries a residual.** An enumeration in this proposal lists the class members
+known at the time of writing. It is the fast path and the seed for the class's residual register. It is
+not the definition. Each class is defined by a deliberately broad predicate, and anything that matches
+the predicate and appears in neither the enumeration nor the class's residual register is a **residual**.
+
+**A residual fails the build.** It is never skipped, and it is never silently absorbed. The residual gate
+(built in TOOL-1, with its cases in TEST-1) computes, per class, the set matching the broad predicate minus the enumerated members minus the
+members the class's residual register records, and fails tier 0 on a non-empty remainder, naming each
+member and its class. Its read domain is stated rather than left to the implementation, because a gate
+whose domain is the whole tree cannot land green. The residual scan reads a tracked file unless one of
+three exclusions covers it. The first is the read exclusion §4.6 states, which is `proposals/`, the
+historical audit records `BUILD-GAPS.md` and `TEST-GAPS.md`, and the two root planning documents
+`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, excluded for the reason N3 gives.
+The second applies to the reserved-phrase class and the identifier class, whose scan additionally excludes
+the root-level records N3 names, `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, so the
+residual scan for a class ranges over the same domain as that class's pass and gates. The third is every
+register a class's predicate would otherwise match as tree content, which is each
+`tests/registers/residual-<class>.yaml` together with the pass or baseline register the class's own gate
+already excludes for the same reason. That third exclusion rests on the argument §4.6 makes, which is that
+a gate cannot read its own baseline as tree content: a residual entry holds a copy of its member's text,
+so scanning the register would report that copy under the register's own path as a further residual, and
+seeding an entry for it would add another copy, so the seeding would not converge. Closing a residual
+means one of two things: the member belongs to the class, so it
+joins that register as `in-class` and the pass handles it; or it does not, so it joins that register as an
+explicit exclusion with a reason. Both are recorded. Neither is a silent widening of the gate. An
+`excluded` entry is permanent, because the member never belonged to the class. The lifetime of an
+`in-class` entry depends on whether its member can stop matching the class's broad predicate, rather than
+on whether a `scripts/specshift` pass runs over the class. In a class whose members can leave it, which
+are the two line-citation classes, the reserved-phrase class, the identifier class, the anchor class, the
+change-graph coverage class, and the skip-reason class, an `in-class` entry is transitional. In the first
+five of those the route out is the pass: registering the member as in-class is how the pass reaches it,
+and once the pass has handled it the member no longer matches the predicate. In the change-graph coverage
+and skip-reason classes the route out is the remediation the gate exists to drive, which is a tracked path
+gaining a glob key in `tests/change-graph.json` and a skip reason being rewritten to open with one of the
+categories, and the member stops matching the predicate at that point. In both routes the `in-class` entry
+is removed in the same run in which its member stops matching, on the same downward rewrite the class's
+own baseline already performs, so ordinary coverage work does not leave a dead entry behind and does not
+turn tier 0 red. In the generated-artifact class alone an `in-class` entry is permanent for the same
+reason an exclusion is, because a generated file keeps matching the predicate for as long as it exists and
+the class's driver is a denylist rather than a rewrite.
+
+The residual check reads a register of its own per class, at `tests/registers/residual-<class>.yaml`,
+seeded in the same sub-step that seeds the class's pass or baseline register and held separately from it.
+The two record different things. A pass register drives a rewrite and is keyed for that rewrite, and
+several of them are transitional: the citation baselines are per-file counts and per-citation entries that
+SPEC-4 empties, the sense maps are keyed by file and occurrence, and the change-graph baseline is keyed by
+path prefix and is rewritten downward only. A residual register records a triage decision. An entry is a
+member, its class, a disposition of `in-class` or `excluded`, and a reason, with no owner, no opened-at
+date, no expiry, and no blocker. The argument for that schema is the one §4.4 makes for
+`tests/claim-map.json`: an explicit exclusion is a permanent statement about the tree, so it has no date
+on which it becomes wrong nor an open item a blocker could resolve to, and an in-class entry is retired by
+the event that takes its member out of the class where the class has one and is otherwise as permanent as
+an exclusion, so in neither case is there a date on which the entry becomes wrong or an open item a
+blocker could name, and under the shared contract's expiry and blocker ratchet rules every such entry
+would fail.
+In a class whose members can leave it, an `in-class` entry is removed from the residual register in
+the same run in which its member stops matching the broad predicate, on the run-completeness criterion
+§4.6 states for the citation baselines and SPEC-1 states for
+`tests/registers/reserved-phrase-senses.yaml`, so the register
+carries no entry for a member the predicate no longer matches. In the generated-artifact class the entry
+stays for as long as the member matches the predicate, and removing it would re-expose the member as a
+residual on the next run. That is why the two dispositions are
+recorded distinctly rather than as one population. The precedent for holding a population in a register of
+its own rather than in the shared exception register is the one §4.6 makes for the citation baselines. The
+residual check for a class lands in the sub-step that seeds that class's registers, per §3.5.
+
+The broad predicates are deliberately over-broad and are triaged rather than made precise. For the
+citation classes the predicate matches any occurrence of a section sigil or a section path adjacent to a
+line-number token, without committing to a separator, a range form, or a comment dialect. Adjacency
+tolerates the continuation join §4.6 states, so the two tokens count as adjacent when a comment marker and
+a newline sit between them, and a wrapped spelling the enumerated form misses is still reported as a
+residual. For the
+generated-artifact class the predicate is the union of a generation marker in the file header, a
+generation declaration in top-level document metadata where the format carries no comment syntax, and
+membership in the output set of a producer §4.6 names, since no one signal covers the tree. Precision is what
+failed: a precise predicate is another enumeration wearing a regular expression, and it misses the same
+tail. Over-breadth plus triage is what makes the class complete, and the register is where the triage is
+recorded.
+
+This is why the enumerations stay. They make the common case fast, they document what is known, and they
+seed each residual register so the gate lands green on a real population rather than on an empty one. The
+residual is what makes them safe to be incomplete.
+
 ## 5. Edge cases and accepted failure modes
 
 | Case | Observable outcome | Where it is documented |
 |:--|:--|:--|
 | A reference is missed by the identifier rewrite | The identifier-resolution gate fails at tier 0, naming the file. The rename is not complete until the gate is green, so a miss blocks the merge rather than shipping | §28.1 states that one identifier resolves to one spelling tree-wide |
+| A class member exists in the tree that no enumeration in this proposal lists | The residual gate fails tier 0 and names the member and the class that should own it, so the build stops rather than the member being silently skipped. Closing it records the member in the class's residual register as in-class or as an explicit exclusion with a reason. A count stated in this proposal that has drifted since it was measured is NOT this case and is not a defect, because nothing keys off a prose figure | §4.7 states the rule; TEST-1 states the gate's cases |
+| A citation in `BUILD-GAPS.md` or `TEST-GAPS.md` points into a range this proposal shifts | The citation goes stale and stays stale. Both files are excluded from every pass, the resolver, the ratchet, and the residual scan, so nothing rewrites them and no gate reports them. They are historical audit records, and rewriting their citations would edit the record of what was found at the time it was found. A reader of either file resolves a stale citation through the successor pointer in the reduced section | §11 states the exclusion and this row states the outcome. No specification or `docs/` page changes, because neither file is reader-facing documentation |
 | A reader follows a stale section number to a reduced section | The section names its successor heading and the identifiers that moved | The successor-pointer sentence, normative in the reduced section |
-| A third-party runtime reads the renamed manifest key | The runtime author contract is updated in the same change, and the manifest emitter and the three SDKs move together, so a runtime built against the published SDK stays correct | The runtime author guide, amended in the wire-contract sub-step |
+| A third-party runtime reads the renamed manifest key | The runtime author contract is updated in the same change, and the manifest emitter and the three SDKs move together, so a runtime built against the published SDK stays correct. The tier-3 round-trip test in SPEC-2 is what establishes that they moved together, because review cannot check a cross-language parse | The runtime author guide, amended in the wire-contract sub-step, and the SPEC-2 tests block |
 | A deployer pins an older runtime image built against the old manifest key | The key rename is a breaking change to the runtime contract and is not compatibility-shimmed, per the repository's no-backward-compatibility rule for a pre-deployment platform | Stated in Non-goals |
-| The naming lint cannot land green because prose violations remain | The violations are enumerated into an exception register, each naming the step that retires it. The gate never widens and suppression is not used | The register contract, shared by every gate in the remediation plan |
-| A line citation is written after the retirement | The ratchet fails the file at tier 0 | §28.1 and `.claude/rules/` |
-| Content moves again after this proposal | The successor pointer names the heading and the identifiers rather than a line, so it survives a further move | §28.1 |
+| A sentence carries the canonical spelling and still describes the wrong mechanism | No gate detects it, because the naming lint reads spellings and the identifier gate reads resolution. `tests/registers/reserved-phrase-senses.yaml` carries an entry per reserved-phrase site and the name pass fails a site with no entry, so the reviewer resolves each ambiguous sentence before the substitution runs rather than after. TEST-1 pins that fail-closed path with its own cases. The sites whose current text names the wrong participant are corrected by hand in SPEC-1, and the wrong artifact descriptions and the wrong artifact-scope sentence at `spec/15_external-api-surface.md` line 1463 in SPEC-2 | §3.2, SPEC-1, SPEC-2, and the hand-authored rows in the §3.4 class table |
+| The naming lint cannot land green because prose violations remain | The lint's domain is the same domain the name pass walks, so SPEC-1 writes every site the lint reads and no violation survives the sub-step. The gate never widens and suppression is not used | SPEC-1's name-pass domain and the TEST-1 sentence stating the lint's domain |
+| A line citation is written after the retirement | The ratchet fails the file at tier 0 | §28.1 N8 and `.claude/rules/` |
+| Content moves again after this proposal | The successor pointer names the heading and the identifiers rather than a line, so it survives a further move | §28.1 N8 |
 
 ## 6. Proposed changes
 
 ### TOOL-1. The migration and gate tooling
 
-**Target:** `scripts/specshift`, `cmd/lenny-test`, `tests/tier0_static/`, `tests/registers/`.
+**Target:** `scripts/specshift`, `cmd/lenny-test`, `tests/tier0_static/`, `tests/registers/`, and
+`TESTING.md` §7 and §21.3, which state the verdict enum and the `tiers.<name>.status` enum that the
+`UNVERIFIED` verdict state and the `unverified` tier status extend.
 
-**Change.** Build `scripts/specshift` with four passes: a name pass that removes reserved bare noun
-phrases from prose, an identifier pass that rewrites a channel identifier across code, schemas, SDKs,
-charts, and documentation, an anchor pass that rewrites a retired section anchor to its successor, and a
-line pass that rewrites or retires a line citation. Each pass is driven by a register file and carries a
-dry-run mode whose output is the entry criterion for applying it. `scripts/specshift` ships with its own
-`run_test.go`.
+**Rationale:** Every later sub-step is a mechanical rewrite over thousands of sites. Without the tooling
+the rewrites are hand edits, and without the gates their completeness is unverifiable. The tooling is kept
+whole rather than split because these pieces share one validator, one register contract, and one set of
+tests, and because splitting them would put a hard dependency across a sign-off boundary for no gain.
 
-Build the citation resolver, the heading walker, the naming lint, the identifier-resolution gate, and the
-line-citation ratchet as Go tests under `tests/tier0_static/` or as checks in the map validator, because
+TOOL-1 also builds the residual gate §4.7 defines: per enumerated class, compute the broad-predicate
+set, subtract the enumerated members and the class's residual register, and fail tier 0 on a non-empty
+remainder naming each member and its class. It scans the read domain §4.7 states, which is the tracked
+tree less the read exclusion §4.6 states, less the further root-level records N3 names for the
+reserved-phrase and identifier classes, and less every residual register and every pass or baseline
+register a class's predicate would match as tree content. It is a `tests/tier0_static` Go test reading the per-class
+residual registers rather than new machinery, and it is what makes every enumeration in this proposal
+safe to be incomplete. Each class has a residual register of its own at
+`tests/registers/residual-<class>.yaml`, distinct from the register or baseline that drives the class's
+pass, because a pass register is keyed for its rewrite and several of them are emptied as the rewrite
+completes. A residual register carries the entry schema §4.7 states, which is a member, a
+class, an `in-class` or `excluded` disposition, and a reason, rather than the shared register contract's
+entry schema, because an exclusion is permanent, an in-class entry is retired by the event that takes its
+member out of the class where the class has one and is permanent for the same reason an exclusion is where
+it has none, so no entry is retired by a date, and the shared contract fails an entry whose expiry has
+passed or whose blocker resolves to no open item. Each residual register is seeded with today's measured
+population so the check lands green on a real population. In a class whose members can leave it the run
+that takes a member out removes that member's entry in the same run, per §4.7, so a rewrite that empties a
+class also empties the in-class part of its residual register, and a tracked path that gains a glob key or
+a skip reason that gains a category drops out of its register on the same downward rewrite its baseline
+performs. In the generated-artifact class no member leaves the class, so its in-class entries persist and
+the gate stays green on them run after run. Narrowing a predicate to reach green is the one closure route the check does not accept.
+
+The check for a class lands in the sub-step that seeds that class's registers, per §3.5, because the
+broad predicate matches a live population until the residual register exists. TOOL-1 lands the checks for
+the classes whose registers it seeds, which are the two line-citation classes over
+`tests/registers/residual-line-citations.yaml` and
+`tests/registers/residual-line-citation-resolution.yaml`, the generated-artifact class over
+`tests/registers/residual-generated-artifacts.yaml`, whose pass driver remains the generated-artifact
+denylist in `scripts/specshift`,
+the change-graph coverage class over `tests/registers/residual-change-graph-coverage.yaml`, and the
+skip-reason class over `tests/registers/residual-skip-reasons.yaml`.
+
+The generated-artifact class's broad predicate is the union §4.7 states, which is a generation marker in
+the file header or in top-level document metadata, or membership in the output set of a producer §4.6
+names. That is the same union §4.6 states as its per-file write exclusion, so the residual scan, the
+exclusion, and the `scripts/specshift` denylist all range over one predicate and cannot drift apart. The
+marker branch alone under-selects the tree, because `charts/lenny/crds/` and `pkg/embedded/crds/` carry no
+generation marker, so the second disjunct is what makes the class complete. The check derives the producer
+output sets from the producer list §4.6 states, together with the chart-to-embedded copy, rather than by
+running a producer, so it is decidable at tier 0.
+
+The reserved-phrase class over
+`tests/registers/residual-reserved-phrases.yaml` lands in SPEC-1, the identifier class over
+`tests/registers/residual-identifiers.yaml` in SPEC-2, and the anchor class over
+`tests/registers/residual-anchors.yaml` in SPEC-3, each with the sub-step that seeds the class's pass
+register.
+
+**Change (staged description).** Build `scripts/specshift` with four passes: a name pass that removes
+reserved bare noun phrases from prose, an identifier pass that rewrites a channel identifier across code,
+schemas, SDKs, charts, and documentation, an anchor pass that rewrites a retired section anchor to its
+successor, and a line pass that rewrites or retires a line citation. Each pass is driven by a register
+file and carries a dry-run mode whose output is the entry criterion for applying it. `scripts/specshift`
+ships with its own `run_test.go`.
+
+This sub-step builds only the gates whose route to green it also supplies, which are the citation
+resolver, the line-citation ratchet, the proto no-drift test, the change-graph completeness check, the
+skip-reason classifier, the shared register contract, and the residual gate with the residual checks for
+the classes whose registers this sub-step seeds. The naming lint,
+the heading walker, and the identifier-resolution gate are red against the unmodified tree, and their
+routes to green are content changes that later sub-steps make: the reserved-phrase removal, the
+`spec/README.md` rows and `tests/spec-map.json` keys, and the collapse of each retired spelling to one
+canonical identifier. Each of those three therefore lands in the sub-step that makes it green, per §3.5,
+so tier 0 is green at the exit of every sub-step and no gate is staged twice. The gate-integrity meta-gate
+lands in SPEC-4 for the same reason, because its fixed list names gates that SPEC-1 through SPEC-4
+register and it is red anywhere earlier.
+
+Seed the citation resolver's baseline, `tests/registers/line-citation-resolution.yaml`, in the same
+sub-step that builds the resolver, per §4.6. The resolver is red on introduction against roughly 1,500
+already-stale citations, so the gate is stated as failing a citation that neither resolves inside its
+section nor appears in the baseline, and every sub-step below takes "no new resolver failure relative to
+the baseline" as its criterion rather than "the resolver is green".
+
+Build the citation resolver and the line-citation ratchet as Go tests under `tests/tier0_static/` or as
+checks in the map validator, because
 those are the two channels the repository hard-gates. A gate delivered as a shell script under `scripts/`
 is not durable here: the repository's lint invocation is downgraded to a non-fatal warning, several tier-0
 checks are non-fatal, and a set of checks pass silently when their script is absent. One documented
 enforcement location in the tree names a script that does not exist, which is the same failure this whole
 remediation addresses, occurring inside the test infrastructure.
+
+Add a tier-0 Go proto no-drift test that reproduces the whole `make generate-proto` target into a
+temporary directory and diffs the result against the committed stubs under `pkg/proto/`, for the same
+reason. `scripts/check-proto-generated.sh` cannot serve: it exits 0 when `buf` is absent, and it exits 0
+whenever `schemas/buf.gen.yaml` carries no uncommented `remote:` plugin line, which is the repository's
+state today, so it certifies `pkg/proto/` unconditionally. `pkg/proto/` is the only generated artifact
+whose producer is not reachable from `make generate`, and SPEC-2 rewrites its source.
+
+The test reproduces the target's `PATH="$(go env GOPATH)/bin:$PATH"` prepend, runs `buf generate`, and
+then applies the target's two post-generation steps, which are the
+`// SPDX-License-Identifier: MIT` prepend and `goimports -w -local github.com/lennylabs/lenny`, before it
+compares (`Makefile` lines 91 through 100, with `GOPATH_BIN` defined at `Makefile` line 20). The `PATH`
+prepend is part of the target rather than an environment detail, because `schemas/buf.gen.yaml` lines 16
+through 21 declare `protoc-gen-go` and `protoc-gen-go-grpc` as `local:` plugins that `buf generate`
+resolves from `PATH`, and `scripts/setup-dev.sh` lines 390 and 391 install both into `GOPATH/bin`.
+Diffing raw `buf generate` output against the committed stubs
+would report drift on every generated file at introduction, because the plugins emit neither the SPDX
+header nor the regrouped import block. The test is verified green against the unmodified tree in TOOL-1,
+before SPEC-2, SPEC-3, and SPEC-4 take it as an exit criterion, and TEST-1 names its cases, because a test
+that returns early when any of `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports` is absent
+reproduces the fail-open behavior that disqualifies the shell script it replaces.
 
 Build the shared register contract every gate in the remediation plan uses, with an entry schema carrying
 a subject, a verdict, an owner, an opened-at date, an expiry, a blocker, and a reason, and with three
@@ -302,139 +1084,3689 @@ Add the remaining tooling the plan's step three carries, which is included in th
 shares the validator, the register contract, and the same authors:
 
 - **Change-graph completeness**, so a change that should have propagated to a derived artifact cannot pass
-  unnoticed.
+  unnoticed. The predicate is the reverse of the one that runs today: `validateChangeGraphFileExistence`
+  walks the glob keys of `tests/change-graph.json` and confirms each resolves on disk
+  (`cmd/lenny-test/cmd_validate.go` lines 272 through 316), while completeness fails a tracked source path
+  that no glob covers. The new check lands in `runValidateMaps` (`cmd/lenny-test/cmd_validate.go`), which
+  runs inside the `validate-maps` tier-0 check and hard-fails the tier
+  (`cmd/lenny-test/cmd_run.go` lines 734 and 742), so this is a behavior change to a running gate rather
+  than new tooling and TEST-1 names its cases. The check is red on introduction and is seeded with a
+  baseline in the same sub-step that builds it, in the way §4.6 states for the citation resolver rather
+  than through the shared exception register. The unmapped population measured over `git ls-files` is on
+  the order of 750 of the 1,378 tracked non-test `.go` files under `pkg/` and `cmd/`, spread over roughly
+  340 of their 498 package directories, and it includes shipped packages such as `pkg/adapter`,
+  `pkg/preflight`, and `pkg/gateway/mcpfabric/mcptools`. The shared register cannot carry that population,
+  because its third ratchet rule fails an entry whose `blocker` does not resolve to an open item and a
+  package absent from the change graph has no pending step to name, which is the same argument the
+  heading walker makes at a tenth of the scale. `tests/change-graph-pending.txt` cannot carry it either,
+  because that file lists change-graph glob keys for paths committed ahead of their implementation, which
+  is the inverse population, and `readPendingPaths` matches an entry by exact string equality on the glob
+  key (`cmd/lenny-test/cmd_validate.go` lines 292 through 295 and 637 through 654). TOOL-1 therefore seeds
+  `tests/registers/change-graph-coverage.yaml`, keyed by path prefix, with today's unmapped paths, and the
+  gate fails a tracked source path that is neither covered by a glob in `tests/change-graph.json` nor
+  covered by a prefix in that baseline. The baseline is rewritten downward only, so a path that gains a
+  glob key cannot lose it again, and TOOL-1 records the exact count its own check produces.
 - **An `UNVERIFIED` verdict state**, so a check that could not reach a conclusion is distinguishable from
-  one that passed. The verdict type already carries a third state with a promotion switch, so this is one
-  constant and one branch rather than new machinery.
+  one that passed. The verdict type already carries a third state with a promotion switch, so the
+  aggregation side is one constant and one branch rather than new machinery. It changes the verdict
+  aggregation and the exit-code contract CI reads, so TEST-1 names its precedence, exit-code, and
+  fail-open cases in `cmd/lenny-test/verdict_test.go`. The aggregation side alone is not enough, because
+  nothing in the tree can produce the status for a tier-0 Go test to carry. `runStaticTier` composes tier 0
+  as a table of checks whose result is a Go error, the `go test ./tests/tier0_static/...` entry included
+  (`cmd/lenny-test/cmd_run.go` lines 717 through 720), and the composing loop collapses every check to two
+  values, returning `"fail"` on the first error and `"pass"` otherwise
+  (`cmd/lenny-test/cmd_run.go` lines 747 through 753); the only other value the tier emits is `"skipped"`
+  when `go` is absent (line 473). `recordTier` reclassifies only a failing tier, only into `inconclusive`,
+  and only on a fixed infrastructure-pattern list that names no toolchain absence
+  (`cmd/lenny-test/verdict.go` lines 235 through 237 and 279 through 309). TOOL-1 therefore also lands the
+  producer: the check table carries a per-check status, the `go test ./tests/tier0_static/...` entry parses
+  a sentinel line a tier-0 test writes to report that it could not reach a conclusion, and the composing
+  loop propagates that status instead of collapsing it. Without the producer the proto no-drift test has
+  only the two outcomes TEST-1 rules out, which are a hard `FAIL` on a tree with no drift and an early
+  return that reproduces the fail-open behavior of the shell script it replaces. TEST-1 names the
+  producer's cases in `cmd/lenny-test/cmd_run` alongside the aggregation cases. `TESTING.md` owns both
+  changed enums in prose and is amended in the same change. §7 field semantics states that the verdict is
+  one of `PASS`, `FAIL`, and `INCONCLUSIVE` (`TESTING.md` line 521), the next sentence in the same list
+  states that `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, and `not-selected`
+  (`TESTING.md` line 522), and §21.3 states the retry-then-`FAIL` path for the one non-`PASS`, non-`FAIL`
+  verdict value (`TESTING.md` line 2572). All three become false the moment the harness emits the new
+  values, and a CI consumer reading §7 to interpret `tests/results/latest.json` mis-parses them. The
+  producer widens both enums, because the per-tier status is the field the new state lands on first
+  (`cmd/lenny-test/verdict.go` line 68 serializes it as `status`) and the verdict is what the aggregation
+  derives from it. The §7 verdict sentence gains
+  `UNVERIFIED` with its meaning, which is that a check could not reach a conclusion, and its exit code
+  distinct from the `INCONCLUSIVE` code; the §7 tier-status sentence gains `unverified` with the same
+  meaning stated for a tier, which is that a check in that tier could not reach a conclusion; and the
+  §21.3 sentence distinguishes the infrastructure-failure
+  `INCONCLUSIVE` path from the new `UNVERIFIED` path. No substitution rule produces those three sentences,
+  so that edit is hand-authored and carries the class row §3.4 adds for it. The rest of `TESTING.md` is inside
+  the name and identifier passes' walk, per the root-contract-document row §3.4 adds and the N3 scope.
 - **The additional `tests/spec-map-exceptions.yaml` fields and the reason class** the new specification
-  sections need to register a heading whose implementation is pending.
-- **An AST-based skip-reason classifier.** The existing convention is implemented in a downgraded shell
-  script whose allow pattern matches any skip regardless of reason, so the convention is unenforced today.
-  Parsing the syntax tree rather than the string is what makes it real.
-- **A gate-integrity meta-gate** asserting that no gate this proposal adds can be disabled by deleting a
-  script.
-
-**Rationale.** Every later sub-step is a mechanical rewrite over thousands of sites. Without the tooling
-the rewrites are hand edits, and without the gates their completeness is unverifiable. The tooling is kept
-whole rather than split because these pieces share one validator, one register contract, and one set of
-tests, and because splitting them would put a hard dependency across a sign-off boundary for no gain.
+  sections need to register a heading whose implementation is pending. The reason class is
+  `pending-implementation`, and the fields it requires are `blocker`, naming the remediation step that
+  implements the heading, and `opened_at`, the date the entry was written. Both field names are taken from
+  the shared register contract's entry schema rather than invented, so one vocabulary covers both
+  registers. This is a behavior change to a running tier-0 gate rather than new tooling:
+  `validateSpecMapExceptionsYAML` hard-codes the accepted reason set
+  (`cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193) and the three-field entry struct
+  (lines 168 through 175), and it runs inside the `validate-maps` tier-0 check
+  (`cmd/lenny-test/cmd_run.go` lines 734 and 742). Widening it changes both its accept and its reject
+  predicate, and the new class is the route by which the heading walker lands green for a heading with no
+  spec-map key, so TEST-1 names its cases.
+- **An AST-based skip-reason classifier.** Its target is `tests/tier0_static/` and
+  `tests/registers/skip-reasons.yaml`. The existing convention is implemented in a downgraded shell script
+  whose allow pattern matches any `t.Skipf` regardless of reason
+  (`scripts/lint-test-conventions.sh` line 102), invoked non-fatally and passing when the script is absent
+  (`cmd/lenny-test/cmd_run.go` lines 690 through 696), so the convention is unenforced today. Parsing the
+  syntax tree rather than the string is what enforces the convention. The predicate is: a `t.Skip` or
+  `t.Skipf` call whose first argument is a string literal must open with one of the reason categories
+  `cmd/lenny-test/cmd_validate.go` lines 853 through 865 already enumerate for §17.9, which are
+  `not implemented:`, `blocked:`, `phase-gated:`, `not-yet-applicable:`, `not yet applicable:`,
+  `flaky-time:`, `flaky-network:`, `flaky-ordering:`, and `quarantined:`; a call to a `SkipUnless*` harness
+  helper and a bare `t.Skip()` with no reason are accepted, because neither states a reason the classifier
+  can read; a reason built from a non-literal expression is reported against the register rather than
+  accepted silently; and a file that does not parse fails rather than being skipped. The check is fatal at
+  tier 0 rather than a warning, which is the point of moving it out of the shell script. It is red on
+  introduction against both call forms, because the predicate reads a string-literal reason wherever it
+  appears rather than only in the formatted call. A measurement over `tests/`, `pkg/`, and `cmd/`, counting
+  a call whose first argument is a string literal that opens with none of the categories and discarding a
+  line whose code is commented out, with the comment test anchored to the start of the source line so that a
+  reason carrying a URL is not discarded, finds 204 `t.Skipf` sites and a further 189 `t.Skip` sites,
+  so the seeded population is on the order of 390 sites rather than the `t.Skipf` sites alone,
+  and TOOL-1 records the exact count its own classifier produces, in the way §4.6 states for the citation
+  resolver. Almost all of them are permanently-correct host-capability skips, such as
+  `tests/testinfra/kind/kind.go` line 104 and `tests/testinfra/envtest/envtest.go` line 94 in the formatted
+  form and `tests/testinfra/kind/kind.go` line 71 and `tests/testinfra/chaos/chaos.go` line 52 in the
+  unformatted form, so TOOL-1 seeds
+  `tests/registers/skip-reasons.yaml` with both populations, keyed by file and call site, and the baseline is
+  rewritten downward only. The non-literal branch is red on introduction too, and its population is seeded
+  into the same register in the same run: ten `t.Skip` calls across five files pass a first argument the
+  classifier cannot read as a literal, at `tests/testinfra/kind/install.go` lines 56, 59, 93, 108, and 116,
+  `tests/testinfra/matrix/matrix.go` line 102, `tests/tier5_e2e_kind/gvisor_isolation_test.go` line 105,
+  `tests/tier5_e2e_kind/execution_modes_test.go` lines 304 and 314, and
+  `tests/tier9_security/adapter_peercred_test.go` line 125. None of them is a `SkipUnless*` helper call, so
+  a classifier that accepted them silently would ship with the hole it replaces, and none of them is
+  covered by the two figures above, which count string-literal reasons alone. The shared exception register cannot hold that population, because its entry
+  schema requires an owner, an expiry, and a `blocker` resolving to an open item, and a skip that fires
+  because Docker is absent has no pending step to name and no date on which it becomes wrong. This is the
+  same construction §4.6 gives the citation resolver and the ratchet, and TEST-1 names the classifier's
+  cases.
 
 ### SPEC-1. The naming law, the registers, and the prose correction
 
 **Target:** `spec/28_communication-channels.md` §28.1 through §28.4 (new), `spec/03_high-level-architecture.md`,
-and the reserved bare noun phrases wherever they appear in `spec/` and `docs/`.
+`spec/README.md`, `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`,
+`tests/registers/reserved-phrase-senses.yaml`, the reserved bare noun phrases
+wherever they appear in the domain N3 states, which is `spec/`, `docs/`, `schemas/`, the Go doc comments
+of every tracked Go file, and the tracked root-level contract documents `README.md` and `TESTING.md`,
+and the `tests/tier11_docs/` reconciliation tests that pin the
+rewritten sentences as string literals. The naming lint lands in this sub-step, because this is the
+sub-step that removes every site the lint reads.
 
-**Change.** Write §28.1 through §28.4: the naming law, the taxonomy and its axes, and the three registers
-with the full inventory. Correct the `spec/03` diagram line, which names one protocol where several run
-and asserts mTLS the rendered podspec does not provide, and add a pointer to §28. Remove the reserved bare
-noun phrases from specification and documentation prose by script.
+**Rationale:** The channels carry no canonical names today, and two unrelated mechanisms are both called a
+lifecycle channel, so every later step that names a channel has nothing to name it by. The naming law, the
+registers, and the reserved-word removal are the vocabulary the rest of this proposal and the remediation
+steps after it cite.
 
-Add `.claude/rules/channel-naming.md` stating N1 through N7.
+**Change (staged description).** Write §28.1 through §28.4: the naming law N1 through N8, which includes
+the citation and successor-pointer rule N8 the citation gates enforce, the taxonomy and its axes, and
+the three registers with the full inventory. Each register carries one row per link, channel, or register
+entry, per §4.3. Correct the `spec/03` diagram line at
+`spec/03_high-level-architecture.md` line 29 so it stops standing for several channels and one protocol
+under a single arrow, and add a pointer to §28. The edit keeps the mTLS assertion, which §10.2, NET-060 in
+§10.3, §15.4, and §4.7 all require and which no edit in this proposal retracts; the podspec's missing
+certificate material is recorded as a claim-register row with status `ABSENT` naming the later step that
+wires it, per §4.4. Retracting the requirement instead would mean staging matching edits to
+`spec/10_gateway-internals.md` lines 190 and 321, `spec/15_external-api-surface.md` lines 1456 and 2554,
+`spec/04_system-components.md` lines 641 and 856, and the documentation pages that state it
+(`docs/api/internal.md` line 13 and its "mTLS requirements" section at line 44,
+`docs/getting-started/architecture.md` lines 75 and 417, and `docs/reference/adapter-contract.md`
+line 18), which this proposal does not do. Remove the reserved bare noun phrases by script, driven by
+`tests/registers/reserved-phrase-senses.yaml`, with the pass failing a site the register does not resolve.
+
+The name pass walks the whole domain N3 states in one run rather than `spec/` and `docs/` alone, under the
+generated-file exclusion §4.6 states. That domain is exactly the naming lint's domain, which is what TEST-1
+requires, and the tree carries the banned phrases outside `spec/` and `docs/` in quantity. In the
+space-separated spelling that is 65 occurrences
+across 11 files in `spec/`, 55 across 16 files in `docs/`, 10 across 4 files in `schemas/`, 124 in Go doc
+comments across 55 tracked Go files, and 10 in `README.md` and `TESTING.md`.
+
+The matcher covers the hyphenated compound as well, per N3, because the tree carries that spelling in
+normative text the space-separated measurement misses. Measured under the compound spelling the tree
+carries 6 further occurrences across 4 files in `spec/`, 3 across 2 files in `docs/`, 29 in Go doc
+comments across 18 tracked Go files, none in `schemas/`, and 2 in `TESTING.md`. The `docs/` figure is the
+compound population net of the markdown anchor identifiers N3 places outside the matcher: `docs/` carries
+6 compound occurrences across 4 files, and three of them are anchor identifiers rather than prose, which
+are the kramdown attributes at `docs/reference/glossary.md` line 207 and `docs/api/internal.md` line 318
+and the same-page fragment link at `docs/api/internal.md` line 229. The three prose sites the pass
+rewrites are `docs/reference/adapter-contract.md` line 84 and `docs/runtime-author-guide/lifecycle.md`
+lines 69 and 319. No `spec/` compound occurrence is an anchor identifier, so the `spec/` figure is
+unaffected. `spec/18_build-sequence.md` carries three of them, at lines 164, 165, and 408, and carries no
+space-separated occurrence at all, so a matcher restricted to the space-separated form leaves that file
+outside the pass, outside the seeded register, and outside §11's touched-file list while §28 and the
+rewritten sections name `CH-RUNTIMEOPS`. Five tracked Go files are in the same position, which are
+`pkg/adapter/credentials.go`, `pkg/gateway/runtime/watchdog/watchdog.go`,
+`tests/tier11_docs/budget_extension_trigger_consistency_test.go`,
+`tests/tier4_integration/credential_test.go`, and
+`tests/tier8_chaos/credential_rotation_ceiling_test.go`. Both figures are measured under N3's stated
+domain, which is a Go doc comment in a tracked Go file, so an occurrence carried in a Go string literal is
+outside them. `pkg/ctlcli/runtime.go` line 424 carries the compound in the `runtimeValidateUsage` raw
+string literal that `lenny runtime validate` prints as operator-facing help text, which the name pass does
+not write and the naming lint does not read. That site is out of scope on the same ground as the other
+Go string literals, and this proposal leaves the printed help text unchanged. The `spec/` population the
+register is seeded against is
+therefore 71 occurrences across 12 files, and the exit criterion below is a search for each reserved bare
+noun phrase in both spellings. A pass
+scoped to `spec/` and `docs/` would leave the remaining sites with a gate that reads them and no pass that
+writes them, which is the failure the root-contract-document class already exists to prevent, and neither
+escape is available: the pass is fail-closed on an unregistered site, and the shared exception register
+fails an entry whose `blocker` does not resolve to an open item. `tests/registers/reserved-phrase-senses.yaml`
+is therefore seeded against that whole population rather than against the `spec/` occurrences alone. The
+identifier pass, which is a different pass on a different register, still runs in SPEC-2.
+
+The Go doc-comment population is stated over every tracked Go file rather than over `pkg/`, `cmd/`, and
+`sdks/`, because 23 of the 124 occurrences sit in 9 files under `tests/`, among them
+`tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 8, which is already a target of
+this sub-step for the spec prose it pins, `tests/tier3_contract/sdks/runtime_sdk_test.go` line 338, and
+`tests/tier4_integration/credential_lifecycle_test.go` line 11. A `// spec:` or `// diagnosis:` comment
+under `tests/` is a Go doc comment in N3's sense, and the naming lint reads it, so a pass scoped to the
+three product directories would leave those 23 sites red with no writer, which is the failure this
+paragraph exists to prevent one directory over. `migrations/` carries no occurrence.
+
+The register's value space is the whole §28 identifier space rather than the channel register alone,
+because several reserved-phrase sites denote a link. Two distinct gRPC connections default to port 50051,
+so a port-50051 site is resolved from the direction the surrounding text describes rather than from the
+port. `LNK-POD-GRPC` in the naming table is the gateway-to-pod `Adapter` service on `adapter.grpcPort`,
+which the gateway dials at the pod IP and which carries `CoordinatorFence`, `NegotiateVersion`,
+`CH-ADAPTEREVENTS`, and `CH-PODHEALTH` on the one connection (`pkg/adapter/holdstate.go` lines 54 through
+59; the ingress site at `spec/13_security-model.md` line 72 names that port).
+`LNK-GWCONTROL` is the pod-to-gateway `GatewayControl` service on `gateway.grpcPort`, which the gateway
+hosts and the adapter dials (`schemas/lenny-adapter.proto` lines 230 through 247). The normative
+default-deny egress prose and the rendered NetworkPolicy at `spec/13_security-model.md` lines 79, 92, and
+100 all sit inside `allow-pod-egress-base` and describe the pod's egress allowance, so each resolves to
+`LNK-GWCONTROL`, as does `docs/getting-started/architecture.md` line 506 in documentation prose.
+Restricting the register to channel identifiers would either abort the pass at every such site, leaving
+SPEC-1 unable to complete, or narrow a security-normative sentence to one of the conversations the link
+carries.
+
+One site resolves to two identifiers rather than one, so a register entry carries one or more identifiers
+and the name pass substitutes each at the position the entry records. The mTLS handshake metric definition
+at `spec/16_observability.md` line 51 labels the histogram by `direction` and instruments the two values
+because they are distinct paths, which the definition states: the gateway originates the adapter gRPC
+dial, and the pod originates the LLM-proxy connection. The LLM proxy runs on port 8443, which
+`spec/13_security-model.md` line 79 excludes from the base allowance and which the naming table records as
+`CH-LLMPROXY` on the pod-egress boundary. That site is recorded in
+`tests/registers/reserved-phrase-senses.yaml` as denoting `LNK-POD-GRPC` for the `gateway_to_pod`
+direction and `CH-LLMPROXY` for the `pod_to_gateway` direction, and the substitution names both. N5 keeps
+the link and channel identifier spaces free of a shared stem, so the substituted identifier stays
+unambiguous.
+
+The sense mapping is a migration register under `tests/registers/` rather than a column in normative
+§28.3, for three reasons. It is keyed by occurrence site rather than by channel, which the one-row-per-
+entry register schema in §4.3 cannot carry, and the measured baseline is roughly 236 reserved-phrase
+occurrences across the whole N3 domain against roughly twenty-two channels, so many sites map to one
+channel row. It is an edit-site list of a script-driven class, which §3.4 states should not appear in the
+applied change. It is also stale once the pass has run over its whole domain, because the pass removes
+every phrase the register indexes, so normative text would enumerate sites that no longer contain the
+phrase.
+
+The register is emptied at the end of SPEC-1, and its entry criterion is run completeness measured against
+the tree rather than the completion of the sub-step, which is that a search for each reserved bare noun
+phrase over the whole domain N3 names returns zero occurrences outside a markdown anchor identifier, which
+is the population the naming lint reads. That is the same criterion SPEC-4 uses
+before emptying `tests/spec-anchor-moves.json`, and it is stated that way because an empty register is also
+what a pass that resolved nothing leaves behind, and because a register emptied while sites remain leaves
+the naming lint red with no writer available. SPEC-2's identifier pass reads
+`tests/registers/identifier-senses.yaml` rather than this register, so the retirement does not strand it.
+
+Correct by hand, rather than by substitution, the spec sentences whose current text names the wrong
+participant, because a substitution turns each of them into a precise false statement: the interrupt
+sentences at `spec/07_session-lifecycle.md` line 324 and `spec/15_external-api-surface.md` line 1755, the
+slot-failure sentence at `spec/05_runtime-registry-and-pool-model.md` line 540, and the mixed-sense
+coordinator-hold-timeout paragraph at `spec/10_gateway-internals.md` line 50.
+
+Eleven files under `tests/tier11_docs/` pin spec prose as Go string literals through `specSection`,
+`requireLine`, and `requireAllContain`, and those literals are neither `spec/`, `docs/`, `schemas/`, nor a
+Go doc comment, so the name pass does not reach them and the naming lint does not see them. Two further
+files pin spec heading slugs and one intra-spec markdown link through a `specCrossRef` table and a
+`mustContain` list rather than through any of those three helpers, so the class register is stated over
+every Go string literal under `tests/tier11_docs/` that names a spec heading slug, an intra-spec markdown
+link, or pinned spec prose, rather than over the three helper names. The pass is extended to all of them
+and tier 11 is the exit criterion of this sub-step. The rewrite of
+`spec/04_system-components.md` line 489 is the concrete case: its "per-pod adapter-to-gateway control
+channel" is exactly the phrase N3 bans, and
+`tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 asserts that clause verbatim.
+
+Add the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4 subsections, at
+the depth the existing entries use, and write for each of those headings the other half of the walker's
+predicate as well, which is a `tests/spec-map.json` key or a `tests/spec-map-exceptions.yaml` entry under
+the `pending-implementation` reason class TOOL-1 adds with its `blocker` and `opened_at` fields. The file is hand-maintained and has no generator, and its last
+numbered entry today is §27.10 at line 190, so an appended section is invisible to a reader scanning the
+index until the rows are written.
+
+Seed the heading walker's predicate to green in the same sub-step, which is a bounded job rather than a
+register entry. The seeding is stated over the walker's whole domain, which is every `## N` heading, every
+`### N.M` heading, and every deeper heading the index already carries, rather than over the `### N.M`
+headings alone. The index carries `## N` and `### N.M` rows, with `spec/README.md` line 147 as its only
+level-4 row, and 49 `### N.M` headings have no row today: the forty §18 build phases, §17.8.1 through
+§17.8.6, §16.1.1, §4.0, and §24.0. Write those rows. Fifty of the same headings have no `tests/spec-map.json`
+key; write a key for each, or an entry in `tests/spec-map-exceptions.yaml` under the
+`pending-implementation` reason class TOOL-1 adds, carrying the `blocker` and `opened_at` fields that
+class requires. `24.19.1 Image Management`, the one deeper heading the index already carries
+(`spec/README.md` line 147) and therefore the one deeper heading inside the walker's domain, needs the
+same treatment: `tests/spec-map.json` carries a `24.19` key and no `24.19.1` key, and
+`tests/spec-map-exceptions.yaml` carries no entry for it, so it gets a key or an exceptions entry under
+the same rule. Without it the walker's spec-map half is red at SPEC-3 on a heading no other instruction in
+this proposal reaches, and the standing rule forbids widening the gate or suppressing the finding.
+
+Add `.claude/rules/channel-naming.md` stating N1 through N8. The file sits outside the domain N3 names,
+so it also carries the two banned spellings verbatim, as the specimen authors and the naming lint's
+matcher are checked against. That is the assertion §28.1's statement of N3 makes about this file, so the
+file has to carry the spellings for the section to be true on landing.
 
 **Not in scope for this sub-step.** The Go file and symbol renames, which belong to the wire-contract
-sub-step so exactly one change moves each file. Metric label renames, which are deferred to the step that
+sub-step so exactly one change moves each file, and which carry the register re-keying §4.6 states. Metric label renames, which are deferred to the step that
 first makes those metrics observable, with a claim-register row naming it.
 
 ### SPEC-2. The wire contract change
 
-**Target:** `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, the normative field
-tables that name the colliding key, the adapter manifest emitter, the three runtime SDKs, the adapter
-flag, and the runtime author guide.
+**Target:** `schemas/lenny-adapter.proto`, `pkg/proto/` (regenerated rather than rewritten),
+`schemas/lenny-adapter-jsonl.schema.json`, the artifact-scope sentence at
+`spec/15_external-api-surface.md` line 1463, the normative field
+tables that name the colliding key, the adapter manifest emitter, the second manifest emitter in the
+external-adapter compliance harness, the three runtime SDKs, the adapter flag, the runtime author guide,
+`docs/reference/glossary.md`, the tracked root-level contract documents `TESTING.md` and `README.md`, `tests/registers/identifier-senses.yaml`,
+`tests/registers/line-citations.yaml`, `tests/registers/line-citation-resolution.yaml`,
+`tests/change-graph.json`, and `tests/spec-map.json`, for the file
+keys and path entries of the renamed files and for the `::<symbol>` references naming symbols the pass
+renames, and the gRPC full-method string
+literals in `pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go`. It also targets the two R1b
+scope-table rows in `gateway-runtime-comms-remediation.md` at line 418 and line 423, which still spell
+the `CH-ADAPTEREVENTS` rename targets from the retired stem. The identifier-resolution gate
+and the `coordinatorHoldAllowedMethods` assertion land in this sub-step, because this is the sub-step that
+collapses each retired spelling to one canonical identifier and therefore the first at whose exit the gate
+can be green.
 
-**Change.** Rename the two colliding channels to their canonical identifiers across every machine-readable
-surface, by script, driven by the naming table in §28.3. Correct the two shipped wire artifacts whose
-descriptions are wrong, including the JSON Lines schema description that attributes intra-pod frames to
-the gRPC stream.
+**Rationale:** The colliding word is embedded in surfaces prose cannot reach, and the runtime author
+contract instructs third-party authors to read the key by name. Leaving the machine-readable surfaces
+ambiguous while renaming only prose produces a worse state than either alternative.
+
+**Change (staged description).** Rename the two colliding channels to their canonical identifiers across
+every machine-readable surface, by script, driven by the naming table in §28.3.
+
+The §28.3 table records the spelling each carrier takes, per N7. The adapter manifest key becomes
+`runtimeOps`, in the camelCase form every sibling key in the §4.7 field set uses
+(`spec/04_system-components.md` lines 788 through 796), and the adapter flag becomes
+`--runtime-ops-socket` in lowercase kebab. The manifest spelling is stated here rather than read off the
+plan's scope table, because that table predates N7 and states a target for the key without stating the
+form rule it follows.
+
+The `CH-ADAPTEREVENTS` carrier spellings are stated here for the same reason and for a stronger one. The
+plan's R1b scope table was written while C6 still carried the retired identifier `CH-EVENTSTREAM`, and
+its rows at `gateway-runtime-comms-remediation.md` line 418 and line 423 still spell the rename targets
+from that stem, as `rpc AdapterEventStream(stream AdapterEventStreamRequest) returns (stream
+AdapterEventStreamResponse)` and `pkg/adapter/eventstream.go`. Both spellings fail N3, which forbids an
+identifier stem that reuses a bound term, and N4, which requires the proto RPC name stem and the Go file
+name stem to be the channel's identifier. Under N4 the RPC at `schemas/lenny-adapter.proto` line 227
+becomes `rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse)`, the two
+message types become `AdapterEventsRequest` and `AdapterEventsResponse`, the gRPC full-method literal in
+`pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go` becomes
+`/lenny.adapter.v1.Adapter/AdapterEvents`, and `pkg/adapter/controlchannel.go` and its test sibling
+become `pkg/adapter/adapterevents.go` and `pkg/adapter/adapterevents_test.go`. The §28.3 table records
+these spellings, and this sub-step corrects the two plan rows in the same change so the retired stem is
+not reintroduced through them. Without the correction an implementor driving the rename from the plan
+produces a gRPC method name, two message type names, and a Go file stem that contradict §28.1, and the
+identifier-resolution gate sees `CH-ADAPTEREVENTS` resolving to more than one spelling.
+
+The retired spelling `LifecycleChannel` is two-valued at the identifier level, not only in prose, so the
+identifier pass is driven by a per-occurrence register in the same way the name pass is. Both channels
+carry that exact Go token inside package `adapter`: `pkg/adapter/lifecyclechannel.go` line 92 declares
+`type LifecycleChannel struct` for `CH-RUNTIMEOPS`, and `pkg/adapter/controlchannel.go` line 90 declares
+`func (s *Server) LifecycleChannel(stream adapterv1.Adapter_LifecycleChannelServer) error` for
+`CH-ADAPTEREVENTS`. A register keyed by channel cannot resolve which occurrence maps to which canonical
+identifier, so `tests/registers/identifier-senses.yaml` carries one entry per occurrence site, and the
+pass aborts on a site with no entry rather than substituting a default. This mirrors the fail-closed rule
+§3.4 row 1 states for the name pass.
+
+The register's trigger is occurrence-scoped rather than channel-count-scoped. A spelling the §28.3 table
+maps to exactly one channel still occurs at sites that are not that channel, and a channel-count trigger
+substitutes at those sites blind. The verified case is the socket token `@lenny-lifecycle`, which the
+naming table renames to `@lenny-runtime-ops` and which the table maps to `CH-RUNTIMEOPS` alone.
+`spec/17_deployment-topology.md` line 1530 uses `@lenny-lifecycle.json` as an `az` command-line file
+argument (`az storage account management-policy create --account-name <account> --policy
+@lenny-lifecycle.json`), where the `@` is the `az` read-from-file prefix and the name is the local
+blob-lifecycle policy document the code fence at `spec/17_deployment-topology.md` lines 1510 through 1529
+produces. Its two sibling lines still read `file://lenny-lifecycle.json` for AWS at line 1490 and
+`--lifecycle-file=lenny-lifecycle.json` for GCP at line 1509. A blind substitution renames a storage
+lifecycle-policy file after a runtime-operations channel and names a file the surrounding spec never
+produces. That occurrence is recorded in `tests/registers/identifier-senses.yaml` as a not-a-channel site
+the pass leaves unmodified, and the identifier-resolution gate reads the same per-context predicate it
+already reads for the `coordinatorHoldAllowedMethods` literals, so a permanently correct non-channel
+occurrence is not routed through the shared exception register, whose owner and expiry it could never
+retire against.
+
+The same socket token is a genuine channel reference in the test-harness contract, which is why the passes
+walk the tracked root-level contract documents rather than stopping at `spec/`, `docs/`, and `schemas/`.
+`TESTING.md` line 1996 states the runtime-author SDK Full-level conformance battery as "connect to
+`@lenny-lifecycle`, capability handshake, checkpoint flow, interrupt flow, credential rotation, deadline
+notification", which is the battery this sub-step's tier-10 bullet re-runs over the renamed socket, so
+leaving it behind would instruct SDK authors and conformance implementors to dial a socket no adapter
+opens. `TESTING.md` lines 788, 858, 874, 993, 1315, 1527, 1972, 1996, and 2248 and `README.md` line 155 carry
+the reserved bare phrase, and SPEC-1's name pass has already rewritten them from
+`tests/registers/reserved-phrase-senses.yaml`, because its walk covers the whole N3 domain. What this
+sub-step writes in those two files is the retired identifier spelling, and `TESTING.md` carries it at two
+lines rather than one. Line 1996 holds the socket token. Line 1521 holds three further retired spellings,
+which are the schema path `schemas/lifecycle-events.schema.json`, the example-fixture glob
+`schemas/examples/lifecycle.*.json`, and the name of the test that validates them,
+`tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate`. The §28.3 naming table renames
+that schema file, this sub-step's tier-0 schema-bijection bullet renames its fixtures, and N4 carries the
+rename into the test name, so all three go stale in the same change. A search of both files for every
+retired spelling returns those two lines and no other, so
+`tests/registers/identifier-senses.yaml` is seeded against both rather than against the socket token
+alone; the pass aborts on a site with no entry, so an unseeded line 1521 would stop the run. Without this the
+identifier-resolution gate, whose domain is the whole tree, would see `CH-RUNTIMEOPS` resolving to two
+spellings at this sub-step's exit with no pass able to write the file, and the occurrence could not be
+recorded as a not-a-channel site because it is a channel.
+
+The other root-level markdown files that carry a retired spelling or the reserved phrase are the ones N3
+excludes, which is why the gate's domain and the passes' walk are the same list. `BUILD-PLAN.md` line 259
+names the `LifecycleChannel` stream in a build-plan entry, `BUILD-PROGRESS.md` line 30 and
+`PROPOSAL-QUEUE.md` lines 289 and 625 carry the reserved bare phrase, and `BUILD-GAPS.md` and
+`TEST-GAPS.md` carry both in quantity. Each records what was planned, found, or decided at the time it was
+written, so nothing rewrites it and no gate reports it, which is the disposition §5 already states for the
+audit records.
+
+A mis-resolved site is not uniformly loud. A mis-mapped Go symbol fails to compile, but a gRPC full-method
+string literal does not: `pkg/adapter/holdstate.go` line 57 carries
+`"/lenny.adapter.v1.Adapter/LifecycleChannel": true` in the `coordinatorHoldAllowedMethods` allowlist that
+the hold-state interceptors read (`// spec: §10.1 line 49.` at line 53), and a pass that resolves it to
+`CH-RUNTIMEOPS` rewrites it to a method the proto no longer declares. The pass rewrites the parallel
+literal at `pkg/adapter/holdstate_test.go` line 292 identically, so the test stays green while a new
+coordinator's control-stream open is rejected during hold state. Every gRPC full-method literal is
+therefore resolved from the proto RPC row rather than from the Go type row, and TEST-1 adds a tier-0
+assertion over `coordinatorHoldAllowedMethods`, so a mis-resolved literal cannot pass with its own test
+rewritten alongside it.
+
+The assertion is stated per service part rather than over the map as a whole, because two of the five
+entries are not `adapterv1` methods: `pkg/adapter/holdstate.go` lines 58 and 59 carry
+`/grpc.health.v1.Health/Check` and `/grpc.health.v1.Health/Watch`, which come from the standard health
+service `pkg/adapter/transport.go` registers from `google.golang.org/grpc/health/grpc_health_v1` and which
+have no descriptor under `pkg/proto/`. An assertion requiring every entry to name an `adapterv1` method
+would be red on the unmodified tree against two entries that are correct and permanently correct, and the
+proposal's standing rule is that a gate never lands green by widening or suppression. The predicate is
+therefore: an entry whose service part is `lenny.adapter.v1.Adapter` names a method or stream
+`Adapter_ServiceDesc` declares, and an entry whose service part is another service names a method of a
+service the adapter registers, which today is only `grpc.health.v1.Health`. A mis-resolved rename
+preserves the `/lenny.adapter.v1.Adapter/` prefix, so the failure this assertion exists to catch stays
+inside the first branch.
+
+The renamed Go files still carry their line citations at this point, because the line pass that retires
+them does not run until SPEC-3 and SPEC-4. `pkg/adapter/lifecyclechannel.go` carries nine and
+`pkg/adapter/controlchannel.go` carries five, with five and four more in their test siblings. The
+identifier pass therefore rewrites the file keys in `tests/registers/line-citations.yaml` and
+`tests/registers/line-citation-resolution.yaml` in the same run that moves each file, per §4.6, so the
+ratchet and the resolver see an unchanged count and an unchanged baseline at this sub-step's exit rather
+than a path they have never seen.
+
+The rule is stated over every path-keyed test-infrastructure register the pass's file moves invalidate,
+rather than over those two registers alone, because a hand-written enumeration of registers is the same
+kind of list §3.4 rules out for edit sites. Two further registers are in that position today. The naming
+table renames `schemas/lifecycle-events.schema.json` to `schemas/runtime-ops-events.schema.json`, and
+`tests/change-graph.json` line 495 carries the old path as a glob key.
+`validateChangeGraphFileExistence` stats every glob key and fails the check when one does not resolve on
+disk (`cmd/lenny-test/cmd_validate.go` lines 294 through 305), and it runs inside the `validate-maps`
+tier-0 check, which hard-fails the tier (`cmd/lenny-test/cmd_run.go` lines 734 and 742), so leaving the key
+behind ends this sub-step with tier 0 red. `tests/change-graph-pending.txt` is not the remedy, because it
+lists paths committed ahead of their implementation rather than paths that moved. `tests/spec-map.json`
+carries the same path in its `schemas` arrays at lines 438, 2360, and 2376, which no check
+existence-checks, so those entries would go stale silently.
+
+The same register also carries two symbol references the pass renames rather than moves, and those are
+existence-checked. `tests/spec-map.json` lines 2187 and 2370 name
+`tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate`, declared at
+`tests/tier0_static/schemas_test.go` line 146, which N4 renames with the schema it validates, and lines
+2188 and 2385 name `cmd/lenny-compliance/full.go::checkLifecycleHandshake`, declared at
+`cmd/lenny-compliance/full.go` line 225, which N4 renames with the channel it exercises.
+`validateSpecMapTestFuncs` reads the referenced file and requires a top-level `func <Name>(` declaration
+(`cmd/lenny-test/cmd_validate.go` lines 564 and 602 through 617), it is registered in `runValidateMaps`
+at line 53, and it runs inside the same `validate-maps` tier-0 check, which hard-fails the tier
+(`cmd/lenny-test/cmd_run.go` lines 734 and 747 through 750). Renaming either symbol without rewriting its
+references therefore ends this sub-step with tier 0 red. The re-key rule §4.6 states covers both a path
+key the pass's file moves invalidate and a `::<symbol>` reference naming a symbol the pass renames, so a
+hand-written enumeration is still not what drives it. The identifier pass rewrites every one of them in
+the same run, and TEST-1 pins the outcome per register rather than as a single `validate-maps` result,
+because `validate-maps` does not read the `schemas` arrays.
+
+Run `make generate-proto` afterwards, because the rename edits `schemas/lenny-adapter.proto` and
+`pkg/proto/` is generated output the passes do not write. That target is separate from `make generate` and
+is reached by no other sub-step. The tier-0 proto no-drift test TOOL-1 adds is an exit criterion of this
+sub-step.
+
+Correct by hand the artifact descriptions and the one specification sentence that state the wrong
+mechanism, because a spelling substitution preserves a wrong sentence:
+
+- `schemas/lenny-adapter-jsonl.schema.json`, whose `description` at line 5 calls checkpoint, interrupt,
+  `credentials_rotated`, and `deadline_approaching` a "gateway↔adapter lifecycle channel" carried on the
+  gRPC stream. Those frames are `CH-RUNTIMEOPS` frames between the adapter and the runtime over the
+  intra-pod socket, so both halves of the sentence are wrong.
+- `spec/15_external-api-surface.md` line 1463, which describes the same artifact from the specification
+  side and makes the mirrored error: it calls `schemas/lenny-adapter-jsonl.schema.json` the JSON Schema for
+  "every adapter↔binary stdin/stdout message ... and every lifecycle-channel message". The artifact
+  schematizes no such message. Its `$defs` are exactly `messageEnvelope`, `from`, `heartbeat`,
+  `heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`, `response`, `status`, and
+  `set_tracing_context`, which is the message list the same sentence already enumerates, and the
+  checkpoint, interrupt, `credentials_rotated`, and `deadline_approaching` frames are schematized in
+  `schemas/runtime-ops-events.schema.json`, the artifact this sub-step renames from
+  `schemas/lifecycle-events.schema.json`. The parenthetical is rewritten to close after
+  `set_tracing_context` and to send the runtime-operations frames to
+  `schemas/runtime-ops-events.schema.json`, so the two published representations of the same wire artifact
+  agree once the corrected `description` above ships. The correction is hand-authored under the §3.4 row
+  for a description the collision made wrong: the sense register cannot repair it, because whichever
+  identifier it substitutes for the reserved phrase, the sentence stays a precise false statement about
+  the artifact's contents, which is the failure mode §3.2 names. SPEC-3 carves this line out of the §15.4
+  reduction and SPEC-4 rewrites its `#1541-adapterbinary-protocol` link, so the sentence survives the
+  later sub-steps and has to be true when it does.
+- The `CheckpointBarrierAck` comment in `schemas/lenny-adapter.proto` lines 166-172, which names the
+  stream by the colliding word.
+- `docs/reference/glossary.md`, whose "Lifecycle Channel" entry (`docs/reference/glossary.md:206-209`)
+  defines the gRPC gateway-to-pod stream and then credits it with checkpoint requests and credential
+  rotation, which are `CH-RUNTIMEOPS` frames on the intra-pod socket, and with session start/stop and
+  workspace notifications, which are separate `Adapter` service RPCs. Split it into one entry for
+  `CH-ADAPTEREVENTS`, carrying the vocabulary the handler emits (`pkg/adapter/controlchannel.go`
+  lines 18-44: `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`,
+  `AdapterTerminating`, `FINAL_USAGE_REPORT`, and `CheckpointBarrierAck`), and one entry for
+  `CH-RUNTIMEOPS`, carrying the checkpoint, interrupt, credential-rotation, and deadline frames. Keep the
+  existing `{: #lifecycle-channel }` anchor on a redirect stub so no inbound link breaks. N3 places a
+  markdown anchor identifier outside the reserved-phrase matcher, so SPEC-1's name pass leaves that
+  attribute in place and the stub inherits an anchor that still exists. Without this the
+  identifier pass produces a glossary asserting that `CH-ADAPTEREVENTS` carries checkpoint requests, and
+  both gates pass it.
 
 Apply as one exclusive change on a quiesced tree. While it is in flight no other change edits an adapter
 handler file or the adapter proto, because a rename and a concurrent edit to the same file produce a
 conflict that resolves silently in the wrong direction.
 
-**Rationale.** The colliding word is load-bearing on surfaces prose cannot reach, and the runtime author
-contract instructs third-party authors to read the key by name. Leaving the machine-readable surfaces
-ambiguous while renaming only prose produces a worse state than either alternative.
+**Tests.** The rename changes a wire contract and the runtime adapter contract, which
+`.claude/rules/test-coverage.md` maps to tier 3 and tier 10. Both tiers already carry suites that
+construct the renamed symbols and drive the renamed handshake, so the change reaches them. The renamed
+manifest key and socket also cross a process boundary between the adapter and a separate runtime binary,
+which `.claude/rules/test-coverage.md` line 36 maps to tier 4, so the change reaches tier 4 as well.
+
+- **Tier 3, manifest round trip.** Emit a manifest from `pkg/adapter/manifest.go` and parse it with each
+  of the three runtime SDKs (`sdks/runtime/go/runtime/types.go`, `sdks/runtime/python/lenny_runtime/types.py`,
+  `sdks/runtime/typescript/src/types.ts`), asserting that the renamed key and its socket resolve in all
+  three and that a manifest carrying only the retired key resolves no operations channel in any of them,
+  so the Full-level socket is reported absent. The assertion is stated that way rather than as a rejection
+  of the retired key, because §4.7 makes silent ignoring of unknown top-level manifest fields normative
+  for runtimes (`spec/04_system-components.md` line 818) and the shipped Go SDK documents that behavior
+  (`sdks/runtime/go/runtime/types.go` lines 113 through 116). A rejection assertion would require the
+  three SDKs to fail on unknown top-level fields, which contradicts that rule and is a runtime behavior
+  change this proposal does not make. This is the cross-language property §5
+  asserts, and review cannot check it.
+- **Tier 3, wire agreement.** Assert that the adapter's listen address derived from the renamed flag
+  equals the socket the manifest advertises, and that the renamed proto RPC and the JSON Lines schema
+  `$defs` agree with the adapter handler and with the §28 register.
+- **Tier 0, schema bijection.** Assert the renamed schema files and their example fixtures round-trip.
+- **Tier 4, live runtime process.** Run `tests/tier4_integration/credential_lifecycle_test.go` over the
+  renamed manifest key, the renamed socket, and the renamed `--runtime-ops-socket` flag, asserting that
+  the real `cmd/runtimes/streaming-echo` process resolves its operations socket from the renamed key and
+  completes the `credentials_rotated` and `credentials_acknowledged` round trip, and asserting the
+  negative case that a manifest carrying only the retired key leaves the runtime with no operations
+  socket, so the Full-level flow fails rather than degrading silently. This tier is the only one that
+  drives the renamed key against a real runtime binary: `cmd/runtimes/streaming-echo` parses the manifest
+  through its own struct tag at `cmd/runtimes/streaming-echo/main.go` line 147 rather than through any of
+  the three runtime SDKs, so a rename applied to the emitter and the SDKs but not to that runtime is a
+  silent JSON unmarshal miss that every other listed test passes. The run is an exit criterion of this
+  sub-step.
+- **Tier 10, conformance.** Run the Full battery over the renamed socket, handshake, and check
+  identifier, asserting that `cmd/lenny-compliance/full.go`, `cmd/lenny-ctl/runtimescaffold/probe.go`, and
+  `tests/tier10_conformance/scaffolds_test.go` agree with the production emitter.
+
+The manifest key has two independent emitters, so `cmd/lenny-compliance/full.go` line 98, which writes the
+manifest for the external-adapter compliance run that gates a third-party adapter from
+`pending_validation` to `active`, moves in the same change, as does the fixture at
+`tests/tier4_integration/credential_lifecycle_test.go` line 362. The manifest also has a fourth reader
+beyond the three runtime SDKs, which is `cmd/runtimes/streaming-echo/main.go` line 147, and it moves in
+the same change. Each new test carries a `// spec:` tie to the §28 card for the channel it exercises,
+which for the tier-4 assertions is the `CH-RUNTIMEOPS` card.
 
 ### SPEC-3. The new sections, the reductions, and the successor pointers
 
 **Target:** `spec/28_communication-channels.md` §28.5 through §28.7 (new),
-`spec/29_communication-scenarios.md` (new), `spec/15_external-api-surface.md` §15.4, `spec/04_system-components.md` §4.7,
-and the sections that link to §28 rather than describing the contract themselves.
+`spec/29_communication-scenarios.md` (new), `spec/15_external-api-surface.md` §15.3, §15.4, §15.4.5, and
+§15.7, `spec/04_system-components.md` §4.7,
+`schemas/runtime-ops-events.schema.json`, `schemas/messagepart.schema.json`, and
+`schemas/lenny-adapter-jsonl.schema.json` (post-SPEC-2 names, for the
+hand-corrected `description` pointers), `docs/api/internal.md` (for the hand-split binary-protocol
+pointer at line 544),
+`spec/README.md`, `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`,
+`tests/spec-anchor-moves.json` and `tests/registers/anchor-senses.yaml` (seeded here),
+the sections that link to §28 rather than describing the contract themselves,
+`tests/claim-map.json`, and
+`pkg/proto/` (regenerated rather than rewritten, because the line pass rewrites `schemas/*.proto`). The
+heading walker, the tier-11 successor-pointer check, and the claim register's schema-only tier-0 validator
+land in this sub-step, because the walker's
+predicate names the §28.5 card headings this sub-step creates, the check reads the pointers this
+sub-step writes, and the validator reads the register this sub-step seeds.
 
-**Change.** Write the contract cards grouped by participant edge, the exclusivity and concurrency model,
-and the wire-contract artifact register derived mechanically from the schemas directory rather than
-hand-enumerated. Write §29 as end-to-end traces naming channels by identifier.
+**Rationale:** The channel contract is spread across `spec/04`, `spec/07`, `spec/10`, `spec/13`, and
+`spec/15`, and no section owns it, so answering how the gateway talks to the pod requires reading all five.
+`spec/28` and `spec/29` give the contract and the end-to-end traces one normative home, and each reduced
+section keeps a successor pointer so a reader arriving by a stale reference lands on a pointer rather than
+on adjacent text.
+
+**Change (staged description).** Write the contract cards grouped by participant edge, the exclusivity and
+concurrency model, and the wire-contract artifact register derived mechanically from the schemas directory
+rather than hand-enumerated. Write §29 as end-to-end traces naming channels by identifier.
 
 Reduce `spec/15` §15.4 to the wire-artifact pointer it already claims to be, and reduce the `spec/04` §4.7
 channel prose, in both cases leaving a successor pointer naming the identifiers that moved and the heading
-that now owns them. Ship `tests/spec-anchor-moves.json` mapping each retired anchor to its successor, so
-the citation resolver stays green until the rewrite runs.
+that now owns them.
 
-Seed the claim register from the reference document's status tables.
+Restate the §15.3 sentence at `spec/15_external-api-surface.md` line 1456 by hand in the same change,
+because the reduction makes it false. It reads "The wire contract is published as machine-readable
+artifacts in [Section 15.4](#154-runtime-adapter-specification); this section (15.4 and its subsections)
+is the normative prose reference and is kept in sync with those artifacts", which asserts a normative
+ownership §15.4 gives up here. The restated sentence names §28 as the normative reference for the
+gateway-to-pod channel contract and §15.4 for the wire artifacts. The edit is hand-authored because the
+sentence sits above the §15.4 heading and so outside the reduction, carries no line citation, carries no
+anchor that moves, and carries neither reserved phrase as a bare noun phrase, so no pass reaches it and no
+gate reads it. Its companion at line 1466 sits inside the §15.4 preamble at lines 1458 through 1468 and
+is covered by the reduction at sentence granularity. Line 1466 carries four sentences, and the reduction
+removes the last one alone, which begins "**This section (15.4 and its subsections) remains the normative
+prose description**" and ends "any discrepancy between the artifacts and this prose is a bug that must be
+reconciled before release". The three sentences that open the line state the compatibility contract for
+the same three artifacts §15.4 is reduced to: the release-tag versioning rule, the buf-style
+breaking-change rule for the `.proto` file together with the `additionalProperties` discipline for the
+JSON Schemas, and the `examples/runtimes/echo/` reference implementation built from the same `.proto`
+file. They are carved out and stay where they are, on the same rule the wire-artifact pointer at lines
+1460 through 1464 gets, because they are part of that pointer rather than a channel contract. A tree-wide
+grep for `buf.build`, `buf-style`, `breaking-change rules`, `additionalProperties discipline`, `versioned
+by Lenny release tag`, and `executable reference` over `spec/` and `docs/` returns
+`spec/15_external-api-surface.md` line 1466 alone, so removing them would delete the only statement in the
+tree of the compatibility contract third-party runtime authors and SDK maintainers build against.
+
+One paragraph of that preamble is carved out and stays where it is: the SDK-warm demotion contract at
+`spec/15_external-api-surface.md` line 1468, which requires adapters for runtimes that declare
+`capabilities.preConnect: true` to implement the `DemoteSDK` RPC and which fixes the 10s teardown timeout
+followed by SIGKILL, the post-demotion pod state, and the `UNIMPLEMENTED` error code for adapters that do
+not support demotion. It is carved out on the same rule §15.4.3 through §15.4.6 get below, because it
+states an obligation on the runtime author's adapter rather than a channel contract, and §28.5 holds
+contract cards grouped over the closed boundary set below, none of which owns an adapter RPC
+implementation obligation. Those particulars appear nowhere else: `spec/04_system-components.md` line 652
+states the RPC's purpose and a gateway-side fallback timeout alone, and `spec/06_warm-pod-model.md` lines
+40 and 67 state the mandatory-support rule and the separate SIGTERM-internal timeout. Keeping the
+paragraph in place is also what keeps the inbound references at
+`spec/05_runtime-registry-and-pool-model.md` line 22, `spec/15_external-api-surface.md` line 1114,
+`docs/reference/adapter-contract.md` line 64, `docs/reference/configuration.md` line 153, and
+`docs/reference/error-catalog.md` line 100 resolving to a normative statement of the contract.
+
+The §15.4 reduction covers the channel-contract prose alone, which is the §15.4 preamble at
+`spec/15_external-api-surface.md` line 1458 other than the wire-artifact pointer at lines 1460 through
+1464, the three compatibility-contract sentences that open line 1466, and the SDK-warm demotion paragraph
+at line 1468. Within the preamble the reduction therefore removes the normative-ownership sentence that
+closes line 1466 and leaves the rest standing. The wire-artifact pointer is
+carved out because it is the pointer §15.4 is reduced to: line 1460 is the sentence "The runtime adapter
+contract is published as three machine-readable artifacts committed to the repository and released
+alongside each Lenny release", and lines 1462 through 1464 name `schemas/lenny-adapter.proto`,
+`schemas/lenny-adapter-jsonl.schema.json`, and `schemas/messagepart.schema.json`. Removing them would
+leave the restated §15.3 sentence pointing at a §15.4 that names no artifact, and would remove line 1463,
+which SPEC-4 counts among the same-page links its anchor pass rewrites. Line 1463 states the scope of
+`schemas/lenny-adapter-jsonl.schema.json` wrongly today, and SPEC-2 corrects it by hand in the same change
+that corrects the artifact's own `description`, so what this carve-out preserves is a true sentence. The reduction also covers
+the `#### 15.4.1 Adapter↔Binary Protocol` and
+`#### 15.4.2 RPC Lifecycle State Machine` subsections at lines 1470 and 2068. The §15.4.1 block is not one
+heading: four unnumbered `####` subsections and their `#####` children sit between line 1470 and line 2068,
+which are the internal `MessagePart` format heading (line 1515), `#### Translation Fidelity Matrix`
+(line 1653), the `MessageEnvelope` unified message format heading (line 1708), and
+`#### Protocol Reference — Message Schemas` (line 1836) with the eight `##### Inbound:` and
+`##### Outbound:` message schemas under it at lines 1840, 1856, 1864, 1872, 1909, 1929, 2023, and 2029.
+Two of the four carry the adapter-to-binary wire contract, which are the internal `MessagePart` format
+heading and `#### Protocol Reference — Message Schemas` with its eight message schemas. Those two are
+inside the §15.4.1 block the reduction retires, they move to §28 with it, and their anchors retire with
+their headings.
+
+The other two state client-facing external-protocol contracts and are carved out of the reduction, because
+§28's boundary set has no card that can own them. §28.5 groups its cards by the boundary values §28.2
+closes, which are `intra-pod`, `gateway-to-pod`, `pod-to-gateway`, `pod-egress`, `gateway-to-store`,
+`inter-replica`, and `control-plane`, and none of them names the external-client-to-gateway edge. This is
+the same rule §15.4.3 through §15.4.6 get below, applied one heading level in.
+
+- `#### Translation Fidelity Matrix` (line 1653), together with its `protocolHints` and
+  round-trip-asymmetry children, documents field-level round-trip fidelity of `MessagePart` through each
+  `ExternalProtocolAdapter` (`spec/15_external-api-surface.md` line 1655, with the column header at line
+  1672 naming MCP, OpenAI Completions, Open Responses, REST, and A2A), which is the §15.2 client surface,
+  and it is implemented gateway-side in `pkg/gateway/externalapi/outputpartfidelity` rather than in the
+  adapter. The
+  heading and its `translation-fidelity-matrix` anchor stay in `spec/15`,
+  `tests/spec-anchor-moves.json` carries no entry for that anchor, and the anchor pass leaves the two
+  inbound links at `spec/15_external-api-surface.md` line 1399 and `spec/21_planned-post-v1.md` line 31
+  untouched. A third inbound link cites the matrix through the retiring anchor and is hand-corrected
+  here: `docs/reference/adapter-contract.md` line 371 links to
+  `.../spec/15_external-api-surface.md#1541-adapterbinary-protocol` for "Spec §15.4.1 -- Translation
+  Fidelity Matrix". It is an absolute GitHub URL, so neither the anchor pass nor the fragment-link gate
+  reads it, and its page is the client-facing adapter-contract reference, so leaving it would drop a
+  runtime author at the top of `spec/15`. SPEC-3 rewrites its fragment to `#translation-fidelity-matrix`
+  in the same change that splits the heading, which is the carve-out class §3.4 states applied where the
+  link sits.
+- The `MessageEnvelope` unified message format heading (line 1708) is split before the reduction runs. Its
+  own first sentence states that the envelope is carried "across the stdin binary protocol, platform MCP
+  server tools, and all external APIs" (line 1710), and the block holds the canonical `delivery` closed
+  enum with its `400 INVALID_DELIVERY_VALUE` rejection rule (lines 1751 and 1759), the `delivery_receipt`
+  schema that the client-facing `lenny/send_message` tool returns together with its `reason` enum (lines
+  1761 and 1775), and the `message_expired` event schema and `reason` enum emitted on the sender session's
+  event stream (line 1796). Those four keep their text in `spec/15` under the existing heading, which
+  keeps its `messageenvelope--unified-message-format` anchor and gains no
+  `tests/spec-anchor-moves.json` entry. Only the stdin and stdout envelope framing moves to §28.
+  `spec/07_session-lifecycle.md` lines 116, 296, 323, 343, 349 (twice on that line), and 433 cite the
+  retired `1541-adapterbinary-protocol` anchor for exactly this material, seven links across six lines.
+  `tests/spec-anchor-moves.json` is keyed by retired anchor and carries one successor per anchor, so it
+  cannot send those seven links to the surviving `spec/15` heading while sending the other links into the
+  same anchor to a §28 card. SPEC-3 therefore rewrites those seven links by hand, in the same change that
+  splits the heading, to the surviving `messageenvelope--unified-message-format` anchor, which is the
+  hand-authored class §3.4 states for this case. The same collision recurs among the same-page links
+  inside `spec/15_external-api-surface.md`, where six links into the retired anchor cite this surviving
+  material: line 1838 (the opening sentence of the retiring Protocol Reference block, citing "the full
+  `MessageEnvelope` format"), line 2165 (the `MessageEnvelope` fields row of the integration-level matrix),
+  line 2489
+  (`MessageEnvelope` in the schema-versioning list), line 2584 (the first of the two links on that line,
+  labelled "`MessageEnvelope` — Unified Message Format"), line 2662 (the SDK comment quoting the same
+  heading title), and line 2684 (the SDK comment citing the "Ordering guarantee" bullet, which sits at
+  `spec/15_external-api-surface.md` line 1829 inside the surviving block rather than in the stdin and
+  stdout framing). SPEC-3 rewrites those six by hand in the same change, to the same surviving anchor.
+  Five of the six stay in `spec/15` and take the same-page form
+  `[...](#messageenvelope--unified-message-format)`. Line 1838 sits inside the Protocol Reference block
+  that moves to §28, so its hand-written target is the file-qualified form
+  `[Section 15.4](15_external-api-surface.md#messageenvelope--unified-message-format)`, because a §28 card
+  citing the same-page form would resolve against §28, which does not define the envelope.
+  Line 2584 is the case that shows one successor per anchor cannot serve the whole population, because it
+  carries two links to `1541-adapterbinary-protocol` on one line whose correct destinations differ: its
+  second link cites the internal `MessagePart` format, which retires with the block and resolves to the
+  §28 successor. SPEC-4's anchor pass then reads a tree with no link into
+  a retired anchor at those six `spec/07` lines, none at `spec/15` lines 1838, 2165, 2489, 2662, and 2684,
+  and only
+  the second of the two links on `spec/15` line 2584, which that pass rewrites to the §28 successor along
+  with the other links the hand corrections leave in place. The four remaining file-qualified links into
+  `1541-adapterbinary-protocol` resolve to that anchor's §28 successor: `spec/09_mcp-integration.md` line
+  24 (the `lenny/output` message schema), `spec/26_reference-runtime-catalog.md` line 221 (the
+  `tool_call` envelope), `spec/17_deployment-topology.md` line 361 (the stdin and stdout JSON Lines
+  protocol), and `spec/08_recursive-delegation.md` line 829 (`MessagePart` schema versioning).
+
+The same one-successor collision reaches the bare `§15.4.1`-form section citations, which the anchor pass
+also writes, and those are the larger population. Outside `spec/` and `proposals/` the tree carries 669
+occurrences of the bare `§15.4.1` citation across 150 files, 595 across 148 once §4.6's read exclusion of
+`BUILD-GAPS.md` and `TEST-GAPS.md` is applied, among them 293 under `pkg/`, 189 under `sdks/`, and 64
+under `cmd/`, and many of them cite the two blocks the carve-outs keep in `spec/15` rather than the
+adapter-to-binary block that moves. Eleven sit in
+`pkg/gateway/externalapi/outputpartfidelity`, the gateway-side implementation of the Translation Fidelity
+Matrix, starting with the package comment at `pkg/gateway/externalapi/outputpartfidelity/matrix.go` line
+3 ("encodes the §15.4.1 Translation Fidelity"). Sixteen sit in `pkg/gateway/session/sessioninbox`,
+including `pkg/gateway/session/sessioninbox/events.go` line 45, which cites §15.4.1 for the
+`message_expired` payload the carve-out keeps in `spec/15`. All three published runtime SDKs document
+their canonical `MessageEnvelope` type the same way, at `sdks/runtime/go/runtime/types.go` lines 52 and
+224, `sdks/runtime/python/lenny_runtime/types.py` lines 145 and 391, and
+`sdks/runtime/typescript/src/types.ts` lines 59 and 211. Rewriting those to the map's single §28
+successor would send a third-party runtime author to a channel-contract card that does not define the
+envelope or the matrix, which is the failure the carve-out exists to prevent. The population is too large
+to enumerate and is selectable only by which block each citation means, so the anchor pass takes the same
+treatment the name and identifier passes take for a two-valued term: SPEC-3 seeds
+`tests/registers/anchor-senses.yaml`, keyed by file and occurrence, recording for each occurrence of a
+retired §15.4 anchor whether its destination is the §28 card, `#translation-fidelity-matrix`, or
+`#messageenvelope--unified-message-format`, and the pass fails an occurrence with no entry rather than
+substituting the map's successor. SPEC-4 retires the register with
+`tests/spec-anchor-moves.json`, on the same run-completeness criterion. The §4.7 reduction carries no
+comparable population, because the material it moves has no bare subsection citation form: §4.7 has no
+numbered subsections, so a citation of the intra-pod block reads `§4.7` and resolves to a section that
+survives.
+
+A same-page fragment link carried inside a block the reduction relocates is a further hand-authored class
+this sub-step lands. A `[...](#anchor)` link resolves against the page it sits on, so moving the text to
+`spec/28` breaks the link even though neither the link nor its target heading changed. The anchor pass
+cannot repair it, because `tests/spec-anchor-moves.json` is keyed by retired anchor, these targets are
+surviving anchors that carry no map entry, and the pass's stated rule leaves a same-page link into a
+surviving anchor untouched. No other class reaches them, because they carry no reserved phrase, no retired
+identifier, and no line citation. SPEC-3 therefore rewrites each of them to the file-qualified form against
+the file the block left, in the same change that moves the block. Today's population is six links across
+five lines inside the internal `MessagePart` format block at `spec/15_external-api-surface.md` line
+1515, which are the `#155-api-versioning-and-stability` links at lines 1537, 1538 (twice on that line), and
+1575, the `#157-runtime-author-sdks` link at line 1649, and the `#154-runtime-adapter-specification` link
+at line 1650. Each is
+rewritten to the `15_external-api-surface.md#...` form, because §15.4, §15.5, and §15.7 all stay where
+they are. The `spec/04` side of this class is empty: the one same-page fragment link inside the §4.7
+block, the `#49-credential-leasing-service` link at `spec/04_system-components.md` line 807, sits in the
+adapter manifest field reference, which the §4.7 boundary below carves out of the reduction, so the link
+neither travels nor needs rewriting. The line 1838 correction above is the same class
+seen from the other side, where the link's target is the surviving `MessageEnvelope` heading rather than a
+numbered section. The population is re-measured against the final reduction boundary before the change
+lands, because the boundary decides which links travel. The fragment-link gate SPEC-4 lands is red on any
+of these left unrewritten, so SPEC-4's red-on-introduction population is the seven pre-existing links only
+once this rewrite has run.
+
+Moving either block instead would require §28.2 to open its closed boundary set to an external-client
+edge and §28.5 to carry a card for it, which widens this proposal from a channel contract into the client
+API surface, and would leave the normative citations above resolving to a card that does not define the
+material they cite.
+The class table stages a hand-authored correction for every sentence a reduction falsifies. The §15.3
+sentence above is one member. The remaining members are enumerated at the end of this sub-step, after the
+§4.7 reduction boundary that falsifies them is stated.
+
+`#### 15.4.3 Runtime
+Integration Levels` (line 2089), `#### 15.4.4 Sample Echo Runtime` (line 2187), `#### 15.4.5 Runtime
+Author Roadmap` (line 2387), and `#### 15.4.6 Conformance Test Suite` (line 2416) keep their headings,
+their anchors, and their subjects, and none of their prose moves to §28. Their prose is still written
+where the passes reach it: SPEC-1's name pass rewrites the 20 reserved-phrase occurrences between lines
+2089 and 2459, SPEC-2's identifier pass rewrites the retired socket token and manifest key at lines 2305,
+2425, and 2450, and SPEC-4's anchor pass rewrites the five links into the retired `15.4.1` and `15.4.2`
+anchors at lines 2163, 2164, 2394, 2395, and 2441. Line 2165 is not among them, because it cites the
+`MessageEnvelope` material the carve-out keeps in `spec/15` and SPEC-3 rewrites it by hand. What is unchanged is the set of headings, the
+anchors, and the content's ownership. They state the runtime-author contract rather than a channel contract,
+and §28 has no heading that can own them: §28.5 holds contract cards grouped by participant edge, and a
+runtime-author contract is not a channel contract. Retiring them would also break inbound normative
+references that this proposal stages
+no edit for, among them `spec/05_runtime-registry-and-pool-model.md` line 40 (the CRD `integrationLevel`
+semantics, citing §15.4.6), `spec/04_system-components.md` line 796 (the `adapterLocalTools` manifest
+field, citing §15.4.3), `spec/26_reference-runtime-catalog.md` line 10 and
+`spec/17_deployment-topology.md` line 291 (the echo runtime, citing §15.4.4), the integration-level
+vocabulary the three runtime SDKs, `README.md`, `TESTING.md`, and `docs/runtime-author-guide/` branch on,
+and the `"15.4.6"` section string `cmd/lenny-compliance/full.go` line 40 stamps into the client-facing
+compliance report.
+
+**The `spec/04` §4.7 reduction covers the channel prose alone, and the adapter manifest material is
+carved out.** §4.7 runs from `spec/04_system-components.md` line 637 to line 968, and its
+`#### Adapter ↔ Runtime Protocol (Intra-Pod)` block runs from line 691 to line 820, ending where
+`#### Runtime Integration Levels (agent-type only)` opens at line 822. Only the first part of that block
+is a channel contract: Part A at line 695 naming the platform and per-connector MCP servers, Part B at
+line 702 stating the intra-pod JSON Lines channel and its socket, and the message-schema table at lines
+715 through 731. Those move to §28, and the successor pointer the reduction leaves names the §28.5 cards
+that now own them. The adapter manifest material at lines 733 through 820 stays in `spec/04` under the
+same heading, which keeps its `adapter--runtime-protocol-intra-pod` anchor and gains no
+`tests/spec-anchor-moves.json` entry. That material is the `**Adapter manifest:**` paragraph at line 733
+with the JSON example that follows it, the **Adapter manifest field reference** table at lines 783 through 810, the
+**Level reading requirements** at lines 812 through 816, the **Forward compatibility** silent-ignore rule
+at line 818, and the `runtimeMcpServers` reservation at line 820. It is carved out on the same rule
+§15.4.3 through §15.4.6 get: the manifest field set states an obligation on the runtime author, whose
+third-party runtimes parse the document field by field, rather than a channel contract, and §28.5 holds
+contract cards grouped by participant edge under a fixed field template that a manifest field table does
+not fit. The carve-out is also what keeps two statements this proposal makes elsewhere true. N7 in §28.1
+reads the camelCase manifest convention off the §4.7 field set, and SPEC-2 justifies the `runtimeOps`
+spelling against the sibling keys at `spec/04_system-components.md` lines 788 through 796; both resolve
+to a §4.7 that still carries the field set. The manifest material staying is what keeps those two
+statements true; the sentences the reduction does falsify are enumerated below.
+
+**The falsified-sentence class is a population of eight, and every member is hand-corrected in the same
+change as the reduction that falsifies it.** The §15.3 sentence at `spec/15_external-api-surface.md` line
+1456 is the first member and is staged above. The other seven are falsified by the §4.7 reduction or by the
+§15.4.1 reduction, and four of them sit outside `spec/`, three in shipped wire artifacts and one in the
+reference page written for runtime adapter authors:
+
+- `spec/15_external-api-surface.md` line 2558, in §15.7 Runtime Author SDKs, which enumerates the
+  `lenny/*` platform MCP tool names and then states that §4.7 "is authoritative for the platform MCP tool
+  set; this list tracks it". Part A at `spec/04_system-components.md` line 697 is the only enumeration of
+  that tool set in §4.7, and it moves to §28, so the ownership claim becomes false. The sentence is
+  restated to name the §28.5 card that owns the intra-pod MCP server contract as authoritative and §4.7 as
+  the owner of the adapter manifest. No pass reaches it: it carries no line citation, its reserved word
+  appears as "lifecycle signal" rather than as a reserved bare noun phrase, and its `#47-runtime-adapter`
+  link survives and gains no `tests/spec-anchor-moves.json` entry, so the anchor pass touches that line
+  only for its separate `#1541-adapterbinary-protocol` link.
+- `spec/15_external-api-surface.md` line 2700, in the §15.7 Runtime Author SDK `Reply` type
+  documentation, which reads "// MCP tool ([§4.7](04_system-components.md#47-runtime-adapter) Part A)
+  with" and so attributes the `lenny/output` platform MCP tool to §4.7 Part A. Part A moves to §28, after
+  which §4.7 has no Part A and the parenthetical dangles. The parenthetical is rewritten to name the §28.5
+  card that owns the intra-pod platform MCP server contract. No pass reaches it, on the same reasoning as
+  line 2558: it carries no line citation, carries neither reserved word as a bare noun phrase, and its
+  `#47-runtime-adapter` link survives and gains no `tests/spec-anchor-moves.json` entry.
+- `spec/15_external-api-surface.md` line 2402, item 7 of the §15.4.5 Runtime Author Roadmap, which sends a
+  Standard-level runtime author to §4.7 for the adapter manifest field reference and then attributes the
+  Part B message schemas to the same section. The manifest half stays true under the carve-out and the
+  message-schema half does not, so the sentence is split by hand to point the message schemas at §28.5.
+  SPEC-1's name pass rewrites the reserved phrase on that line to the current spelling and leaves the
+  section pointer wrong, which is why the correction is hand-authored rather than script-driven.
+- `schemas/runtime-ops-events.schema.json`, the artifact SPEC-2 renames from
+  `schemas/lifecycle-events.schema.json`, whose top-level `description` states that the frame field names
+  are camelCase "to match the §4.7 message-schema table" and closes with "See spec/04_system-components.md
+  §4.7 and spec/15_external-api-surface.md §15.4". The table moves to §28, so the description points a
+  third-party runtime author at a section that no longer carries the contract it names. `schemas/embed.go`
+  embeds the artifact so `cmd/lenny-compliance` and `lenny runtime validate` carry it into repositories
+  where `schemas/` is absent, which makes the description a shipped statement of the contract on the same
+  footing as the `schemas/lenny-adapter-jsonl.schema.json` description SPEC-2 corrects. Both pointers are
+  rewritten to the §28.5 card that owns the intra-pod runtime-operations channel. No pass reaches them:
+  the name pass rewrites only the reserved phrase in that sentence, the line pass matches only the
+  line-citation form and neither pointer carries a line number, and §4.7 and §15.4 both keep their
+  anchors.
+- `schemas/messagepart.schema.json`, whose `description` at line 5 closes with "See
+  spec/15_external-api-surface.md §15.4". The internal `MessagePart` format block at
+  `spec/15_external-api-surface.md` line 1515, which is where that format is defined, moves to §28 with
+  the §15.4.1 reduction, so the pointer is rewritten to the §28.5 card that owns the adapter-to-binary
+  contract. The artifact is embedded by the same `schemas/embed.go` and reaches the same external
+  consumers.
+- `schemas/lenny-adapter-jsonl.schema.json`, whose `description` at line 5 closes with the same sentence,
+  "See spec/15_external-api-surface.md §15.4". SPEC-2 corrects the wrong-mechanism half of that
+  `description` and leaves the pointer, and the §15.4.1 reduction then falsifies most of it. The artifact
+  schematizes the adapter↔binary stdin/stdout messages, whose normative definitions are
+  `#### Protocol Reference — Message Schemas` at `spec/15_external-api-surface.md` line 1836 and its eight
+  `#####` message children, all of which move to §28 with the reduction, while its `messageEnvelope` `$def`
+  is defined by the `MessageEnvelope` unified message format heading at line 1708, which the carve-out
+  keeps in §15.4. The pointer is therefore half true after the reduction, on the same structure as the
+  `docs/api/internal.md` member below, and it is split by hand so that the stdin/stdout message schemas
+  point at the §28.5 card that owns the adapter-to-binary contract while the `messageEnvelope` reference
+  keeps pointing at the surviving `MessageEnvelope` heading in §15.4. No pass reaches it: the name pass
+  rewrites only the reserved phrase in that `description`, the line pass matches only the line-citation
+  form and the pointer carries no line number, and §15.4 keeps its anchor. The artifact is embedded by the
+  same `schemas/embed.go` and reaches the same external consumers.
+- `docs/api/internal.md` line 544, on the page whose audience line at line 11 names runtime adapter
+  authors, which reads "For the complete binary protocol specification, including `MessagePart` format,
+  `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4".
+  The binary protocol specification and the internal `MessagePart` format block at
+  `spec/15_external-api-surface.md` line 1515 move to §28 with the §15.4.1 reduction, while the
+  `MessageEnvelope` unified message format heading at line 1708 and the level-specific behavior in §15.4.3
+  through §15.4.6 are carved out and stay in §15.4. The sentence is therefore half true, on the same
+  structure as the §15.4.5 item 7 member above, and it is split by hand so that the binary protocol
+  specification and the `MessagePart` format point at the §28.5 card that owns the adapter-to-binary
+  contract while the `MessageEnvelope` schema and the level-specific behavior keep pointing at §15.4. No
+  pass reaches it: the sentence carries no line citation, it is bare prose rather than a markdown link, it
+  names the surviving §15.4 rather than a retired anchor and so gains no `tests/spec-anchor-moves.json` or
+  `tests/registers/anchor-senses.yaml` entry, and it carries neither reserved word as a bare noun phrase.
+
+**The reduction and the line pass over the two reduced files are one atomic sub-step.** `spec/04` §4.7
+runs from line 637 to line 968, and 697 Go citations of the form `§4.8 line N`, `§4.9 line N`, and
+`§4.9.1 line N` point below it; `spec/15` §15.4 runs from line 1458 to line 2459, with 39 `§15.5 line N`
+citations below it. A further 294 citations of the range spelling point into §4.7, §4.8, §4.9, §15.4, and
+§15.5 and are inside the same blast radius, for example
+`pkg/adapter/controlchannel.go` line 89 (`§4.7 lines 652-662`) and
+`pkg/api/v1/session/delivery_receipt.go` line 13
+(`§15.4 lines 1725-1737`). A further 86 citations across 57 files use the comma-list spelling into the
+same sections, for example `cmd/lenny-gateway/adminrouter.go` line 205
+(`§4.8 lines 1057-1058, 1077`). A further 39 citations use the path-form spelling into the same ranges,
+naming `spec/04_system-components.md` at or below line 637 or `spec/15_external-api-surface.md` at or
+below line 1458, for example `pkg/adapter/metrics.go` line 12 (`spec/04_system-components.md lines
+870-888`) and `pkg/credential/lease.go` line 150 (`spec/04_system-components.md line 1145`), and the
+en-dash range spelling reaches the same sections, for example
+`pkg/gateway/policy/policy/authevaluator.go` line 47 (`§4.8 lines 1025–1028`). Removing content from
+either section shifts every one of those line numbers, and
+each citation whose target leaves its section becomes a new citation resolver failure relative to the
+baseline TOOL-1 seeds.
+`tests/spec-anchor-moves.json` cannot rescue them, because §4.8, §4.9, and §15.5 do not move and have no
+retired anchor, so the map has no entry for them. The `specshift` line pass therefore converts every
+citation into `spec/04` and `spec/15`, in every section of those two files, in every carrier, and in every
+spelling of the retired citation form §4.6 states, to anchor citations inside the same change that removes the
+content, and the exit criterion is that the resolver reports no failure the baseline does not already
+carry, together with tier 11. The criterion is stated against the baseline rather than as a green resolver
+because the resolver is red on introduction against roughly 1,500 pre-existing stale citations, per §4.6,
+so "the resolver is green" is unreachable here and would not distinguish a citation this reduction broke
+from one that was already stale.
+
+The line pass rewrites `schemas/*.proto`, whose comments the committed stubs under `pkg/proto/` mirror and
+which no pass writes, so this sub-step runs `make generate-proto` after the line pass and takes the tier-0
+proto no-drift test TOOL-1 adds as a further exit criterion. Without it `pkg/proto/` holds the
+pre-reduction citations at the sub-step's exit, and several of them point into the shifted ranges:
+`pkg/proto/adapter/v1/lenny-adapter_grpc.pb.go` lines 178, 189, 194, and 1343 cite `§4.7` lines 632, 631,
+660, and 942, `pkg/proto/adapter/v1/lenny-adapter.pb.go` line 3287 cites `§4.7 line 822`, and
+`pkg/proto/tokenservice/v1/lenny-tokenservice.pb.go` line 622 cites `§4.9 lines 1246-1298`. §4.6 states
+that a generated file is read by the resolver, so leaving the regeneration to SPEC-4 would break the
+atomicity this sub-step rests on. This is the treatment the sub-step already gives the two OpenAPI-derived
+producers below.
+
+The same change runs the anchor pass over the markdown links into the retired §15.4 and §4.7
+subsections, because those headings cease to exist the moment the reduction lands.
+`tests/spec-anchor-moves.json` records the retired anchors and their successors in §28, and SPEC-4 empties
+it once the tree-wide pass has run.
+
+The atomic sub-step covers the two carriers the resolver would otherwise miss. The first is
+`pkg/gateway/externalapi/openapi/openapi.json`, which carries twenty line citations inside served JSON
+values, nineteen in a `description` and one in the `summary` at line 2200 that `openapi-to-mcp` copies
+into the generated tool inventory, among them `§15.4 line 1715` at line 461, a line inside the range this
+reduction shifts. That file is embedded with `//go:embed` and served at `/openapi.yaml`, `/openapi.json`, and
+`/v1/openapi.json`, and it is the source the MCP tool schema generator reads, so a stale citation ships to
+clients. Those descriptions lose the citation rather than gaining an anchor, because a served client
+artifact is not a place to cite the specification, and the same rule applies to the schema descriptions in
+`pkg/gateway/mcpfabric/mcptools/mcptools.go`. A tier-3 assertion that the served OpenAPI document and the
+committed generated MCP tool schemas carry no citation of the retired line form lands with them. The
+assertion is stated over the line form rather than over every citation form, because the strip this
+sub-step performs is scoped to the line form and `pkg/gateway/externalapi/openapi/openapi.json` carries
+citations that name a section and no line, which survive it: of the 75 section-symbol citations in that
+file, 21 name a line and the rest sit on 47 lines that name only a section, among them the
+`§10.2 OIDC/OAuth 2.1 access token` description at line 18. The two artifacts derived from it inherit the
+same state, so `pkg/gateway/mcpfabric/mcptools/generated_schemas.go` still carries the `§11.5` and `§7.3`
+descriptions in the served `lenny/create_session` input schema after the regeneration. Removing those as
+well is a served-description text change with no citation gate behind it, which this proposal does not
+stage, so an assertion over every form would have no route to green at the sub-step that lands it.
+
+Two committed generated artifacts are derived byte for byte from `openapi.json` and carry the citation
+form, so this sub-step regenerates them rather than editing them and takes their drift tests as exit
+criteria. `pkg/gateway/mcpfabric/mcptools/generated_schemas.go` is `genmcpschemas` output carrying seven
+citations inside the served `lenny/create_session` input schema, its producer is
+`go generate ./pkg/gateway/mcpfabric/mcptools/...` rather than `make generate`, and
+`TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386` requires byte identity with a fresh derivation.
+`pkg/ops/mcp/generated_tools.go` is `openapi-to-mcp` output pinned by
+`TestGeneratedToolsMatchOpenAPI_spec_25_12` and is refreshed by `make generate`. Both producers run inside
+this sub-step, so the two artifacts do not sit drifted between here and SPEC-4, and the same
+citation-removal rule applies to both sides so the derived schemas keep matching the document they mirror.
+The second is the
+tier-11 tests that pin §4.7 prose: `tests/tier11_docs/eviction_coordinator_route_consistency_test.go`,
+`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go`, and
+`tests/tier11_docs/budget_extension_trigger_consistency_test.go` all scope assertions to `"### 4.7 "`.
+Every row they pin sits above the reduction boundary stated above, which opens at
+`spec/04_system-components.md` line 691: the `Terminate` (proto `Shutdown`) row at line 664, which
+`tests/tier11_docs/recycle_scrub_trigger_consistency_test.go` lines 65 and 139 select with `requireLine`;
+the `AdapterTerminating` event row at line 688, which
+`tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 88 selects the same way; and the
+whole-section absence assertion over `ExtendLease` at
+`tests/tier11_docs/budget_extension_trigger_consistency_test.go` line 175, which stays true over a §4.7
+that has lost only the intra-pod block. §4.7 therefore keeps the gateway-to-adapter RPC tables at lines
+643 through 671 and the adapter-to-gateway event table at lines 679 through 689, and all three files stay
+green without an edit at this sub-step. They are named here so an implementor confirms that state rather
+than assuming the reduction reached them, on the same rule as the two embedded-anchor files below. The
+standing rule holds that a row relocated into a §28.5 card carries its pin with it, re-scoped to
+`spec/28`, and under the boundary stated above no row these three tests pin relocates, so the rule stages
+no edit here. Tier 11 is an exit criterion of this sub-step alongside the resolver. The one edit any of
+the three takes lands elsewhere: `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line
+69 pins a §4.6.1 clause carrying a reserved noun phrase, and SPEC-1's name pass rewrites that literal with
+the §4.6.1 prose it asserts, under the tier-11 literal class §3.4 states.
+
+Two further tier-11 files pin §15.4 subsection anchors without using any of those three helpers, and the
+narrowed reduction is what keeps them green rather than a rewrite.
+`tests/tier11_docs/embedded_mode_anchors_test.go` line 43 requires the heading slug
+`1543-runtime-integration-levels` to exist in `spec/15_external-api-surface.md`, and
+`tests/tier11_docs/embedded_echo_placement_test.go` line 38 requires `1544-sample-echo-runtime`; both
+assert against `headingSlugs()` over the live file. `tests/tier11_docs/embedded_echo_placement_test.go`
+line 116 additionally requires `spec/17_deployment-topology.md` to contain the verbatim string
+`[Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)`. Because §15.4.3 and §15.4.4 keep
+their headings and their anchors, `tests/spec-anchor-moves.json` carries no entry for
+`1543-runtime-integration-levels` or `1544-sample-echo-runtime`, the anchor pass leaves the
+`spec/17_deployment-topology.md` links at lines 181, 291, and 353 untouched, and both files stay green
+without an edit. They are named here so an implementor confirms that state rather than assuming the
+reduction reached them. The retired §15.4 anchors are the two numbered anchors
+`1541-adapterbinary-protocol` and `1542-rpc-lifecycle-state-machine`, together with the anchors of the
+unnumbered headings inside the §15.4.1 block that the reduction retires, which are
+`internal-messagepart-format`, `protocol-reference--message-schemas`, and the eight `##### Inbound:` and
+`##### Outbound:` message-schema anchors under the last of them. `tests/spec-anchor-moves.json` carries an
+entry for each of those anchors with its §28 successor, and no other anchor of this file.
+`translation-fidelity-matrix` and `messageenvelope--unified-message-format` are absent from the map,
+because both headings survive the carve-outs above.
+
+Add the `spec/README.md` rows for `spec/29`, for §28.5 through §28.7, and for the §28.5.1 through §28.5.7
+card headings, and revise the §4.7 and §15.4 rows so the index describes what those sections contain after
+the reduction. The card headings are level-4 and the index carries only one level-4 row today, so they are
+an explicit addition rather than a consequence of the depth convention: they are the citable handles every
+later remediation step uses, and the heading walker's predicate names them for that reason. Neither §4.7
+nor §15.4 has a subsection row in the index, and §4.7 has no numbered subsections at all, so there are no
+subsection rows to revise for either.
+
+Write, in the same change as those rows, the other half of the heading walker's predicate for every
+heading this sub-step creates: a `tests/spec-map.json` key, or an entry in `tests/spec-map-exceptions.yaml`
+under the `pending-implementation` reason class TOOL-1 adds, carrying the `blocker` and `opened_at` fields
+that class requires. The headings are §28.5, §28.6, §28.7, the §28.5.1 through §28.5.7 card headings,
+`## 29`, and each `### N.M` subsection of `spec/29`. Without this the walker is red at the exit of the
+sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
+existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193
+and the validator runs inside the hard-failing `validate-maps` tier-0 check
+(`cmd/lenny-test/cmd_run.go` lines 734 and 742), so an entry under a reason class that file does not
+carry fails tier 0 rather than passing silently, which is why the `pending-implementation` class is a
+TOOL-1 deliverable.
+
+Seed the claim register from the reference document's status tables, and land its schema-only tier-0
+validator over `tests/claim-map.json` in the same change. This sub-step is the one that supplies the
+validator's route to green, because the register does not exist before it and the validator fails a
+missing register file, and every rule the validator checks reads a seeded row or a `spec/28` heading this
+sub-step writes. TEST-1 states the validator's predicate and adds its cases.
 
 ### SPEC-4. Anchor and line-citation retirement
 
-**Target:** every `// spec:` citation in the tree, and `tests/spec-map.json`.
+**Target:** every citation of the retired form §4.6 states, in the tree under the read exclusion
+§4.6 states, in every spelling that form
+covers, which includes the 556
+section-level occurrences that carry no subsection component across 148 files, the 617 comma-list
+occurrences across 341
+files, the 50 slash-separated and 2 `and`-separated multi-member occurrences across 42 files, the
+`+`-separated multi-member occurrences across 11 files, the 136
+qualified occurrences across 68 files, the 65 en-dash range occurrences across 38 files, the 123
+path-form occurrences across 59 files, and the colon-form occurrences, which are 18 across 10 files in the
+section-number variant and 11 across 7 files in the path variant; in every carrier of the
+form, which is the `// spec:`,
+`-- spec:`, and `# spec:` comment dialects, YAML block scalars, JSON string values, and Go string literals
+holding served schema descriptions; the generated artifacts listed in §4.6, which are
+`pkg/embedded/manifests/manifests.yaml`, `pkg/embedded/crds/`, `charts/lenny/crds/`, `pkg/proto/`,
+`pkg/gateway/mcpfabric/mcptools/generated_schemas.go`, `pkg/ops/mcp/generated_tools.go`,
+`charts/lenny/values.schema.json`, `docs/alerting/rules.yaml`,
+`docs/alerting/routing-recommendations.md`, and `schemas/ocsf-mapping.yaml`,
+regenerated rather than rewritten; the hand-applied annotation blocks in `charts/lenny/crds/` and the
+literal prefixes that match them in `tests/tier0_static/crds_test.go`; every intra-repo markdown fragment
+link in `spec/` and `docs/`;
+`tests/spec-map.json`; the seventeen straddling range citations across fifteen files §4.6 enumerates,
+hand-corrected; the six authored path-form citations naming the nonexistent
+`11_security-trust-model.md` that §4.6 enumerates, hand-corrected; the paragraph at `spec/04_system-components.md` line 489;
+`tests/tier11_docs/eviction_coordinator_route_consistency_test.go`; and
+`tests/tier0_static/degradation_lock_line_citation_test.go`, whose predicate requires the retired citation
+form to be present and which is hand-rewritten here; and the seven markdown fragment links enumerated below
+whose target heading does not exist today. The fragment-link gate lands in this sub-step, because this is
+the sub-step whose anchor pass rewrites the links into the retired `15.4.1` and `15.4.2` anchors.
 
-**Change.** Run the anchor pass to rewrite each redirected citation to its successor, and empty
-`tests/spec-anchor-moves.json`. Run the line pass to convert line citations to anchor citations, driving
-every per-file count in the line-citation register to zero. Break the oversized multi-contract paragraph
-that five later steps would otherwise contend over into separately addressable blocks.
+**Rationale:** The citation and link rewrite is a large diff with no judgement in it, and its risk is
+concentrated entirely in the tooling, which is why the tooling ships first with its own tests and a dry-run
+gate. The paragraph break is the exception and is hand-authored.
+
+**Change (staged description).** Run the anchor pass tree-wide to rewrite each remaining redirected
+citation and each remaining markdown link into a retired anchor to its successor, then empty
+`tests/spec-anchor-moves.json` and `tests/registers/anchor-senses.yaml`. The entry criterion for emptying
+both is run completeness measured
+against the tree, which is that a search for each retired anchor the map names returns zero remaining
+citations and zero remaining markdown links, because an empty map is also what a pass that resolved
+nothing leaves behind. The sense register SPEC-3 seeds is retired on the same criterion, since a retired
+anchor with no remaining occurrence has no occurrence left to disambiguate. The pass rewrites markdown fragment links as well as comment
+citations, and its markdown domain is the fragment-link gate's domain, which is every link whose target is
+a tracked `.md` file or the citing page itself, so the same-page `[...](#anchor)` form is rewritten
+alongside the file-qualified `[...](NN_file.md#anchor)` form. Stating the domain that way is what keeps
+the pass and the gate over one population: reducing §15.4 retires the §15.4.1 and §15.4.2 subsections and
+`spec/` and `docs/` carry 37 markdown links into their two numbered anchors,
+`1541-adapterbinary-protocol` and `1542-rpc-lifecycle-state-machine`, of which 25 are same-page links
+inside `spec/15_external-api-surface.md` itself and 11 are file-qualified links across `spec/` and
+`docs/`. Seven of those 11 are the `spec/07_session-lifecycle.md` links SPEC-3 hand-corrects to the
+surviving `MessageEnvelope` heading before this pass runs, so this pass rewrites the other four. Six of
+the 25 same-page links, at `spec/15_external-api-surface.md` lines 1838, 2165, 2489, 2584 (the first of the two
+links on that line), 2662, and 2684, are hand-corrected to the same surviving heading in that earlier sub-step
+for the same reason, so this pass rewrites the other 19. A pass matching the file-qualified form alone would leave those 19 same-page links pointing at
+deleted anchors and the gate red on them, including the five links SPEC-4 names by line inside §15.4.3
+through §15.4.6 at lines 2163, 2164, 2394, 2395, and 2441, and the second of the two links on line 2584. The
+remaining link of the 37 is the absolute GitHub URL at `docs/reference/adapter-contract.md` line 371,
+which neither the pass nor the gate reads. It cites the retired anchor for the Translation Fidelity
+Matrix, which the carve-out keeps in `spec/15`, so it is a member of the carve-out class §3.4 states and
+SPEC-3 rewrites its fragment by hand to `#translation-fidelity-matrix` in the same change that splits the
+heading. Among the
+file-qualified links is
+`spec/17_deployment-topology.md` line 361, which sends a Source Mode reader to the stdin/stdout JSON Lines
+protocol. `spec/04_system-components.md` carries no link into either retired anchor, so the anchor pass
+stages no edit there; its line 967 link to `#1543-runtime-integration-levels`, which carries the intra-pod
+MCP nonce wire format, targets a surviving anchor and is confirmed untouched in the same way the two
+tier-11 anchor files are. The retired §15.4.1 block also retires the two unnumbered `####` anchors and the
+`#####` children SPEC-3 names, which are `#internal-messagepart-format` and
+`#protocol-reference--message-schemas`, and one further markdown link targets one of them:
+`spec/15_external-api-surface.md` line 1399 links to `#internal-messagepart-format`, and the pass rewrites
+that link from the same map. The same line's link to `#translation-fidelity-matrix` and
+`spec/21_planned-post-v1.md` line 31's link to the same anchor are untouched, because that heading and its
+anchor survive the carve-out SPEC-3 states. The 30 links whose target
+is one of the `1543` through `1546` anchors are untouched, because §15.4.3 through §15.4.6 keep their
+headings and their anchors, per SPEC-3. Links written inside those four subsections are a separate
+population and are rewritten like any other: five of them target the two retired numbered anchors, at
+`spec/15_external-api-surface.md` lines 2163, 2164, 2394, 2395, and 2441. The sixth link in that range, at
+line 2165, is one of the six SPEC-3 hand-corrects, because it cites the surviving `MessageEnvelope`
+heading.
+
+Correct the seven markdown fragment links whose target heading does not exist on the unmodified tree, by
+hand, in the same change that lands the fragment-link gate. Each names a heading that was renamed at some
+point without its inbound links being updated, so the anchor map has no entry to redirect and no pass
+produces the replacement. The gate is red on introduction against exactly these seven and green once they
+are corrected, which is why they are enumerated rather than registered: a permanently wrong link resolves
+to no open remediation item, so the shared exception register's `blocker` rule cannot hold it, and the
+proposal's standing rule forbids widening the gate or suppressing the finding. The links the SPEC-3
+reduction retires are not part of that count, because the anchor pass rewrites each of them to its §28
+successor earlier in this same sub-step, with the seven `spec/07_session-lifecycle.md` links and the six
+same-page `spec/15_external-api-surface.md` links SPEC-3
+hand-corrects to the surviving `MessageEnvelope` heading already rewritten in that earlier sub-step, so
+the gate reads a tree in which every retired anchor has already been redirected. The same-page fragments
+SPEC-3 carries out of `spec/15` and `spec/04` into `spec/28` are likewise already rewritten to their
+file-qualified form, so the gate reads them as resolving and the count of seven stands.
+
+| Link site | Current target | Heading that exists | Corrected target |
+|:--|:--|:--|:--|
+| `spec/09_mcp-integration.md` line 56 | `08_recursive-delegation.md#85-platform-tool-inventory` | `### 8.5 Delegation Tools` (`spec/08_recursive-delegation.md` line 525) | `08_recursive-delegation.md#85-delegation-tools` |
+| `docs/runbooks/artifact-replication-residency-violation.md` line 82 | `../../spec/17_deployment-topology.md#175-cloud-deployment-shapes` | `### 17.5 Cloud Portability` (`spec/17_deployment-topology.md` line 382) | `../../spec/17_deployment-topology.md#175-cloud-portability` |
+| `docs/runbooks/legal-hold-escrow-residency-violation.md` line 84 | `../../spec/17_deployment-topology.md#175-cloud-deployment-shapes` | the same heading | `../../spec/17_deployment-topology.md#175-cloud-portability` |
+| `docs/runbooks/ops-lock-split-brain.md` line 78 | `../../spec/25_agent-operability.md#254-remediation-locks-and-escalations` | ``## 25.4 The `lenny-ops` Service`` (`spec/25_agent-operability.md` line 783) | `../../spec/25_agent-operability.md#254-the-lenny-ops-service` |
+| `docs/runbooks/ops-lock-split-brain.md` line 78 | `../../spec/10_gateway-internals.md#104-runtime-extensibility` | `### 10.4 Gateway Reliability` (`spec/10_gateway-internals.md` line 376) | `../../spec/10_gateway-internals.md#104-gateway-reliability` |
+| `docs/runbooks/otlp-plaintext-egress-detected.md` line 79 | `../../spec/13_security-model.md#132-network-policy` | `### 13.2 Network Isolation` (`spec/13_security-model.md` line 32) | `../../spec/13_security-model.md#132-network-isolation` |
+| `docs/runbooks/admission-plane-feature-flag-downgrade.md` line 151 | `#` (empty fragment on the citing page) | `### Step 5 — Post-incident drift-snapshot refresh` (`docs/runbooks/admission-plane-feature-flag-downgrade.md` line 149) | `#step-5--post-incident-drift-snapshot-refresh` |
+
+The seventh is the one link in `spec/` and `docs/` written as `](#)`. Its path is empty, so its target is
+the citing page, which is a tracked `.md` file and therefore inside the gate's domain, and its empty
+fragment matches no heading slug and no anchor attribute. The `.html` exclusion below does not reach it,
+and a permanently wrong link holds no shared-register entry, so it is corrected here with the other six
+rather than excluded.
+
+Two of the seven point at a section whose current subject differs from what the citing sentence expects, so
+each corrected target is checked against the citing sentence before it is written rather than resolved by
+section number alone. The gate's domain is a link whose target is a tracked `.md` file or the citing page
+itself. A link written to the rendered documentation site, which is the `.html` form the `docs/` pages use
+for site-internal navigation, is resolved by the site generator rather than against a markdown heading and
+is outside the gate. Run the line pass over
+every carrier of the citation form to convert line citations to anchor citations, driving every per-file
+count in the line-citation register to zero.
+
+Hand-correct the straddling range citations §4.6 enumerates before the final line-pass run, because the
+pass fails each of them rather than guessing an anchor and they would otherwise hold their files above
+count zero. Each is rewritten to name the section that contains the content it cites.
+
+Hand-correct the path-form citations whose named file does not resolve under `spec/`, in the same run and
+for the same reason. §4.6 enumerates today's population, which is the six authored sites naming
+`11_security-trust-model.md` at `pkg/audit/ocsf/catalog.go` line 149,
+`pkg/audit/ocsf/catalog_test.go` lines 26, 44, 75, and 113, and `cmd/lenny-ocsf-mapping-gen/main.go`
+line 10. Each is rewritten to the `spec/11_policy-and-controls.md` §11.7 anchor, which is the heading that
+contains both line 414 and line 365. `pkg/audit/ocsf/catalog.go` line 149 is the `mappingHeader` const, so
+`go run ./cmd/lenny-ocsf-mapping-gen` runs after that edit and carries the correction into
+`schemas/ocsf-mapping.yaml`, with `TestMappingYAMLInSync` as the exit criterion §4.6 already states.
+
+The sub-step's exit criteria are that every per-file count in the line-citation register is zero and that
+the pass reports no remaining straddling range and no remaining unresolvable path-form citation, so the
+flat-prohibition end state §4.6 describes is reached rather than
+blocked by a fail-closed rule with no remedy. The register carries a per-file count for every file inside
+the resolver's and the ratchet's read domain, so the criterion is measured over that domain rather than
+over `BUILD-GAPS.md`, `TEST-GAPS.md`, and the two root planning documents, which
+the passes and the gates never open. A generated artifact inside that domain reaches zero through the
+regeneration of its source rather than through a write.
+
+Run the producers of every generated artifact §4.6 lists afterwards, so each follows its source. That is
+`make generate`, `make generate-proto`, `go generate ./pkg/gateway/mcpfabric/mcptools/...`,
+`go run ./cmd/lenny-chart-schema-gen`, `go run ./cmd/lenny-ocsf-mapping-gen`, the
+re-application of the hand-applied CRD layers described below, and the chart-to-embedded CRD re-copy, in
+that order. Run `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4`,
+`TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437`,
+`TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437`,
+`TestEmbeddedCRDsPreserveUnknownFields_spec_10_437`, `tests/tier0_static/crds_test.go`, the tier-0 proto
+no-drift test, `TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386`,
+`TestGeneratedToolsMatchOpenAPI_spec_25_12`, `TestSchemaIsCommitted_spec_17_6_655`, and
+`TestMappingYAMLInSync` as exit criteria.
+`go run ./cmd/lenny-chart-schema-gen` and `go run ./cmd/lenny-ocsf-mapping-gen` are named explicitly
+because no Makefile target reaches either, so a
+regeneration sequence that names only the `make` targets leaves `charts/lenny/values.schema.json` stale
+against the `desc:` tags the line pass rewrote and `TestSchemaIsCommitted_spec_17_6_655` red, and leaves
+`schemas/ocsf-mapping.yaml` stale against the `mappingHeader` const the line pass rewrote,
+`TestMappingYAMLInSync` red, and that file above count zero in the line-citation register.
+
+Most of the chart CRD text is controller-gen output whose citations originate in the doc comments on
+`pkg/apis/lenny/v1alpha1/*.go`, and controller-gen re-wraps description text at a fixed width, so a direct
+substitution into the CRD would be stale against the Go types and would not match what regeneration emits.
+The exception is the two hand-applied post-generation layers §4.6 describes, which `make generate`
+deletes and which nothing regenerates: the `lenny.dev/schema-version` annotation with its comment block,
+one per CRD file, and the top-level spec and status `x-kubernetes-preserve-unknown-fields: true` markers.
+Re-apply both after `make generate` and before the chart-to-embedded re-copy.
+
+The ten citations inside those five annotation blocks are hand-edited in this sub-step rather than left to
+the line pass, because the pass does not write a generated file and regeneration does not reproduce them,
+so they would otherwise hold `charts/lenny/crds/` above count zero and block the ratchet's
+flat-prohibition end state. They carry the section-level spelling `# spec: §10 line 437 / §10 line 443`
+(`charts/lenny/crds/lenny.dev_runtimes.yaml` line 7 and the same line in the four sibling CRD files), which
+the widened citation form §4.6 states matches and the subsection-only form would not, so their disposition
+is a hand edit rather than an exclusion. The citation text is required as an exact literal:
+`tests/tier0_static/crds_test.go` lines 178
+through 183 recognize the block by the exact prefix `"# spec: §10 line 437"` and strip it before comparing
+against controller-gen output, so converting the block to the anchor form without updating that prefix
+would stop the normalizer stripping the line and turn the drift test red. The prefix literals move in the
+same edit, and `tests/tier0_static/crds_test.go` is a target of this sub-step for that reason.
+
+Rewrite `tests/tier0_static/degradation_lock_line_citation_test.go` in the same change as the line pass
+over `pkg/ops/`, because that file is a running tier-0 gate whose predicate is the presence of the retired
+form rather than a matcher precedent. `TestSpec254DegradationWarningLineCitationsAreFresh` compiles
+`§25\.4 lines? (\d+)(?:-(\d+))?` at line 38, reads the comment block above each declaration it names, and
+calls `t.Fatalf` when the expression does not match (lines 104 and 105), so converting
+`pkg/ops/opsidem/writers.go` line 53 and `pkg/ops/coordination/service.go` line 153 to the anchor form
+turns tier 0 red. Tier 0 hard-fails on a failing `go test ./tests/tier0_static/...`
+(`cmd/lenny-test/cmd_run.go` lines 717 and 745 through 748), and SPEC-4's other exit criteria are all
+satisfiable while it is red, so the sub-step would otherwise end broken. The test is rewritten rather than
+deleted, because its `wantSubstring` check is a freshness property the resolver and the ratchet do not
+carry: they read whether a citation resolves and whether a count rose, not whether the cited section
+contains the quoted sentence. The rewritten predicate reads the anchor-form citation above each
+declaration and requires the §25.4 heading it names to have a body containing that declaration's
+`wantSubstring`. This is a predicate change to a running tier-0 gate rather than new tooling, and the
+rewritten predicate is green from the moment it lands, so TEST-1 names its cases on the same rule the
+change-graph completeness check and the widened exceptions validator are held to. Tier 0 over `pkg/ops/`
+is an exit criterion of this sub-step for that reason. The same
+hand rewrite covers the two colon-form path citations that file carries in its comments, at lines 74 and
+77 (`spec/25_agent-operability.md:2057` and `spec/25_agent-operability.md:2215`), which the widened
+citation form §4.6 states matches and which would otherwise hold the file above count zero after the
+predicate rewrite.
+
+`spec/17_deployment-topology.md` line 450 carries the only colon-form citation inside `spec/`: the
+bootstrap Job's readiness-poll reference `(§17.6:404)` inside the `playground.devTenantId` ordering
+paragraph. The line pass converts it with every other colon-form citation, to the anchor for
+`### 17.6 Packaging and Installation` at `spec/17_deployment-topology.md` line 391. It is named here because a citation inside `spec/` is the
+one place where a spelling the matcher misses would leave the specification contradicting the naming law
+the same change makes normative.
+
+Break the oversized multi-contract paragraph at `spec/04_system-components.md` line 489 into separately
+addressable blocks, which five later steps would otherwise contend over. This part is a hand-authored edit
+rather than part of the mechanical pass, because it re-cuts a normative paragraph that a running gate
+treats as one unit: `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` selects that
+paragraph with `requireLine` and then requires eight substrings and two inline anchor links inside the one
+line, so splitting it into five paragraphs fails every assertion whose substring lands outside the first
+block. That test moves with the edit, with each `requireLine` re-scoped to the block carrying its
+substrings, and tier 11 is an exit criterion of this sub-step alongside the citation resolver.
+
+Land the gate-integrity meta-gate in this sub-step, in `tests/tier0_static/`. It asserts that every gate
+this proposal registers at tier 0 is reachable as a Go test under `tests/tier0_static/` or as a check
+inside `runValidateMaps`, which are the two channels the repository hard-gates, and that none of them is
+invoked through a shell script under `scripts/` whose absence or non-zero exit is tolerated. Its predicate
+is a fixed list of those gate names, checked against the tier-0 registration, so deleting a gate's file
+fails the meta-gate rather than silently removing the gate. Its domain is the tier-0 gates alone. The two
+gates this proposal registers elsewhere are outside it and are named as such: the tier-11
+successor-pointer check, which SPEC-3 lands in `tests/tier11_docs/`, and the tier-3 assertion SPEC-3 lands
+with the served OpenAPI document and the generated MCP tool schemas. The harness runs both suites as Go
+test packages and fails the tier on a failing test, so each is registered through the channel its tier
+uses rather than through `tests/tier0_static/`, and the meta-gate's fixed list and its accepted-channel
+set name the same population. The meta-gate lands here rather than in TOOL-1 because several of the gates it
+names are registered by SPEC-1 through SPEC-4, among them the naming lint, the identifier-resolution gate,
+the heading walker, the claim register's schema-only validator, and the fragment-link gate, and a fixed
+list checked against the tier-0 registration
+fails on a name that is not yet registered in exactly the way it fails on a deleted one, so any earlier
+landing point would leave tier 0 red. It is green on introduction here, because every gate it names is
+registered at the point it lands, and TEST-1 names its cases.
 
 Apply as one exclusive change, scheduled after the wire-contract sub-step, executed by `scripts/specshift`
 with a proven dry run as the entry criterion. No other change's output depends on this one, because every
 step that needs a citable anchor cites a `spec/28` card, which lives in a new file and needs no in-file
 surgery.
 
-**Rationale.** This is a very large diff with no judgement in it. Its risk is concentrated entirely in the
-tooling, which is why the tooling ships first with its own tests and a dry-run gate.
-
 ### TEST-1. Gates
 
-**Target:** `tests/tier0_static/`, the map validator, and `tests/tier11_docs/`.
+**Target:** `tests/tier0_static/`, the map validator, `cmd/lenny-test`, and `tests/tier11_docs/`. The
+tier-3 and tier-10 tests the wire rename reaches are listed under SPEC-2, because they belong to that
+change rather than to the gate set.
 
-**Change.** Add the naming lint enforcing the reserved-word ban and the one-identifier rule across `spec/`,
-`docs/`, `schemas/`, and Go doc comments. Add the identifier-resolution gate asserting each canonical
-identifier resolves to exactly one spelling across the tree. Add the citation resolver asserting every
-remaining line citation resolves inside its section, and the line-citation ratchet asserting no file
-acquires a new one. Add the heading walker asserting every numbered heading carries a map entry. Add a
-tier-11 check asserting each reduced section carries a successor pointer whose named heading resolves.
+**The residual gate.** One gate stands apart from the per-class gates below, because it is what makes
+their incompleteness safe. For each enumerated class it computes the set matching the class's broad
+predicate, subtracts the enumerated members and the class's residual register, and fails tier 0 on a non-empty
+remainder, naming each unclassified member and the class that should own it. Its cases are: a residual in
+each class fails and names the member; a member moved into the register as in-class passes; a member
+registered as an explicit exclusion with a reason passes; an exclusion whose reason field is empty fails;
+an `excluded` entry naming a member the predicate no longer matches fails, so the register cannot
+accumulate dead exclusions; an `in-class` entry whose member has stopped matching the class's broad
+predicate, whether because the pass handled it, because the tracked path gained a glob key in
+`tests/change-graph.json`, or because the skip reason was rewritten to open with one of the categories, is
+removed from the register in the same run and the gate stays green, so neither a class the pass empties
+nor ordinary change-graph and skip-reason remediation turns tier 0 red on the entries that routed their
+own members out; an `in-class` entry whose member no longer matches the predicate and which
+survives the run fails, so an in-class entry cannot outlive the remediation it recorded; an `in-class`
+entry in the generated-artifact class, whose member still matches the predicate, survives repeated runs
+and the gate stays green, so that class is not
+required to empty; a file that is a member of a producer's output set, carries no header or
+document-metadata generation marker, and appears in neither the enumeration nor
+`tests/registers/residual-generated-artifacts.yaml` is reported as a residual and named, so the
+generated-artifact predicate's second disjunct is pinned rather than left to the marker branch; a member's
+text carried inside `tests/registers/residual-<class>.yaml` itself, or inside the pass or baseline
+register the class's own gate excludes, reports no residual, so the scan does not read a register as tree
+content; an occurrence in a file the read domain §4.7 states excludes, including `BUILD-GAPS.md` and
+`TEST-GAPS.md`, reports no residual, so the gate does not report the populations §5 and §11 promise no
+gate reports; and a
+malformed or missing residual register fails rather than certifying the
+class. Each class has its own `tests/registers/residual-<class>.yaml`, separate from the register or
+baseline that drives the class's pass, and it carries the entry schema §4.7 states, which is a
+member, a class, an `in-class` or `excluded` disposition, and a reason, so the shared register contract's
+expiry and blocker ratchet rules do not range over them. The gate is built in TOOL-1, and the check for
+each class lands in the sub-step that seeds that class's registers, per §3.5. Like every gate here
+it lands green by seeding today's population into the register rather than by narrowing the predicate.
 
-Each gate lands green by enumerating today's violations into a named register with an owner and an expiry,
-never by widening the gate and never by suppression.
-
-**Rationale.** Each gate closes the loop on one class of rewrite. Without them the completeness of a
+**Rationale:** Each gate closes the loop on one class of rewrite. Without them the completeness of a
 several-thousand-site mechanical change rests on review, which cannot verify it.
+
+**Change (staged description).** This sub-step states each gate's predicate and adds each gate's cases.
+The gates themselves land in the sub-step §3.5 assigns them, which is the sub-step that supplies the
+route to green: the naming lint in SPEC-1, the identifier-resolution gate and the
+`coordinatorHoldAllowedMethods` assertion in SPEC-2, the heading walker, the tier-11 successor-pointer
+check, and the claim register's schema-only validator in SPEC-3, the fragment-link gate, the
+gate-integrity meta-gate, and the rewritten §25.4 freshness gate in SPEC-4, and the gates TOOL-1
+seeds a baseline for in TOOL-1.
+Stating the predicate here and landing the gate there keeps one landing point per gate, so no gate
+reaches tier 0 before the sub-step that makes it green.
+
+The naming lint enforces the reserved-word ban, and only that ban, across
+`spec/`, `docs/`, `schemas/`, the Go doc comments of every tracked Go file, and
+the tracked root-level contract documents N3 names, under the same exclusion list and under the same
+markdown-anchor-identifier exclusion the name pass reads, so the lint's domain is
+exactly what the name pass can write. The
+identifier-resolution gate asserts each canonical identifier resolves to exactly one spelling across the
+tree under that same exclusion list, so every file the gate reads has a pass that writes it,
+reading a retired spelling per context so that an occurrence `tests/registers/identifier-senses.yaml`
+records as not a channel, such as the `az` file argument at `spec/17_deployment-topology.md` line 1530,
+passes without an entry in the shared exception register. The citation resolver asserts that every remaining line citation either resolves inside its
+section or appears in the `tests/registers/line-citation-resolution.yaml` baseline TOOL-1 seeds, and
+the line-citation ratchet asserting no file acquires a new one; both match the retired citation form §4.6
+states, in every spelling that form covers, which is the section reference given by number or by file
+path, the optional qualifier, the optional trailing gloss on a member, the hyphen, en-dash, and em-dash
+range separators, and the comma, slash, plus-sign, and
+`and` member separators consumed whole, wherever the form appears
+in a tracked file, including YAML block scalars, JSON string values, and Go string literals
+holding served schema descriptions, and both walk the tree under the exclusion list §4.6 states rather
+than an inclusion list of directories. The heading walker asserts that every `## N` and `### N.M`
+heading under `spec/`, every deeper heading the index already carries, and the §28.5.1 through §28.5.7
+card headings carry both a `tests/spec-map.json` entry, or a `tests/spec-map-exceptions.yaml` entry under
+a stated reason class, which for a heading whose implementation is pending is `pending-implementation`
+with its `blocker` and `opened_at` fields, and a `spec/README.md` table-of-contents entry whose anchor resolves, so an
+appended or reduced section cannot silently miss the hand-maintained index. The predicate is stated at
+those depths because the index carries two levels today, with `spec/README.md` line 147 as its only
+level-4 row, and the walker lands green through the rows and keys SPEC-1 seeds together with the §28 and
+§29 rows and keys SPEC-3 writes, rather than through a
+register, because roughly a hundred exemptions would each need an owner and an expiry this proposal is in
+no position to set. The fragment-link gate is a Go test under
+`tests/tier0_static/` asserting that every intra-repo markdown fragment link in `spec/` and `docs/`
+resolves to a heading slug that exists or to an explicit kramdown anchor attribute (`{: #id }`) that
+exists, over links whose target is a tracked `.md` file or the citing page itself; the existing
+`scripts/check-markdown-links.sh` cannot serve, because it resolves
+the file rather than the fragment and exits 0 when `markdown-link-check` is absent. The predicate reads
+the anchor attribute as well as the heading because the `docs/` pages carry 75 of them in
+`docs/reference/glossary.md` alone, `docs/api/internal.md` line 229 links to `#lifecycle-channel-messages`
+on its own page and resolves only through the attribute at line 318, and SPEC-2's glossary redirect stub
+keeps the `{: #lifecycle-channel }` anchor for the same reason. A heading-only predicate would be red on
+that link and on every other attribute-resolved fragment, none of which SPEC-4 stages a correction for.
+Under the stated predicate the gate is red against the
+unmodified tree on the seven links SPEC-4 enumerates and green once SPEC-4 corrects them, so it lands with
+those corrections rather than with a baseline. That population holds only because SPEC-3 has already
+rewritten the same-page fragments it carried out of `spec/15` and `spec/04` into `spec/28` to their
+file-qualified form; a relocated fragment left in the same-page form would be an eighth red link the
+gate reports here. The tier-11 check asserts that each reduced section carries
+a successor pointer whose named heading resolves.
+
+Add the naming lint's cases in the tier-0 package that hosts it, each carrying a `// spec:` tie to §28.1
+N3, because the lint is one of the two gates that prove the naming law landed and its predicate has a
+large false-positive and false-negative surface. The tree carries 610 case-insensitive occurrences of the
+word `lifecycle`
+across 25 files under `spec/` against a banned population of 71 in both spellings, so the lint has to
+reject the bare noun
+phrase and accept the roughly 540 bound senses, and neither a matcher that is silently a no-op nor one
+that is red on permanently-correct prose is distinguishable from a correct one without cases. The cases
+are: a bare reserved noun phrase in `spec/` prose fails and names the file and the line; the same phrase in
+its hyphenated compound spelling fails as well, with `spec/18_build-sequence.md` line 165 as the worked
+case, because that file carries no space-separated occurrence; the same word
+inside a canonical identifier, such as `CH-RUNTIMEOPS` or `LNK-GWCONTROL`, passes; an unrelated bound
+sense passes, with the cloud-storage prose at `spec/17_deployment-topology.md` line 1512 and the in-fence
+command arguments at lines 1490 and 1509 as the worked cases; a bare reserved noun phrase in each of the
+other domains N3 names fails, which is a `docs/` page, a `description` string in a `schemas/` JSON
+document, a Go doc comment, and `README.md` or `TESTING.md`; an occurrence in a file the N3 exclusion list
+names does not fail; the normative statement of N3 in `spec/28_communication-channels.md` passes, because
+it describes the two banned spellings rather than quoting them and no exclusion covers the file that
+states the rule; and a run that matches zero sites on a tree seeded with a known violation fails
+rather than reporting green.
+
+Add the identifier-resolution gate's cases in the same package and with the same `// spec:` tie, because
+§5 row 1 rests the completeness of the whole rename on it and its per-context branch is what keeps it from
+either failing on a correct occurrence or passing a missed one. The cases are: an identifier that resolves
+to one spelling tree-wide passes; an identifier that resolves to two spellings fails and names both files;
+an occurrence `tests/registers/identifier-senses.yaml` records as not a channel passes with no entry in
+the shared exception register, with the `az` file argument at `spec/17_deployment-topology.md` line 1530
+as the worked case; a genuine channel reference left at the retired spelling fails, with the socket token
+at `TESTING.md` line 1996 as the worked case; a malformed or missing
+`tests/registers/identifier-senses.yaml` fails rather than certifying the tree; and the gate is verified
+red against the pre-SPEC-2 tree and green after the pass, so it is known to observe the rename rather than
+to be inert.
+
+Add the heading walker's own cases in the tier-0 package that hosts it, each carrying a `// spec:` tie to
+§28.1 N8, because the walker is the only gate that observes whether the hand-maintained `spec/README.md`
+index gained rows for the two appended files, and both its domain selector and its anchor resolution are
+silently satisfiable. Red-on-introduction against the 49 rows the index is missing today does not
+substitute, because it shows the walker firing on `### N.M` headings rather than reaching the level-4
+§28.5 card headings SPEC-3 adds, which is the population the walker is landed for. The cases are: a
+`### N.M` heading with a `tests/spec-map.json` key and a `spec/README.md` row whose anchor resolves
+passes; a heading with a key and no README row fails and names the heading; a heading whose README row
+carries an anchor that does not resolve fails; a heading with no spec-map key and a well-formed
+`pending-implementation` exceptions entry passes, while the same heading with neither a key nor an entry
+fails; a level-4 §28.5 card heading with no README row fails, so the domain selector is shown to reach the
+card headings; a deeper heading the index does not carry is outside the domain and does not fail; and a
+run that inspects zero headings fails rather than reporting green.
+
+Add the register-contract validator tests in the style of the two in-tree validators the contract
+generalizes (`cmd/lenny-test/cmd_validate_yaml_test.go` lines 241-400), one case per ratchet rule: a
+violation absent from the register fails, an entry whose expiry has passed fails, an entry whose blocker
+does not resolve to an open item fails, a malformed or missing register file fails rather than passing
+silently, and a well-formed register passes. Every gate that uses the shared contract lands green by
+seeding that register, so a rule that is silently a no-op would certify an exempted tree indefinitely. The
+heading walker, the line-citation ratchet, the citation resolver, the change-graph completeness check, and
+the residual gate land green by their own baselines instead, for the reasons stated at the end of this
+sub-step.
+
+Add the change-graph completeness check's own cases in `cmd/lenny-test/cmd_validate_test.go`, for the same
+reason: it is a new accept-and-reject predicate on the hard-gated `validate-maps` tier-0 check, and the
+existing change-graph checks carry no unit case in tree today. The cases are: a tracked source path
+covered by neither a glob in `tests/change-graph.json` nor a prefix in
+`tests/registers/change-graph-coverage.yaml` fails and names the path; a path covered by a prefix in that
+baseline passes; a path that gains a glob key is removed from the baseline in the same run and the
+baseline is rewritten downward, and a run that would add a prefix to the baseline fails, so coverage
+cannot be given back; a malformed or missing `tests/registers/change-graph-coverage.yaml` fails rather
+than certifying the tree; a malformed or missing `tests/change-graph.json` fails
+rather than certifying the tree, which is the fail-open outcome the register-contract cases above rule out
+for the other registers; and a fully mapped tree passes. Add one further case pinning the interaction with
+the identifier pass at this register: a file the pass renames leaves the change-graph completeness check
+green, because the pass rewrites the glob key in `tests/change-graph.json` in the same run that moves the
+file. The other registers are pinned in `scripts/specshift`'s `run_test.go` rather than here, because
+`validate-maps` existence-checks the change-graph glob keys, the `spec_file` pointer, and the
+`::<symbol>` references, and deliberately does not existence-check the `schemas` paths
+(`cmd/lenny-test/cmd_validate.go` lines 236 through 238), so a `validate-maps` result cannot observe a
+stale `schemas` entry or a stale citation baseline. The cases carry no `// spec:`
+tie, matching the validator cases they sit beside, because the map validator is test infrastructure.
+
+Add a case-per-rule battery for the widened `tests/spec-map-exceptions.yaml` validator, in
+`cmd/lenny-test/cmd_validate_yaml_test.go` alongside the four cases that pin its current behavior
+(`TestValidateSpecMapExceptionsHappy` at line 187, `TestValidateSpecMapExceptionsUnknownReason` at line
+204, `TestValidateSpecMapExceptionsMissingJustification` at line 215, and
+`TestValidateSpecMapExceptionsDuplicateSection` at line 225). TOOL-1 widens both the accepted reason set
+and the entry schema of a validator that runs inside the `validate-maps` tier-0 check, and the
+`pending-implementation` class is the route by which the heading walker lands green for a heading with no
+spec-map key, so an entry that passes with an empty field exempts that heading permanently, which is the
+suppression outcome this sub-step's standing rule forbids. The cases are: an entry under
+`pending-implementation` carrying `blocker` and `opened_at` passes; an entry under that class missing
+either field fails and names the section; an entry under that class whose `blocker` does not name an open
+step fails; an entry whose `opened_at` is not a date fails; a reason value outside the widened allowlist
+still fails; and `blocker` and `opened_at` on an entry under one of the existing reason classes are
+validated by the same rules. The cases carry no `// spec:` tie, matching the four they sit beside, because
+the exceptions validator is test infrastructure rather than a spec behavior, which
+`.claude/rules/spec-driven-development.md` names as an escape hatch from the annotation requirement.
+
+Add the name pass's own cases, in `scripts/specshift`'s `run_test.go`, because the fail-on-unregistered-
+site rule is what substitutes for a gate on the wrong-mechanism class and a silent default substitution
+would pass the naming lint and the identifier-resolution gate while converting every ambiguous sentence
+into a precise false one: a reserved-phrase occurrence with no entry in
+`tests/registers/reserved-phrase-senses.yaml` aborts the pass non-zero, names the file and the line, and
+leaves the tree unmodified; a site whose entry resolves to a canonical identifier is substituted; an entry
+whose identifier is not a declared §28 identifier fails rather than substituting; a site whose correct
+sense is a link is substituted with that link identifier rather than collapsed onto a channel or aborting
+the pass, with the `allow-pod-egress-base` sites at `spec/13_security-model.md` lines 79, 92, and 100
+resolving to `LNK-GWCONTROL` as the worked case; a site whose entry carries more than one identifier is
+substituted with each at the position the entry records rather than collapsed onto one, with the mTLS
+handshake metric at `spec/16_observability.md` line 51 resolving to `LNK-POD-GRPC` for `gateway_to_pod`
+and `CH-LLMPROXY` for `pod_to_gateway` as the worked case; a reserved-phrase site in a Go doc comment and
+a site in a `schemas/` JSON `description` value are each substituted, so the pass writes every surface the
+naming lint reads; a markdown anchor identifier carrying a reserved phrase is left unmodified and requires
+no register entry, with the kramdown attribute `{: #lifecycle-channel }` at `docs/reference/glossary.md`
+line 207 and the same-page fragment link at `docs/api/internal.md` line 229 as the worked accept cases, and
+the naming lint is asserted green on the same two sites so the pass and the lint read one exclusion; a site
+in a file the generated-file exclusion covers is left unmodified; a malformed or
+missing sense register fails rather than passing with zero substitutions; and
+the dry-run output equals the applied diff for the same input. Each case carries a `// spec:` tie to the §28.1 naming law.
+
+Add the identifier pass's own cases in the same `run_test.go`, because the retired `LifecycleChannel`
+spelling denotes both renamed channels inside package `adapter` and the identifier-resolution gate reads
+the forward relation only, so it does not observe one spelling resolved to the wrong identifier: an
+occurrence of a retired spelling with no entry in `tests/registers/identifier-senses.yaml`
+aborts the pass non-zero, names the file and the line, and leaves the tree unmodified; an occurrence whose
+entry resolves is substituted to that entry's canonical identifier; a retired spelling the §28.3 table
+maps to exactly one channel, occurring in unrelated text such as a command-line file argument, aborts the
+pass when it has no entry and is left unmodified when its entry records it as not a channel; and a gRPC
+full-method string literal is resolved from the proto RPC row rather than from the Go type row. Add the
+register re-key cases in the same file, asserted by reading each register after the run rather than by a
+`validate-maps` result: a run that renames a file rewrites that file's key in every path-keyed register
+§4.6 names, including the `schemas` array entries in `tests/spec-map.json` that no check
+existence-checks; a run that renames a symbol rewrites every `::<symbol>` reference to it in
+`tests/spec-map.json`, so the `validate-maps` test-function check stays green; and a run that leaves a
+register carrying the old key or the old symbol fails rather than completing. Add the same dry-run case
+the other three passes carry: the dry-run output equals the applied diff for the same input, including the
+file moves and the register re-key edits. The case is stated for this pass because the dry run is the
+entry criterion TOOL-1 gives for applying it, this is the pass whose applied change is the largest and the
+hardest to reverse, and no other listed test observes a divergence, since the register cases read the
+tree after the run and the identifier-resolution gate runs after the pass has been applied. Add the tier-0 assertion over
+`coordinatorHoldAllowedMethods` (`pkg/adapter/holdstate.go` line 54) stated in SPEC-2: an entry whose
+service part is `lenny.adapter.v1.Adapter` names a method or stream `Adapter_ServiceDesc` declares, and an
+entry whose service part is another service names a method of a service the adapter registers, which today
+is only the standard `grpc.health.v1.Health` service the two entries at lines 58 and 59 name. A literal
+rewritten to a method the proto no longer declares then fails at tier 0 rather than silently removing an
+RPC from the coordinator-hold allowlist. The assertion is verified green against the unmodified tree
+before the identifier pass runs, and the two health entries need no register entry, whose owner and expiry
+they could never retire against.
+
+Add the anchor pass's own cases in the same `run_test.go`, for the same reason the other three passes have
+them. The two gates §3.4 names for its classes do not distinguish a correct run from a silent no-op or a
+destructive one: the row-3 gate validates the entries in `tests/spec-anchor-moves.json` rather than
+observing whether any citation in the tree was rewritten, and the row-4 fragment-link gate reads markdown
+links only and passes a link redirected to the wrong existing heading. A bare `§15.4.1`-style anchor
+citation in a comment or in prose is read by neither, because the citation resolver and the ratchet match
+the retired line-citation form alone. SPEC-4 then empties
+`tests/spec-anchor-moves.json`, so a pass that resolved zero sites, aborted silently on a malformed map,
+or substituted a default destroys its own record with every gate green. The cases are: a citation naming a
+retired anchor with an entry in the map is rewritten to that entry's successor; a citation naming a
+retired anchor with no entry aborts the pass non-zero, names the file and the line, and leaves the tree
+unmodified rather than substituting a default; a malformed or missing anchor-move map fails rather than
+passing with zero rewrites; an entry whose successor heading does not exist fails before any write; a
+`[...](NN_file.md#anchor)` link into a retired anchor is rewritten while a link into a surviving anchor is
+left untouched; a same-page `[...](#anchor)` link into a retired anchor is rewritten while a same-page
+link into a surviving anchor is left untouched, which is the majority form inside
+`spec/15_external-api-surface.md`; a bare `§15.4.1`-form citation whose occurrence
+`tests/registers/anchor-senses.yaml` does not record aborts the pass non-zero, names the file and the
+line, and leaves the tree unmodified rather than substituting the anchor map's single successor; a bare
+citation the register records as citing carved-out material is rewritten to the surviving `spec/15`
+heading, taking the `MessageEnvelope` citation at `sdks/runtime/go/runtime/types.go` line 52 as the worked
+case; and the dry-run output equals the applied diff for the same input. Each case carries a
+`// spec:` tie to N8, the §28.1 citation rule.
+
+Add the line pass's own cases in the same `run_test.go`. The two gates §3.4 names for this class cannot
+distinguish a correct conversion from a destructive one, because the ratchet counts citations and the
+resolver only validates a citation that still exists, so a pass that deletes a citation instead of
+converting it produces count zero, no resolver failure, and a greener gate result than a correct
+conversion, while discarding the anchor this proposal exists to establish and breaking the standing rule
+that spec-derived logic carries a spec citation (`.claude/rules/code-best-practices.md` line 57). The
+dry-run diff is not a substitute at a scale of 2,353 Go files and 264 non-Go files, by §3.4's own
+argument. The cases are: a `§X.Y line N` citation in a Go comment becomes the anchor form with the
+citation retained rather than removed; a section-level `§X line N` citation becomes the anchor for the
+section it names; a comma-list citation such as `§4.8 lines 1057-1058, 1077` becomes a single anchor
+citation with no line number left behind, so the pass consumes the whole list rather than its head; a
+slash-continuation citation such as `§10.7 line 694 / line 743` and an `and`-continuation citation each
+become a single anchor citation with no line number left behind, for the same reason; a
+`+`-continuation citation whose members carry trailing glosses, such as
+`§10 line 437 ("...") + line 443 ("...")` at `pkg/preflight/crdschema.go` lines 22 through 25, becomes a
+single anchor citation with no orphan integer left behind, so a gloss does not terminate the match; a
+member list that
+repeats the keyword, such as `§10.6 line 601, line 629`, is consumed whole; a qualified citation such as
+`§11.7 item 3 line 364` becomes the anchor for the section it names with the qualifier carried through; an
+en-dash range citation such as `§4.4 lines 263–291` becomes a single anchor, so the range separator is not
+read as an ASCII hyphen alone; a path-form citation such as `spec/04_system-components.md line 1145`
+becomes the anchor for the section that contains the cited line; a colon-form citation becomes a single
+anchor citation in both its variants, with `§15.1:805-812, 876-878` at
+`pkg/gateway/externalapi/admin/me.go` line 109 as the section-number worked case, which also shows the
+colon and comma-list spellings composing, and `spec/15_external-api-surface.md:1315` at
+`tests/tier3_contract/rest_mcp_consistency/published_schema_test.go` as the path worked case; a path-form citation naming a file that
+does not resolve under `spec/`, such as `11_security-trust-model.md line 414` at
+`pkg/audit/ocsf/catalog.go` line 149, fails the pass and is reported for hand correction rather than being
+converted against a guessed file; a
+`§X.Y lines N-M` citation whose endpoints straddle two sections fails the pass and is reported for hand
+correction rather than being converted to either section's anchor; a citation wrapped across two comment
+lines becomes a single anchor with no line number left behind, with a case per carrier dialect (`//`, `#`,
+and `--`) and one case per wrap position, which are a wrap between the section reference and the keyword,
+a wrap between the keyword and its first member, and a wrap that straddles a member list, with
+`pkg/gateway/sessionserver/messages.go` lines 156 and 157 as the worked case; a citation in a served client artifact
+(`pkg/gateway/externalapi/openapi/openapi.json`, `pkg/gateway/mcpfabric/mcptools/mcptools.go`, and the
+`desc:` struct tags on `pkg/chart/values/values.go`) is stripped while every other carrier is converted,
+with a case per carrier dialect; a stripped served-artifact citation whose authoring source carries no
+surviving spec tie after the strip fails the pass rather than being dropped silently, which is the case
+the three `pkg/chart/values/values.go` fields with no doc comment sit in per §4.6; a run that reduces a
+file's citation count without emitting a corresponding anchor fails rather than reporting a retirement;
+and the dry-run output equals the applied diff for the same input. Each case carries a `// spec:` tie to N8, the §28.1 citation rule.
+
+Add the `UNVERIFIED` verdict state's own cases in `cmd/lenny-test/verdict_test.go`, mirroring the three
+that pin `INCONCLUSIVE` today (`TestRecordTierFailOutranksInconclusive` at line 140, `TestExitCodeFor` at
+line 149, and `TestRecordTierSkippedKeepsPass` at line 164). The state is a behavior change to the value
+CI gates on, and its purpose is a fail-closed distinction, so the paths that matter are the precedence and
+the exit code rather than the happy path. `recordTier`'s switch carries no default branch
+(`cmd/lenny-test/verdict.go` lines 245 through 254) and the verdict is initialized to `verdictPASS`
+(line 106), so a status the switch does not handle leaves the run at `PASS` and `exitCodeFor` returns 0
+(`cmd/lenny-test/cmd_run.go` lines 457 through 466), which is the fail-open outcome the state exists to
+prevent. The cases are: a tier recorded as unverified sets the overall verdict to `UNVERIFIED` rather than
+leaving it `PASS`; `FAIL` outranks `UNVERIFIED` and `UNVERIFIED` outranks `PASS` regardless of the order
+the tiers are recorded in; `exitCodeFor("UNVERIFIED")` returns a non-zero code distinct from the
+`INCONCLUSIVE` code, which is 2 today; and a status value the switch does not handle does not leave the
+run at `PASS`. Add the producer's cases beside them, over the tier-0 composition in
+`cmd/lenny-test/cmd_run.go`, because the aggregation cases pin what happens once the status arrives and
+nothing else pins that it can arrive: a tier-0 check reporting that it could not reach a conclusion yields
+tier status `unverified` rather than `pass` or `fail`; a failing check in the same run still yields
+`fail`, so the new status cannot mask a real failure; and a check that reports nothing yields `pass` as it
+does today. The cases carry no `// spec:` tie, matching the three they sit beside, because
+`cmd/lenny-test` verdict aggregation is test infrastructure rather than a spec behavior, which
+`.claude/rules/spec-driven-development.md` names as an escape hatch from the annotation requirement. A
+bare `§7` would resolve to `spec/07_session-lifecycle.md` under the repository's citation convention,
+which is Session Lifecycle and states no verdict schema, so the harness would report the new tests as
+coverage of that section. The verdict schema is owned by `TESTING.md` §7, which TOOL-1 amends.
+
+Add the citation resolver's own cases, for the reason the ratchet and the change-graph check have theirs.
+The resolver lands green through a seeded baseline of roughly 1,500 pre-existing failures and is the exit
+criterion SPEC-3 rests its atomicity on, so a baseline load that degrades to exempting everything reports
+no failure for exactly the citations the reduction breaks. The cases are: a citation that resolves inside
+the section it names passes; a citation that does not resolve and is absent from
+`tests/registers/line-citation-resolution.yaml` fails and names the file, the line, and the citation text;
+a citation present in the baseline under the same file and the same citation text passes, while the same
+citation text under a different file fails, so a baseline entry does not travel; a baselined non-resolving
+citation in a file the identifier pass renamed still passes under the new path after the run, so the
+baseline follows the file it was written for; a citation text carried inside
+`tests/registers/line-citation-resolution.yaml` itself is outside the read domain and reports no failure,
+and the same holds for the ratchet's per-file count over
+`tests/registers/line-citations.yaml`, so neither gate reads its own baseline as tree content; a baseline entry whose
+citation no longer exists in the tree is removed in the same run, so an exemption cannot outlive the
+citation it was written for; a range or multi-member citation fails unless every member resolves; a
+citation broken by a heading move fails rather than being absorbed by the baseline; and a malformed or
+missing `tests/registers/line-citation-resolution.yaml` fails rather than certifying the tree. Each case
+carries a `// spec:` tie to N8, the §28.1 citation rule.
+
+Add the line-citation ratchet's own cases, which the five register-contract cases above do not supply because none of them is a
+count comparison: a file already in the register whose count rises by one fails at tier 0 and names the
+file; a file at count N that drops to N-1 passes and the register is rewritten to N-1 in the same run; a
+file at the rewritten N-1 that returns to N fails, so the retirement cannot be undone; a file at count
+zero fails on any new citation, which is the flat-prohibition end state; a file at count zero fails on a
+new range citation as well as on a new singular one, so the plural spelling cannot regrow after
+retirement; a file at count zero fails on a new section-level citation such as `§10 line 437`, so the
+spelling that carries no subsection component cannot regrow either; a file at count zero fails on a new
+comma-list citation such as `§4.8 lines 1057-1058, 1077`, counted as one citation rather than as a
+converted anchor plus orphan integers, so the list spelling cannot regrow either; a file at count zero
+fails on a new slash-continuation citation such as `§10.7 line 694 / line 743`, on a new
+`+`-continuation citation with trailing glosses such as `§10 line 437 ("...") + line 443 ("...")`,
+counted as one citation rather than as a converted anchor plus an orphan integer, on a new qualified
+citation such as `§11.7 item 3 line 364`, on a new en-dash range citation such as `§4.4 lines 263–291`,
+on a new path-form citation such as `spec/04_system-components.md line 1145`, and on a new colon-form
+citation in either variant, such as `§17.6:404` or `spec/15_external-api-surface.md:1315`, so none of the
+remaining spellings can regrow after retirement; a file at count zero fails on a new citation wrapped
+across two comment lines, counted as one citation in each of the three wrap positions and in each carrier
+dialect, so the wrapped spelling cannot regrow either; a file renamed with its citation count
+unchanged passes and its register key moves with it, so a rename is not read as a new file at its first
+citation; and a file absent from the register fails on its first citation. The rise case is the boundary the mechanism exists for, and the fall
+case mutates the gate's own baseline, so a downward rewrite that silently does not happen lets a file
+regrow to its old count with the gate green. Each case carries a `// spec:` tie to N8, the
+§28.1 citation rule.
+
+Add the skip-reason classifier's own cases in `tests/tier0_static/`, because it is a new accept-and-reject
+predicate replacing a check that accepts everything: a `t.Skip` or `t.Skipf` whose reason opens with each
+of the categories `cmd/lenny-test/cmd_validate.go` lines 853 through 865 enumerate is accepted, one case
+per category; a `SkipUnless*` helper call and a bare `t.Skip()` are accepted; a free-text string-literal
+reason is rejected and named with its file and line in the `t.Skip` call form as well as in the `t.Skipf`
+call form, so the seeded population TOOL-1 measures over both forms is the population the predicate
+selects; a
+`t.Skip` or `t.Skipf` whose first argument is a non-literal expression is reported and named with its file
+and line rather than accepted, with `tests/testinfra/kind/install.go` line 56 as the worked case, because
+that branch is where the shell script's silent accept would otherwise reappear; a site
+present in `tests/registers/skip-reasons.yaml` under the same file and call site passes while the same
+reason at a different site fails; a site whose reason is rewritten to open with one of the categories is
+removed from `tests/registers/skip-reasons.yaml` in the same run and the baseline is rewritten downward,
+which is the downward rewrite §4.7 rests the in-class residual entry's removal on; a site removed by that
+rewrite whose reason returns to free text fails, so the remediation cannot be given back; a run that would
+add a site to the baseline fails, so the exemption cannot be given back; a malformed or missing
+`tests/registers/skip-reasons.yaml` fails rather than
+certifying the tree; and a file that does not parse fails rather than being skipped. The cases carry no
+`// spec:` tie, matching the validator cases they sit beside, because the skip convention is test
+infrastructure.
+
+Add the proto no-drift test's own cases in `tests/tier0_static/`, because it is the sole `pkg/proto/` exit
+criterion SPEC-2, SPEC-3, and SPEC-4 each declare and its spec-named failure mode is the fail-open path
+that disqualifies `scripts/check-proto-generated.sh`. Its producer needs four external binaries, which are
+`buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, and `goimports`: `schemas/buf.gen.yaml` lines 16 through 21
+declare the two codegen plugins as `local:` entries, so `buf generate` resolves them from `PATH`, and
+`scripts/setup-dev.sh` lines 390 and 391 install them into `$(go env GOPATH)/bin` alongside `goimports`
+while `buf` is installed as a system package (`scripts/setup-dev.sh` line 308). The test therefore
+reproduces the target's `PATH="$(go env GOPATH)/bin:$PATH"` prepend before it invokes `buf`
+(`Makefile` lines 91 through 100, with `GOPATH_BIN` defined at `Makefile` line 20), because without it a
+tree whose plugins are installed only in `GOPATH/bin` fails the test while `make generate-proto` succeeds.
+The skip-reason classifier accepts a bare `t.Skip()`, so nothing else would catch a test that returns
+early when one of the four is missing. The cases
+are: committed stubs matching a reproduced `make generate-proto` run pass; a stub carrying a hand-edited
+comment fails and names the file; a run in which any of the four producer binaries is unavailable records
+the tier as `UNVERIFIED` rather than passing or failing, through the tier-0 status route TOOL-1 lands with
+the state, since the composing loop collapses a check to `pass` or `fail` without it; and a run that
+produces zero generated files
+fails rather than reporting no drift. The cases carry no `// spec:` tie, matching the validator cases they sit beside, because the
+generated-artifact no-drift check is test infrastructure.
+
+Add the gate-integrity meta-gate's own cases in the same package: a gate registered as a
+`tests/tier0_static/` Go test or as a `runValidateMaps` check passes; a gate whose file is deleted fails
+and names the gate; a gate reached only through a shell script under `scripts/` fails, which is the
+condition the meta-gate exists to detect; and the fixed list names exactly the gates this proposal
+registers at tier 0, so a name added to the list without a tier-0 registration fails and the tier-11
+successor-pointer check and the tier-3 no-line-citation assertion are absent from the list rather than
+unsatisfiable entries on it. The cases carry no `// spec:` tie, for the same reason.
+
+Add the cases for the claim register's schema-only tier-0 validator over `tests/claim-map.json`, which
+SPEC-3 lands alongside the seeded register that supplies its route to green, one case per rule: a `WIRED` row with no
+`surface` fails; a `WIRED` row whose `surface` is a bare line number rather than a symbol reference fails;
+an `UNWIRED` or `ABSENT` row with no `deferral_id` fails, and one whose `deferral_id` does not name a step
+in the plan fails; a duplicate `claim_id` fails; a `spec_anchor` that does not resolve to a `spec/28`
+heading fails; a missing or malformed register file fails rather than passing silently; and a well-formed
+seeded register passes. Only the schema validator is in scope. The join, which is that every
+`WIRED` claim cites a surface the reachability gate reports reachable, needs that gate and lands with it in
+a later step.
+
+Add the fragment-link gate's own cases in the `tests/tier0_static/` package that hosts it, each carrying a
+`// spec:` tie to §28.1 N8, because §3.4 rests the markdown cross-reference redirect class, the
+relocated-same-page-fragment class, and the pre-existing-broken-link class on this gate alone and rests
+part of the carve-out class on it, and because the gate is green tree-wide once SPEC-4 corrects the seven
+links it enumerates, so a predicate that selects zero links, that drops the same-page form, or that never
+reads the kramdown attribute branch is green in the same way a correct one is. The cases are: a
+file-qualified link to an existing heading slug passes; a link that resolves only through an explicit
+kramdown `{: #id }` attribute passes, with `docs/api/internal.md` line 229 against the attribute at line
+318 as the worked case; a link to a slug carried by no heading and no attribute fails and names the file
+and the line; a same-page `[...](#anchor)` form whose target heading now lives in another file fails,
+which is the class §3.4 rests on the gate; a link to the rendered-site `.html` form and an absolute URL
+are outside the domain and do not fail; and a run that inspects zero links fails rather than reporting
+green.
+
+Add the tier-11 successor-pointer check's own cases in `tests/tier11_docs/`, each carrying a `// spec:` tie
+to §28.1 N8, because SPEC-3 writes the successor pointers and lands the check in the same sub-step, so the
+check is green from the moment it exists and no other observation separates a working predicate from one
+that selects zero sections. The behavior is normative: N8 makes the pointer permanent law, §4.5 states the
+pointer is the only route that serves a reader who arrives by a reference no tool rewrites, and §3.4 names
+the check as the mechanical half of the falsified-sentence class's proof. The cases are: a reduced section
+carrying a pointer whose named §28 heading exists passes; a reduced section with no pointer fails and names
+the section; a pointer naming a heading that exists in no `spec/` file fails and names both the section and
+the missing heading; a section that gave up no content is outside the domain and does not fail; and a run
+that inspects zero reduced sections fails rather than reporting green, so the check cannot ship inert
+against the §4.7 and §15.4 reductions it is landed for.
+
+Add the rewritten §25.4 freshness gate's own cases in the `tests/tier0_static/` package that hosts
+`degradation_lock_line_citation_test.go`, each carrying a `// spec:` tie to §25.4 and to §28.1 N8. SPEC-4
+replaces the predicate of a running, hard-gated tier-0 test rather than adding a new one, which is the
+same condition under which the change-graph completeness check and the widened exceptions validator get
+cases in this sub-step. The rewritten predicate is the sole carrier of the freshness property, because the
+resolver and the ratchet read whether a citation resolves and whether a count rose rather than whether the
+cited section contains the quoted sentence, and it is green from the moment it lands, while the current
+implementation fails loudly only through the `t.Fatalf` its regular expression triggers on a non-match
+(`tests/tier0_static/degradation_lock_line_citation_test.go` line 38 and lines 104 and 105). A rewrite
+whose anchor-form matcher matches nothing, whose §25.4 heading lookup returns an empty
+body, or whose declaration table selects zero entries is green with the property gone. The cases are: a
+declaration whose anchor-form §25.4 citation names a heading whose body contains that declaration's
+`wantSubstring` passes; a declaration whose cited heading exists and whose body does not contain the
+`wantSubstring` fails and names the file and the declaration; a declaration carrying no citation fails
+rather than being skipped; a citation naming a §25.4 heading that does not resolve fails and names the
+heading; a declaration still carrying the retired `§25.4 line N` form fails, so the retirement cannot be
+undone; and a run that inspects zero declarations fails rather than reporting green, so the rewritten
+predicate cannot ship inert.
+
+**What the gates do not cover.** The naming lint reads spellings and the identifier-resolution gate reads
+resolution, so neither detects a sentence that carries a canonical identifier and describes the wrong
+mechanism. N1 and N6 are review-time rules for the same reason. What substitutes for a gate here is
+`tests/registers/reserved-phrase-senses.yaml`: the name pass fails a reserved-phrase site with no
+register entry, so a human resolves the sense of every site before the substitution runs. The sites whose
+current text names the wrong participant are corrected by hand in SPEC-1, and the wrong artifact
+descriptions together with the artifact-scope sentence at `spec/15_external-api-surface.md` line 1463 are
+corrected by hand in SPEC-2. A wrong-mechanism sentence found after those sub-steps is a review finding
+rather than a gate failure.
+
+Each gate lands green by enumerating today's violations into a named register, never by widening the gate
+and never by suppression. Several gates land green by a different route because the shared exception
+register's entry schema does not fit them. The heading walker lands green through the rows and keys SPEC-1
+seeds together with the §28 and §29 rows and keys SPEC-3 writes, for the reason stated above. The line-citation ratchet lands green through its per-file count
+baseline. The citation resolver lands green through the
+`tests/registers/line-citation-resolution.yaml` baseline TOOL-1 seeds, because a citation that is stale
+today is retired by SPEC-4 rather than owned and dated by a person. The change-graph completeness check
+lands green through `tests/registers/change-graph-coverage.yaml`. The skip-reason classifier lands green
+through `tests/registers/skip-reasons.yaml`, because a host-capability skip is permanently correct and has
+neither a blocker nor an expiry. The naming lint and the identifier-resolution gate land green through the
+content changes SPEC-1 and SPEC-2 make, which remove every site each one reads. The fragment-link gate
+lands green through the seven hand-authored link corrections SPEC-4 enumerates, because a link that points
+at a heading that never existed resolves to no open remediation item and so cannot hold a shared-register
+entry with a blocker and an expiry. The gate-integrity meta-gate is green on introduction in SPEC-4, which
+is the sub-step at whose exit every gate on its fixed list is registered at tier 0. The residual gate
+lands green through the per-class residual registers, which carry the entry schema §4.7 states, because an
+explicit exclusion is a permanent statement about the tree and an in-class entry is either retired by the
+event that takes its member out of the class or, in the generated-artifact class where no member leaves,
+permanent for the same reason an exclusion is, so no entry carries an expiry or a blocker. Every other gate uses the shared register with an owner and an expiry per entry.
 
 ## 7. Non-goals
 
 - **Closing any capability gap.** This proposal builds no channel, wires no consumer, and changes no
   runtime behavior. The reference document's records are closed by later steps, which this proposal
   exists to unblock.
-- **Renumbering or moving existing specification sections.** New sections append. The only existing
-  sections that change are those giving up content, and each keeps a successor pointer.
+- **Renumbering or moving existing specification sections.** New sections append. The existing sections
+  that change are those giving up content, each of which keeps a successor pointer, plus `spec/README.md`,
+  which is the hand-maintained index and gains rows for the appended sections and revised rows for the
+  reduced ones.
 - **A compatibility shim for the renamed manifest key.** The platform is pre-deployment and the repository
   rule forbids compatibility paths. The key rename is breaking for a runtime built against the old
   contract, and the SDKs and author guide move with it.
-- **Metric label renames.** Deferred to the step that first makes the adapter metrics observable, with a
-  claim-register row naming that step.
+- **Metric label renames.** These are deferred to the step that first makes the adapter metrics
+  observable, with a claim-register row naming that step.
 - **Deleting the three comments describing a kubelet-path handler that does not exist.** They are the only
   in-tree description of that mechanism. They become seed rows in the claim register with status `ABSENT`,
   and the step that owns the mechanism either implements it or removes them.
 - **Absorbing `gateway-runtime-comms.md` wholesale into the specification.** The reference is a
   point-in-time analysis with code evidence. The specification carries the contract, and code evidence
-  lives in the claim register, which is gated.
+  lives in the claim register, whose schema is validated at tier 0 by the validator SPEC-3 lands with the
+  seeded register and TEST-1 supplies the cases for. The join
+  from a `WIRED` row to a reachable surface lands with the reachability gate in a later step.
 
 ## 8. Findings closed on application
 
 This proposal closes no record from `gateway-runtime-comms.md` section 6 by itself, other than the
 specification and shipped-artifact halves of the record about wire-contract artifacts being misdescribed.
-It also discharges, as a standing mechanism rather than as a one-time fix, the section 8 item about the
-test harness being unable to detect an unreachable surface; the plan's closure step discharges the item
-itself once every gate is populated.
+It also discharges, as a standing mechanism rather than as a one-time fix, the section 8 item recording
+that no test tier was run and that every claim is a static reading of the working tree
+(`gateway-runtime-comms.md` line 2760, mapped in the plan as item 8.1). The `UNVERIFIED` verdict state and
+the tier-0 gates make a conclusion the harness could not reach visible instead of indistinguishable from a
+pass. The plan's closure step discharges the item itself with a full-tier run.
 Its function is to make the remaining records closable: every later step names a channel, cites a card,
 and registers a claim, none of which exist today.
 
-## 9. Open decisions for review
+## 9. Resolved in adversarial review
+
+### Pass 1 (2026-07-27, automated)
+
+- **Section 8 attributed a nonexistent item to the reference document.** The closure named "the section 8
+  item about the test harness being unable to detect an unreachable surface", which
+  `gateway-runtime-comms.md` section 8 does not contain. Section 8 now names the item the reference
+  records at line 2760 and the plan maps as 8.1, which is that no test tier was run, and states
+  what the `UNVERIFIED` verdict state and the tier-0 gates discharge.
+
+- **The adopted identifiers violated N1, and §3.2 claimed a legibility they do not provide.** N1 required a
+  channel name to state the endpoint pair and the plane and to omit the transport, which
+  `CH-EVENTSTREAM`, `CH-RUNTIMEOPS`, and `CH-MSGSOCK` all fail. N1 is restated to describe what an
+  identifier is, which is a mnemonic for the conversation, with the endpoint pair, the plane, the two
+  directions, and the transport carried as register columns, and it is marked as a review-time rule with
+  no gate. The §3.2 sentence claiming direction and participants are legible from the identifier alone is
+  replaced by a pointer to the register rows. N3 gains the rule that an identifier stem may not reuse a
+  term the specification already binds, and C6 is renamed from the plan's `CH-EVENTSTREAM` to
+  `CH-ADAPTEREVENTS`, because "event stream" is already bound to the operational event stream in §25.5, to
+  the per-session event stream in `spec/07_session-lifecycle.md` line 286, and to
+  `pkg/ops/events/service.go`, and N4 would have made it a Go file stem and a metric label value.
+
+- **`spec/README.md` was in no class and no gate.** The hand-maintained table of contents runs to §27.10
+  at line 190 and has no generator, so appending `spec/28` and `spec/29` and reducing §4.7 and §15.4 would
+  have left it silently wrong. It is now a target of SPEC-1 and SPEC-3 and an entry in §11, it has its own
+  row in the §3.4 class table as a hand-authored class, and the heading walker in TEST-1 asserts that an
+  in-scope heading carries an index entry whose anchor resolves. Pass 2 corrected this bullet's original
+  claim that the index lists every numbered heading and fixed the depth the walker's predicate uses.
+
+- **The SQL and YAML citation dialects were outside the line-citation class.** The `// spec:` scope covered
+  Go and proto and left 3,666 citations across 264 files ungated while the §4.7 reduction shifted the
+  lines they point at. SPEC-4's target, §4.6, §11, and the §3.4 class row now cover them. Pass 2 replaced
+  the dialect-and-directory scoping this bullet introduced with a match on the citation form and a
+  tree-wide walk, because the form is also carried in YAML block scalars, JSON values, and Go string
+  literals.
+
+- **The anchor-move map could not keep the resolver green across the reductions.** Removing content from
+  `spec/04` §4.7 (lines 637-968) shifts the 697 `§4.8`, `§4.9`, and `§4.9.1` line citations below it, and
+  removing content from `spec/15` §15.4 (lines 1458-2459) shifts the 39 `§15.5` ones; those sections do
+  not move, so `tests/spec-anchor-moves.json` has no entry for them. SPEC-3 now makes the reduction and
+  the line pass over the two reduced files one atomic sub-step with the resolver as its exit criterion,
+  and the claim that the anchor-move map holds the resolver green is removed.
+
+- **The wire rename reached tier 3 and tier 10 with no test named.** SPEC-2 gains a Tests block naming the
+  tier-3 manifest round trip against all three runtime SDKs, the tier-3 assertion that the flag-derived
+  listen address matches the advertised socket and that the proto RPC and the JSON Lines schema agree with
+  the handler and the §28 register, the tier-0 schema bijection, and the tier-10 Full conformance run over
+  the renamed socket, handshake, and check identifier. The second manifest emitter at
+  `cmd/lenny-compliance/full.go` line 98 and the fixture at
+  `tests/tier4_integration/credential_lifecycle_test.go` line 362 are named as part of the same change.
+
+- **Markdown cross-links into the reduced subsections had no class and no gate.** `spec/` and `docs/`
+  carry 43 links into §15.4, 30 of them into subsection anchors the reduction retires as the reduction
+  stood at that pass. A class row is added, the
+  `specshift` anchor pass is extended to `[...](NN_file.md#anchor)` targets, the links into the retired
+  subsections are rewritten in the same change as the reduction, and TEST-1 adds a Go fragment-link gate,
+  because `scripts/check-markdown-links.sh` resolves the file rather than the fragment and exits 0 when
+  `markdown-link-check` is absent.
+
+- **The glossary kept the conflation, and the rename passes would have made it canonical.**
+  `docs/reference/glossary.md` lines 206-209 define "Lifecycle Channel" as the gRPC stream and credit it
+  with checkpoint requests and credential rotation, which are `CH-RUNTIMEOPS` frames, and with session
+  start/stop and workspace notifications, which are separate `Adapter` RPCs. SPEC-2 now names it as a
+  third artifact whose description is wrong and stages the split into a `CH-ADAPTEREVENTS` entry and a
+  `CH-RUNTIMEOPS` entry with a redirect stub on the existing anchor. A hand-authored class row is added,
+  and TEST-1 states that neither the naming lint nor the identifier gate detects a semantically wrong
+  sentence carrying a canonical spelling.
+
+- **The shared register contract shipped with no test.** Every gate lands green by seeding that register,
+  so a ratchet rule that is silently a no-op would certify an exempted tree indefinitely. TEST-1 now names
+  a case per rule in the style of `cmd/lenny-test/cmd_validate_yaml_test.go` lines 241-400: an
+  unregistered violation fails, a passed expiry fails, an unresolvable blocker fails, a malformed or
+  missing register fails rather than passing silently, and a well-formed register passes. Pass 2 replaced
+  this bullet's reuse of the same five cases for the line-citation ratchet with the ratchet's own count
+  cases, because none of the five compares a count.
+
+### Pass 2 (2026-07-27, automated)
+
+- **The heading walker rested on a false premise about `spec/README.md`.** The index carries two heading
+  levels, with line 147 as its only level-4 row, so an every-numbered-heading predicate is red on 71
+  existing headings today, 49 of them at `### N.M` level, and the `tests/spec-map.json` half is red on 67.
+  The register escape does not fit, because each entry needs an owner and an expiry this proposal cannot
+  set for the forty §18 build phases. The predicate in §3.4, TEST-1, and SPEC-1 is now stated at the two
+  depths the index carries, plus the deeper headings the index already carries and the §28.5.1 through
+  §28.5.7 card headings this proposal creates, which SPEC-3 now adds to the index because they are the
+  citable handles every later step uses. SPEC-1 seeds the 49 missing rows and the 50 missing spec-map keys
+  so the walker lands green. SPEC-3's instruction to revise the §4.7 and §15.4 subsection rows is removed,
+  because the index has no subsection row for either and §4.7 has no numbered subsections.
+
+- **The line-citation class was defined by comment dialect and an inclusion list of directories.** The
+  `§X.Y line N` form is also carried in JSON string values, YAML block scalars, and Go string literals:
+  `pkg/gateway/externalapi/openapi/openapi.json` holds twenty of them in served `description` values,
+  including `§15.4 line 1715` at line 461, which is inside the range SPEC-3 shifts and ships to clients at
+  `/openapi.json`; `pkg/gateway/mcpfabric/mcptools/mcptools.go` holds them in the served MCP tool schemas;
+  twenty-nine of the thirty-four citations under `charts/lenny/crds/` sit in `description:` block scalars;
+  and `schemas/`, `tests/**/*.json`, `compose/`, `.github/`, `dist/`, and the repository root sit outside
+  the walk list entirely. §4.6, TEST-1, SPEC-3, SPEC-4, and §11 now scope all three passes by the citation
+  form and walk the tree under an exclusion list. Served schema descriptions lose the citation rather than
+  gaining an anchor, with a tier-3 assertion to that effect. The counts in §1, §4.6, and §11 are corrected
+  to the measured 3,666 citations across 264 non-Go files, 1,218 of them across 230 files under the five
+  directories the earlier draft named. Pass 3 widened the form this bullet introduced to cover the
+  `§X.Y lines N-M` spelling as well.
+
+- **The line pass would have broken two no-drift tests and edited generated output.**
+  `pkg/embedded/manifests/manifests.yaml` is a `helm template` render of `charts/lenny` carrying 110
+  citations, and `pkg/embedded/crds/` must stay byte-identical to `charts/lenny/crds/`, which carries 34,
+  so rewriting the chart side alone fails `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4` and
+  `TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437`. The chart CRDs are controller-gen output whose
+  citations originate in `pkg/apis/lenny/v1alpha1/*.go` doc comments. §3.4 gains a generated-artifact class
+  row, §4.6 states the `pkg/embedded/`, `charts/lenny/crds/`, and `pkg/proto/` denylist, and SPEC-4 runs
+  `make generate` and the CRD re-copy with those tests and `tests/tier0_static/crds_test.go` as exit
+  criteria. Pass 3 corrected this bullet's denylist: it was over-broad on `pkg/embedded/`, wrong about the
+  producer of `pkg/proto/`, incomplete against the OpenAPI-derived and alerting-derived artifacts, and it
+  treated `charts/lenny/crds/` as pure controller-gen output.
+
+- **Tier-11 tests pin the rewritten prose as Go string literals, in no class and no gate.** Eleven files
+  under `tests/tier11_docs/` assert spec sentences verbatim through `specSection`, `requireLine`, and
+  `requireAllContain`, and those literals are outside the name pass's scope and the naming lint's scope.
+  `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 pins the exact bare noun
+  phrase N3 bans at `spec/04_system-components.md` line 489, and three files scope assertions to
+  `"### 4.7 "`, which SPEC-3 empties. §3.4 gains a class row, SPEC-1 and SPEC-3 extend the passes to those
+  literals and name tier 11 as an exit criterion, and a §4.7 row relocated into a §28.5 card carries its
+  pin with it. Pass 6 widened the register this bullet keyed on the three helper names, because two further
+  files pin retired §15.4 anchors through a `specCrossRef` table and a `mustContain` list.
+
+- **SPEC-4's paragraph break destroys an invariant two tier-11 assertions depend on.** The paragraph at
+  `spec/04_system-components.md` line 489 is one markdown line, and
+  `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` selects it with `requireLine` and then
+  requires eight substrings and two inline anchor links inside that one line, so splitting it into five
+  paragraphs fails every assertion outside the first block. SPEC-4 now states that the break is a
+  hand-authored edit rather than part of the mechanical pass, names that test as moving with it, and adds
+  tier 11 to the sub-step's exit criteria. The rationale no longer describes the whole sub-step as
+  judgement-free.
+
+- **The wrong-mechanism class was bounded at three artifacts outside `spec/`.** The colliding phrase is
+  two-valued inside `spec/` as well: `spec/10_gateway-internals.md` line 50 uses both senses two clauses
+  apart, and `spec/07_session-lifecycle.md` line 324, `spec/15_external-api-surface.md` line 1755, and
+  `spec/05_runtime-registry-and-pool-model.md` line 540 attribute intra-pod frames or adapter-to-gateway
+  events to the wrong participant, so a substitution makes each precise and false. §3.4 row 1 now drives
+  the name pass from a per-occurrence sense column in the §28.3 register and fails a site with no entry,
+  §3.2 drops the bound of three, the §5 row and TEST-1 state the register as what substitutes for a gate,
+  and SPEC-1 corrects those four sites by hand. Pass 3 moved that sense mapping out of normative §28.3 into
+  `tests/registers/reserved-phrase-senses.yaml` and gave the name pass's fail-closed rule its own tests.
+
+- **The line-citation ratchet's defining cases had no test.** TEST-1 deferred to the shared register
+  contract's five schema cases, none of which compares a count, so neither the rise that the ratchet exists
+  to catch nor the downward rewrite of its own baseline was pinned. TEST-1 now names the ratchet's own
+  cases: a rise fails and names the file, a fall passes and rewrites the register in the same run, a return
+  to the old count fails, a file at zero fails on any citation, and a file absent from the register fails
+  on its first.
+
+- **The claim register was asserted to be gated with no validator listed.** TEST-1 now adds a schema-only
+  tier-0 validator over `tests/claim-map.json` with a case per rule, §4.4 states that the register carries
+  its own schema because a `WIRED` row has no expiry and the shared contract requires one, and §7 says that
+  only the schema is validated here while the join from a `WIRED` row to a reachable surface lands with the
+  reachability gate in a later step.
+
+### Pass 3 (2026-07-27, automated)
+
+- **`charts/lenny/crds/` was treated as pure controller-gen output.** The committed CRDs carry two
+  hand-applied post-generation layers that no Go doc comment and no chart template produces, which are the
+  `lenny.dev/schema-version` annotation with its comment block and the top-level spec and status
+  `x-kubernetes-preserve-unknown-fields: true` markers. `make generate` overwrites the directory and
+  deletes both, and `TestCRDManifestsInSyncWithGoTypes` strips exactly those lines before comparing, so the
+  three exit criteria the proposal named went green on a regeneration that dropped the fail-closed CRD
+  currency annotation and the pruning guard. §4.6 and SPEC-4 now describe the two layers, make
+  re-application part of the regeneration step before the chart-to-embedded re-copy, and add
+  `TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437` and
+  `TestEmbeddedCRDsPreserveUnknownFields_spec_10_437` to the exit criteria and to the §3.4 generated-artifact
+  row. The five hand-applied citations gain an explicit disposition: SPEC-4 hand-edits the annotation blocks
+  to the anchor form together with the matching literal prefixes in `tests/tier0_static/crds_test.go` lines
+  178 through 183, which that file's drift normalizer matches verbatim, so the directory can reach count
+  zero without turning the drift test red.
+
+- **`pkg/proto/` was excluded on a false premise.** §4.6 attributed its content to `make generate`, which
+  does not touch it; `make generate-proto` (`buf generate`) produces it from `schemas/*.proto`. The line
+  pass was therefore forbidden from writing 60 citations that no scheduled regeneration would refresh, and
+  several point below §4.7 into ranges the SPEC-3 reduction shifts. §4.6 now names the correct producer,
+  SPEC-2 runs `make generate-proto` after the proto rename and lists `pkg/proto/` in its Target, SPEC-4
+  runs it in the regeneration sequence, and §11 gains a bullet. TOOL-1 adds a tier-0 Go proto no-drift test,
+  because `scripts/check-proto-generated.sh` exits 0 both when `buf` is absent and whenever
+  `schemas/buf.gen.yaml` has no uncommented `remote:` plugin line, which is the repository's state today.
+
+- **`pkg/embedded/` was excluded wholesale as a generated tree.** Only `pkg/embedded/manifests/` and
+  `pkg/embedded/crds/` are derived. `pkg/embedded/localcli/`, `pkg/embedded/stack/`, and
+  `pkg/embedded/k3s/` are hand-written Go with no `go:generate` directive and no Makefile target, and they
+  carry 132 line citations that nothing would have rewritten and nothing would have regenerated, so the
+  ratchet's zero end state was unreachable. §4.6 narrows the exclusion to the two derived subdirectories
+  and restates the rule per file rather than per directory, and §11 records that the three packages are
+  rewritten by the line pass.
+
+- **The generated-artifact denylist omitted the OpenAPI-derived artifacts.**
+  `pkg/gateway/mcpfabric/mcptools/generated_schemas.go` is `genmcpschemas` output carrying seven citations
+  inside the served `lenny/create_session` input schema, and its producer is
+  `go generate ./pkg/gateway/mcpfabric/mcptools/...` rather than `make generate`, so the line pass would
+  have edited generated output and `TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386` would have gone red.
+  `pkg/ops/mcp/generated_tools.go`, `docs/alerting/rules.yaml`, and `docs/alerting/routing-recommendations.md`
+  were in the same position. §4.6 now states the exclusion as a rule covering any file whose header
+  declares it generated, lists each artifact with its producer, and SPEC-3 runs the two OpenAPI-derived
+  producers inside the sub-step that strips `openapi.json`'s citations, with their drift tests as exit
+  criteria. §4.6 and SPEC-3 also correct the claim that all twenty `openapi.json` citations sit in a
+  `description`, since one sits in the `summary` at line 2200 that `openapi-to-mcp` copies into the
+  generated tool inventory.
+
+- **The line-citation class matched only the singular spelling.** The tree carries 3,606 citations of the
+  `§X.Y lines N-M` form across 1,198 files, 294 of them pointing into §4.7, §4.8, §4.9, §15.4, and §15.5,
+  which are the sections the SPEC-3 reduction shifts, and the §1 magnitude already counted both spellings.
+  A matcher on the singular form alone would have left those 294 silently stale after the reduction and
+  would have left the ratchet's prohibition non-flat. §1, the §3.4 class row, §4.6, SPEC-3, SPEC-4, TEST-1,
+  and §11 now state both spellings, a range resolves as valid only when both endpoints fall inside the
+  cited section, and TEST-1 adds a ratchet case for a new range citation at count zero. The in-tree
+  precedent at `tests/tier0_static/degradation_lock_line_citation_test.go` line 38 already matches both.
+
+- **The per-occurrence sense register sat inside normative §28.3.** That is an edit-site list of a
+  script-driven class, which §3.4 forbids in the applied change; it is stale the moment SPEC-1's own pass
+  removes the phrases it indexes; and its granularity, one entry per occurrence site, does not fit the
+  one-row-per-entry register schema §4.3 states, since roughly sixty occurrences across eleven files map to
+  roughly twenty-two channel rows. It moves to `tests/registers/reserved-phrase-senses.yaml` alongside the
+  other migration registers, and SPEC-1 empties it once the name pass has run, which is the retirement
+  SPEC-4 applies to `tests/spec-anchor-moves.json`. §3.4 rows 1 and 9, §5, SPEC-1, and TEST-1 now name that
+  register, and §28.3 keeps the per-channel rows.
+
+- **SPEC-2's tier-3 round trip required the retired manifest key to be rejected.**
+  `spec/04_system-components.md` line 818 makes silent ignoring of unknown top-level manifest fields
+  normative for runtimes, and `sdks/runtime/go/runtime/types.go` lines 113 through 116 document that
+  behavior, so a rejection assertion could pass only by changing all three SDKs, which contradicts the
+  normative rule and the proposal's own statement that it changes no runtime behavior. The assertion is
+  restated as what the rename guarantees: a manifest carrying only the retired key resolves no operations
+  channel in any of the three SDKs, and a manifest carrying the renamed key resolves it in all three.
+
+- **The name pass's fail-on-unregistered-site rule had no test.** That rule is what substitutes for a gate
+  on the wrong-mechanism class, and a silent default substitution would pass the naming lint and the
+  identifier-resolution gate while turning each ambiguous sentence into a precise false one. TEST-1 applies
+  the standard it already applies to the other three validators and names the pass's own cases: an
+  unregistered site aborts non-zero and leaves the tree unmodified, a resolved site is substituted, an entry
+  naming an undeclared channel fails, a malformed or missing register fails rather than passing with zero
+  substitutions, and the dry-run output equals the applied diff.
+
+### Pass 4 (2026-07-27, automated)
+
+- **`charts/lenny/values.schema.json` was classified as an authored carrier the line pass rewrites.** The
+  file is generator output byte-pinned to `pkg/chart/values`: its seven citations are copied verbatim from
+  the `desc:` struct tags in `pkg/chart/values/values.go`, and `TestSchemaIsCommitted_spec_17_6_655` in
+  `pkg/chart/values/schema_test.go` requires the committed file to byte-match a fresh `Generate()`.
+  Directing a pass to write it contradicts §3.4's rule that a derived artifact is regenerated rather than
+  edited, and §4.6's header-comment detection rule could not catch it, because the file is JSON whose only
+  generation notice sits in the top-level `description` value at line 5. The file moves from §4.6's carrier
+  sentence into §4.6's generated-artifact list, §4.6's detection rule is widened to cover a generation
+  notice carried as a document field, §4.6 gains a producer bullet naming `go run ./cmd/lenny-chart-schema-gen`
+  and its authoring source, and SPEC-4 adds that producer to its regeneration sequence and
+  `TestSchemaIsCommitted_spec_17_6_655` to its exit criteria and to the §3.4 generated-artifact row. The
+  producer is named explicitly because `Makefile` carries no target for it. The seven citations are
+  stripped from the `desc:` tags rather than converted to anchors, under the rule SPEC-3 already applies to
+  served client artifacts, and the spec tie is kept in the Go doc comment above each field, which carries
+  the same citation and which the line pass converts to the anchor form. Pass 6 corrected that last claim,
+  which holds for four of the seven fields and not for the three that have no doc comment.
+
+- **The citation resolver was red on introduction with no baseline.** The tree already carries on the order
+  of 1,500 line citations across roughly 500 files that do not resolve inside the section they name, for
+  example `pkg/adapter/workspace/materialize.go` line 203 citing `§7.4 line 433` when §7.4 begins at
+  `spec/07_session-lifecycle.md` line 437, and `pkg/gateway/externalapi/admin/erasure.go` line 356 citing
+  `§12.8 line 764` when §12.8 begins at `spec/12_storage-architecture.md` line 774. TOOL-1 could not
+  deliver a green gate, and the shared exception register does not fit, because a stale citation is retired
+  by SPEC-4 rather than owned and dated, which is the argument TEST-1 already makes for the heading walker.
+  SPEC-3's exit criterion was also unusable, since a resolver failing on a thousand pre-existing citations
+  cannot distinguish one the reduction broke. §4.6 records the measurement and states the baseline
+  register `tests/registers/line-citation-resolution.yaml`, TOOL-1 seeds it, TEST-1 states the gate as
+  failing a citation that neither resolves nor appears in the baseline, SPEC-3's criterion becomes no new
+  resolver failure relative to the baseline, and SPEC-4 empties it when every per-file count reaches zero.
+  TEST-1's claim that every gate lands green through the shared register is corrected to name the three
+  gates that land green through their own baselines.
+
+- **SPEC-3 declared the resolver its exit criterion without regenerating `pkg/proto/`.** The sub-step's
+  line pass rewrites `schemas/*.proto`, whose comments the committed stubs mirror and which no pass writes,
+  and several mirrored citations point into the ranges the reduction shifts:
+  `pkg/proto/adapter/v1/lenny-adapter_grpc.pb.go` lines 178, 189, 194, and 1343 cite `§4.7` lines 632, 631,
+  660, and 942, `pkg/proto/adapter/v1/lenny-adapter.pb.go` line 3287 cites `§4.7 line 822`, and
+  `pkg/proto/tokenservice/v1/lenny-tokenservice.pb.go` line 622 cites `§4.9 lines 1246-1298`. Because §4.6
+  makes a generated file readable by the resolver, the resolver was red exactly where the sub-step declared
+  it green. SPEC-3 now runs `make generate-proto` after the line pass, takes the tier-0 proto no-drift test
+  as a further exit criterion, and lists `pkg/proto/` in its Target, which is the treatment it already gave
+  the two OpenAPI-derived producers.
+
+- **The identifier pass had no way to resolve the two-valued `LifecycleChannel` spelling.** Both renamed
+  channels carry that exact Go token inside package `adapter`: `pkg/adapter/lifecyclechannel.go` line 92
+  declares `type LifecycleChannel struct` for `CH-RUNTIMEOPS` and `pkg/adapter/controlchannel.go` line 90
+  declares the `LifecycleChannel` stream handler for `CH-ADAPTEREVENTS`. A register keyed by channel, which
+  is the §4.3 one-row-per-entry schema, cannot say which occurrence maps to which identifier, and the
+  identifier-resolution gate reads the forward relation only, so it does not observe one spelling resolved
+  to the wrong identifier. The failure is silent on the gRPC full-method literal at
+  `pkg/adapter/holdstate.go` line 57, which sits in the coordinator-hold allowlist and whose parallel
+  literal at `pkg/adapter/holdstate_test.go` line 292 the pass rewrites identically, so a mis-resolution
+  would reject a new coordinator's control-stream open during hold state with the test still green. §3.4
+  row 2 and SPEC-2 now drive the identifier pass from a per-occurrence register,
+  `tests/registers/identifier-senses.yaml`, for any retired spelling the §28.3 table maps to more than one
+  channel, with the pass failing a site that has no entry rather than substituting a default, which mirrors
+  the name pass's fail-closed rule. Pass 6 replaced that trigger with an occurrence-scoped one, because a
+  single-channel spelling also occurs at sites that are not the channel. Every gRPC full-method literal is resolved from the proto RPC row
+  rather than from the Go type row, and TEST-1 adds the identifier pass's own cases and a tier-0 assertion
+  that every method string in `coordinatorHoldAllowedMethods` names a method the generated `adapterv1`
+  service descriptor declares.
+
+### Pass 5 (2026-07-27, automated)
+
+- **The tier-0 proto no-drift gate diffed raw `buf generate` output against post-processed stubs.**
+  `make generate-proto` runs `buf generate` and then applies two steps the plugins do not perform: it
+  prepends `// SPDX-License-Identifier: MIT` to every file and runs
+  `goimports -w -local github.com/lennylabs/lenny ./pkg/proto`, which regroups the import block
+  (`Makefile` lines 91 through 100; `schemas/buf.gen.yaml` lines 6 and 7 record the same fact). A diff against
+  raw `buf generate` output reports drift on every generated file with none present, confirmed by
+  generating into a temporary directory and diffing all six committed stubs, so the gate could not go green
+  and could not serve as the exit criterion SPEC-2, SPEC-3, and SPEC-4 each declare it to be. §4.6 and
+  TOOL-1 now state the gate against the whole `make generate-proto` producer, with the same SPDX prepend
+  and `goimports` normalization applied before the comparison, and TOOL-1 verifies it green against the
+  unmodified tree before any sub-step takes it as a criterion.
+
+- **The `coordinatorHoldAllowedMethods` assertion was red on introduction.** Two of the five entries are
+  not `adapterv1` methods: `pkg/adapter/holdstate.go` lines 58 and 59 carry `/grpc.health.v1.Health/Check`
+  and `/grpc.health.v1.Health/Watch`, which come from the standard health service
+  `pkg/adapter/transport.go` registers from `google.golang.org/grpc/health/grpc_health_v1` and which have
+  no descriptor under `pkg/proto/`. Requiring every entry to name a method the `adapterv1` descriptor
+  declares would fail at tier 0 against two permanently correct entries, and neither TEST-1's shared
+  register, which needs an owner and an expiry per entry, nor a widened gate is available under the
+  proposal's own rules. §3.4 row 2, SPEC-2, and TEST-1 now state the predicate per service part: an entry
+  whose service part is `lenny.adapter.v1.Adapter` names a method or stream `Adapter_ServiceDesc` declares,
+  and an entry whose service part is another service names a method of a service the adapter registers. A
+  mis-resolved rename preserves the `/lenny.adapter.v1.Adapter/` prefix, so the failure the assertion
+  exists to catch stays inside the predicate.
+
+- **The citation matcher required a subsection component, leaving the section-level spelling ungated.** The
+  tree carries 556 occurrences of `§X line N` and `§X lines N-M` across 148 files, in the same carriers the
+  dotted spelling uses. Three of them cite `§15 line 2141`
+  (`pkg/gateway/sessionserver/expiry_warning.go` lines 32 and 50 and
+  `pkg/gateway/runtime/adapterclient/client.go` line 484), which sits inside the §15.4 block SPEC-3 reduces,
+  so the reduction would have broken them while SPEC-3's exit criterion stayed satisfied. Thirty-one of
+  them are the `§10 line 437` sites SPEC-4 depends on rewriting, whose hand-edit paragraph rested on a
+  premise its own matcher contradicted. The remainder would have stayed free to regrow, so the ratchet's
+  flat-prohibition end state was unreachable. §3.4 row 5, §4.6, SPEC-3, SPEC-4, TEST-1, and §11 now state
+  one form with the section component optional, which is `§X(.Y)* line N` and `§X(.Y)* lines N-M`; a
+  section-level citation resolves against the whole of the section it names; both baselines are measured
+  under the widened predicate; and TEST-1 gains a ratchet case for a new section-level citation at count
+  zero. The chart CRD annotation count is corrected from five citations to ten across five blocks.
+
+- **The `UNVERIFIED` verdict state changed the exit-code contract with no test listed.** The state adds a
+  fourth value to the enum CI gates on, and its three siblings are each pinned in
+  `cmd/lenny-test/verdict_test.go` (lines 140, 149, and 164). `recordTier`'s switch has no default branch
+  (`cmd/lenny-test/verdict.go` lines 245 through 254) and the verdict starts at `verdictPASS` (line 106),
+  so a status the switch does not handle leaves the run at `PASS` with exit code 0
+  (`cmd/lenny-test/cmd_run.go` lines 457 through 466), which is the fail-open outcome §8 claims the state
+  prevents. TEST-1 now names its cases: an unverified tier sets the overall verdict, `FAIL` outranks
+  `UNVERIFIED` and `UNVERIFIED` outranks `PASS` in either recording order, `exitCodeFor("UNVERIFIED")`
+  returns a non-zero code distinct from the `INCONCLUSIVE` code, and an unhandled status does not leave the
+  run at `PASS`. TOOL-1's bullet points at those cases.
+
+- **The line pass had no test case, and both gates named for it are green on a destructive run.** The
+  ratchet counts citations and the resolver validates only citations that still exist, so a pass that
+  deletes a citation instead of converting it yields count zero, no resolver failure, and a better gate
+  result than a correct conversion, while discarding the anchor and breaking the rule that spec-derived
+  logic carries a spec citation (`.claude/rules/code-best-practices.md` line 57). §3.4 rules out review as
+  the control at this scale. TEST-1 now names the line pass's own cases in `scripts/specshift`'s
+  `run_test.go`: a Go-comment citation is converted with the citation retained, a section-level citation
+  converts to the anchor for the section it names, a range straddling two sections fails rather than
+  converting, a served client artifact is stripped while every other carrier is converted with a case per
+  dialect, a run that reduces a count without emitting an anchor fails, and the dry-run output equals the
+  applied diff.
+
+### Pass 6 (2026-07-27, automated)
+
+- **The `desc:`-tag citation strip rested on a doc-comment fallback three of the seven fields do not
+  have.** §4.6 stated that the spec tie survives the strip in the Go doc comment above each field, which
+  holds for `Cluster`, `IsolationProfile`, `MaintenanceMode`, and `NoEnvironmentPolicy` and is false for
+  `SpiffeTrustDomain`, `TraceSamplingRate`, and `SaTokenAudience` at `pkg/chart/values/values.go` lines 136
+  through 138, whose `desc:` tags are today the only carrier of `§10.3 line 316`, `§16.3 line 359`, and
+  `§10.3 line 334`. The type-level comment on `Global` carries none of the three. Stripping as written
+  would delete a spec tie the standing rule requires (`.claude/rules/code-best-practices.md` line 57)
+  rather than relocate it, and it would leave the ratchet and the resolver green on the deletion because
+  both read a removed citation as a retirement. §4.6 now names the four fields whose doc comment already
+  carries the tie, states that a tag is stripped only where one does, and adds an anchor-form `// spec:`
+  doc comment above the three fields that have none in the same edit. TEST-1 gains a line-pass case in
+  which a stripped served-artifact citation whose authoring source keeps no surviving tie fails the pass.
+
+- **Two tier-11 files pin retired §15.4 anchors and fall outside the class register.**
+  `tests/tier11_docs/embedded_mode_anchors_test.go` line 43 requires the heading slug
+  `1543-runtime-integration-levels` and `tests/tier11_docs/embedded_echo_placement_test.go` line 38
+  requires `1544-sample-echo-runtime`, both asserted against `headingSlugs()` over the live spec file, and
+  the second file's line 116 requires `spec/17_deployment-topology.md` to contain the verbatim link
+  `[Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime)`, which the anchor pass rewrites
+  at `spec/17_deployment-topology.md` lines 181, 291, and 353. Neither file uses `specSection`,
+  `requireLine`, or `requireAllContain`, so the row-7 register keyed on those three helper names reached
+  neither, and tier 11 was unreachable as an exit criterion of SPEC-3 and SPEC-4. The row-7 register is
+  widened to every Go string literal under `tests/tier11_docs/` naming a spec heading slug, an intra-spec
+  markdown link, or pinned spec prose; SPEC-1 records the widening; and SPEC-3 names both files as targets
+  so their anchor rows and the link literal move to their §28.5 successors in the same change as the
+  reduction. Pass 10 narrowed the §15.4 reduction so that §15.4.3 and §15.4.4 keep their headings and
+  anchors, which leaves both files green without an edit and removes them from SPEC-3's Target.
+
+- **The identifier register's fail-closed trigger was channel-count-scoped, so a single-channel token was
+  substituted blind at a non-channel site.** `@lenny-lifecycle` maps to `CH-RUNTIMEOPS` alone, so it earned
+  no `tests/registers/identifier-senses.yaml` entry and no abort, while
+  `spec/17_deployment-topology.md` line 1530 uses `@lenny-lifecycle.json` as an `az` read-from-file
+  argument naming the local blob-lifecycle policy the code fence at lines 1510 through 1529 produces, with
+  the AWS and GCP siblings at lines 1490 and 1509 still reading `lenny-lifecycle.json`. Blind substitution
+  would rename a storage lifecycle-policy file after a runtime-operations channel and name a file the
+  section never produces, and no gate reads meaning. §3.4 row 2 and SPEC-2 now state the register
+  occurrence-scoped, carrying an entry for every occurrence whose site the pass cannot prove is the
+  channel, with that line recorded as a not-a-channel site the pass leaves unmodified. The
+  identifier-resolution gate reads a retired spelling per context, the same predicate SPEC-2 already gives
+  the `coordinatorHoldAllowedMethods` literals, so a permanently correct non-channel occurrence is not
+  routed through an exception register whose expiry it can never meet. TEST-1 gains the matching case.
+
+- **The line-citation ratchet and the resolver baseline are keyed per file path, and SPEC-2 renames files
+  that still carry citations.** SPEC-2 moves `pkg/adapter/lifecyclechannel.go` (nine citations) and
+  `pkg/adapter/controlchannel.go` (five), with `pkg/adapter/lifecyclechannel_test.go` (five) and
+  `pkg/adapter/controlchannel_test.go` (four) alongside, and the line pass that retires those citations
+  does not run until SPEC-3 and SPEC-4. The new paths are absent from
+  `tests/registers/line-citations.yaml`, so the ratchet's own rule fails them on their first citation at
+  SPEC-2's exit, and their entries in `tests/registers/line-citation-resolution.yaml` detach, so every
+  baselined stale citation reappears as a new resolver failure. §4.6 and SPEC-2 now state that the
+  identifier pass rewrites the register keys of any file it moves in the same run, SPEC-2 lists both
+  registers in its Target, and TEST-1 gains a ratchet case in which a renamed file with an unchanged count
+  passes and its key moves with it.
+
+- **The reserved-phrase sense register admitted only channel identifiers, while several sites denote a
+  link.** `spec/13_security-model.md` lines 79, 92, and 100 describe the default-deny egress allowance and
+  `docs/getting-started/architecture.md` line 506 is the documentation case. A channel-only value space
+  either aborts the pass at every such site, leaving
+  SPEC-1 unable to complete, or narrows a security-normative sentence to one of the conversations the link
+  carries. §3.4 row 1 and SPEC-1 now state the value space as the whole §28 identifier space of links,
+  channels, and registers, TEST-1's validator case is restated against a declared §28 identifier rather
+  than a declared §28.3 channel, and TEST-1 gains a name-pass case covering a site whose correct sense is
+  a link.
+
+- **The anchor pass, one of four rewrite passes, had no test case.** The other three each carry their own
+  cases in `scripts/specshift`'s `run_test.go` because their class gates cannot separate a correct run
+  from a silent no-op or a destructive one, and the anchor pass is in the same position: the row-3 gate
+  validates map entries rather than tree rewrites, the row-4 fragment-link gate reads markdown links only
+  and passes a link redirected to a wrong existing heading, and a bare `§15.4.1`-style anchor citation is
+  matched by neither the resolver nor the ratchet. SPEC-4 then empties `tests/spec-anchor-moves.json`, so
+  a pass that resolved nothing destroys its own record with every gate green. TEST-1 now names the anchor
+  pass's cases, and SPEC-4 states run completeness against the tree, which is zero remaining citations and
+  links for each retired anchor, as the entry criterion for emptying the map.
+
+### Pass 7 (2026-07-27, automated)
+
+- **SPEC-1 assigned the gateway-to-pod link identifier to the pod-egress sites.** Two distinct gRPC
+  connections default to port 50051. `LNK-POD-GRPC` is the gateway-to-pod `Adapter` service on
+  `adapter.grpcPort`, which the gateway dials at the pod IP and which the ingress site at
+  `spec/13_security-model.md` line 72 names, and the `pkg/adapter/holdstate.go` allowlist SPEC-1 cited is
+  entirely `lenny.adapter.v1.Adapter` methods, so it supports that reading rather than the one the text
+  drew. `LNK-GWCONTROL` is the pod-to-gateway `GatewayControl` service on `gateway.grpcPort`
+  (`schemas/lenny-adapter.proto` lines 230 through 247). Every site SPEC-1 prescribed the identifier for
+  sits inside `allow-pod-egress-base` (`spec/13_security-model.md` lines 79, 92, and 100) or restates it in
+  documentation (`docs/getting-started/architecture.md` line 506), so each is the pod-originated link.
+  Applying the paragraph as written would have put the gateway-to-pod identifier into security-normative
+  default-deny egress prose, left the link the allowance permits unnamed, and put the applied §13.2 out of
+  agreement with the §28.2 link register, with no gate able to detect it. SPEC-1 now names both links and
+  their ports, resolves those four sites to `LNK-GWCONTROL`, states that a port-50051 site is resolved from
+  the policy direction rather than from the port, and TEST-1's worked name-pass case is restated against
+  the `allow-pod-egress-base` sites.
+
+- **The §16 mTLS handshake metric spans two connections, so no single identifier substitutes.**
+  `spec/16_observability.md` line 51 states that the two `direction` label values are instrumented because
+  each side initiates handshakes in distinct paths, which are the gateway-originated adapter gRPC dial and
+  the pod-originated LLM-proxy connection. The LLM proxy runs on port 8443, which
+  `spec/13_security-model.md` line 79 excludes from the base allowance and which the naming table records
+  as `CH-LLMPROXY`. Collapsing the site onto one link identifier would have made a normative metric
+  definition assert that the `pod_to_gateway` histogram measures the gRPC control link. SPEC-1 now records
+  the site as denoting `LNK-POD-GRPC` for `gateway_to_pod` and `CH-LLMPROXY` for `pod_to_gateway`, states
+  that a sense-register entry carries one or more identifiers, and TEST-1 gains a name-pass case for a site
+  whose entry carries more than one identifier so the pass cannot collapse it.
+
+- **The comma-separated citation spelling fell outside the stated matcher.** The tree carries 617
+  occurrences across 341 files of one `§X(.Y)* line(s)` prefix followed by two or more comma-separated line
+  numbers or ranges, 86 of them across 57 files naming §4.7, §4.8, §4.9, §15.4, or §15.4.x, which are the
+  ranges SPEC-3 shifts. A matcher stopping at the first comma converts the head and leaves live line
+  numbers behind, where the resolver does not read them and the ratchet does not count them, so a file
+  reaches count zero with a stale pointer surviving. The proposal's own worked example,
+  `cmd/lenny-gateway/adminrouter.go` line 205 (`§4.8 lines 1057-1058, 1077`), is an instance. §3.4 row 5,
+  §4.6, SPEC-3, SPEC-4, TEST-1, and §11 now state the form as `§X(.Y)* line(s) L` with `L` a
+  comma-separated list of line numbers and ranges, a comma-list citation resolves only when every member
+  resolves, and TEST-1 gains a line-pass case converting a comma list to a single anchor with no residue
+  and a ratchet case for a comma-list citation at count zero.
+
+- **The straddling-range rule had no remedy, so SPEC-4's zero end state was unreachable.** The line pass is
+  specified to fail a range whose endpoints straddle two sections, and the tree carries seventeen such
+  citations across fifteen files, measured by computing each section's range from the `##` through `######`
+  headings under `spec/`. Every other blocker to count zero has a disposition and this population had none,
+  so those files could not reach zero and the ratchet's flat prohibition could not be reached. §4.6 now
+  enumerates the population with the section each citation should name, SPEC-3's blast-radius example list
+  separates the comma-list case from the plain range case, SPEC-4 stages the hand correction before the
+  final line-pass run and lists the population in its Target, and SPEC-4's exit criteria add that the pass
+  reports no remaining straddling range.
+
+- **§5 rows 7 and 8 and three TEST-1 test ties named a §28.1 rule no staged edit wrote.** §4.1 stated N1
+  through N7, every one a naming rule about identifiers, and SPEC-1 scoped §28.1 the same way, so the
+  anchor-citation convention announced as a decision was normative nowhere in `spec/` and three families of
+  new tier-0 tests would have carried `// spec:` annotations naming a rule the section does not state. §4.1
+  gains N8, which states that a citation names a heading, retires the `§X(.Y)* line(s) L` form, and
+  requires a permanent successor pointer from a section that gives up content. SPEC-1's Change sentence and
+  `.claude/rules/channel-naming.md` now carry N1 through N8, and the §5 rows and the three TEST-1 tie
+  clauses name N8.
+
+- **The widened spec-map-exceptions validator had no test, and it is the heading walker's escape hatch.**
+  `validateSpecMapExceptionsYAML` hard-codes its reason set (`cmd/lenny-test/cmd_validate_yaml.go` lines 185
+  through 193) and its three-field entry struct (lines 168 through 175) and runs inside the `validate-maps`
+  tier-0 check (`cmd/lenny-test/cmd_run.go` lines 734 and 742), so TOOL-1's addition changes both its accept
+  and its reject predicate while its four existing behaviors are each pinned in tree. An entry passing with
+  an empty field would exempt a heading from the walker permanently, which is the suppression outcome the
+  proposal forbids. TOOL-1 now names the class `pending-implementation` and its `blocker` and `opened_at`
+  fields, taken from the shared register contract's vocabulary, SPEC-1 names both fields where it seeds the
+  entry, and TEST-1 adds a case-per-rule battery beside the four existing cases in
+  `cmd/lenny-test/cmd_validate_yaml_test.go`.
+
+### Pass 8 (2026-07-27, automated)
+
+- **The slash and `and` member separators fell outside the stated matcher.** The tree carries 50
+  occurrences across 42 files whose members are separated by a slash and 2 more separated by the word
+  `and`, with the continuation member repeating the word `line` and carrying no `§` prefix, for example
+  `§10.7 line 694 / line 743` at `pkg/experiment/experiment.go` line 184 and
+  `pkg/controller/poolscaling/variants.go` line 98, `§25.3 line 441 / lines 527-528` at
+  `cmd/lenny-gateway/httpsurface.go` line 144, and `§10 line 437 / line 443` at
+  `cmd/lenny-controller/setup.go` line 110 and `pkg/embedded/crds/crds_test.go` line 90, which is the same
+  section-level family SPEC-4 hand-edits in the chart CRD annotation blocks. A comma list also occurs with
+  the keyword repeated (`§10.6 line 601, line 629` at `pkg/gateway/mcpfabric/mcptools/mcptools.go` lines
+  1445 and 1503), which the bare-number member grammar did not admit. Every consequence §4.6 states for the
+  comma list applies unchanged: the pass converts the head, the resolver never reads the trailing number,
+  the ratchet counts the file at zero, and SPEC-4's zero exit criterion is met with a stale pointer alive.
+  §4.6 now states the member separator as a comma, a slash, or `and`, admits a repeated `line` keyword, and
+  records the population; §3.4 row 5, SPEC-4's Target, TEST-1, and §11 carry the same predicate; and TEST-1
+  gains a line-pass case and a ratchet case for the spelling.
+
+- **The qualified spelling fell outside the stated matcher.** A short qualifier between the section
+  reference and the word `line` (`item 3`, `rule 4`, `table`, `preamble`, `step 2`, or `NET-063`) put 136
+  occurrences across 68 files, measured over `pkg`, `cmd`, `tests`, `sdks`, `spec`, `docs`, `schemas`,
+  `charts`, and `migrations`, in no class, no pass, and no gate, among them `§11.7 item 3 line 364` at
+  `pkg/audit/jcs/jcs.go` lines 15 and 39, `§15.2.1 rule 4 line 1386` inside the served MCP tool schema at
+  `pkg/gateway/mcpfabric/mcptools/generated_schemas.go` lines 9 and 16, and `§7.2 table line 124` in the
+  shipped client SDK at `sdks/client/go/lenny/client.go` lines 332, 345, 363, and 380. N8 as written
+  prohibited one spelling rather than the line number, so the population was free to regrow after
+  retirement and a file could reach count zero with live line citations. N8 is restated as a prohibition on
+  citing a line number in any spelling, §4.6 admits an optional qualifier and carries it through the
+  conversion, and TEST-1 gains a line-pass case and a ratchet case for it.
+
+- **The en-dash range spelling fell outside the stated matcher.** 65 occurrences across 38 files separate
+  a range's endpoints with U+2013 rather than an ASCII hyphen, including `§4.4 lines 263–291` at
+  `pkg/gateway/storage/evictionfallback/evictionfallback.go` lines 3, 31, and 377 and `§4.8 lines
+  1025–1028` at `pkg/gateway/policy/policy/authevaluator.go` line 47, which points into a section the
+  SPEC-3 reduction shifts. The in-tree precedent §4.6 pointed the implementor at,
+  `tests/tier0_static/degradation_lock_line_citation_test.go` line 38, compiles
+  `§25\.4 lines? (\d+)(?:-(\d+))?`, which pins one section, accepts an ASCII hyphen alone, and stops at the
+  first member. §4.6 now states the range separator as a character class covering the ASCII hyphen, the en
+  dash, and the em dash, states that the precedent is the starting point and must be widened on all three
+  counts, and records the population; SPEC-3's blast radius names the en-dash case; and TEST-1 gains a
+  line-pass case and a ratchet case.
+
+- **The path-form spelling was in no class, and 39 of its occurrences sit in the SPEC-3 blast radius.**
+  123 occurrences across 59 files name the specification file rather than the section number
+  (`spec/04_system-components.md line 1145` at `pkg/credential/lease.go` line 150,
+  `spec/04_system-components.md lines 870-888` at `pkg/adapter/metrics.go` line 12,
+  `11_security-trust-model.md line 414` at `pkg/audit/ocsf/catalog.go` line 149), so they carry no `§` and
+  the stated matcher did not reach them. 39 point at or below `spec/04_system-components.md` line 637 or
+  `spec/15_external-api-surface.md` line 1458, which are the ranges the reduction shifts, so SPEC-3's exit
+  criterion was satisfiable while those citations pointed at the wrong lines. §4.6's citation form now
+  admits the path-form section reference with the `spec/` prefix optional, SPEC-3's blast radius counts the
+  39, SPEC-4's Target and §11 carry the population, and TEST-1 gains a line-pass case and a ratchet case.
+
+- **The `UNVERIFIED` verdict state left `TESTING.md` stale and tied its tests to the wrong §7.**
+  `TESTING.md` line 521 states that the verdict is one of `PASS`, `FAIL`, and `INCONCLUSIVE`, and line 2572
+  states the retry-then-`FAIL` path for the one non-`PASS`, non-`FAIL` value, and both become false when
+  the harness emits a fourth value. `TESTING.md` sits outside every pass's scope and appeared in no target
+  list, so nothing staged the edit. TOOL-1 now names `TESTING.md` §7 and §21.3 in its Target and states the
+  two sentences, §3.4 gains a hand-authored class row for the class, and §11 records the file. Separately,
+  TEST-1's instruction to tie the new cases to "the §7 verdict schema section" would have put
+  `// spec: §7` on verdict-aggregation tests, and a bare `§7` resolves to `spec/07_session-lifecycle.md`
+  under the repository's convention, so the harness would have counted them as Session Lifecycle coverage.
+  The tie is dropped, matching the three sibling cases in `cmd/lenny-test/verdict_test.go` at lines 140,
+  149, and 164, which carry none, because verdict aggregation is test infrastructure.
+
+- **The wire rename invalidates a hard-gated key in `tests/change-graph.json` that no class covered.** The
+  naming table renames `schemas/lifecycle-events.schema.json` to `schemas/runtime-ops-events.schema.json`,
+  and `tests/change-graph.json` line 495 carries the old path as a glob key.
+  `validateChangeGraphFileExistence` stats every glob key and fails when one does not resolve
+  (`cmd/lenny-test/cmd_validate.go` lines 294 through 305) inside the `validate-maps` tier-0 check, which
+  hard-fails the tier (`cmd/lenny-test/cmd_run.go` lines 734 and 742), so SPEC-2 would have exited with
+  tier 0 red and no remedy staged; `tests/change-graph-pending.txt` covers paths committed ahead of
+  implementation rather than paths that moved. `tests/spec-map.json` carries the same path in its
+  `schemas` arrays at lines 438, 2360, and 2376, which nothing existence-checks. §4.6 and SPEC-2 now state
+  the re-keying rule over every path-keyed test-infrastructure register the move invalidates rather than
+  over the two line-citation registers alone, name both files, and add them to SPEC-2's Target and to §11,
+  and TEST-1 gains a case asserting that a file the identifier pass renames leaves `validate-maps` green.
+
+- **Change-graph completeness had no predicate, no register, no landing-green route, and no test.** The
+  bullet was one sentence, and the item is a new accept-and-reject predicate on `runValidateMaps`, which
+  the proposal itself identifies as one of the two channels the repository hard-gates. Its two siblings in
+  the same bullet list each state their target and carry a TEST-1 battery, and the existing change-graph
+  checks carry no unit case in tree, so there was nothing to fall back on. TOOL-1 now states the predicate
+  against the reverse-direction check that runs today (`cmd/lenny-test/cmd_validate.go` lines 272 through
+  316), names its target, and states that it lands green through the existing
+  `tests/change-graph-pending.txt` channel extended with the shared contract's `blocker` and `opened_at`
+  fields, and TEST-1 adds its cases, including the deny path, the expired-pending path, the fail-closed
+  path on a malformed or missing register, and the mapped-tree pass.
+
+- **§3.4 row 2 stated the coordinator-hold assertion over every gRPC full-method literal in the tree.**
+  SPEC-2 and TEST-1 state it over the five entries of `coordinatorHoldAllowedMethods`, while the class
+  table ranged it over every literal, whose second branch is red on the unmodified tree against permanently
+  correct literals: `cmd/lenny-token-service/spiffe_test.go` line 54 and
+  `pkg/proto/tokenservice/v1/lenny-tokenservice_grpc.pb.go` lines 40 through 43 carry TokenService
+  literals and `pkg/proto/interceptor/v1/lenny-interceptor_grpc.pb.go` line 39 carries a
+  RequestInterceptor literal, and the adapter registers only the `Adapter` service and the standard health
+  service (`pkg/adapter/transport.go` lines 50 and 54). Neither the shared exception register nor a widened
+  gate is available under the proposal's own rules, so the row as written described a gate that cannot go
+  green. Row 2's "Proven by" cell now states the same domain SPEC-2 and TEST-1 use, which is the
+  `coordinatorHoldAllowedMethods` entries in `pkg/adapter/holdstate.go`.
+
+### Pass 9 (2026-07-27, automated)
+
+- **The tracked root-level contract documents fell into no class, so the wire rename left the conformance
+  battery pointing at a socket no adapter opens.** `TESTING.md` line 1996 states the runtime-author SDK
+  Full-level battery as "connect to `@lenny-lifecycle`, capability handshake, checkpoint flow, interrupt
+  flow, credential rotation, deadline notification", which is the battery SPEC-2's tier-10 bullet re-runs
+  over the renamed socket, and the file also carries the reserved bare phrase at lines 788, 874, 1315,
+  1527, and 1972 while `README.md` line 155 carries it in the integration-level table. The proposal
+  declared `TESTING.md` outside every pass's scope and staged only its two verdict sentences, and
+  `README.md` appeared in no target list, so no pass and no hand edit reached either occurrence, and the
+  tree-wide identifier-resolution gate would have seen `CH-RUNTIMEOPS` resolving to two spellings with no
+  writer available. The occurrence is a genuine channel reference, so the not-a-channel register entry was
+  unavailable and the shared exception register requires an owner and an expiry it could never retire
+  against. N3 and the naming lint now scope to the tracked root-level contract documents alongside `spec/`,
+  `docs/`, `schemas/`, and Go doc comments, with `BUILD-GAPS.md`, `TEST-GAPS.md`, and the two root planning
+  documents excluded as historical audit records in the way `proposals/` already is. §3.4 gains a class row
+  for those documents naming the two registers, the two passes, and the two gates; the row for the
+  verdict-enum prose now scopes "outside every pass's scope" to the two sentences rather than to the whole
+  file, and TOOL-1's sentence matches. SPEC-2 names both files in its Target, states the battery site and
+  the phrase sites, and §11 records both with their reasons. The identifier-resolution gate's domain is
+  stated as the same exclusion list the passes walk, so every file the gate reads has a pass that can write
+  it.
+
+- **The change-graph completeness gate was red on introduction against a population its stated landing
+  route cannot hold.** `tests/change-graph.json` carries 142 glob keys, and measured over `git ls-files` on
+  the order of 750 of the 1,378 tracked non-test `.go` files under `pkg/` and `cmd/`, across roughly 340 of
+  their 498 package directories, match no key, including shipped packages such as `pkg/adapter`,
+  `pkg/preflight`, and `pkg/gateway/mcpfabric/mcptools`. `tests/change-graph-pending.txt` holds 25 entries
+  today, matches by exact string equality on a change-graph glob key
+  (`cmd/lenny-test/cmd_validate.go` lines 292 through 295 and 637 through 654), and covers the inverse
+  population of paths committed ahead of their implementation, and the shared contract's third ratchet rule
+  fails an entry whose `blocker` names no open item, which a package absent from the graph has none of.
+  Because `validate-maps` hard-fails tier 0, TOOL-1 would have ended with tier 0 red under every later
+  sub-step's exit criteria. TOOL-1 now gives the check its own seeded baseline,
+  `tests/registers/change-graph-coverage.yaml`, keyed by path prefix and rewritten downward only, in the
+  way §4.6 already grants one to the citation resolver and the ratchet, states the measured population and
+  that the check is red on introduction, and states why neither the pending file nor the shared register
+  can carry it. TEST-1's cases are restated against the baseline, including the fail-closed case on a
+  malformed or missing baseline and the case that coverage cannot be given back, and the sentence naming
+  the gates that land green by their own baselines now includes this one.
+
+- **The `+` member separator fell outside the citation matcher, so the line pass would have left live line
+  numbers behind.** Under the stated grammar the pass consumed the head member and left the continuation
+  in place, carrying no `§` and no path form, so the resolver never read it and the ratchet never counted
+  it, and a file reached count zero with a stale pointer alive. That is the failure §4.6 already states for
+  the comma, slash, and `and` spellings, so SPEC-4's exit criterion and N8's flat prohibition were both
+  satisfiable with these pointers live. The population is 11 files outside `proposals/`, the two root
+  planning documents, and `BUILD-GAPS.md`, and it includes the spec tie of a fail-closed control:
+  `pkg/preflight/crdschema.go` lines 22 through 25 carry `§10 line 437 ("...") + line 443 ("...")` on the
+  annotation the `CRDSchemaVersionCheck` upgrade gate compares, which is the same `§10 line 437` family
+  SPEC-4 depends on rewriting. A second un-admitted feature travels with it, which is a trailing gloss on a
+  member such as `line 408 step (e)`, `line 240 messagingScope`, `line 1779 audit event`, and a quoted
+  fragment. §4.6 now admits the plus sign as a member separator and the trailing gloss as part of its
+  member, records the measured population and every site, and the same predicate is carried into §3.4
+  row 5, SPEC-4's Target, §11, and TEST-1, which gains a line-pass case converting
+  `§10 line 437 ("...") + line 443 ("...")` to a single anchor with no orphan integer and a ratchet case
+  failing a file at count zero on a new `+`-separated citation.
+
+### Pass 10 (2026-07-27, automated)
+
+- **§4.6 attributed 2,168 root-level citations to the reference and plan documents.** The two root planning
+  documents carry seven citations between them; the 2,168 sit in the historical audit records
+  `BUILD-GAPS.md` and `TEST-GAPS.md`, which the §4.6 breakdown named nowhere. Because the sentence named
+  the two files N3 excludes, the largest non-Go carrier read as already-excluded population, while the
+  measurement paragraphs at three other points in §4.6 excluded only `proposals/` and the two planning
+  documents, so the passes walked `BUILD-GAPS.md` and SPEC-4's zero exit criterion required script-rewriting
+  a historical audit record the proposal declares out of scope. §4.6 now attributes the figure correctly and
+  states one exclusion list, which is `proposals/`, `BUILD-GAPS.md`, `TEST-GAPS.md`, the two root planning
+  documents, and the per-file generated-artifact rule, shared by the resolver, the ratchet, and the line
+  pass. Every measurement paragraph in §4.6, SPEC-4's Target, SPEC-4's zero exit criterion, and §11 are
+  restated against that one list.
+
+- **The naming lint's domain was wider than any staged rewrite, so it could not land green.** N3 and the
+  lint cover `spec/`, `docs/`, `schemas/`, Go doc comments, and the two tracked root-level contract
+  documents, while SPEC-1's name pass ran over `spec/` and `docs/` alone. The tree carries the banned bare
+  phrase at 100 Go doc-comment sites across 45 files under `pkg/`, `cmd/`, and `sdks/` and at 10 sites
+  across 4 files under `schemas/`, of which SPEC-2 hand-corrected two. Both branches failed: a pass that
+  walked them could not complete, because it is fail-closed on an unregistered site and the register was
+  seeded only for `spec/`; a pass that did not walk them left tier 0 red with no writer available, and
+  neither the §5 escape nor the shared exception register was reachable, since no sub-step retires those
+  sites. SPEC-1's name pass now walks the whole N3 domain in one run under the generated-file exclusion,
+  `tests/registers/reserved-phrase-senses.yaml` is sized to that population (65 in `spec/`, 55 in `docs/`,
+  10 in `schemas/`, 100 in Go doc comments, and 6 in the two root documents), SPEC-1's Target and §11 carry
+  the domain, the §5 row states that the lint's domain equals what the pass writes, and TEST-1 gains
+  name-pass cases for a Go doc comment and a `schemas/` JSON `description` value.
+
+- **The §15.4 reduction retired four runtime-author subsections into §28.5 cards that cannot hold them.**
+  Only §15.4.1 and §15.4.2 carry channel prose. §15.4.3 Runtime Integration Levels, §15.4.4 Sample Echo
+  Runtime, §15.4.5 Runtime Author Roadmap, and §15.4.6 Conformance Test Suite state the runtime-author
+  contract, and §28.5 holds channel contract cards with no destination stated for any of the four,
+  while `spec/05` line 40, `spec/04` line 796, `spec/26` line 10, `spec/17` line 291, the three runtime
+  SDKs, and the `"15.4.6"` string `cmd/lenny-compliance/full.go` line 40 serves all depend on them. §3.1 and
+  SPEC-3 now scope the reduction to the §15.4 preamble and the §15.4.1 and §15.4.2 subsections and state
+  that the remaining four keep their headings, anchors, and content. The `tests/spec-anchor-moves.json`
+  entries for `1543-runtime-integration-levels` and `1544-sample-echo-runtime` are dropped, so
+  `tests/tier11_docs/embedded_mode_anchors_test.go` and
+  `tests/tier11_docs/embedded_echo_placement_test.go` stay green without an edit and leave SPEC-3's Target
+  and §11 accordingly, and SPEC-4's link count is corrected to the 37 links into the two retired anchors.
+
+- **The `spec/03` correction treated a normative mTLS requirement as a false statement.** mTLS on the
+  gateway-to-pod hop is required by `spec/10` line 190, NET-060 at `spec/10` line 321, `spec/15` line 1456,
+  and `spec/04` line 641, none of which the proposal edits, and by four documentation pages it stages no
+  edit for. The missing certificate material in the podspec is an implementation gap, and under
+  `.claude/rules/spec-driven-development.md` the code is the defect where code and spec disagree. Editing
+  `spec/03` alone would have left the applied specification denying a transport property four other
+  sections require, with no gate able to detect it. §1 and SPEC-1 now scope the `spec/03` edit to the
+  collapsed protocol line and the §28 pointer, keep the mTLS assertion, record the podspec gap as a
+  claim-register row with status `ABSENT`, and name the edits a retraction would require instead.
+
+- **SPEC-1 emptied the reserved-phrase sense register before SPEC-2's fail-closed name pass needed it.**
+  SPEC-2 stated that the name pass rewrites `README.md` line 155 and `TESTING.md` lines 788, 874, 1315,
+  1527, and 1972 from a register SPEC-1 had already emptied, and the pass aborts non-zero on an
+  unregistered site, so the sub-step could not complete; the alternative reading is the silent default the
+  proposal rules out. With SPEC-1's pass now covering the whole N3 domain, those six sites are written in
+  SPEC-1, and the register's emptying carries an entry criterion of run completeness measured against the
+  tree, which is zero remaining occurrences of each reserved phrase across the whole domain, the same
+  criterion SPEC-4 uses before emptying `tests/spec-anchor-moves.json`. The rationale asserting that the
+  pass removes every phrase the register indexes is restated so it holds. SPEC-2 now states that it writes
+  the retired identifier spelling at `TESTING.md` line 1996 and reads its own register.
+
+- **The AST skip-reason classifier had no target, no predicate, no landing-green route, and no cases.** Its
+  three siblings in the same TOOL-1 list each state all three. The measured population is 201 `t.Skipf`
+  sites under `tests/`, `pkg/`, and `cmd/` whose reason matches no §17.9 category, almost all of them
+  permanently-correct host-capability skips such as `tests/testinfra/kind/kind.go` line 104, so a
+  category-requiring classifier is red at tier 0 on introduction with no route to green, and a
+  category-tolerant one is the silent no-op it exists to replace. TOOL-1 now states the target, the
+  predicate against the categories `cmd/lenny-test/cmd_validate.go` lines 853 through 865 enumerate, the
+  accepted `SkipUnless*` and bare-`t.Skip()` forms, the fail-closed behavior on an unparseable file, and a
+  seeded `tests/registers/skip-reasons.yaml` baseline rewritten downward only, in the way §4.6 already
+  grants one to the resolver and the ratchet. The gate-integrity meta-gate gains the same treatment.
+  TEST-1 adds a case battery for each, and the sentence naming the gates that land green by their own
+  baselines now covers both.
+
+- **SPEC-4's line-citation retirement turns an existing hard tier-0 gate red.**
+  `TestSpec254DegradationWarningLineCitationsAreFresh` compiles `§25\.4 lines? (\d+)(?:-(\d+))?`
+  (`tests/tier0_static/degradation_lock_line_citation_test.go` line 38) and calls `t.Fatalf` when it does
+  not match (lines 104 and 105), so its predicate is the presence of the retired form above
+  `pkg/ops/opsidem/writers.go` line 53 and `pkg/ops/coordination/service.go` line 153. The proposal named
+  the file only as matcher precedent, and SPEC-4's stated exit criteria are all satisfiable with tier 0
+  red. §4.6 now records that the file is a running gate, SPEC-4 names it as a hand-authored target and
+  states the rewritten predicate, which reads the anchor-form citation and requires the named §25.4
+  heading's body to carry the declaration's `wantSubstring`, tier 0 over `pkg/ops/` becomes an exit
+  criterion, and §11 gains the entry.
+
+- **The citation resolver was a baselined fail-closed gate with no listed cases.** Its two baselined
+  siblings each carry their own, and the resolver is the exit criterion SPEC-3 rests its atomicity on while
+  landing green through a baseline of roughly 1,500 pre-existing failures, so a baseline load that
+  degrades to exempting the tree reports no failure for exactly the citations the reduction breaks. TEST-1
+  now names the resolver's cases: a resolving citation passes; a non-resolving citation absent from the
+  baseline fails and names file, line, and citation text; a baselined citation passes only under the file
+  and citation text it was baselined for; a baseline entry whose citation no longer exists is removed in
+  the same run; a range or multi-member citation fails unless every member resolves; a citation broken by a
+  heading move fails rather than being absorbed; and a malformed or missing baseline fails.
+
+### Pass 11 (2026-07-27, automated)
+
+- **The fragment-link gate was red on introduction with no route to green.** Six intra-repo markdown
+  fragment links in `spec/` and `docs/` already point at headings that do not exist, and no sub-step staged
+  an edit for any of them: `spec/09_mcp-integration.md` line 56 targets
+  `08_recursive-delegation.md#85-platform-tool-inventory` while `spec/08_recursive-delegation.md` line 525
+  is `### 8.5 Delegation Tools`; two runbooks target
+  `spec/17_deployment-topology.md#175-cloud-deployment-shapes` while line 382 is `### 17.5 Cloud
+  Portability`; `docs/runbooks/ops-lock-split-brain.md` targets
+  `#254-remediation-locks-and-escalations` and `#104-runtime-extensibility` while
+  `spec/25_agent-operability.md` line 783 is ``## 25.4 The `lenny-ops` Service`` and
+  `spec/10_gateway-internals.md` line 376 is `### 10.4 Gateway Reliability`; and
+  `docs/runbooks/otlp-plaintext-egress-detected.md` targets `#132-network-policy` while
+  `spec/13_security-model.md` line 32 is `### 13.2 Network Isolation`. A link pointing at a heading that
+  never existed resolves to no open remediation item, so the shared exception register's `blocker` rule
+  cannot hold it. SPEC-4 now names the six as a bounded hand-authored correction in the change that lands
+  the gate, with a table giving each link's current target, the heading that exists, and the corrected
+  target; the gate's domain is stated as a link whose target is a tracked `.md` file or the citing page;
+  §3.4 gains the class row; the landing-green paragraph and §11 record the route.
+
+- **The naming lint, the heading walker, and the identifier-resolution gate were staged twice, and the
+  tooling placement landed them red.** §3.5 item 1 and TOOL-1 built all three, while TEST-1 added them
+  again, and all three are red against the unmodified tree with their routes to green in later sub-steps.
+  Each gate now has one landing sub-step, and it is the sub-step that supplies its route to green: the
+  naming lint in SPEC-1, the identifier-resolution gate and the `coordinatorHoldAllowedMethods` assertion
+  in SPEC-2, the heading walker and the tier-11 successor-pointer check in SPEC-3, the fragment-link gate
+  in SPEC-4, and the gates TOOL-1 seeds a baseline for in TOOL-1. §3.5 gains a fifth item for the gate
+  cases and states the one-landing-point rule, TOOL-1 states which gates it builds and why the other three
+  land elsewhere, each sub-step's Target records the gate it lands, and TEST-1 states each gate's predicate
+  and adds its cases rather than adding the gate.
+
+- **§15.3's normative sentence naming §15.4 as the prose reference was in no edit list and becomes false.**
+  `spec/15_external-api-surface.md` line 1456 states that §15.4 and its subsections are the normative prose
+  reference for gateway-to-pod communication, and it sits above the §15.4 heading, so the reduction does not
+  cover it. It carries no line citation, no anchor that moves, and no bare reserved phrase, so no pass
+  reaches it. SPEC-3 now names it in its Target and stages a hand-authored restatement pointing at §28 for
+  the channel contract and §15.4 for the wire artifacts, §3.4 gains a hand-authored class row for a
+  normative sentence a reduction falsifies, and §11 records the file.
+
+- **The name pass's Go doc-comment domain stopped at `pkg/`, `cmd/`, and `sdks/` while the lint read every
+  Go doc comment.** 23 occurrences of the banned bare phrase across 9 files sit in Go doc comments under
+  `tests/`, among them `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 8,
+  `tests/tier3_contract/sdks/runtime_sdk_test.go` line 338, and
+  `tests/tier4_integration/credential_lifecycle_test.go` line 11, and `tests/` was in neither the exclusion
+  list nor the write domain. N3, SPEC-1's Target, SPEC-1's domain paragraph, TEST-1's lint sentence, and
+  §11 now state one domain, which is the Go doc comments of every tracked Go file under the single
+  exclusion list, and the seeded population is re-measured to 124 occurrences across 55 files, of which 23
+  across 9 are under `tests/`. `migrations/` carries none.
+
+- **The root-level markdown scope was stated two incompatible ways and three tracked files fell between
+  them.** `BUILD-PLAN.md` line 259 carries the retired `LifecycleChannel` spelling, and
+  `BUILD-PROGRESS.md` line 30 and `PROPOSAL-QUEUE.md` lines 289 and 625 carry the reserved bare phrase,
+  while §3.4 admitted all tracked root-level markdown to the passes' walk and N3 scoped it to two files. N3
+  now names `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md` as excluded build and queue
+  records alongside `BUILD-GAPS.md` and `TEST-GAPS.md`, states that the name pass, the identifier pass, the
+  naming lint, and the identifier-resolution gate all read that one list, and SPEC-2 records the three
+  files and their occurrences. §4.6 states why the citation list stays narrower, which covers one citation
+  at `BUILD-PROGRESS.md` line 34. The reserved-phrase population in the two contract documents is
+  re-measured from 6 to 10, which is `TESTING.md` lines 788, 858, 874, 993, 1315, 1527, 1972, 1996, and
+  2248 and `README.md` line 155, and SPEC-2 and §11 carry the corrected figure.
+
+- **The two gates that prove the naming law landed carried no test cases.** Every other new tier-0
+  predicate in TEST-1 has an accept, reject, and boundary battery, on the stated ground that a rule that is
+  silently a no-op certifies an exempted tree indefinitely, while the naming lint and the
+  identifier-resolution gate had only their assertion sentence, and §5 rows 1 and 6 rest the completeness
+  of the rename and the naming law on them. TEST-1 now adds a battery for each, tied to §28.1 N3: for the
+  lint, a bare phrase in each domain N3 names fails, the same word inside a canonical identifier passes, a
+  bound sense passes with `spec/17_deployment-topology.md` lines 1490, 1509, and 1512 as worked cases, an
+  excluded file does not fail, and a zero-match run on a seeded tree fails; for the gate, one spelling
+  passes, two spellings fail and name both files, a not-a-channel occurrence passes with no shared-register
+  entry with `spec/17_deployment-topology.md` line 1530 as the worked case, a genuine channel reference
+  left at the retired spelling fails with `TESTING.md` line 1996 as the worked case, a malformed or missing
+  `tests/registers/identifier-senses.yaml` fails, and the gate is verified red before SPEC-2 and green
+  after it.
+
+### Pass 12 (2026-07-28, automated)
+
+- **SPEC-4 offered `spec/04` line 967 as a worked example of a link into a retired §15.4 anchor, and it is
+  a link into a surviving one.** That line's only markdown link targets
+  `#1543-runtime-integration-levels`, which is §15.4.3 and which SPEC-3 preserves, and
+  `spec/04_system-components.md` carries no occurrence of either retired anchor, so the example directed an
+  implementor to redirect a correct client-facing cross-reference into a §28.5 card that owns neither the
+  nonce wire format nor the runtime-integration-level contract. SPEC-4 now names
+  `spec/17_deployment-topology.md` line 361 as the worked example, states that `spec/04_system-components.md`
+  carries no link into either retired anchor and that its line 967 link is confirmed untouched, and the
+  Pass 1 record no longer carries the example.
+
+- **`schemas/ocsf-mapping.yaml` was a generated carrier of the retired citation form with no producer, no
+  regeneration step, and no drift-test exit criterion.** Its header declares it generated, so the per-file
+  rule in §4.6 bars every pass from writing it, while its authoring source is the `mappingHeader` const at
+  `pkg/audit/ocsf/catalog.go` lines 147 through 150, which the line pass does rewrite. Without a
+  regeneration step `TestMappingYAMLInSync` in `pkg/audit/ocsf/catalog_test.go` goes red and the committed
+  file stays above count zero, which makes SPEC-4's zero exit criterion unmeetable. §4.6 now lists the
+  file and its producer `go run ./cmd/lenny-ocsf-mapping-gen`, noting as for `cmd/lenny-chart-schema-gen`
+  that no `make` target reaches it; SPEC-4's regeneration sequence runs that producer and takes
+  `TestMappingYAMLInSync` as an exit criterion; the §3.4 generated-artifact row names both; and §11 records
+  the file.
+
+- **The gate-integrity meta-gate landed in TOOL-1 while ranging over six gates that SPEC-1 through SPEC-4
+  register.** A fixed list checked against the tier-0 registration fails on a not-yet-written gate in
+  exactly the way it fails on a deleted one, so the meta-gate was red at TOOL-1's exit with its route to
+  green four sub-steps away. It now lands in SPEC-4, which is the first sub-step at whose exit every gate
+  on its list is registered, and §3.5, TOOL-1, SPEC-4, and TEST-1 all state that placement.
+
+- **The meta-gate's two accepted registration channels excluded tier 11 and tier 3, while its list named
+  gates that land there.** The tier-11 successor-pointer check and the tier-3 assertion that the served
+  OpenAPI document and the generated MCP tool schemas carry no citation can satisfy neither the
+  `tests/tier0_static/` channel nor the `runValidateMaps` channel, so the list held two names that could
+  never pass. The meta-gate's domain is now stated as the gates this proposal registers at tier 0, the two
+  gates outside it are named with the tier-11 and tier-3 suites as their registration channel, and TEST-1
+  adds the case asserting the fixed list and the accepted-channel set name the same population.
+
+- **§11's `TESTING.md` entry enumerated five reserved-phrase lines where the file carries nine.** Lines
+  858, 993, and 2248 were absent, and lines 788, 874, 1315, 1527, 1972, 1996, and 2248 are the rest, which
+  is the population SPEC-2 already enumerates and the count §11 already states in aggregate. An
+  implementor seeding `tests/registers/reserved-phrase-senses.yaml` from §11 would have left three sites
+  unregistered, and the name pass is fail-closed on an unregistered site. §11 now lists all nine lines.
+
+- **The §15.4 reduction retired four unnumbered subsections whose anchors were excluded from the
+  retired-anchor set.** Between `#### 15.4.1` at line 1470 and `#### 15.4.2` at line 2068 sit the internal
+  `MessagePart` format, the Translation Fidelity Matrix, the `MessageEnvelope` unified message format, and
+  the Protocol Reference message schemas with their eight `#####` children, and three live intra-repo
+  fragment links target two of them at `spec/15_external-api-surface.md` line 1399 and
+  `spec/21_planned-post-v1.md` line 31. SPEC-3 now states the reduction's scope over the whole §15.4.1
+  block and lists those headings, SPEC-4's retired-anchor sentence covers their anchors as
+  `tests/spec-anchor-moves.json` entries, the anchor pass rewrites the three links, and SPEC-4 states that
+  links the reduction retires are redirected earlier in the same sub-step so the fragment-link gate's
+  red-on-introduction population stays the six enumerated ones.
+
+- **The tier-0 proto no-drift test had no listed cases, including the tool-absent path it exists to
+  eliminate.** It is the sole `pkg/proto/` exit criterion SPEC-2, SPEC-3, and SPEC-4 each declare, its
+  producer needs external binaries (`Makefile` lines 91 through 100), and the skip-reason classifier
+  accepts a bare `t.Skip()`, so a test that returns early when a binary is missing reproduces the
+  fail-open behavior that disqualifies `scripts/check-proto-generated.sh`. TEST-1 now names its cases:
+  matching stubs pass, a hand-edited stub fails and names the file, an unavailable producer binary
+  records the tier as `UNVERIFIED` rather than passing, and a run producing zero generated files fails.
+
+- **The fragment-link gate was red on a seventh pre-existing link.** `docs/api/internal.md` line 229 links
+  to `#lifecycle-channel-messages` on its own page, and that fragment resolves only through the kramdown
+  anchor attribute at line 318, which a heading-only predicate does not read. SPEC-2's glossary redirect
+  stub relies on the same mechanism, and `docs/reference/glossary.md` carries 75 anchor attributes. The
+  gate's predicate now resolves a fragment against heading slugs and explicit kramdown anchor attributes,
+  under which the gate is red on exactly the links SPEC-4 enumerates, and §3.4's row states the same
+  predicate.
+
+### Pass 13 (2026-07-28, automated)
+
+- **The path-form citation staged for the OCSF mapping named a specification file that does not exist, so
+  the line pass had no anchor to convert it to and no stated disposition.** `11_security-trust-model.md` is
+  not a tracked file, and the stated resolution rule computes a citation's anchor from the file it names, so
+  the seven occurrences at `pkg/audit/ocsf/catalog.go` line 149, `pkg/audit/ocsf/catalog_test.go` lines 26,
+  44, 75, and 113, `cmd/lenny-ocsf-mapping-gen/main.go` line 10, and the generated
+  `schemas/ocsf-mapping.yaml` line 3 held four files above count zero with no route down. §4.6 now gives the
+  case the straddling range's disposition, which is that the pass fails and reports it, and enumerates the
+  population; SPEC-4 hand-corrects the six authored sites to the `### 11.7 Audit Logging` heading at
+  `spec/11_policy-and-controls.md` line 341, which contains both line 414 and line 365, and regenerates
+  `schemas/ocsf-mapping.yaml`; and TEST-1 carries the line-pass case.
+
+- **The anchor pass was specified over file-qualified markdown links alone, while the majority of links into
+  the retired §15.4 anchors are same-page bare fragments.** `spec/15_external-api-surface.md` carries 25
+  same-page links into the two retired numbered anchors against 11 file-qualified ones, and every link SPEC-3
+  and SPEC-4 name by line is same-page, so the stated pattern would have left them pointing at deleted
+  anchors and the fragment-link gate red on a population no pass writes. §3.4 row 4 and SPEC-4 now state the
+  pass's markdown domain as the fragment-link gate's domain, which is every link whose target is a tracked
+  `.md` file or the citing page itself, and TEST-1 adds the same-page accept and reject cases.
+
+- **§4.6 put generated artifacts in the one exclusion list shared by the resolver, the ratchet, and the line
+  pass, while three later arguments required the resolver and the ratchet to read and count exactly those
+  files.** §4.6 now states two levels: the read exclusion the resolver and the ratchet share is `proposals/`,
+  the two historical audit records, and the two root planning documents, and the write exclusion the passes
+  read is those four groups plus every generated artifact. A generated artifact therefore carries a per-file
+  count whose route to zero is the regeneration of its source, which is what the SPEC-3 atomicity argument,
+  the OCSF regeneration argument, and SPEC-4's chart-CRD hand edit each rest on, and every measurement,
+  baseline, Target, and §11 figure is stated against the read domain.
+
+- **The claim register's schema-only tier-0 validator landed in TEST-1, after the gate-integrity meta-gate
+  that must name it had already landed green in SPEC-4.** Its route to green is the seeded register, so it
+  now lands in SPEC-3 alongside `tests/claim-map.json`, per §3.5's rule that a gate lands in the sub-step
+  that supplies its route to green. §3.5, SPEC-3, SPEC-4's meta-gate list, and TEST-1's gate-landing
+  enumeration all state that placement, and §4.4 and the §7 non-goal no longer credit TEST-1 with landing it.
+
+- **A seventh pre-existing broken fragment link left the gate red at SPEC-4's exit.**
+  `docs/runbooks/admission-plane-feature-flag-downgrade.md` line 151 writes `](#)`, whose empty path targets
+  the citing page and whose empty fragment matches no heading slug and no anchor attribute, so it sits inside
+  the gate's domain and outside the `.html` exclusion. SPEC-4's correction table now carries a seventh row
+  pointing it at `### Step 5 — Post-incident drift-snapshot refresh` at line 149, and SPEC-4, §3.4 row 13,
+  TEST-1, the landing-green paragraph, and §11 all state seven.
+
+- **TEST-1 gave the naming lint the one-identifier rule as part of its predicate, which SPEC-1 cannot make
+  green.** SPEC-1 changes no identifier, and the retired spellings are still live in `spec/` and `schemas/`
+  at its exit, so an N4 clause would have left the lint red at its landing sub-step. TEST-1 now states the
+  lint's predicate as the reserved-word ban and only that ban, matching §3.4 row 1, §3.5, §5, SPEC-1, and the
+  lint's own case list. N4 stays with the identifier-resolution gate, which lands in SPEC-2.
+
+- **N7 mandated a kebab or snake manifest key, which the §4.7 manifest field set cannot take.** Every sibling
+  key in the adapter manifest is camelCase and the three runtime SDKs type it that way, so a kebab or snake
+  key would put the naming law and the §4.7 field reference in disagreement on a surface third-party runtimes
+  parse. N7 now names the form each carrier already fixes, which is lowercase kebab for a flag, upper snake
+  for an environment variable, and camelCase for a manifest key, and SPEC-2 records `runtimeOps` and
+  `--runtime-ops-socket` as the concrete targets rather than leaving them to be read off the plan's table.
+
+- **SPEC-3's tier-3 assertion over the served client artifacts was red at its own landing sub-step.** The
+  strip that sub-step performs is scoped to the line form, while `pkg/gateway/externalapi/openapi/openapi.json`
+  carries 75 section-symbol citations of which 21 name a line, so 47 lines naming a section survive it and the
+  two derived artifacts inherit them. The assertion is now stated over the retired line form, with the reason
+  recorded, so it has a route to green in the sub-step that lands it.
+
+- **The skip-reason classifier's non-literal-reason branch had no listed case, and it is the branch that
+  reproduces the shell script's silent accept.** TOOL-1 now seeds that branch's population into
+  `tests/registers/skip-reasons.yaml`, which is ten `t.Skip` calls across five files that pass a non-literal
+  first argument and none of which is a `SkipUnless*` helper, and TEST-1 adds the case asserting such a call
+  is reported and named with its file and line, with `tests/testinfra/kind/install.go` line 56 as the worked
+  case.
+
+- **SPEC-2 and §11 enumerated the retired identifier spellings in the two root contract documents as the
+  single socket token at `TESTING.md` line 1996, and line 1521 carries three more.** That line names the
+  schema path `schemas/lifecycle-events.schema.json`, the example-fixture glob
+  `schemas/examples/lifecycle.*.json`, and `TestLifecycleEventExamplesValidate`, all of which this sub-step
+  renames, and the identifier pass aborts on a site with no register entry, so an implementor seeding from
+  the stated population would have stopped the run. SPEC-2 and §11 now state both lines.
+
+- **The heading walker's domain includes `24.19.1`, which has no `tests/spec-map.json` key and no exception,
+  and no sub-step seeded one.** `spec/README.md` line 147 is the index's only level-4 row and
+  `tests/spec-map.json` carries `24.19` and no `24.19.1`, so the walker's spec-map half was red at SPEC-3 on
+  a heading SPEC-1's `### N.M` seeding instruction did not reach. SPEC-1 now states the seeding over the
+  walker's whole domain and names `24.19.1` explicitly, and §11 records it.
+
+### Pass 14 (2026-07-28, automated)
+
+- **The renamed test and compliance-check functions left two existence-checked `::<symbol>` references in
+  `tests/spec-map.json` dangling, which hard-fails `validate-maps` at tier 0.** `tests/spec-map.json` lines
+  2187 and 2370 name `tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate` (declared at
+  `tests/tier0_static/schemas_test.go` line 146) and lines 2188 and 2385 name
+  `cmd/lenny-compliance/full.go::checkLifecycleHandshake` (declared at `cmd/lenny-compliance/full.go` line
+  225), both of which N4 renames. `validateSpecMapTestFuncs` requires a top-level `func <Name>(`
+  declaration for each (`cmd/lenny-test/cmd_validate.go` lines 564 and 602 through 617, registered at line
+  53) inside the hard-gating `validate-maps` check (`cmd/lenny-test/cmd_run.go` lines 734 and 747 through
+  750), so the claim that the spec-map entries are not existence-checked was true of the `schemas` paths
+  alone. §4.6 and SPEC-2 now extend the re-key rule from path keys to any `::<symbol>` reference naming a
+  symbol the pass renames, SPEC-2 names the four lines, and §11 records the register.
+
+- **The reserved-phrase population was measured in the space-separated spelling alone, leaving
+  `spec/18_build-sequence.md` outside the pass, the register, and the touched-file list.** That file
+  carries the hyphenated compound at lines 164, 165, and 408 and carries no space-separated occurrence, so
+  after SPEC-1 it would still have read "adding a lifecycle-channel client" while §28 named
+  `CH-RUNTIMEOPS`, and the stated exit criterion would have been false. Measured across the tree the
+  compound adds 6 occurrences in `spec/`, 6 in `docs/`, 30 in Go doc comments across 19 tracked Go files,
+  and 2 in `TESTING.md`, and it brings in five Go files that carry no space-separated occurrence. N3 now
+  states both spellings, SPEC-1 and §11 record the augmented population and the `spec/` count of 71 across
+  12 files, and TEST-1 adds the naming lint's hyphenated-spelling case with
+  `spec/18_build-sequence.md` line 165 as the worked case.
+
+- **TEST-1 stated the heading walker's predicate and added none of its cases.** The walker is the only
+  gate that observes whether the hand-maintained `spec/README.md` index gained rows for the two appended
+  files, and neither its domain selector nor its anchor resolution is observable from red-on-introduction
+  against the 49 rows the index misses today, because those are `### N.M` rows rather than the level-4
+  §28.5 card headings SPEC-3 adds. TEST-1 now adds the walker's accept, reject, and boundary cases,
+  including the card-heading case and a run that inspects zero headings.
+
+- **The one case listed for the identifier pass's register re-keying could not observe two of the four
+  registers.** It was stated as a `validate-maps` outcome, and `validate-maps` existence-checks the
+  change-graph glob keys, the `spec_file` pointer, and the `::<symbol>` references while deliberately
+  leaving the `schemas` paths unchecked (`cmd/lenny-test/cmd_validate.go` lines 236 through 238), so the
+  case was green whether or not the pass rewrote the `tests/spec-map.json` `schemas` entries, and the
+  citation resolver carried no rename case at all. TEST-1 now states the re-key cases per register in
+  `scripts/specshift`'s `run_test.go`, asserted by reading each register after the run, and adds the
+  resolver case that a baselined non-resolving citation still passes under the new path after a rename.
+
+- **Correction to this pass: SPEC-2's Target paragraph still scoped `tests/spec-map.json` to path
+  entries after the re-key rule had been widened to symbol references.** The sub-step's own scope
+  declaration read "for the file keys and path entries of the renamed files" while SPEC-2's body, §4.6,
+  and §11 all stated both halves, so an implementor working the Target list would have left
+  `tests/spec-map.json` lines 2187, 2188, 2370, and 2385 dangling and ended the sub-step with
+  `validate-maps` red. The Target clause now names the `::<symbol>` references alongside the path
+  entries, so all four statements carry the same predicate.
+
+### Pass 15 (2026-07-28, automated)
+
+- **SPEC-3 cited a blank line as the companion of the §15.3 normative-ownership sentence.**
+  `spec/15_external-api-surface.md` line 1467 is empty; the second assertion that §15.4 and its
+  subsections remain the normative prose description sits on line 1466, inside the §15.4 preamble at
+  lines 1458 through 1469. The disposition was already right, because line 1466 is inside the block the
+  §15.4 reduction removes, so only the citation was wrong. SPEC-3 now cites line 1466 and quotes the
+  sentence's opening and closing text, so an implementor auditing the reduction boundary lands on the
+  sentence rather than on an empty line.
+
+- **The markdown anchors SPEC-2 and TEST-1 depend on were inside the population the name pass rewrites
+  and the naming lint fails.** N3 banned both spellings across `docs/`, and three of the six hyphenated
+  occurrences the tree carries there are link targets rather than prose: the kramdown attributes at
+  `docs/reference/glossary.md` line 207 and `docs/api/internal.md` line 318, and the same-page fragment
+  link at `docs/api/internal.md` line 229. The reserved-phrase register carries no leave-unmodified
+  disposition, so the pass would have rewritten all three, which contradicts SPEC-2's instruction to keep
+  `{: #lifecycle-channel }` on a redirect stub and removes the attribute-resolved fragment TEST-1 uses to
+  justify the fragment-link gate's predicate. N3 now places a markdown anchor identifier, meaning a
+  kramdown `{: #id }` attribute value and the fragment of an intra-repo markdown link, outside the
+  reserved-phrase matcher in both spellings, because an anchor is an addressable link target and rewriting
+  one breaks inbound links this repository cannot see. An anchor that has to change moves through the
+  anchor class with an entry in `tests/spec-anchor-moves.json` instead. The §4.1 principle bullet, the
+  §3.4 class-table row, the naming lint's domain in TEST-1, SPEC-1's zero-occurrence exit criterion, and
+  the `docs/` compound figure in SPEC-1 and §11 all carry the narrowed predicate, and the `docs/` compound
+  population the register is seeded against is now the 3 prose occurrences across 2 files
+  (`docs/reference/adapter-contract.md` line 84 and `docs/runtime-author-guide/lifecycle.md` lines 69 and
+  319). TEST-1 adds the accept case, asserting that the pass leaves both anchor sites unmodified without a
+  register entry and that the naming lint is green on the same two sites.
+
+### Pass 16 (2026-07-28, automated)
+
+- **SPEC-3 landed the heading walker while staging only half of the walker's predicate for the headings it
+  creates.** SPEC-3 wrote a `spec/README.md` row for §28.5, §28.6, §28.7, the §28.5.1 through §28.5.7 card
+  headings, `## 29`, and each `spec/29` subsection, and staged no `tests/spec-map.json` key and no
+  `tests/spec-map-exceptions.yaml` entry for any of them, so the walker was red on at least eleven
+  headings at the exit of the sub-step that lands it. `tests/spec-map.json` is keyed by section number and
+  the exceptions validator runs inside the hard-failing `validate-maps` tier-0 check
+  (`cmd/lenny-test/cmd_run.go` lines 734 and 742), so a heading acquires walker-visible coverage only
+  through one of those two files. SPEC-3's Target now names both files, its change description states the
+  key-or-exception instruction over every heading it creates, and the two landing sentences in TEST-1 and
+  §6 now read "the §28 and §29 rows and keys SPEC-3 writes". SPEC-1's instruction is stated explicitly for
+  §28 and §28.1 through §28.4 as well, rather than left implied by its Target list.
+
+- **SPEC-3 classified two client-facing blocks inside §15.4.1 as adapter-to-binary wire prose and moved
+  them to a section with no card that can own them.** The Translation Fidelity Matrix documents
+  round-trip fidelity of `MessagePart` through each `ExternalProtocolAdapter`
+  (`spec/15_external-api-surface.md` lines 1655 and 1672), and the `MessageEnvelope` block states by its
+  own first sentence that the envelope is carried across the stdin binary protocol, the platform MCP
+  server tools, and all external APIs (line 1710), holding the `delivery` enum, the `delivery_receipt`
+  schema and its `reason` enum, and the `message_expired` event schema and `reason` enum. §28's boundary
+  set is closed over `intra-pod`, `gateway-to-pod`, `pod-to-gateway`, `pod-egress`, `gateway-to-store`,
+  `inter-replica`, and `control-plane`, so no §28.5 card holds the external-client edge, and moving the
+  material would have left the `spec/07_session-lifecycle.md` citations at lines 116, 296, 323, 343, 349,
+  and 433 resolving to a card that does not define what they cite. SPEC-3 now carves both blocks out of
+  the reduction on the same rule it already applies to §15.4.3 through §15.4.6, keeps the
+  `translation-fidelity-matrix` and `messageenvelope--unified-message-format` anchors out of
+  `tests/spec-anchor-moves.json`, moves only the stdin and stdout envelope framing to §28, and
+  hand-corrects the seven `spec/07` links to the surviving `spec/15` heading. SPEC-4's anchor-pass paragraph
+  carries the same narrowed set: the retired unnumbered anchors are `#internal-messagepart-format` and
+  `#protocol-reference--message-schemas` with its children, one link is rewritten rather than three, and
+  the two links into `#translation-fidelity-matrix` at `spec/15_external-api-surface.md` line 1399 and
+  `spec/21_planned-post-v1.md` line 31 are untouched.
+
+- **SPEC-2 declared the manifest rename to reach tiers 3 and 10 while editing a tier-4 fixture in the same
+  change.** The renamed key and socket cross a process boundary between the adapter and a separate runtime
+  binary, which `.claude/rules/test-coverage.md` line 36 maps to tier 4, and
+  `tests/tier4_integration/credential_lifecycle_test.go` is the only in-tree test that drives that flow
+  against a real runtime process over a live Unix socket. The listed SDK-parse coverage does not
+  substitute, because `cmd/runtimes/streaming-echo` parses the manifest through its own struct tag at
+  `cmd/runtimes/streaming-echo/main.go` line 147 rather than through any of the three SDKs, so a rename
+  that misses it is a silent JSON unmarshal miss rather than a compile error. SPEC-2 now states that the
+  change reaches tier 4, adds a tier-4 item covering the rotation round trip and the negative case of a
+  manifest carrying only the retired key as an exit criterion of the sub-step, names
+  `cmd/runtimes/streaming-echo/main.go` as a manifest reader the rename moves, and ties the tier-4
+  assertions to the `CH-RUNTIMEOPS` card. §11 lists the file.
+
+Corrections to this pass, found by review of its own edits:
+
+- **The MessageEnvelope carve-out named an outcome the anchor pass cannot produce.**
+  `tests/spec-anchor-moves.json` is keyed by retired anchor with one successor per anchor, as §3.4 row 3,
+  SPEC-4's pass description, and TEST-1's pass cases all state, so the pass cannot send the
+  `spec/07_session-lifecycle.md` links into `1541-adapterbinary-protocol` to the surviving `spec/15`
+  heading while sending the other links into that same anchor to a §28 card. SPEC-3 now rewrites those
+  links by hand, in the same change that splits the heading, so the pass reads a tree with no link into a
+  retired anchor at those sites, and §3.4 carries a class row for the case. The register's key, the pass
+  description, and the TEST-1 cases are unchanged.
+
+- **The carve-out enumerated five of the seven links.** `spec/07_session-lifecycle.md` line 116 cites the
+  same retired anchor for the same surviving material ("All content delivery uses the `MessageEnvelope`
+  format"), and line 349 carries two such links rather than one, so the set is seven links across six
+  lines: 116, 296, 323, 343, 349 twice, and 433. The bullet, SPEC-4's file-qualified count, and the Pass
+  16 entry above now carry the full set, and the four file-qualified links that do go to §28 are named
+  with the material each cites.
+
+- **The Translation Fidelity Matrix bullet cited a package path that does not exist.** The implementation
+  is `pkg/gateway/externalapi/outputpartfidelity`, which is also the path `tests/spec-map.json` records.
+
+### Pass 17 (2026-07-28, automated)
+
+- **The carve-out's hand-authored class stopped at `spec/07` and left the same collision live among the
+  same-page links inside `spec/15`.** Four of the 25 same-page links into `1541-adapterbinary-protocol`
+  cite the `MessageEnvelope` material the carve-out keeps in `spec/15`, at
+  `spec/15_external-api-surface.md` lines 2165, 2489, 2584, and 2662, and SPEC-4 handed all 25 to the
+  mechanical anchor pass, whose map carries one successor per retired anchor. Line 2584 is decisive,
+  because it carries two links to that one anchor whose correct destinations differ: the first is labelled
+  with the surviving heading's own title and the second cites the internal `MessagePart` format, which
+  retires. No gate observes the misdirection, since the fragment-link gate checks only that the target
+  resolves, and SPEC-4 then empties `tests/spec-anchor-moves.json`. §3.4 row 12 now states the class as
+  every link into a retired anchor whose cited material stays where it is, and names the four `spec/15`
+  same-page links alongside the seven `spec/07` links. SPEC-3 enumerates the four and rewrites them by
+  hand in the same change that splits the heading, its anchor-pass list for §15.4.3 through §15.4.6 drops
+  line 2165 and reads five links rather than six, and SPEC-4 restates the same-page population as 21 links
+  after the hand corrections.
+
+- **The §15.4 preamble reduction removed the SDK-warm demotion contract, a client-facing adapter
+  obligation with no successor.** `spec/15_external-api-surface.md` line 1468 sits inside the stated
+  preamble range and is a normative obligation on third-party adapter implementers: adapters for runtimes
+  declaring `capabilities.preConnect: true` must implement `DemoteSDK`, with a 10s teardown timeout
+  followed by SIGKILL, a defined post-demotion pod state, and the `UNIMPLEMENTED` error code. Those
+  particulars appear nowhere else, because `spec/04_system-components.md` line 652 states the RPC's
+  purpose and a gateway-side fallback timeout alone and `spec/06_warm-pod-model.md` lines 40 and 67 state
+  the mandatory-support rule and the separate SIGTERM-internal timeout, and §28.5's closed boundary set
+  has no card that owns an adapter RPC implementation obligation. SPEC-3 now carves the paragraph out of
+  the reduction on the same rule §15.4.3 through §15.4.6 get, restates the preamble range as lines 1458
+  through 1468 with that paragraph excluded, and records the inbound references at
+  `spec/05_runtime-registry-and-pool-model.md` line 22, `spec/15_external-api-surface.md` line 1114,
+  `docs/reference/adapter-contract.md` line 64, `docs/reference/configuration.md` line 153, and
+  `docs/reference/error-catalog.md` line 100 that continue to resolve to it. §3.1 carries the same scope.
+
+- **The identifier pass had no dry-run equivalence case while the other three passes each had one.**
+  TOOL-1 makes the dry-run output the entry criterion for applying every pass, and the identifier pass is
+  the one whose applied change is the largest and the hardest to reverse, since SPEC-2 runs it as one
+  exclusive change on a quiesced tree and it both moves files and rewrites their keys in four path-keyed
+  registers plus the `::<symbol>` references in `tests/spec-map.json`. No other listed test observes a
+  divergence, because the register cases read the tree after the run and the identifier-resolution gate
+  runs after the pass has been applied. TEST-1 now carries the same case the other three passes carry,
+  covering the file moves and the register re-key edits.
+
+- **Correction to this pass: SPEC-3's post-condition sentence contradicted its own line 2584 case.** The
+  sentence stated that the anchor pass reads a tree with no link into a retired anchor at those four
+  `spec/15` lines, while the preceding sentence leaves the second link on line 2584 pointing into
+  `1541-adapterbinary-protocol` for the pass to redirect to the §28 successor. SPEC-3 now states the
+  post-condition per line: no remaining link at lines 2165, 2489, and 2662, and only the second of the two
+  links on line 2584, which the pass rewrites. This is also what makes SPEC-4's count of 21 same-page links
+  add up.
+
+- **Correction to this pass: SPEC-4's "every link SPEC-3 and SPEC-4 name by line" qualifier went stale when
+  the same-page population was narrowed from 25 to 21.** The four SPEC-3 hand-corrects are named by line
+  and are no longer in that population, so the qualifier asserted membership the same paragraph denies for
+  line 2165. The qualifier now names the five links inside §15.4.3 through §15.4.6 at lines 2163, 2164,
+  2394, 2395, and 2441, and the second of the two links on line 2584.
+
+### Pass 18 (2026-07-28, automated)
+
+- **The compound reserved-phrase Go population named a file whose only occurrence is a CLI help string and
+  omitted the file that holds that position.** N3's domain is a Go doc comment in a tracked Go file, and
+  under that predicate the compound population is 29 occurrences across 18 files rather than 30 across 19:
+  `pkg/ctlcli/runtime.go` line 424 sits inside the `runtimeValidateUsage` raw string literal the CLI
+  prints, which the name pass does not write and the naming lint does not read. The file that carries the
+  compound in a doc comment while its only space-separated occurrence is a string literal is
+  `tests/tier8_chaos/credential_rotation_ceiling_test.go`, at lines 64 and 153. Seeding the register from
+  the stated population would have registered a site the pass never visits and left the tier-8 doc comment
+  unregistered, which aborts the fail-closed run. SPEC-1's five-file list now names the tier-8 file in
+  place of `pkg/ctlcli/runtime.go`, SPEC-1 and §11 state 29 across 18, and SPEC-1 gives the CLI help
+  string an explicit out-of-scope disposition alongside the other Go string literals.
+
+- **Two same-page `spec/15` links citing surviving `MessageEnvelope` material were handed to the
+  single-successor anchor pass.** `spec/15_external-api-surface.md` line 2684 cites the "Ordering
+  guarantee" bullet, which sits at line 1829 inside the surviving envelope block, and line 1838 cites the
+  full `MessageEnvelope` format, whose definition stays in `spec/15` while line 1838 itself travels to §28
+  with the Protocol Reference block. The anchor map carries one successor per retired anchor, so both
+  would have resolved to a §28 card that does not define the envelope, and the fragment-link gate cannot
+  see it because it checks only that a target resolves. SPEC-3's hand-corrected set is now six same-page
+  links, with line 1838 taking the file-qualified form because it lands in §28, §3.4 row 12 states six,
+  and SPEC-4's mechanical same-page count is 19 rather than 21.
+
+- **SPEC-3's stated §15.4 preamble reduction range deleted the wire-artifact list the same sub-step says
+  §15.4 keeps.** The wire-artifact pointer is the preamble: `spec/15_external-api-surface.md` line 1460
+  and the three artifact bullets at lines 1462 through 1464 are what §15.4 is reduced to, and the stated
+  exclusion set spared only the SDK-warm demotion paragraph at line 1468. Applying the range as written
+  would have left the restated §15.3 sentence pointing at a §15.4 that names no artifact and removed line
+  1463, which SPEC-4 counts among the same-page links its anchor pass rewrites. SPEC-3 and §3.1 now state
+  the exclusion set as lines 1460 through 1464 together with line 1468, so the preamble reduction removes
+  the normative-ownership sentence at line 1466.
+
+- **Same-page fragment links inside the relocated blocks pointed at headings that stay behind, and the
+  anchor pass was instructed to leave exactly those links untouched.** A `[...](#anchor)` link resolves
+  against the citing page, so six links across five lines inside the internal `MessagePart` format block
+  (`spec/15_external-api-surface.md` lines 1537, 1538 twice, 1575, 1649, and 1650) and the `[§4.9]` link at
+  `spec/04_system-components.md` line 807 inside the relocated intra-pod protocol block break on the move
+  even though their targets, §15.4, §15.5, §15.7, and §4.9, all survive. The anchor map has no entry for a
+  surviving anchor, and the pass's stated rule leaves such links alone, so the applied spec would have
+  carried seven dangling fragments in §28 and the fragment-link gate would have been red on them beyond
+  the seven links SPEC-4 enumerates. §3.4 gains a class row for a same-page fragment carried out of its
+  file by a reduction, SPEC-3 enumerates today's population and rewrites each to the file-qualified form
+  in the same change that moves the block, and SPEC-4 and TEST-1 state that the gate's
+  red-on-introduction population is the seven pre-existing links only once that rewrite has run.
+
+### Pass 19 (2026-07-28, automated)
+
+- **§2 attributed `CH-EVENTSTREAM` to a plan section that no longer carries it.** The naming table at
+  `gateway-runtime-comms-remediation.md` line 225 gives C6 the identifier `CH-ADAPTEREVENTS` at line 238,
+  and the provenance note at lines 256 through 261 records this proposal's rename and states that
+  `CH-EVENTSTREAM` "appears nowhere in the plan and must not be reintroduced". §0 sends an implementor to
+  the plan for the naming table, so the present-tense claim of a divergence sent that reader to a table
+  that contradicts it. The §2 bullet and N3 now state the rename in the past tense against the plan's
+  current text, and the substantive decision is unchanged. The Pass 1 record is left as written, because it
+  records what was decided at the time.
+
+- **The `spec/04` §4.7 reduction had no stated boundary and would have carried the adapter manifest field
+  set into §28.** The `#### Adapter ↔ Runtime Protocol (Intra-Pod)` block runs from
+  `spec/04_system-components.md` line 691 to line 820, and lines 733 through 820 are the manifest
+  paragraph, the **Adapter manifest field reference** table, the **Level reading requirements**, the
+  **Forward compatibility** silent-ignore rule, and the `runtimeMcpServers` reservation. Relocating the
+  whole block would have moved a runtime-author contract into a §28.5 card set that by SPEC-3's own
+  carve-out rule cannot own one, and would have falsified N7 in §28.1 and SPEC-2's `runtimeOps`
+  justification, both of which read the camelCase convention off the §4.7 field set. SPEC-3 now states the
+  boundary line by line, as it already did for §15.4, and carves the manifest material out on the rule
+  §15.4.3 through §15.4.6 get, so §4.7 keeps the field set, the heading keeps its anchor, and the
+  falsified-sentence class stays a population of one. The `#49-credential-leasing-service` link at
+  `spec/04_system-components.md` line 807 leaves the relocated-same-page-link class for the same reason,
+  which reduces that class to the six `spec/15` links.
+
+- **A client-facing link into a retired anchor for carved-out material fell into no class.**
+  `docs/reference/adapter-contract.md` line 371 cites
+  `.../spec/15_external-api-surface.md#1541-adapterbinary-protocol` for the Translation Fidelity Matrix,
+  whose heading and `translation-fidelity-matrix` anchor SPEC-3 keeps in `spec/15`. It is a member of the
+  carve-out class §3.4 defines, which the class row states covers such a link wherever it sits, but the
+  enumeration that drives the hand-authored work omitted it and SPEC-4 disposed of it as an absolute URL
+  that neither the pass nor the gate reads. §3.4, SPEC-3, SPEC-4, and §11 now carry it, with its fragment
+  hand-rewritten to `#translation-fidelity-matrix` in the change that splits the heading, and the class
+  row states that the absolute-URL member is covered by review because the fragment-link gate does not
+  read an absolute URL.
+
+- **The retired citation form omitted the colon spelling, which is live in `spec/` itself.** The stated
+  form required the literal word `line` or `lines`, so it matched none of the 18 section-number colon
+  citations across 10 files (`§17.6:404` at `spec/17_deployment-topology.md` line 450, `§11.2:46` at
+  `pkg/adapter/usage.go` lines 52, 62, 152, and 259, and `§15.1:778-780`, `§15.1:798-800`, `§15.1:802`,
+  and `§15.1:805-812, 876-878` at `pkg/gateway/externalapi/admin/me.go` lines 78, 92, 103, and 109, among
+  others) nor the 11 path-variant colon citations across 7 files (`spec/15_external-api-surface.md:1315`,
+  `spec/25_agent-operability.md:2057`, and the rest). Under the proposal's own reasoning for the other
+  spellings, SPEC-4 would have reported every per-file count zero and the ratchet would have reached its
+  flat prohibition while 29 live line citations survived, one of them inside `spec/` after the change that
+  makes N8 normative, and two of them inside the tier-0 gate file SPEC-4 hand-rewrites. §4.6 now
+  admits a colon in place of the keyword in both variants and records the measured populations, §3.4 row 5
+  names the spelling, TEST-1 adds the line-pass and ratchet cases, and SPEC-4 accounts for
+  `spec/17_deployment-topology.md` line 450 and for the two colon citations in
+  `tests/tier0_static/degradation_lock_line_citation_test.go` lines 74 and 77. §11 carries the counts.
+
+- **Correction to the preceding entry: §4.6 still sized the read-exclusion difference against the keyword
+  spelling alone.** Widening the form to admit a colon brings `PROPOSAL-QUEUE.md` into the population,
+  because `grep -nE "§[0-9]+(\.[0-9]+)*:[0-9]+"` over the three files the naming exclusion adds returns
+  three hits, all in that file: `§8.3:470` at line 459, and `§8.8:879` and `§15.1:630` at line 477. The
+  keyword form adds nothing further to those files, since the same grep with ` lines? ` returns 0 for
+  `BUILD-PLAN.md`, 0 for `PROPOSAL-QUEUE.md`, and 1 for `BUILD-PROGRESS.md`, which is the line 34 citation
+  already named. All three files sit inside the citation read domain, so the line pass converts them and
+  SPEC-4's per-file-count-zero exit criterion covers them. §4.6 now states the difference as four
+  citations across two files and names each. The Pass 13 restatement is left as written, because it
+  records what was measured at the time.
+
+- **Correction to the preceding entry: SPEC-4's Target enumeration was left at the pre-fix seven
+  spellings.** §11, §3.4, and TEST-1 took the colon spelling, but SPEC-4's **Target** list, which is the
+  parallel of the §11 blast-radius enumeration and the place an implementor reads what the line pass must
+  reach, still ended at the path form. SPEC-4's own later prose already accounts for the spelling in
+  `spec/17_deployment-topology.md` and in the tier-0 gate file it hand-rewrites. The Target list now
+  carries the colon spelling and its measured counts in the same words §11 uses.
+
+### Pass 20 (2026-07-28, automated)
+
+- **The §4.7 reduction falsified two further `spec/15` sentences that the "population of one" bound
+  excluded.** §15.7 Runtime Author SDKs at `spec/15_external-api-surface.md` line 2558 enumerates the
+  `lenny/*` platform MCP tool names and states that §4.7 "is authoritative for the platform MCP tool set;
+  this list tracks it", and item 7 of the §15.4.5 roadmap at line 2402 sends a Standard-level runtime
+  author to §4.7 for both the adapter manifest field reference and the Part B message schemas. SPEC-3
+  moves Part A at `spec/04_system-components.md` line 697, which is the only enumeration of that tool set
+  in §4.7, and the message-schema table at lines 715 through 731, so both sentences assert an ownership
+  §4.7 no longer holds. No pass repaired either one: neither carries a line citation, the §15.7 sentence
+  carries the reserved word only as "lifecycle signal", and the `#47-runtime-adapter` anchor survives and
+  gains no `tests/spec-anchor-moves.json` entry. SPEC-3 now enumerates both as hand-authored corrections,
+  and the "exactly one"/"population of one" bound is removed from SPEC-3, from the §3.4 class row, and
+  from the §4.7 carve-out paragraph. The Pass 19 record is left as written, because it records what was
+  measured at the time.
+
+- **The same reduction falsified two shipped schema descriptions outside `spec/`, which fell into no
+  class.** `schemas/lifecycle-events.schema.json` line 5, which SPEC-2 renames to
+  `schemas/runtime-ops-events.schema.json`, tells runtime authors that the frame field names are camelCase
+  "to match the §4.7 message-schema table" and closes with "See spec/04_system-components.md §4.7 and
+  spec/15_external-api-surface.md §15.4", and `schemas/messagepart.schema.json` line 5 closes with "See
+  spec/15_external-api-surface.md §15.4" for a format whose defining block at
+  `spec/15_external-api-surface.md` line 1515 moves to §28. `schemas/embed.go` embeds both artifacts so
+  `cmd/lenny-compliance` and `lenny runtime validate` carry them into repositories where `schemas/` is
+  absent, which puts these descriptions on the same footing as the
+  `schemas/lenny-adapter-jsonl.schema.json` description SPEC-2 already corrects by hand. The name pass
+  rewrites only the reserved phrase, the line pass matches only the line-citation form and neither pointer
+  carries a line number, and both cited anchors survive, so no pass reached them. SPEC-3 now stages both
+  as hand-authored corrections re-pointed at the owning §28.5 cards, §11 lists both files, and the claim
+  that no normative sentence outside `spec/15` is falsified by the reduction is replaced by the
+  enumerated set.
+
+- **Correction to this pass: SPEC-3's Target did not carry the four new edit sites the pass added.** The
+  Target scoped the `spec/15` edits to §15.3 and §15.4 and named no `schemas/` artifact, while the two
+  bullets above put hand corrections in §15.7 at line 2558, in the §15.4.5 roadmap at line 2402, and in
+  the `description` of `schemas/runtime-ops-events.schema.json` and `schemas/messagepart.schema.json`, all
+  of which §11 attributes to SPEC-3. An implementor scoping the sub-step from the Target would have
+  applied the reduction without the corrections. The Target now reads §15.3, §15.4, §15.4.5, and §15.7 for
+  `spec/15` and lists both schema artifacts under their post-SPEC-2 names.
+
+### Pass 21 (2026-07-28, automated)
+
+- **The §15.4 carve-out preserved a sentence that contradicts the artifact description SPEC-2 corrects.**
+  `spec/15_external-api-surface.md` line 1463 states that `schemas/lenny-adapter-jsonl.schema.json` is the
+  JSON Schema for "every adapter↔binary stdin/stdout message ... and every lifecycle-channel message". The
+  artifact defines exactly `messageEnvelope`, `from`, `heartbeat`, `heartbeat_ack`, `shutdown`,
+  `tool_call`, `tool_result`, `response`, `status`, and `set_tracing_context`, and its own `description` at
+  line 5 declares the checkpoint, interrupt, `credentials_rotated`, and `deadline_approaching` frames out
+  of scope; those frames are schematized in `schemas/lifecycle-events.schema.json`, which SPEC-2 renames to
+  `schemas/runtime-ops-events.schema.json`. SPEC-2 corrected the artifact `description` and no pass
+  corrected the specification sentence, while SPEC-3 carved that sentence out of the §15.4 reduction so it
+  survives, leaving the two published representations of the same wire artifact in disagreement. The sense
+  register cannot repair it, because every candidate substitution leaves a precise false statement about
+  the artifact's contents. SPEC-2 now corrects line 1463 by hand in the same change as the artifact
+  `description`, closing the parenthetical after `set_tracing_context` and sending the runtime-operations
+  frames to `schemas/runtime-ops-events.schema.json`. SPEC-2's Target adds the line, the SPEC-3 carve-out
+  paragraph records that the surviving sentence is corrected upstream, the §5 risk row naming the
+  hand-corrected wrong-mechanism sites includes it, and §11 records it under
+  `spec/15_external-api-surface.md`.
+- **Correction to the entry above: the §7 statement of what substitutes for a gate still carried the
+  superseded split.** The "What the gates do not cover" paragraph in §7 assigned every in-`spec/` member of
+  the ungated wrong-mechanism class to SPEC-1 and described SPEC-2's hand corrections as "the wrong
+  descriptions in the three shipped artifacts", which contradicts SPEC-2 as now written and repeats the
+  count removed from the SPEC-2 lead-in and the §11 `schemas/` bullet. The paragraph now matches the §5
+  risk row: the sites whose current text names the wrong participant are corrected by hand in SPEC-1, and
+  the wrong artifact descriptions together with the artifact-scope sentence at
+  `spec/15_external-api-surface.md` line 1463 are corrected by hand in SPEC-2.
+- **Correction to the entry above: §3.2 named the three artifact-side corrections as SPEC-2's whole
+  hand-correction set.** The paragraph read "SPEC-2 stages those three by hand" and then bounded the class
+  "at three". It now names the line 1463 correction alongside them and drops the number from the
+  unboundedness sentence, so §3.2, §5, §7, SPEC-2, and §11 state the same set.
+
+### Pass 22 (2026-07-28, automated)
+
+- **The §15.4 preamble reduction deleted the wire-artifact compatibility contract, the only statement of
+  it in the tree.** `spec/15_external-api-surface.md` line 1466 is one markdown line carrying four
+  sentences, and only the last states the normative ownership the reduction retires. The first three state
+  the compatibility contract third-party runtime authors and SDK maintainers build against: the artifacts
+  are versioned by Lenny release tag, `.proto` breaking changes follow buf-style breaking-change rules
+  while JSON Schema changes follow the `additionalProperties` discipline, and `examples/runtimes/echo/` is
+  built from the same `.proto` file and serves as the executable reference. A tree-wide grep for
+  `buf.build`, `buf-style`, `breaking-change rules`, `additionalProperties discipline`, `versioned by Lenny
+  release tag`, and `executable reference` over `spec/` and `docs/` returns that line alone, so the
+  reduction as stated destroyed the contract with no carve-out and no successor pointer, since the
+  successor pointer names channel identifiers and this material is not a channel contract. SPEC-3's two
+  statements of the range also disagreed with each other, one removing the whole line and the other
+  removing the ownership sentence alone. SPEC-3 now states the reduction at sentence granularity: the
+  three compatibility-contract sentences are carved out on the same rule the wire-artifact pointer at
+  lines 1460 through 1464 gets, and the reduction removes the normative-ownership sentence that closes the
+  line. §3.1's summary, the reduction paragraph, and the carve-out paragraph now state the same range.
+- **A second §15.7 site attributes the platform MCP tool set to a §4.7 Part A the reduction moves, and it
+  was in no pass and in no class.** `spec/15_external-api-surface.md` line 2700, inside the Runtime Author
+  SDK `Reply` type documentation, reads "// MCP tool ([§4.7](04_system-components.md#47-runtime-adapter)
+  Part A) with" and so attributes the `lenny/output` platform MCP tool to §4.7 Part A. Part A at
+  `spec/04_system-components.md` line 695 moves to §28, after which §4.7 has no Part A. No pass reaches the
+  line, by the same reasoning SPEC-3 already records for line 2558: it carries no line citation, carries
+  neither reserved word as a bare noun phrase, and its `#47-runtime-adapter` link survives and gains no
+  `tests/spec-anchor-moves.json` entry. SPEC-3 now lists line 2700 in the hand-authored falsified-sentence
+  enumeration with the parenthetical rewritten to name the §28.5 card that owns the intra-pod platform MCP
+  server contract, states the class population as six, and §11 names the correction alongside the other
+  three in `spec/15_external-api-surface.md`.
+
+### Pass 23 (2026-07-28, automated)
+
+- **SPEC-3's tier-11 instruction contradicted its own §4.7 reduction boundary and would have turned tier 11
+  red at the sub-step's exit.** The atomic sub-step told an implementor that the invariant the three
+  `tests/tier11_docs/` §4.7 tests encode moves to a §28.5 card and that a relocated row carries its pin
+  with it, re-scoped to `spec/28`. No row those tests pin is inside the relocated block. The reduction
+  boundary SPEC-3 states moves the content of `spec/04_system-components.md` lines 695 through 731 alone,
+  inside the block that opens at line 691, while
+  `tests/tier11_docs/recycle_scrub_trigger_consistency_test.go` pins the `Terminate` (proto `Shutdown`)
+  row at line 664, `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` pins the
+  `AdapterTerminating` event row at line 688, and
+  `tests/tier11_docs/budget_extension_trigger_consistency_test.go` asserts the absence of `ExtendLease`
+  over the whole section. All three sit above the boundary, and a grep of `tests/tier11_docs/` for
+  `Adapter ↔ Runtime`, `Part A`, `Part B`, and `adapter--runtime-protocol` returns nothing, so nothing
+  those tests pin relocates. Re-scoping the `specSection(..., "### 4.7 ")` calls to `spec/28` would have
+  demanded rows `spec/28` does not carry and would have stopped guarding the §4.6.1 coordinator-loss route
+  the eviction test exists for. SPEC-3 now records that §4.7 keeps the gateway-to-adapter RPC and event
+  tables, that all three files stay green without an edit at this sub-step, and that they are named so an
+  implementor confirms that state, on the same rule as the two embedded-anchor files. The conditional rule
+  is kept and its population today is empty. The one edit those files take, the reserved noun phrase in
+  the pinned §4.6.1 clause at `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69,
+  is attributed to SPEC-1's name pass.
+- **The carve-out class covered markdown links alone, so bare `§15.4.1` citations of carved-out material,
+  including in all three published runtime SDKs, would have been redirected to the wrong §28 card.** The
+  anchor pass rewrites bare section citations as well as links, and
+  `tests/spec-anchor-moves.json` carries one successor per retired anchor, so every bare `§15.4.1`
+  citation of the Translation Fidelity Matrix or of `MessageEnvelope` material would have been sent to the
+  §28 adapter-to-binary card that, by SPEC-3's own carve-out argument, does not define either. Outside
+  `spec/` and `proposals/` the tree carries 669 such occurrences across 150 files, 595 across 148 once
+  §4.6's read exclusion of `BUILD-GAPS.md` and `TEST-GAPS.md` is applied, among them
+  `pkg/gateway/externalapi/outputpartfidelity/matrix.go` line 3, `pkg/gateway/session/sessioninbox/events.go`
+  line 45 for the `message_expired` payload, and the canonical `MessageEnvelope` documentation in all
+  three runtime SDKs at `sdks/runtime/go/runtime/types.go` lines 52 and 224,
+  `sdks/runtime/python/lenny_runtime/types.py` lines 145 and 391, and
+  `sdks/runtime/typescript/src/types.ts` lines 59 and 211. §3.4's carve-out row now states the class over
+  every reference in any carrier the anchor pass writes rather than over links alone. SPEC-3 seeds
+  `tests/registers/anchor-senses.yaml`, keyed by file and occurrence, recording each occurrence's
+  destination among the §28 card, `#translation-fidelity-matrix`, and
+  `#messageenvelope--unified-message-format`, on the same per-occurrence mechanism the name and identifier
+  passes already use for a two-valued term, and the anchor pass fails an occurrence with no entry rather
+  than substituting the map's successor. TEST-1 gains the fail-closed case and a case pinning that a
+  citation of carved-out material resolves to the surviving `spec/15` heading, and SPEC-4 retires the
+  register with the map on the same run-completeness criterion.
+- **Correction to the bullet above: the bare-citation population figures were measured over a scope wider
+  than the sentence stated, so two of the three headline figures counted `spec/` and `proposals/` sites
+  the sentence excludes.** The stated 689 citations across 159 files and 26 of the `§15.4.2` form matched
+  no single population. Measured outside `spec/`, `proposals/`, and `.git/`, the tree carries 669
+  occurrences of `§15.4.1` across 150 files and 21 of `§15.4.2` across 9 files; 159 is the file count only
+  when `spec/` (4 files) and `proposals/` (5 files) are added back, and 26 is the `§15.4.2` count only
+  tree-wide. Applying §4.6's read exclusion of `BUILD-GAPS.md` (69 and 6 occurrences) and `TEST-GAPS.md`
+  (5) leaves 595 across 148 files and 15 across 8. The figure sizes the per-occurrence seed of
+  `tests/registers/anchor-senses.yaml`, and an implementor sizing that seed from 159 files would have
+  included `proposals/` sites that no pass writes. SPEC-3, the §11 files-touched bullet, and this record
+  now carry the corrected figures and name which measurement each is. The per-directory sub-counts change
+  only for `pkg/`, which is 293 occurrences over 292 matching lines; `sdks/` (189) and `cmd/` (64) are
+  unchanged, and every named site still resolves.
+
+### Pass 24 (2026-07-28, automated)
+
+- **The falsified-sentence population omitted the `docs/api/internal.md` pointer that sends runtime
+  adapter authors to §15.4 for the binary protocol and the `MessagePart` format.** SPEC-3 closed the class
+  at six members, all inside `spec/` or the two shipped schema descriptions, while `docs/api/internal.md`
+  line 544 states "For the complete binary protocol specification, including `MessagePart` format,
+  `MessageEnvelope` schema, and level-specific behavior, see the technical design document Section 15.4"
+  on a page whose audience line at line 11 names runtime adapter authors. The §15.4.1 reduction retires
+  `#### 15.4.1 Adapter↔Binary Protocol` at `spec/15_external-api-surface.md` line 1470 and moves the
+  internal `MessagePart` format heading at line 1515 to §28, so two of the four things the sentence names
+  leave §15.4, while the `MessageEnvelope` heading at line 1708 and the level-specific behavior in §15.4.3
+  through §15.4.6 are carved out and stay. That is the same half-true structure the §15.4.5 item 7 member
+  already gets, and the same criterion under which
+  `schemas/messagepart.schema.json` is corrected. No pass reaches the sentence: it carries no line
+  citation, it is bare prose rather than a markdown link, it names the surviving §15.4 rather than a
+  retired anchor, and it carries neither reserved word as a bare noun phrase. The population is now seven,
+  the sentence is split by hand in the change that lands the reduction so the binary protocol
+  specification and the `MessagePart` format point at the §28.5 adapter-to-binary card while the
+  `MessageEnvelope` schema and the level-specific behavior keep pointing at §15.4, and `docs/api/internal.md`
+  is added to SPEC-3's Target, to §3.4's falsified-sentence row, and to §11.
+
+### Pass 25 (2026-07-28, automated)
+
+- **The falsified-sentence population omitted the shipped JSONL schema's own spec pointer.** SPEC-3 closed
+  the class at seven members and named only `schemas/runtime-ops-events.schema.json` and
+  `schemas/messagepart.schema.json` among the `schemas/` artifacts, while the `description` of
+  `schemas/lenny-adapter-jsonl.schema.json` at line 5 closes with the identical sentence "See
+  spec/15_external-api-surface.md §15.4". That artifact schematizes the adapter↔binary stdin/stdout
+  messages, whose definitions are `#### Protocol Reference — Message Schemas` at
+  `spec/15_external-api-surface.md` line 1836 and its eight `#####` children, which SPEC-3 itself says move
+  to §28 with the §15.4.1 reduction, while its `messageEnvelope` `$def` is defined by the `MessageEnvelope`
+  heading at line 1708 that the carve-out keeps. SPEC-2 runs first and corrects only the wrong-mechanism
+  half of that `description`, so the pointer survives the sub-step that falsifies it, and no pass repairs
+  it on SPEC-3's own reasoning for the other two artifacts. The artifact is embedded through
+  `schemas/embed.go` and carried by `cmd/lenny-compliance` and `lenny runtime validate` into third-party
+  runtime repositories. The population is now eight, the pointer is split by hand on the same rule as the
+  `docs/api/internal.md` member so the stdin/stdout message schemas point at the §28.5 adapter-to-binary
+  card while the `messageEnvelope` reference keeps pointing at §15.4, and the artifact is added to SPEC-3's
+  Target, to §3.4's falsified-sentence row, and to §11.
+- **TEST-1 landed no cases for the fragment-link gate.** §3.5 sub-step 5 states that TEST-1 adds the
+  accept, reject, and boundary cases for every gate the earlier sub-steps land, and TEST-1 added them for
+  every other gate while stating only the fragment-link gate's predicate. §3.4 rests three classes on that
+  gate alone and part of the carve-out class on it, and the gate is green tree-wide once SPEC-4 corrects
+  the seven links it enumerates, so a predicate that selects zero links, that drops the same-page
+  `[...](#anchor)` form, or that never reads the kramdown attribute branch is indistinguishable from a
+  correct one. TEST-1 now carries a cases paragraph for the gate, with `docs/api/internal.md` line 229
+  against the attribute at line 318 as the worked attribute-branch case and a zero-selection case.
+- **TEST-1 landed no cases for the tier-11 successor-pointer check.** The check's whole contribution was
+  one sentence stating its predicate, and SPEC-3 writes the successor pointers and lands the check in the
+  same sub-step, so the check is green on introduction and nothing showed it fires. The pointer is
+  normative under §28.1 N8 and §4.5, and §3.4 names the check as the mechanical half of the
+  falsified-sentence class's proof. TEST-1 now carries a cases paragraph in `tests/tier11_docs/` covering
+  the present pointer, the missing pointer, the unresolvable named heading, the out-of-domain section, and
+  the zero-selection run, matching the treatment the naming lint and the heading walker already get.
+
+### Pass 26 (2026-07-28, automated)
+
+- **The citation resolver's seeded baseline sat inside the resolver's own read domain.**
+  `tests/registers/line-citation-resolution.yaml` is keyed by file and citation text, so it holds a copy
+  of the text of roughly 1,500 non-resolving citations, and §4.6's read exclusion named only `proposals/`,
+  the two historical audit records, and the two root planning documents. The resolver therefore read every
+  copy a second time under the register's own path, where each one is non-resolving by construction and is
+  the exact outcome TEST-1 pins as a failure when it requires that a baseline entry does not travel between
+  files, and seeding an entry for a copy would add a further copy, so the seeding would not converge. The
+  ratchet had the matching defect, because the register was a file absent from
+  `tests/registers/line-citations.yaml` and would fail on its first line citation. Both outcomes contradict
+  §3.5 step 1's requirement that TOOL-1's gates land green. §4.6's read exclusion now names both citation
+  registers as a fifth group, with the reason stated, and TEST-1's resolver cases gained a case pinning
+  that neither gate reads its own baseline as tree content.
+- **The skip-reason classifier's seeded baseline was measured over `t.Skipf` alone.** The predicate covers
+  a `t.Skip` or `t.Skipf` call whose first argument is a string literal, while the two seeded populations
+  were 201 non-conforming `t.Skipf` sites and ten non-literal `t.Skip` sites, leaving non-conforming
+  `t.Skip("<literal>")` sites in neither. A measurement over `tests/`, `pkg/`, and `cmd/` under the
+  proposal's own category list finds 186 such sites, among them
+  `tests/testinfra/kind/kind.go` line 71 and `tests/testinfra/chaos/chaos.go` line 52, so the fatal tier-0
+  check would have been red on introduction against an unregistered population that the downward-only
+  baseline forbids adding later. TOOL-1 now states the measurement over both call forms, seeds both
+  populations into `tests/registers/skip-reasons.yaml`, and records the exact count its own classifier
+  produces, and TEST-1's rejection case now covers both call forms.
+- **TEST-1 landed no cases for the rewritten §25.4 freshness gate.** SPEC-4 replaces the predicate of the
+  running tier-0 test `tests/tier0_static/degradation_lock_line_citation_test.go`, and the proposal states
+  that its `wantSubstring` check is a freshness property no other gate carries. The rewritten predicate is
+  green from the moment it lands, so a matcher that matches nothing, a heading lookup that returns an empty
+  body, or a declaration table that selects zero entries is indistinguishable from a working one, which is
+  the inertness case §3.5 sub-step 5 requires for every comparable gate. TEST-1 now carries a cases
+  paragraph covering the resolving citation, the stale `wantSubstring`, the absent citation, the
+  unresolvable heading, the retired `§25.4 line N` form, and the zero-selection run, and SPEC-4 states that
+  TEST-1 names them.
+- **Correction to the preceding bullet: the fail-loud citation named the wrong lines.** The new cases
+  paragraph cited `tests/tier0_static/degradation_lock_line_citation_test.go` "lines 38 and 101 through
+  103" for the `t.Fatalf` the argument rests on. Lines 101 through 103 hold the path join, the comment-block
+  read, and the regular-expression match; the non-match guard is at line 104 and the `t.Fatalf` is at line
+  105. The two parallel statements of the same mechanism cited "lines 103 and 104", so the three sites
+  disagreed with each other as well as with the file. All three now name line 38 for the expression and
+  lines 104 and 105 for the guard and the fatal call.
+
+### Pass 27 (2026-07-28, automated)
+
+- **The citation resolver's seeded baseline inside its own read domain was re-checked and is closed.** The
+  read exclusion in §4.6 now names `tests/registers/line-citation-resolution.yaml` and
+  `tests/registers/line-citations.yaml` as a fifth group with the non-convergence reason stated, §4.6
+  states that every measurement, every seeded baseline, SPEC-4's Target, and §11 are stated against that
+  read domain, and TEST-1 carries the case pinning that neither gate reads its own baseline as tree
+  content. The finding required no further change beyond that verification.
+- **The skip-reason classifier's seeded population was re-measured over both call forms and the two figures
+  were corrected.** TOOL-1 stated 201 non-conforming `t.Skipf` sites and 186 non-conforming
+  `t.Skip("<literal>")` sites. Counting under the proposal's own category list over `tests/`, `pkg/`, and
+  `cmd/`, discarding a line whose code is commented out, gives 204 and 189. TOOL-1 now states those figures
+  and states the
+  counting predicate that produces them, so the red-on-introduction population TOOL-1 seeds into
+  `tests/registers/skip-reasons.yaml` is stated at the size the tree carries. The seeding of both call
+  forms, the ten non-literal sites, and TEST-1's rejection case covering both forms were already in place
+  and are unchanged.
+- **Correction to the re-measurement above: the 202 and 185 figures were short by six sites and are now 204
+  and 189.** The filter that produced 202 and 185 discarded any line matching `:\s*//`, which also matches
+  the `://` inside a URL, so six live non-conforming skip sites whose reason text carries a URL were dropped:
+  `tests/testinfra/load/k6.go` lines 101 and 110, `tests/tier1_unit/helm/helm_test.go` line 55,
+  `tests/testinfra/security/kubebench/kubebench.go` line 31, `tests/testinfra/security/sbom/sbom.go` line 32,
+  and `tests/testinfra/security/zap/zap.go` line 37. Each is executable code, opens with none of the nine
+  categories, and is the body of a `SkipUnless*` helper rather than a call to one, so the classifier selects
+  all six. Re-running the count with the comment test anchored to the start of the source line gives 204
+  `t.Skipf` sites and 189 `t.Skip("<literal>")` sites. TOOL-1 now states those figures and states the
+  anchoring, so the seeded `tests/registers/skip-reasons.yaml` baseline covers every site the classifier
+  reports and lands green as §3.5 step 1 requires. The parallel statement that the seeded population is on
+  the order of 390 sites still holds at 393 and is unchanged.
+
+### Pass 28 (2026-07-28, automated)
+
+- **The proto no-drift test's toolchain-absence branch was enumerated over two binaries when its producer
+  needs four.** TEST-1 stated that `make generate-proto` needs `buf` and `goimports`, so a run missing a
+  codegen plugin would have turned tier 0 red on a tree with no drift while the target itself succeeds
+  there, and the `UNVERIFIED` state this proposal adds would never have fired for that condition.
+  `schemas/buf.gen.yaml` lines 16 through 21 declare `protoc-gen-go` and `protoc-gen-go-grpc` as `local:`
+  plugins that `buf generate` resolves from `PATH`, `scripts/setup-dev.sh` lines 390 and 391 install both
+  into `GOPATH/bin`, and `Makefile` line 94 prepends `$(GOPATH_BIN)` to `PATH` for exactly that reason.
+  §4.6 and TOOL-1 now state the producer's dependencies as `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`,
+  and `goimports`, require the test to reproduce the target's `PATH` prepend before invoking `buf`, and
+  TEST-1's case now reads that a run in which any of the four producer binaries is unavailable records the
+  tier as `UNVERIFIED` rather than passing or failing. The separate case that a `buf generate` producing
+  zero files fails is unchanged.
+
+- **§28.1's own statement of N3 quoted both banned spellings, so the naming lint could not be green at the
+  exit of the sub-step that lands it.** N3 named the space-separated and hyphenated-compound spellings by
+  reproducing them, and `spec/28_communication-channels.md` is inside `spec/`, which is inside both the
+  lint's domain and SPEC-1's exit criterion, with no code-span or self-quotation exclusion stated anywhere.
+  N3 now describes the two spellings rather than reproducing them, and states that the literal spellings
+  are carried in `.claude/rules/channel-naming.md` and in the lint's own matcher, both outside the domain
+  N3 names. Describing them was chosen over adding a self-quotation exclusion because it keeps the matcher
+  a single predicate with one stated exclusion, which is the markdown anchor identifier. TEST-1's naming
+  lint cases now pin that the normative statement of N3 passes the lint. §3.4 row 1's gate column and
+  SPEC-1's exit criterion are unchanged, because no exclusion was added.
+
+- **Correction to the fix above: N3 asserted that `.claude/rules/channel-naming.md` carries the two
+  literal spellings, but SPEC-1's only instruction for that file was to state N1 through N8, which after
+  the de-quoting carry no specimen.** As written, §28.1 would land asserting a location for the specimens
+  that nothing in the proposal creates. SPEC-1 now instructs the file to carry the two banned spellings
+  verbatim alongside N1 through N8, and states why the file can carry them: it is not under `spec/`,
+  `docs/`, or `schemas/`, is not a tracked root-level markdown document, and is not a Go doc comment, so
+  it is outside every part of the domain N3 names. §11's touched-file entry records the same content.
+
+### Pass 29 (2026-07-29, automated)
+
+- **The residual gate was placed on the shared register contract, whose expiry and blocker ratchet rules
+  no permanent class-register entry can satisfy.** TOOL-1 described the gate as a `tests/tier0_static` Go
+  test "over the shared register contract", while §4.7 closes a residual either as a seeded in-class
+  member or as an explicit exclusion with a reason. Both are permanent statements about the tree, so
+  neither carries a date on which it becomes wrong nor an open item a blocker can resolve to, and the
+  shared contract's second and third ratchet rules would have failed every entry, leaving the gate unable
+  to land green. §4.7 now gives each class register its own permanent-entry schema of a member, a class,
+  an `in-class` or `excluded` disposition, and a reason, on the same argument §4.4 makes for
+  `tests/claim-map.json` and §4.6 makes for the citation baselines. TOOL-1 and TEST-1 state the same
+  schema, TEST-1 adds the missing malformed-or-missing-register case, and the residual gate now appears in
+  the TEST-1 and §6 sentences listing the gates that land green by their own baselines rather than through
+  the shared register.
+
+- **The residual gate landed in TOOL-1 while three of the class registers it subtracts are first seeded in
+  SPEC-1, SPEC-2, and SPEC-3.** `tests/registers/reserved-phrase-senses.yaml` is seeded in SPEC-1,
+  `tests/registers/identifier-senses.yaml` in SPEC-2, and `tests/registers/anchor-senses.yaml` in SPEC-3,
+  and each of those classes has a large live population on the unmodified tree, so a single TOOL-1 landing
+  would have left tier 0 red at the exit of TOOL-1, SPEC-1, and SPEC-2, against §3.5's rule that a gate
+  lands with the sub-step that supplies its route to green. The residual gate is now stated with a
+  per-class landing: the mechanism is built in TOOL-1, and each class's check lands with the sub-step that
+  seeds that class's register. §3.5 states the per-class rule and lists the assignment, TOOL-1 names the
+  registers whose checks it lands and those it defers, TOOL-1's closed list of the gates it builds now
+  includes the residual gate and its own checks, and TEST-1's landing sentence matches.
+
+- **No proto RPC or message-type spelling was stated for `CH-ADAPTEREVENTS`, and the plan rows the
+  proposal deferred to still carry the retired `EVENTSTREAM` stem.** The plan's naming table carries
+  `CH-ADAPTEREVENTS` and its provenance note bans the retired stem, but the plan's R1b scope table at
+  `gateway-runtime-comms-remediation.md` line 418 and line 423 still spells the rename targets as
+  `rpc AdapterEventStream(stream AdapterEventStreamRequest) returns (stream AdapterEventStreamResponse)`
+  and `pkg/adapter/eventstream.go`, both of which fail N3 and N4. An implementor driving the rename from
+  the plan would have published a gRPC method name, two message type names, and a Go file stem that
+  contradict §28.1. SPEC-2 now states the carrier spellings explicitly, as it already did for the manifest
+  key and the flag: `AdapterEvents`, `AdapterEventsRequest`, and `AdapterEventsResponse` for the RPC at
+  `schemas/lenny-adapter.proto` line 227 and its two messages, `/lenny.adapter.v1.Adapter/AdapterEvents`
+  for the full-method literals in `pkg/adapter/holdstate.go` line 57 and `pkg/adapter/holdstate_test.go`
+  line 292, and `pkg/adapter/adapterevents.go` with its test sibling for `pkg/adapter/controlchannel.go`.
+  SPEC-2 also stages the correction of the two plan rows, the §2 decision bullet no longer claims that no
+  divergence from the plan remains, and §11 records both touched surfaces.
+
+- **The permanent-entry schema was asserted of the pass registers, five of which are keyed differently and
+  are transitional.** The previous bullet's fix stated that "each class register" carries a member, a
+  class, an `in-class` or `excluded` disposition, and a reason, and that every such register is permanent,
+  while TOOL-1 named those registers as `tests/registers/line-citations.yaml` (a per-file count that
+  reaches zero), `tests/registers/line-citation-resolution.yaml` (keyed by file and citation text, emptied
+  by SPEC-4), `tests/registers/change-graph-coverage.yaml` (keyed by path prefix, rewritten downward
+  only), `tests/registers/reserved-phrase-senses.yaml` and `tests/registers/identifier-senses.yaml` (keyed
+  by file and occurrence, mapping a site to a canonical identifier or a sense), and
+  `tests/registers/anchor-senses.yaml` (keyed by file and occurrence, retired by SPEC-4 with the map). The
+  claim was false of every one of them, and an implementor was told to read a permanent
+  member-and-disposition schema out of counts, per-occurrence sense maps, and a prefix baseline. §4.7 now
+  gives the residual check a register of its own per class at `tests/registers/residual-<class>.yaml`,
+  seeded alongside the class's pass or baseline register and held separately from it, and states why the
+  two record different things. TOOL-1 names the residual register for each of the classes whose checks it
+  lands and for each of the three it defers, TEST-1's malformed-or-missing case names the residual
+  register, and §3.5, §5, the §2 decision bullet, and §6's closing paragraph use the same term.
+
+- **The permanence argument cited §4.6, which argues the opposite.** §4.7 credited both §4.4 and §4.6 for
+  the permanent-entry schema, but §4.6 argues that a stale citation's correct disposition is retirement in
+  SPEC-4 rather than an owned and dated entry, which is an argument for a transitional baseline. §4.7 now
+  cites §4.4's `tests/claim-map.json` argument for permanence and cites §4.6 only as the precedent for
+  holding a population in a register of its own rather than in the shared exception register.
+
+- **The generated-artifact class's register was a denylist compiled into `scripts/specshift`, which can
+  carry no disposition and no reason and cannot be malformed or missing.** TOOL-1 subtracted "the
+  generated-artifact denylist in `scripts/specshift`", so a residual in that class had no route to closure
+  as an explicit exclusion with a reason and TEST-1's malformed-or-missing case was untestable for it.
+  TOOL-1 now names `tests/registers/residual-generated-artifacts.yaml` as that class's residual register,
+  states its broad predicate as the per-file generation rule §4.6 states, and leaves the denylist as the
+  pass driver it is in the §3.4 class table.
+
+### Pass 30 (2026-07-29, automated)
+
+- **An `in-class` residual entry was declared permanent, so TEST-1's dead-entry case would have turned
+  tier 0 red at the exit of the sub-step that seeded the register.** §4.7 asserted that both dispositions
+  are permanent and that "neither has a date on which it becomes wrong", while registering a member
+  `in-class` is the route by which the pass handles it. For every pass-driven class the seeded in-class
+  population is exactly what the pass eliminates, so at the sub-step's exit criterion (SPEC-1's zero
+  occurrences of each reserved bare noun phrase, SPEC-2's identifier collapse, SPEC-3's and SPEC-4's anchor
+  and citation passes) those members no longer match the class's broad predicate and TEST-1's case for an
+  entry naming a member the predicate no longer matches fired on them, with no route to retirement in a
+  schema that carries no expiry and forbids narrowing the predicate. §4.7 now separates the two lifetimes:
+  an `excluded` entry is permanent, and an `in-class` entry is transitional and is removed from the
+  residual register in the same run in which the pass handles its member, on the run-completeness criterion
+  §4.6 states for the citation baselines and SPEC-1 states for
+  `tests/registers/reserved-phrase-senses.yaml`. TOOL-1's seeding sentence and the SPEC-4 sentence on the
+  residual gate's route to green carry the same rule, and TEST-1's dead-entry case now ranges over
+  `excluded` entries only, with two new cases pinning that a handled in-class member is removed in the same
+  run and that an in-class entry surviving the run that handled its member fails.
+
+- **The lifetime rule above declared every `in-class` entry transitional, which is false for the three
+  classes no pass eliminates.** TOOL-1 lands residual checks for eight classes, and only five of them are
+  emptied by a pass. The generated-artifact class's members keep their generation marker and its driver is
+  a skip denylist, the change-graph coverage class is a path-prefix baseline rewritten downward only, and
+  the skip-reason class's population is the permanently-correct host-capability skips whose baseline is
+  also rewritten downward only. For those three an in-class member never stops matching the broad
+  predicate, so removing its entry "in the same run in which the pass handles its member" would re-expose
+  the member as a residual on the next run and turn tier 0 red by the gate's own subtraction rule. The
+  blanket rule also left the no-expiry argument in TOOL-1 and SPEC-4 resting on retirement by a pass that,
+  for those three classes, never runs. §4.7 now conditions the lifetime on the class: an `in-class` entry
+  is transitional in a class whose pass eliminates its members and permanent, for the same reason an
+  exclusion is, in a class no pass eliminates. TOOL-1's seeding sentence and SPEC-4's route-to-green
+  sentence carry both cases. TEST-1 defines a handled member as one the class's broad predicate no longer
+  matches, so its two new cases cannot fire on a permanently-matching member, and adds a case pinning that
+  an in-class entry in a non-eliminating class survives repeated runs green.
+
+### Pass 31 (2026-07-29, automated)
+
+- **§4.7 and TOOL-1 stated two different broad predicates for the generated-artifact residual class, and
+  §4.7 called TOOL-1's insufficient.** TOOL-1 pointed the class's predicate at §4.6's per-file generation
+  rule, which was marker-based only, while §4.7 states the predicate as the union of a generation marker
+  and membership in a generator's output set "since neither signal alone covers the tree". The two are not
+  the same set, and the marker branch under-selects: the five CRDs in `charts/lenny/crds/` and their five
+  copies in `pkg/embedded/crds/` are controller-gen and copy output whose first content after the document
+  marker is `apiVersion` and which carry no generation declaration anywhere
+  (`charts/lenny/crds/lenny.dev_runtimes.yaml` lines 1 through 6), so a marker-keyed predicate would both
+  direct a pass to write them and leave the residual gate unable to select a future producer output with
+  no marker, which is the member the residual exists to catch. §4.6's rule now states the same union
+  TOOL-1 and §4.7 state, with the producer-output-set disjunct named as load-bearing and the output sets
+  read from the producer list §4.6 already carries rather than by running a producer, so the residual
+  scan, the write exclusion, and the `scripts/specshift` denylist range over one predicate. TOOL-1's
+  class list is restated so the predicate explanation follows the list rather than interrupting it, and
+  TEST-1's residual-gate cases gain a case pinning the second disjunct, which is that a file in a
+  producer's output set carrying no marker and absent from both the enumeration and
+  `tests/registers/residual-generated-artifacts.yaml` is reported as a residual and named.
+
+- **Correction to the entry above: §4.7's own predicate sentence was left at two disjuncts while §4.6
+  and TOOL-1 were rewritten to three and both cite §4.7 as the definition.** §4.7 governs the residual
+  mechanism, so a file whose generation declaration sits in top-level document metadata rather than a
+  header comment matched §4.6 and TOOL-1 but not the section they defer to, and
+  `charts/lenny/values.schema.json` is that branch's case, with its notice in the top-level `description`
+  value at line 5 rather than in a header comment. §4.7 now states the same three disjuncts, which are a
+  generation marker in the file header, a generation declaration in top-level document metadata where the
+  format carries no comment syntax, and membership in the output set of a producer §4.6 names, so the
+  governing sentence and the two sentences that quote it describe one set.
+
+- **The proto no-drift test's missing-toolchain path had no producer for the `UNVERIFIED` status.** The
+  proposal staged only the aggregation half, which is one constant and one branch in
+  `cmd/lenny-test/verdict.go`, while nothing in the tree can emit the status for a tier-0 Go test.
+  `runStaticTier` composes tier 0 as a table of checks returning a Go error
+  (`cmd/lenny-test/cmd_run.go` lines 717 through 720) and the composing loop collapses each to `"fail"` or
+  `"pass"` (lines 747 through 753), with `"skipped"` reachable only when `go` is absent (line 473);
+  `recordTier` reclassifies only a failing tier into `inconclusive` and only on a fixed
+  infrastructure-pattern list that names no toolchain absence (`cmd/lenny-test/verdict.go` lines 235
+  through 237 and 279 through 309). The test therefore had only the two outcomes TEST-1 rules out, which
+  are a hard failure on a tree with no drift and an early return that reproduces the fail-open behavior of
+  the shell script it replaces. TOOL-1's `UNVERIFIED` bullet now also lands the producer: a per-check
+  status in the tier-0 check table, a sentinel line the `go test ./tests/tier0_static/...` check parses
+  out of the test output, and a composing loop that propagates the status instead of collapsing it.
+  TEST-1 gains the producer's cases over `cmd/lenny-test/cmd_run.go` beside the aggregation cases, and the
+  proto no-drift case names the route it depends on.
+
+### Pass 32 (2026-07-29, automated)
+
+- **A citation wrapped across two comment lines matched neither the retired citation form nor the residual
+  predicate, so a large live population survived SPEC-4's zero-count exit criterion.** §4.6 stated the form
+  as one contiguous string and stated that the matchers do not read a comment dialect, and §4.7's residual
+  predicate required the section sigil to be adjacent to the line-number token. A citation written across
+  two comment lines separates the two by a newline plus the carrier's comment marker, so on a line-oriented
+  scan the first line carries a sigil with no line number and the second carries a line number with no
+  sigil, and neither the enumerated form nor the residual caught it. Measured over `git ls-files` under
+  §4.6's read exclusion at commit `668deca8`, the population is 768 occurrences across 436 files, of which
+  45 across 32 files cite §4.7, §4.8, §4.9, §15.4, or §15.5, which are the ranges the SPEC-3 reduction
+  shifts, so those pointers would have gone silently wrong while SPEC-4 reported every count zero. §4.6 now
+  states a continuation join that consumes the newline together with the comment marker and the surrounding
+  whitespace, covering the wrap between the section reference and the keyword, the wrap between the keyword
+  and its first member, and the wrap inside a member list, with worked cases in the `//` and `#` dialects;
+  the sentence that rules out comment-dialect matching names the join as its one exception; §4.7's
+  adjacency tolerates the same join, so the residual still catches a wrapped spelling the enumerated form
+  misses; the §3.4 class row carries the wrapped spelling; and TEST-1 gains a line-pass case per carrier
+  dialect and per wrap position, with `pkg/gateway/sessionserver/messages.go` lines 156 and 157 as the
+  worked case, together with a ratchet case for a wrapped citation at count zero. §4.6 also states that the
+  resolver and ratchet baselines TOOL-1 seeds are measured with the join applied.
+
+- **`TESTING.md` §7 closes a second enum that the `UNVERIFIED` producer widens, and it was not staged.**
+  TOOL-1 amended the §7 verdict sentence (`TESTING.md` line 521) and the §21.3 infrastructure-failure
+  sentence (line 2572), but the producer also emits a new `tiers.<name>.status` value, which TEST-1 names
+  as `unverified` and which `cmd/lenny-test/verdict.go` line 68 serializes as `status`. `TESTING.md` line
+  522, in the same §7 field-semantics list, states that `tiers.<name>.status` is one of `pass`, `fail`,
+  `skipped`, and `not-selected`, so after the proposal's edits that sentence would state a closed set for
+  the field the new state actually lands on, and no gate reads a prose enumeration. TOOL-1's `UNVERIFIED`
+  bullet now amends line 522 as well, the §3.4 class row is restated as every §7 field-semantics sentence
+  closing an enum the producer widens plus the §21.3 sentence rather than as two named sentences, TOOL-1's
+  Target names both enums, and §11 lists all three `TESTING.md` sentences with their lines.
+
+### Pass 33 (2026-07-29, automated)
+
+- **The change-graph-coverage and skip-reason residual entries were declared permanent on a premise their
+  own downward-ratcheted baselines contradict, so ordinary coverage work would have turned tier 0 red.**
+  §4.7 keyed the lifetime of an `in-class` entry on whether a `scripts/specshift` pass runs over the class,
+  and grouped the change-graph coverage and skip-reason classes with the generated-artifact class as
+  classes whose entries are permanent because the member keeps matching the predicate for as long as it
+  exists. That premise is false for the first two. Both classes are defined by a baseline TOOL-1 rewrites
+  downward precisely because members leave the class: a tracked path that gains a glob key in
+  `tests/change-graph.json` stops matching the coverage predicate, which is the reverse of
+  `validateChangeGraphFileExistence` (`cmd/lenny-test/cmd_validate.go` lines 282 through 315), and a skip
+  whose reason is rewritten to open with one of the categories
+  (`cmd/lenny-test/cmd_validate.go` lines 853 through 865) stops matching the skip-reason predicate. The
+  entry left behind is then a dead entry, and TEST-1's case for an `in-class` entry whose member no longer
+  matches the predicate fails tier 0 on it, with no removal rule reaching it because §4.7's removal rule
+  fired only when a pass handled the member. §4.7 now keys the lifetime on whether a member can leave the
+  class rather than on whether a pass runs, names the change-graph coverage and skip-reason classes as
+  classes whose members leave by the remediation the gate exists to drive, states that the entry is removed
+  in the same run on the same downward rewrite the class's own baseline performs, and keeps the permanent
+  branch for the generated-artifact class alone. TOOL-1's seeding sentence, the §6 route-to-green sentence,
+  and TEST-1's residual cases carry the same predicate.
+
+### Pass 34 (2026-07-29, automated)
+
+- **The skip-reason baseline's downward rewrite had no case, unlike the two sibling baselines governed by
+  the same rule.** TOOL-1 states that `tests/registers/skip-reasons.yaml` is rewritten downward only, and
+  §4.7 rests the removal of an `in-class` residual entry on that same-run downward rewrite. TEST-1's
+  skip-reason list pinned only the upward guard, so a classifier whose baseline never shrinks would have
+  passed every listed case, leaving a remediated skip listed and its exemption available again. The two
+  sibling baselines each carry the removal case, which are the change-graph check and the line-citation
+  ratchet. TEST-1 now adds the matching pair: a site whose reason is rewritten to open with one of the
+  categories is removed from the baseline in the same run and the baseline is rewritten downward, and a
+  site removed by that rewrite whose reason returns to free text fails.
+- **The residual gate had no stated read domain, so as written it reported the `BUILD-GAPS.md` and
+  `TEST-GAPS.md` populations that §5 and §11 promise no gate reports.** §4.7, TOOL-1, and TEST-1 all
+  described the residual computation without naming what the scan reads, while every other reader in the
+  proposal carries an explicit domain: §4.6 states the resolver's and the ratchet's read exclusion and N3
+  states the exclusion list the passes and the two naming gates share. Applied to the whole tree the scan
+  would have reported the thousands of citation sites in the two audit records, this proposal's own quoted
+  specimens under `proposals/`, and the member text held inside each residual register, and §4.7 admits no
+  closure route but registration, so the check could not have landed green in TOOL-1. §4.7 now states the
+  domain as the tracked tree less the read exclusion §4.6 states, less the further root-level records N3
+  names for the reserved-phrase and identifier classes, and less every residual register and every pass or
+  baseline register a class's predicate would match as tree content, with the non-convergent-seeding
+  argument §4.6 already makes for the citation registers. TOOL-1 restates the same domain, TEST-1 adds the
+  register self-reference case and the read-exclusion case, and the §5 row and §11 now name the residual
+  scan alongside the resolver and the ratchet.
+
+## 10. Open decisions for review
 
 1. **Whether the tooling ships in this proposal or as its own.** It is included here because the three
    migration sub-steps cannot run without it and because splitting it puts a hard dependency across a
@@ -445,27 +4777,174 @@ and registers a claim, none of which exist today.
    lands first. Renaming now makes this proposal a breaking change to the runtime author contract. The
    planning material treated the deferral as the more expensive option, and this proposal follows it.
 
-3. **The per-card line budget in §28.5.** A cap forces clarity and risks truncating a genuinely complex
-   contract. The budget is stated so a reviewer can judge it against the first cards written.
+3. **Settled, no longer open: the per-card line budget in §28.5.** The cap is removed. A card states the
+   contract its channel has, and the fixed field template carries the comparability the cap was meant to
+   force. A channel whose contract is genuinely long is described in full rather than truncated to meet a
+   number, and a card that reads as unclear is a signal to rewrite the card rather than evidence that the
+   budget was correct.
 
 4. **Whether `spec/29` is a separate file or a subsection of `spec/28`.** Separate keeps each file
    scannable and matches the modularity goal. Combined keeps one file to consult.
 
-## 10. Files touched on application
+## 11. Files touched on application
 
 - `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new.
 - `spec/03_high-level-architecture.md`, `spec/04_system-components.md`, and
   `spec/15_external-api-surface.md`, for the diagram correction, the reductions, and the successor
-  pointers.
-- Specification and documentation files carrying reserved bare noun phrases, rewritten by script.
-- `schemas/lenny-adapter.proto` and `schemas/lenny-adapter-jsonl.schema.json`, for the renames and the two
-  incorrect descriptions.
+  pointers. `spec/15_external-api-surface.md` also carries four hand-authored corrections for sentences
+  the reductions falsify: the §15.3 sentence at line 1456, which names §15.4 as the normative prose
+  reference for the gateway-to-pod channel contract and becomes false when §15.4 gives that content up;
+  the §15.7 sentence at line 2558, which names §4.7 as authoritative for the platform MCP tool set that
+  the §4.7 reduction moves to §28; the §15.7 SDK `Reply` doc comment at line 2700, which attributes the
+  `lenny/output` platform MCP tool to a §4.7 Part A that no longer exists after the reduction; and item 7
+  of the §15.4.5 roadmap at line 2402, which attributes the Part B message schemas to §4.7 after they
+  move. It also carries one hand-authored correction that SPEC-2
+  lands rather than SPEC-3: the artifact-scope sentence at line 1463, which credits
+  `schemas/lenny-adapter-jsonl.schema.json` with schematizing the runtime-operations frames that live in
+  `schemas/runtime-ops-events.schema.json`.
+- `spec/05_runtime-registry-and-pool-model.md`, `spec/07_session-lifecycle.md`, and
+  `spec/10_gateway-internals.md`, together with the interrupt row in `spec/15_external-api-surface.md`,
+  for the sentences whose current text names the wrong participant, corrected by hand.
+- `spec/README.md`, for the `spec/28` and `spec/29` table-of-contents rows, the §28.5.1 through §28.5.7
+  card rows, the revised §4.7 and §15.4 rows, and the 49 `### N.M` rows the index is missing today. The
+  file is hand-maintained and has no generator, so it is edited in the same change as the headings it
+  indexes.
+- `tests/spec-map.json` and `tests/spec-map-exceptions.yaml`, for the new `spec/28` and `spec/29` headings,
+  the 50 existing `### N.M` headings that carry no key, and `24.19.1`, the one deeper heading the index
+  already carries and which has neither a key nor an exceptions entry today. `tests/spec-map.json` is also
+  re-keyed by the identifier pass, for the renamed schema path in its `schemas` arrays and for the two
+  existence-checked `::<symbol>` references to `TestLifecycleEventExamplesValidate` and
+  `checkLifecycleHandshake`.
+- `tests/tier11_docs/`, for the reconciliation tests that pin rewritten or relocated spec prose, spec
+  heading slugs, or intra-spec markdown links as string literals, re-scoped to the heading that owns each
+  sentence or anchor after the change. `tests/tier11_docs/embedded_mode_anchors_test.go` and
+  `tests/tier11_docs/embedded_echo_placement_test.go` pin the §15.4.3 and §15.4.4 anchors through a
+  `specCrossRef` table and a `mustContain` list rather than through the three helper functions the other
+  files use; those two headings survive the narrowed §15.4 reduction, so both files are confirmed green
+  rather than edited. The three files that scope assertions to `"### 4.7 "` pin rows above the §4.7
+  reduction boundary, so the reduction edits none of them; the reserved noun phrase in the pinned §4.6.1
+  clause at `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 is rewritten by
+  SPEC-1's name pass.
+- Files carrying reserved bare noun phrases anywhere in the domain N3 states, in either spelling, rewritten
+  by script. In the space-separated spelling that is
+  `spec/` (65 occurrences across 11 files), `docs/` (55 across 16), `schemas/` (10 across 4), the Go doc
+  comments of tracked Go files (124 across 55, of which 23 across 9 sit under `tests/`), and the two
+  tracked root-level contract documents (10, which is 9 in `TESTING.md` and 1 in `README.md`). The
+  hyphenated compound adds 6 in `spec/`, 3 in `docs/` (the 6 the tree carries less the three markdown
+  anchor identifiers N3 places outside the matcher, at `docs/reference/glossary.md` line 207 and
+  `docs/api/internal.md` lines 229 and 318), 29 in Go doc comments, and 2 in `TESTING.md`, and
+  it brings in `spec/18_build-sequence.md` (lines 164, 165, and 408) and five Go files that carry no
+  space-separated occurrence, so the `spec/` population is 71 across 12 files. Both spellings are rewritten
+  under the
+  generated-file exclusion §4.6 states and the N3 exclusion list for root-level markdown.
+- `schemas/lenny-adapter.proto` and `schemas/lenny-adapter-jsonl.schema.json`, for the renames and the
+  incorrect descriptions SPEC-2 corrects.
+- `schemas/runtime-ops-events.schema.json` (renamed from `schemas/lifecycle-events.schema.json` by SPEC-2),
+  `schemas/messagepart.schema.json`, and `schemas/lenny-adapter-jsonl.schema.json` a second time under
+  SPEC-3, for the `description` pointers into `spec/04` §4.7 and `spec/15`
+  §15.4 that the SPEC-3 reductions falsify, re-pointed by hand at the §28.5 cards that own the material,
+  with the `schemas/lenny-adapter-jsonl.schema.json` pointer split so its `messageEnvelope` reference keeps
+  pointing at the surviving `MessageEnvelope` heading in §15.4.
+  All three artifacts are embedded through `schemas/embed.go`, so the descriptions ship to external
+  consumers.
+- `docs/reference/glossary.md`, for the split of the conflated entry into one `CH-ADAPTEREVENTS` entry and
+  one `CH-RUNTIMEOPS` entry, with a redirect stub on the existing anchor.
+- `docs/api/internal.md`, for the sentence at line 544 that sends runtime adapter authors to §15.4 for the
+  binary protocol specification and the `MessagePart` format, both of which move to §28 with the §15.4.1
+  reduction, split by hand so that the two surviving halves keep pointing at §15.4.
+- `docs/reference/adapter-contract.md`, for the absolute GitHub URL at line 371 whose fragment cites the
+  retiring `1541-adapterbinary-protocol` anchor for the Translation Fidelity Matrix. The matrix stays in
+  `spec/15`, and no pass or gate reads an absolute URL, so the fragment is hand-rewritten to
+  `#translation-fidelity-matrix` in the SPEC-3 change that splits the heading.
 - The adapter manifest emitter, the adapter flag, and the three runtime SDKs, rewritten by script.
+- `pkg/adapter/controlchannel.go` and `pkg/adapter/controlchannel_test.go`, renamed to
+  `pkg/adapter/adapterevents.go` and `pkg/adapter/adapterevents_test.go` under N4, with the RPC and its
+  two message types in `schemas/lenny-adapter.proto` renamed to `AdapterEvents`, `AdapterEventsRequest`,
+  and `AdapterEventsResponse`.
+- `gateway-runtime-comms-remediation.md`, for the two R1b scope-table rows at line 418 and line 423 that
+  still spell the rename targets from the retired `CH-EVENTSTREAM` stem, corrected by hand in SPEC-2.
+- `pkg/adapter/holdstate.go` and `pkg/adapter/holdstate_test.go`, whose gRPC full-method string literals
+  name the renamed RPC and are resolved from the proto RPC row rather than from the Go type row.
+- `cmd/lenny-compliance/full.go` and `tests/tier4_integration/credential_lifecycle_test.go`, the second
+  manifest emitter and its integration fixture.
+- `cmd/runtimes/streaming-echo/main.go`, the manifest reader outside the three runtime SDKs, which parses
+  the renamed key through its own struct tag and is what the tier-4 run exercises.
 - `docs/runtime-author-guide/`, for the renamed manifest key.
-- Every file carrying a `// spec:` citation, rewritten by script.
-- `scripts/specshift`, `cmd/lenny-test`, `tests/tier0_static/`, `tests/registers/`,
-  `tests/spec-anchor-moves.json`, and `tests/spec-map.json`.
-- `.claude/rules/channel-naming.md`, new.
+- `spec/09_mcp-integration.md`, `docs/runbooks/artifact-replication-residency-violation.md`,
+  `docs/runbooks/legal-hold-escrow-residency-violation.md`, `docs/runbooks/ops-lock-split-brain.md`, and
+  `docs/runbooks/otlp-plaintext-egress-detected.md`, and
+  `docs/runbooks/admission-plane-feature-flag-downgrade.md`, for the seven markdown fragment links whose
+  target heading does not exist today, corrected by hand in the change that lands the fragment-link gate.
+- Every file carrying a citation of the retired form §4.6 states, in any carrier and any spelling,
+  including the 556
+  section-level occurrences across 148 files that carry no subsection component, the 617 comma-list
+  occurrences across 341 files, the 50 slash-separated and 2 `and`-separated multi-member occurrences
+  across 42 files, the `+`-separated multi-member occurrences across 11 files, the 136 qualified
+  occurrences across 68 files, the 65 en-dash range occurrences across
+  38 files, the 123 path-form occurrences across 59 files, and the colon-form occurrences, which are 18
+  across 10 files in the section-number variant and 11 across 7 files in the path variant,
+  which is 2,353 Go files and 264 non-Go
+  files: 230 of the non-Go files sit under `migrations/`, `charts/`, `sdks/`, `tests/`, and `build/`, and
+  the rest sit under `pkg/`, `schemas/`, `scripts/`, `docs/`, `compose/`, `.github/`, and `dist/`.
+  Rewritten by script. `BUILD-GAPS.md` and `TEST-GAPS.md` are **not touched by this proposal**. They are
+  named in the read exclusion §4.6 states, so no `specshift` pass opens them, the resolver, the
+  ratchet, and the residual scan §4.7 defines skip them, and the line-citation register carries no per-file
+  count for either. They hold roughly
+  2,168 citations between them, which is the largest non-Go population in the tree, and none of it is in
+  scope here. Both are historical audit records rather than authored specification or code carriers, so
+  rewriting their citations would edit the record of what was found at the time it was found. A citation in
+  either that points into a range this proposal shifts goes stale and stays stale, which is the accepted
+  outcome recorded in §5.
+- `pkg/gateway/externalapi/openapi/openapi.json` and `pkg/gateway/mcpfabric/mcptools/mcptools.go`, whose
+  served schema descriptions carry the citation form inside JSON values and Go string literals and lose it
+  rather than gaining an anchor.
+- `pkg/embedded/manifests/manifests.yaml`, `pkg/embedded/crds/`, and `charts/lenny/crds/`, regenerated by
+  `make generate` and the chart-to-embedded copy rather than rewritten, from the chart templates and the
+  doc comments on `pkg/apis/lenny/v1alpha1/*.go` that the passes do rewrite. The `lenny.dev/schema-version`
+  annotation blocks and the top-level spec and status preserve-unknown markers in `charts/lenny/crds/` are
+  hand-applied after regeneration and are hand-edited in SPEC-4, together with the matching literal
+  prefixes in `tests/tier0_static/crds_test.go`.
+- `pkg/proto/`, regenerated by `make generate-proto` from `schemas/*.proto` rather than rewritten.
+- `pkg/gateway/mcpfabric/mcptools/generated_schemas.go`, `pkg/ops/mcp/generated_tools.go`,
+  `docs/alerting/rules.yaml`, and `docs/alerting/routing-recommendations.md`, regenerated from
+  `pkg/gateway/externalapi/openapi/openapi.json` and from `pkg/alerting/rules` rather than rewritten.
+- `charts/lenny/values.schema.json`, regenerated by `go run ./cmd/lenny-chart-schema-gen` rather than
+  rewritten, from the `desc:` struct tags on `pkg/chart/values/values.go` that the passes do rewrite.
+- `schemas/ocsf-mapping.yaml`, regenerated by `go run ./cmd/lenny-ocsf-mapping-gen` rather than rewritten,
+  from the `mappingHeader` const at `pkg/audit/ocsf/catalog.go` lines 147 through 150 that the line pass
+  does rewrite, with `TestMappingYAMLInSync` in `pkg/audit/ocsf/catalog_test.go` as the drift gate.
+- `tests/tier0_static/degradation_lock_line_citation_test.go`, a running tier-0 gate whose predicate
+  requires a `§25.4 line N` citation to be present above two declarations in `pkg/ops/`. Its predicate is
+  hand-rewritten in SPEC-4 to read the anchor form and to require the named §25.4 heading's body to carry
+  the quoted sentence.
+- `pkg/embedded/localcli/`, `pkg/embedded/stack/`, and `pkg/embedded/k3s/`, which are hand-written Go with
+  no generator and carry 132 line citations, rewritten by the line pass like any other Go source.
+- Markdown files in `spec/` and `docs/` carrying a fragment link into a retired anchor, rewritten by
+  script.
+- Files carrying a bare `§15.4.1`-form or `§15.4.2`-form citation, which outside `spec/` and `proposals/`
+  is 669 occurrences of the first form across 150 files and 21 of the second across 9 files (595 and 15
+  once §4.6's read exclusion of `BUILD-GAPS.md` and `TEST-GAPS.md` is applied), among them the three published runtime SDKs and
+  `pkg/gateway/externalapi/outputpartfidelity`, rewritten by the anchor pass to the destination
+  `tests/registers/anchor-senses.yaml` records for each occurrence.
+- `scripts/specshift`, `cmd/lenny-test`, `tests/tier0_static/`, `tests/tier3_contract/`,
+  `tests/tier10_conformance/`, `tests/tier11_docs/`, `tests/registers/`, `tests/spec-anchor-moves.json`,
+  `tests/claim-map.json`, `tests/spec-map.json`, `tests/change-graph.json`, and
+  `tests/change-graph-pending.txt`.
+- `TESTING.md`, for the §7 verdict-enum sentence at line 521, the §7 `tiers.<name>.status` enum sentence
+  at line 522, and the §21.3 infrastructure-failure sentence at line 2572, which the
+  `UNVERIFIED` verdict state and the `unverified` tier status make false, hand-authored in the same change
+  as the constant; for the
+  retired identifier spellings at line 1996, which is the socket token in the Full-level conformance
+  battery, and at line 1521, which is the schema path, the example-fixture glob, and the validating test
+  name of the runtime-ops event schema; and for the reserved bare phrase at lines
+  788, 858, 874, 993, 1315, 1527, 1972, 1996, and 2248, rewritten by script. Those nine lines are the same
+  population SPEC-2 enumerates and the same count this section states above, and the two identifier lines
+  are the population SPEC-2 enumerates for the identifier pass.
+- `README.md`, for the reserved bare phrase in the integration-level table at line 155, rewritten by
+  script.
+- `.claude/rules/channel-naming.md`, new: N1 through N8, plus the two banned spellings verbatim as the
+  specimen §28.1's N3 points to. The file is outside the naming lint's domain, so the specimen does not
+  trip it.
 
 The specific files inside each script-driven class are the script's output rather than this document's
 content, and the gates in TEST-1 are what prove the class is complete.
