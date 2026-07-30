@@ -1,6 +1,7 @@
 # Proposal: Build the specification-migration tooling and the gates that prove a migration complete
 
-- **Status:** **Draft for review.**
+- **Status:** Verified (2026-07-30). Converged after 10 adversarial review rounds (20 findings fixed);
+  awaiting sign-off.
 - **Date:** 2026-07-30.
 - **Scope:** The tooling half of the first three steps of `gateway-runtime-comms-remediation.md`, split out
   of proposal 0064 so that it lands first. This proposal changes no specification file. It builds
@@ -108,7 +109,7 @@ from the source the passes rewrite rather than edited, and its gate is the exist
 | Regeneration of a derived artifact whose source the passes rewrite | the generated-artifact denylist in `scripts/specshift` | `make generate`, `make generate-proto`, `go generate ./pkg/gateway/mcpfabric/mcptools/...`, `go run ./cmd/lenny-chart-schema-gen`, `go run ./cmd/lenny-ocsf-mapping-gen`, the hand-applied CRD post-generation re-application, and the chart-to-embedded CRD re-copy, run as the exit criterion of the pass that touched the source | `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4`, `TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437`, `TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437`, `TestEmbeddedCRDsPreserveUnknownFields_spec_10_437`, the new tier-0 proto no-drift test, `TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386`, `TestGeneratedToolsMatchOpenAPI_spec_25_12`, `TestSchemaIsCommitted_spec_17_6_655`, and `TestMappingYAMLInSync`, each of which fails on drift between a derived file and its source |
 | Specification prose, heading slugs, and intra-spec links pinned as Go string literals in a `tests/tier11_docs/` reconciliation test | the register of every Go string literal under `tests/tier11_docs/` that names a spec heading slug, an intra-spec markdown link, or pinned spec prose, which includes but is not limited to the `specSection`, `requireLine`, and `requireAllContain` literals | the `specshift` name pass and the reduction sub-steps, extended to those literals | tier 11, run as the exit criterion of every sub-step that edits pinned prose |
 | Specification index entries in `spec/README.md` | the `## N` and `### N.M` headings under `spec/`, the deeper headings the index already carries, and the §28.5 card headings | hand-authored in the same change as the heading | the heading walker, which fails an in-scope heading with no index entry whose anchor resolves |
-| Test-harness contract prose in `TESTING.md` that enumerates a value the tooling changes, which is every §7 field-semantics sentence closing an enum the producer widens plus the §21.3 infrastructure-failure sentence | the `UNVERIFIED` verdict state and the `unverified` tier status TOOL-1 adds | hand-authored in the same change as the constant, because no substitution rule produces the sentence | review, because no gate reads a prose enumeration; those sentences are outside every pass's scope even though the rest of the file is not, and TOOL-1 names them and the change that stages them |
+| Test-harness contract prose in `TESTING.md` that enumerates a value the tooling changes, which is every §7 field-semantics sentence closing an enum the producer widens plus the §21.3 infrastructure-failure sentence | the `UNVERIFIED` verdict state and the `unverified` tier status TOOL-1 adds | hand-authored in the same change as the constant, because no substitution rule produces the sentence | the tier-11 enum-reconciliation test TEST-1 adds, which derives the verdict and tier-status value sets from the exported constants TOOL-1 moves into `cmd/lenny-test/verdictstatus`, and fails when a documented sentence omits one, in the manner of `tests/tier11_docs/backup_status_enum_test.go`; the §21.3 sentence carries no derivable value set and is covered by review. Those sentences are outside every pass's scope even though the rest of the file is not, and TOOL-1 names them and the change that stages them |
 | Reserved noun phrases and retired channel identifiers in the tracked root-level contract documents `README.md` and `TESTING.md` | `tests/registers/reserved-phrase-senses.yaml` and `tests/registers/identifier-senses.yaml`, on the same per-occurrence terms as the `spec/` and `docs/` sites | the `specshift` name and identifier passes, whose walk covers tracked root-level markdown under the exclusion list N3 states | the naming lint and the identifier-resolution gate, whose scope is the same walk, so the gate that reads the whole tree has a pass that can write every file it reads |
 | Correcting a description the collision made wrong | `tests/registers/reserved-phrase-senses.yaml` | hand-authored | review, because no gate reads meaning; the naming lint and the identifier gate both pass a semantically wrong sentence that carries a canonical spelling |
 | A sentence that a reduction falsifies, where no pass repairs its meaning, because the sentence carries no line citation and no moved anchor, and any reserved phrase it carries is rewritten to the current spelling while the false statement stands | the reductions SPEC-3 lands | hand-authored in the same change as the reduction, and enumerated there; the members are the `spec/15` §15.3, §15.4.5, and `MessageEnvelope` sentences, the two §15.7 platform-MCP-tool sentences, the six §15.4.4 pseudocode comments that cite the retired §15.4.1 in the spelled-out `Section 15.4.1` form the anchor pass does not read, the `spec/21_planned-post-v1.md` line 31 link label that names the retired §15.4.1 in the same spelled-out form while its target anchor survives, the three shipped schema descriptions, the `docs/api/internal.md` binary-protocol pointer, the two `schemas/README.md` artifact-table rows, and the ten pointers that name §4.7 as the owner of relocated intra-pod material, nine of them `spec/` and `docs/` sentences, one of those nine being the §15.7 graceful-shutdown bullet, and the tenth the pair of `schemas/lenny-adapter.proto` comments on the intra-pod handshake, all of which SPEC-3 lists | review, plus the tier-11 successor-pointer check where the rewritten sentence names a successor heading |
@@ -125,9 +126,9 @@ on them rather than as an attempt at enumeration.
 
 ### 3.3 How this document refers to proposal 0064
 
-The design sections and the staged changes below are the tooling half of 0064, carried over unchanged so
-that the rewrite each pass performs and the population each gate measures are stated in the same words in
-both documents. That text refers to the four specification sub-steps of 0064 by their labels, and to
+The design sections and the staged changes below are the tooling half of 0064, carried over with one
+recorded divergence, so that the rewrite each pass performs and the population each gate measures are
+stated in the same words in both documents. That text refers to the four specification sub-steps of 0064 by their labels, and to
 sections of 0064 by number. Those references are to the other document throughout, and they resolve as
 follows.
 
@@ -143,6 +144,26 @@ follows.
 
 A reference of the form `§X lines N-M` inside a quoted or illustrative citation is an example of the
 citation form under discussion rather than a cross-reference, and is left as written.
+
+Three passages diverge from 0064. The read exclusion §4.6 states and the residual scan's first exclusion
+§4.7 states both exclude every `testdata/` directory here, and the corresponding paragraphs in 0064 do
+not. The third is N3's exclusion list in 0064, which the same clause extends: every `testdata/` directory
+is outside the domain of the name pass, the identifier pass, the naming lint, and the
+identifier-resolution gate alike, so N3's rule that every file those gates read has a pass that can write
+it still holds, and the reserved-phrase and retired-identifier fixtures TEST-1 places under `testdata/`,
+including the ones a tracked Go file carries in a doc comment, are read by no gate and written by no pass.
+Without that extension the fixtures TEST-1 stages for the name pass's Go-doc-comment case would sit inside
+the naming lint's read domain and outside the name pass's write domain, which is the condition N3 exists
+to prevent. No tracked `testdata/` file carries a bare reserved phrase or a retired channel spelling
+today, measured over `git ls-files`, so the extension removes nothing from the population SPEC-1 and
+SPEC-2 measure. The three paragraphs in this proposal supersede those in 0064, because the gates are built
+here and the exclusion is what lets their own fixtures carry the retired form. Every measurement 0064
+states against the read domain, including SPEC-4's Target and its zero exit criterion, is therefore
+measured over the domain the gates this proposal builds actually scan. One sentence in §4.6 depends on
+that supersession: where it says the citation list is narrower than the naming list N3 states, the
+citation list it compares against is the superseded one, and the two lists differ in the three build and
+queue records `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md` rather than in the `testdata/`
+clause, which the supersession puts in both.
 
 Nothing in this proposal is blocked on any of those. Each pass is built and tested against fixtures in its
 own test file, and each gate this proposal lands is green on the unmodified tree or against a baseline
@@ -207,7 +228,8 @@ That exclusion list has two levels, because a pass writes and a gate only reads.
 the resolver and the ratchet share, is `proposals/`, the historical audit records `BUILD-GAPS.md` and
 `TEST-GAPS.md`, the two root planning documents `gateway-runtime-comms.md` and
 `gateway-runtime-comms-remediation.md`, and the two citation registers the two gates themselves consume,
-`tests/registers/line-citation-resolution.yaml` and `tests/registers/line-citations.yaml`. The first four
+`tests/registers/line-citation-resolution.yaml` and `tests/registers/line-citations.yaml`, and every
+`testdata/` directory. The first four
 groups are excluded for the reason N3 gives, which is
 that they record findings as they were written rather than the current contract. The two registers are
 excluded because a gate cannot read its own baseline as tree content. The resolution baseline is keyed by
@@ -219,7 +241,22 @@ travel between files. Seeding an entry for such a copy would add a further copy 
 to the register, so the seeding would not converge. The ratchet excludes the same pair for the same
 reason: the register would otherwise enter its population as a file with no per-file count and fail on its
 first line citation. Excluding the pair from both gates is what lets TOOL-1 land them green, per the sequencing 0064 §3.5 states, step
-1. The write exclusion,
+1.
+
+The `testdata/` exclusion rests on the same argument extended from a gate's baseline to a gate's input.
+The resolver, the ratchet, and the line pass are themselves tested, and each accept, reject, and boundary
+case TEST-1 states has to present the retired citation form verbatim, in every spelling this section
+enumerates. Text of that kind is input to a gate rather than a pointer into the specification. It names no
+section to resolve against, and its route out of the population is the deletion of the case rather than a
+retirement, so a resolution-baseline entry or a per-file count seeded for it would never fall and SPEC-4's
+zero exit criterion would be unmeetable. TEST-1 therefore holds every fixture that carries the retired
+form in a `testdata/` file the test reads rather than in a Go string literal in the test source, and
+`testdata/` sits outside the read domain of the resolver, the ratchet, and the residual scan, and outside
+the write domain of every pass. No tracked `testdata/` file carries the retired form today, measured over
+`git ls-files`, so the exclusion removes nothing from the measured population and no gate reaches green
+through it. The one in-tree test whose predicate requires the retired form in its own source is
+`tests/tier0_static/degradation_lock_line_citation_test.go`, which SPEC-4 rewrites as stated below. The
+write exclusion,
 which the line pass reads, is those groups plus every file the per-file generated-artifact rule
 stated at the end of this section covers. A generated artifact is therefore inside the resolver's and the
 ratchet's read domain and carries a per-file count, and its route to zero is the regeneration of its
@@ -581,6 +618,76 @@ therefore depends on four external binaries, which are `buf`, `protoc-gen-go`, `
 `UNVERIFIED`. Without the prepend, a tree whose plugins live only in `GOPATH/bin` would fail the test
 while `make generate-proto` succeeds there.
 
+The producer's binaries are absent from continuous integration today, so the test needs a workflow change
+to reach a conclusion in every job where the gate is enforced. `scripts/setup-dev.sh` is the workstation
+path and is the only installer of the two codegen plugins in the tree; nothing under `.github/` installs
+either one. Four jobs run the static tier, and only one of them installs any tool. The tier-0 `static` job
+installs `gofumpt`, `goimports`, `golangci-lint`, and `buf` (`.github/workflows/pr.yml` lines 65 through
+71) before running the static tier (`.github/workflows/pr.yml` line 81), so two of the producer's four
+binaries are present there and the two codegen plugins are not. The other three jobs install nothing
+beyond `actions/setup-go`, so all four are absent from them: the `pr-fast` job runs a group whose plan
+opens with the static tier (`.github/workflows/pr.yml` lines 41 through 44, with the plan at
+`cmd/lenny-test/tiers.go` lines 57 through 78), and the phase-gate `gate` job and weekly's
+`load-full-system` job run groups whose plans also open with the static tier on the same bare toolchain
+(`.github/workflows/phase-gate.yml` line 42, with the per-phase plans at `cmd/lenny-test/tiers.go` lines
+114 through 233, and `.github/workflows/weekly.yml` line 105, whose `phase-13.5-gate` plan comes from
+`tests/groups.yaml` lines 359 through 362 through `tiersForGroupFromYAML` at `cmd/lenny-test/tiers.go`
+line 240). A tier whose status is not `pass` ends the run
+and exits non-zero (`cmd/lenny-test/cmd_run.go` line 428), so a test recording `UNVERIFIED` on every run
+would leave tier 0 red in all four jobs, stop the later tier-0 checks in the same run from being reached,
+and verify `pkg/proto/` nowhere. Installing the two codegen plugins alone would fix one job of the four
+and leave the other three permanently red on the two binaries they still lack, which is a worse outcome
+than the fail-open behavior the test replaces.
+
+TOOL-1 therefore stages the producer's whole binary set in every job that runs the static tier. The
+`static` job's existing install step gains `protoc-gen-go` and `protoc-gen-go-grpc` beside the `goimports`
+and `buf` it already installs, so that job installs `gofumpt`, `goimports`, `golangci-lint`, `buf`,
+`protoc-gen-go`, and `protoc-gen-go-grpc` (`.github/workflows/pr.yml` lines 65 through 71). The `pr-fast`,
+phase-gate `gate`, and `load-full-system` jobs each gain three steps modeled on the `static` job's, which
+are a `~/go/bin` cache restore, an install conditional on a cache miss covering `buf`, `goimports`,
+`protoc-gen-go`, and `protoc-gen-go-grpc`, and an `Add tool bin to PATH` step.
+`pr-fast`'s timeout rises from 5 minutes to the 10 the `static` job carries
+(`.github/workflows/pr.yml` lines 32 and 49), because a cold install runs before its group does. TOOL-1
+installs all four into `$(go env GOPATH)/bin`, and bumps the
+`~/go/bin` cache key from `lenny-go-bin-v2` to `lenny-go-bin-v3` (`.github/workflows/pr.yml` lines 62 and
+64, `.github/workflows/nightly.yml` lines 187 and 189, and
+`.github/workflows/reusable/tool-cache.yml` lines 40 through 43), because the install step is skipped on
+an exact cache hit and an existing cache carries neither plugin.
+
+The three added restore steps read the `lenny-go-bin-v3` key and never write it. They use
+`actions/cache/restore` at the pinned `actions/cache` commit, so no post-job save runs. That alone does
+not make the `static` job the sole writer of the key, because one already exists: the `mutation` job in
+`.github/workflows/nightly.yml` restores `~/go/bin` with a read-write `actions/cache` step whose primary
+key string is byte-identical to the `static` job's (`.github/workflows/nightly.yml` lines 184 through 189
+against `.github/workflows/pr.yml` lines 57 through 64), and the only binary it installs is `go-mutesting`
+(`.github/workflows/nightly.yml` lines 190 through 195). TOOL-1 therefore converts that step to
+`actions/cache/restore` at the same pinned commit in the same change. The conversion costs the `mutation`
+job nothing, because its `go-mutesting` install is already conditional on `cache-hit != 'true'` and
+carries `continue-on-error: true`, so it re-runs on every miss. Leaving it read-write would carry the
+second writer onto the empty `lenny-go-bin-v3` namespace, where the first job to save decides the
+directory's contents: nightly runs on a schedule against the default branch
+(`.github/workflows/nightly.yml` lines 9 through 11) while `pr.yml` never runs on `main`
+(`.github/workflows/pr.yml` lines 9 through 12), so the `mutation` job would be the only writer of a
+`main`-scoped cache under that key, and a `main`-scoped cache is restorable from every pull-request
+branch. A `static` job taking an exact hit on that one-binary directory reaches the fail-open the rest of
+this paragraph describes, and, after this proposal, also finds none of the proto producer's four binaries,
+so the no-drift test records `UNVERIFIED` and ends the run non-zero on every affected pull request.
+The difference from the `static` job's step is load-bearing. The
+`static` job's install step is the only one in the tree that installs `gofumpt` and `golangci-lint`, and
+it is skipped on an exact key hit (`.github/workflows/pr.yml` lines 65 and 66). A read-write cache step in
+a job that installs only the producer's four binaries would save a `~/go/bin` missing those two under the
+shared exact key, and the next `static` job to hit that key would skip its install and find neither
+binary. Both checks return a nil error when their binary does not resolve
+(`cmd/lenny-test/cmd_run.go` lines 537 through 540 and 577 through 579), so `gofumpt` would stop reporting
+unformatted files and `golangci-lint` would stop surfacing findings, with tier 0 green throughout. The
+window is not hypothetical: `static` runs after `pr-fast` in the same workflow (`.github/workflows/pr.yml`
+line 50), including after `pr-fast`'s post-job save, and a cache written on `main` by the phase-gate or
+weekly job is readable from every pull-request branch. Restore-only in every job that installs a partial
+set, which after TOOL-1's conversion of the `mutation` job is every job but `static`, keeps the shared
+key's contents complete by construction, and it needs neither a second key namespace nor a duplicate
+install of the two lint binaries in three jobs that do not otherwise need them. With that change `UNVERIFIED` reports a
+degraded environment rather than the steady state of every CI run.
+
 ### 4.7 Measured populations, and the residual that catches what they miss
 
 This sub-section governs every place this proposal states a measured fact about the tree: a count of
@@ -613,7 +720,9 @@ member and its class. Its read domain is stated rather than left to the implemen
 whose domain is the whole tree cannot land green. The residual scan reads a tracked file unless one of
 three exclusions covers it. The first is the read exclusion §4.6 states, which is `proposals/`, the
 historical audit records `BUILD-GAPS.md` and `TEST-GAPS.md`, and the two root planning documents
-`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, excluded for the reason N3 gives.
+`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, excluded for the reason N3 gives,
+together with every `testdata/` directory, excluded for the fixture reason §4.6 states, so the residual
+scan does not report a gate's own fixture as an unclassified member of the class that fixture exercises.
 The second applies to the reserved-phrase class and the identifier class, whose scan additionally excludes
 the root-level records N3 names, `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, so the
 residual scan for a class ranges over the same domain as that class's pass and gates. The third is every
@@ -693,15 +802,24 @@ residual is what makes them safe to be incomplete.
 | An enumerated class gains a member no enumeration anticipated | The residual gate fails tier 0 naming the member and its class | §4.7 |
 | A residual register entry's member leaves its class | The run that removes the member removes its entry in the same run, so a rewrite that empties a class also empties the in-class part of its register | §4.7 |
 | A baseline register is seeded from a measured population that has since drifted | The baseline is rewritten downward only, so drift upward fails and drift downward is absorbed | §4.6 |
-| A gate is registered but never runs | The run that inspects zero members fails rather than reporting green | The per-gate cases in §6 |
+| A gate runs but inspects nothing, because its walk root or its exclusion list selects zero files, or because it finds zero inspectable sites, over a tracked tree that is not empty | The run fails and names the gate rather than reporting green. A class whose broad predicate selects zero members over a scan that did select files is the terminal state of that class and stays green | The zero-inspection case §6 states for the residual gate, the change-graph completeness check, the citation resolver, the line-citation ratchet, the skip-reason classifier, and the proto no-drift test |
+| A gate is absent from the registered gate list altogether, so nothing invokes it | Out of scope here. The gate-integrity meta-gate over the registered list lands in 0064 with SPEC-4, because its fixed list names gates SPEC-1 through SPEC-4 register | §7 |
+| A pass writes a file the write exclusion covers, which no gate reads and no gate could report | Each pass carries a case asserting that a site in `proposals/`, in the two historical audit records, and in the two root planning documents is left byte-identical while an equivalent site in an ordinary carrier in the same run is rewritten. The name and identifier passes cover the three build and queue records as well, and the name and line passes cover a file the per-file generated-artifact rule selects. No case asserts byte-identity for the two citation registers, because the identifier pass rewrites a renamed file's key in them in the same run per §4.6, so they are excluded from site rewriting while remaining subject to that key rewrite; and none asserts it for `testdata/`, which is where each case's own fixture tree sits | The per-pass write-exclusion cases in §6 |
+| A gate's own test fixture carries the text that gate fails on | The fixture is held in a `testdata/` file, which is outside the read domain of the resolver, the ratchet, and the residual scan, and outside every pass's write domain, so no gate reports its own input | §4.6 |
 
 ## 6. Proposed changes
 
 ### TOOL-1. The migration and gate tooling
 
-**Target:** `scripts/specshift`, `cmd/lenny-test`, `tests/tier0_static/`, `tests/registers/`, and
+**Target:** `scripts/specshift`, `cmd/lenny-test`, `tests/tier0_static/`, `tests/registers/`,
 `TESTING.md` §7 and §21.3, which state the verdict enum and the `tiers.<name>.status` enum that the
-`UNVERIFIED` verdict state and the `unverified` tier status extend.
+`UNVERIFIED` verdict state and the `unverified` tier status extend, and the workflow files that run the
+static tier, which are `.github/workflows/pr.yml`, `.github/workflows/phase-gate.yml`,
+`.github/workflows/weekly.yml`, and the shared tool list in
+`.github/workflows/reusable/tool-cache.yml`, together with `.github/workflows/nightly.yml`, for the
+`~/go/bin` cache key it restores alongside `.github/workflows/pr.yml` and the shared tool list, and for
+the conversion of its `mutation` job's read-write cache step to `actions/cache/restore` that §4.6
+requires.
 
 **Rationale:** Every later sub-step is a mechanical rewrite over thousands of sites. Without the tooling
 the rewrites are hand edits, and without the gates their completeness is unverifiable. The tooling is kept
@@ -807,9 +925,32 @@ resolves from `PATH`, and `scripts/setup-dev.sh` lines 390 and 391 install both 
 Diffing raw `buf generate` output against the committed stubs
 would report drift on every generated file at introduction, because the plugins emit neither the SPDX
 header nor the regrouped import block. The test is verified green against the unmodified tree in TOOL-1,
-before SPEC-1, SPEC-2, SPEC-3, and SPEC-4 take it as an exit criterion, and TEST-1 names its cases, because a test
+both on a workstation provisioned by `scripts/setup-dev.sh` and in the continuous-integration job that
+runs tier 0, before SPEC-1, SPEC-2, SPEC-3, and SPEC-4 take it as an exit criterion, and TEST-1 names its
+cases, because a test
 that returns early when any of `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports` is absent
 reproduces the fail-open behavior that disqualifies the shell script it replaces.
+
+Green in the second of those environments needs a workflow change, which TOOL-1 stages with the test, per
+§4.6. No job under `.github/` installs `protoc-gen-go` or `protoc-gen-go-grpc` today, and three of the
+four jobs that run the static tier install `buf` and `goimports` no more than they install the plugins, so
+the producer cannot run in any of the four and the test would record `UNVERIFIED` on every run, which ends
+the run non-zero (`cmd/lenny-test/cmd_run.go` line 428) and leaves `pkg/proto/` unverified in every
+environment that enforces the gate. TOOL-1 therefore stages the whole binary set rather than the plugins
+alone. The `static` job in `.github/workflows/pr.yml` gains a `go install` of `protoc-gen-go` and
+`protoc-gen-go-grpc` into `$(go env GOPATH)/bin` in the install step that already covers `goimports` and
+`buf`. The `pr-fast` job in the same file, the gate job in `.github/workflows/phase-gate.yml`, and the
+full-system load job in `.github/workflows/weekly.yml` each gain a `~/go/bin` cache restore, a
+conditional install of all four binaries, and the `Add tool bin to PATH` step that the `static` job
+carries today, and `pr-fast`'s timeout rises from 5 minutes to 10 to cover a cold install. The three added
+restore steps use `actions/cache/restore` rather than `actions/cache`, so they read the shared key without
+saving to it, and the `mutation` job's existing read-write step in `.github/workflows/nightly.yml` lines
+184 through 189 is converted to `actions/cache/restore` at the same pinned commit, so that the `static`
+job becomes the only writer, for the reason §4.6 gives. TOOL-1 adds the
+two plugins to the `buf` group of the shared tool list in
+`.github/workflows/reusable/tool-cache.yml` so one list names the producer's binaries, and bumps the
+`~/go/bin` cache key to `lenny-go-bin-v3` in every workflow that restores it, because an exact hit on the
+existing key skips the install step and the cached directory carries neither plugin.
 
 Build the shared register contract every gate in the remediation plan uses, with an entry schema carrying
 a subject, a verdict, an owner, an opened-at date, an expiry, a blocker, and a reason, and with three
@@ -861,7 +1002,16 @@ shares the validator, the register contract, and the same authors:
   loop propagates that status instead of collapsing it. Without the producer the proto no-drift test has
   only the two outcomes TEST-1 rules out, which are a hard `FAIL` on a tree with no drift and an early
   return that reproduces the fail-open behavior of the shell script it replaces. TEST-1 names the
-  producer's cases in `cmd/lenny-test/cmd_run` alongside the aggregation cases. `TESTING.md` owns both
+  producer's cases in `cmd/lenny-test/cmd_run` alongside the aggregation cases. TOOL-1 also moves the two
+  constant blocks out of `package main` into a new `cmd/lenny-test/verdictstatus` package as exported
+  constants, updating the callsites in `cmd/lenny-test/verdict.go` and `cmd/lenny-test/cmd_run.go`, which
+  are the only two files that reference them. The move is what makes the tier-11 reconciliation test below
+  possible, because Go forbids importing a `main` package and the constants are unexported today
+  (`cmd/lenny-test/verdict.go` lines 3 and 23 through 33), so without it that test could only restate the
+  values and go stale with the sentence it guards. An ordinary sub-package under `cmd/` that tests and
+  `pkg/` import already exists in `cmd/lenny-ctl/runtimescaffold` (`pkg/ctlcli/runtime.go` line 15 and
+  `tests/tier3_contract/sdks/runtime_sdk_test.go` line 38), so this extends an in-tree pattern rather than
+  adding a parallel one. `TESTING.md` owns both
   changed enums in prose and is amended in the same change. §7 field semantics states that the verdict is
   one of `PASS`, `FAIL`, and `INCONCLUSIVE` (`TESTING.md` line 521), the next sentence in the same list
   states that `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, and `not-selected`
@@ -873,10 +1023,15 @@ shares the validator, the register contract, and the same authors:
   derives from it. The §7 verdict sentence gains
   `UNVERIFIED` with its meaning, which is that a check could not reach a conclusion, and its exit code
   distinct from the `INCONCLUSIVE` code; the §7 tier-status sentence gains `unverified` with the same
-  meaning stated for a tier, which is that a check in that tier could not reach a conclusion; and the
+  meaning stated for a tier, which is that a check in that tier could not reach a conclusion, and gains
+  `inconclusive`, which the harness already emits for a tier whose failure `classifyInfraFailure`
+  reclassifies (`cmd/lenny-test/verdict.go` lines 236 and 237) and which that sentence has never
+  enumerated, because the tier-11 test TEST-1 adds derives the documented set from the constant block and
+  is red at introduction while the omission stands; and the
   §21.3 sentence distinguishes the infrastructure-failure
   `INCONCLUSIVE` path from the new `UNVERIFIED` path. No substitution rule produces those three sentences,
-  so that edit is hand-authored and carries the class row §3.4 adds for it. The rest of `TESTING.md` is inside
+  so that edit is hand-authored and carries the class row §3.4 adds for it, and the two §7 sentences are
+  held to the emitted constants afterwards by the tier-11 reconciliation test TEST-1 adds. The rest of `TESTING.md` is inside
   the name and identifier passes' walk, per the root-contract-document row §3.4 adds and the N3 scope.
 - **The additional `tests/spec-map-exceptions.yaml` fields and the reason class** the new specification
   sections need to register a heading whose implementation is pending. The reason class is
@@ -933,12 +1088,33 @@ shares the validator, the register contract, and the same authors:
 ### TEST-1. Gate cases
 
 **Target:** `scripts/specshift`'s `run_test.go`, `cmd/lenny-test`'s `cmd_validate_test.go` and
-`verdict_test.go`, and `tests/tier0_static/`.
+`verdict_test.go`, `tests/tier0_static/`, `tests/tier11_docs/verdict_enum_test.go`, new, and the
+`testdata/` fixture directory beside each of them.
 
 **Rationale:** Each gate closes the loop on one class of rewrite. A gate whose own accept, reject, and
 boundary behavior is untested is an assertion about the tree rather than a check on it.
 
 **Change (staged description).** This sub-step adds each gate's cases.
+
+Every case that has to present the retired citation form, a retired anchor, or a reserved noun phrase
+verbatim holds that text in a `testdata/` fixture file the test reads rather than in a Go string literal
+in the test source. `testdata/` is outside the read domain of the resolver, the ratchet, and the residual
+scan per §4.6, so the citation spellings the cases below quote do not enter the resolver's baseline, do
+not raise a per-file ratchet count, and are not reported as residuals, and tier 0 is green at this
+sub-step's exit. A fixture in the test source would fail all three, because the fixture files are new and
+are therefore absent from the baselines TOOL-1 seeds from today's measured population, and those baselines
+are rewritten downward only.
+
+Each pass also carries a case for the write exclusion §4.6 states, because that exclusion is the one
+boundary no gate observes. The files it covers sit outside the read domain of the resolver, the ratchet,
+and the residual scan, so a pass whose walk did not honor it would rewrite a historical record while every
+gate stayed green, and the population at risk is large: `BUILD-GAPS.md` carries 1,831 lines matching the
+retired citation form and `TEST-GAPS.md` carries 48, measured at commit `c7d0f7f8`, alongside
+`proposals/`, the two root planning documents, and the three build and queue records. Each case below is
+stated over a fixture tree that reproduces those paths, asserts that the excluded file is byte-identical
+after an applied run and appears in neither the dry-run output nor the applied diff, and asserts that an
+equivalent site in an ordinary carrier in the same run is rewritten, so the case cannot pass through a
+pass that rewrote nothing.
 
 **The residual gate.** One gate stands apart from the per-class gates below, because it is what makes
 their incompleteness safe. For each enumerated class it computes the set matching the class's broad
@@ -964,16 +1140,19 @@ text carried inside `tests/registers/residual-<class>.yaml` itself, or inside th
 register the class's own gate excludes, reports no residual, so the scan does not read a register as tree
 content; an occurrence in a file the read domain §4.7 states excludes, including `BUILD-GAPS.md` and
 `TEST-GAPS.md`, reports no residual, so the gate does not report the populations §5 and §11 promise no
-gate reports; and a
+gate reports; a
 malformed or missing residual register fails rather than certifying the
-class. Each class has its own `tests/registers/residual-<class>.yaml`, separate from the register or
+class; a run whose scan selects zero files over a tracked tree that is not empty fails and names the
+class rather than reporting no residual, so a walk root or an exclusion list that silently excludes
+everything is a failure rather than a green result; and a run whose scan selects files while the class's
+broad predicate selects zero members passes, because an emptied class is the terminal state the pass and
+the remediation reach rather than a defect, unless the class's residual register still carries an
+`in-class` entry, which is the register-versus-tree inconsistency the in-class survival case above fails. Each class has its own `tests/registers/residual-<class>.yaml`, separate from the register or
 baseline that drives the class's pass, and it carries the entry schema §4.7 states, which is a
 member, a class, an `in-class` or `excluded` disposition, and a reason, so the shared register contract's
 expiry and blocker ratchet rules do not range over them. The gate is built in TOOL-1, and the check for
 each class lands in the sub-step that seeds that class's registers, per the sequencing 0064 §3.5 states. Like every gate here
 it lands green by seeding today's population into the register rather than by narrowing the predicate.
-
-**Rationale:** Each gate closes the loop on one class of rewrite. Without them the completeness of a
 
 Add the register-contract validator tests in the style of the two in-tree validators the contract
 generalizes (`cmd/lenny-test/cmd_validate_yaml_test.go` lines 241-400), one case per ratchet rule: a
@@ -995,7 +1174,8 @@ baseline is rewritten downward, and a run that would add a prefix to the baselin
 cannot be given back; a malformed or missing `tests/registers/change-graph-coverage.yaml` fails rather
 than certifying the tree; a malformed or missing `tests/change-graph.json` fails
 rather than certifying the tree, which is the fail-open outcome the register-contract cases above rule out
-for the other registers; and a fully mapped tree passes. Add one further case pinning the interaction with
+for the other registers; a run whose walk selects zero tracked source paths fails and names the check
+rather than reporting full coverage; and a fully mapped tree passes. Add one further case pinning the interaction with
 the identifier pass at this register: a file the pass renames leaves the change-graph completeness check
 green, because the pass rewrites the glob key in `tests/change-graph.json` in the same run that moves the
 file. The other registers are pinned in `scripts/specshift`'s `run_test.go` rather than here, because
@@ -1022,9 +1202,9 @@ validated by the same rules. The cases carry no `// spec:` tie, matching the fou
 the exceptions validator is test infrastructure rather than a spec behavior, which
 `.claude/rules/spec-driven-development.md` names as an escape hatch from the annotation requirement.
 
-Add the name pass's own cases, in `scripts/specshift`'s `run_test.go`, because the fail-on-unregistered-
-site rule is what substitutes for a gate on the wrong-mechanism class and a silent default substitution
-would pass the naming lint and the identifier-resolution gate while converting every ambiguous sentence
+Add the name pass's own cases, in `scripts/specshift`'s `run_test.go`, because the
+fail-on-unregistered-site rule is what substitutes for a gate on the wrong-mechanism class and a silent
+default substitution would pass the naming lint and the identifier-resolution gate while converting every ambiguous sentence
 into a precise false one: a reserved-phrase occurrence with no entry in
 `tests/registers/reserved-phrase-senses.yaml` aborts the pass non-zero, names the file and the line, and
 leaves the tree unmodified; a site whose entry resolves to a canonical identifier is substituted; an entry
@@ -1038,9 +1218,15 @@ and `CH-LLMPROXY` for `pod_to_gateway` as the worked case; a reserved-phrase sit
 a site in a `schemas/` JSON `description` value are each substituted, so the pass writes every surface the
 naming lint reads; a markdown anchor identifier carrying a reserved phrase is left unmodified and requires
 no register entry, with the kramdown attribute `{: #lifecycle-channel }` at `docs/reference/glossary.md`
-line 207 and the same-page fragment link at `docs/api/internal.md` line 229 as the worked accept cases, and
-the naming lint is asserted green on the same two sites so the pass and the lint read one exclusion; a site
-in a file the generated-file exclusion covers is left unmodified; a malformed or
+line 207 and the same-page fragment link at `docs/api/internal.md` line 229 as the worked accept cases,
+with the matching assertion that the naming lint is green on those same two sites left to SPEC-1, where
+the lint lands, because the lint does not exist at this sub-step's exit; a site
+in a file the generated-file exclusion covers is left unmodified; a reserved-phrase site in each file
+group of the write exclusion §4.6 states, over a fixture tree carrying `proposals/`, `BUILD-GAPS.md`,
+`TEST-GAPS.md`, `gateway-runtime-comms.md`, `gateway-runtime-comms-remediation.md`, `BUILD-PLAN.md`,
+`BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, is left byte-identical and appears in neither the dry-run
+output nor the applied diff, while an equivalent site in an ordinary carrier in the same run is
+substituted; a malformed or
 missing sense register fails rather than passing with zero substitutions; and
 the dry-run output equals the applied diff for the same input. Each case carries a `// spec:` tie to the §28.1 naming law.
 
@@ -1051,7 +1237,11 @@ occurrence of a retired spelling with no entry in `tests/registers/identifier-se
 aborts the pass non-zero, names the file and the line, and leaves the tree unmodified; an occurrence whose
 entry resolves is substituted to that entry's canonical identifier; a retired spelling the §28.3 table
 maps to exactly one channel, occurring in unrelated text such as a command-line file argument, aborts the
-pass when it has no entry and is left unmodified when its entry records it as not a channel; and a gRPC
+pass when it has no entry and is left unmodified when its entry records it as not a channel; a retired
+spelling in each file group of the write exclusion §4.6 states, including `proposals/`, `BUILD-GAPS.md`,
+`TEST-GAPS.md`, the two root planning documents, and `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and
+`PROPOSAL-QUEUE.md`, is left byte-identical and appears in neither the dry-run output nor the applied
+diff, while an equivalent occurrence in an ordinary carrier in the same run is substituted; and a gRPC
 full-method string literal is resolved from the proto RPC row rather than from the Go type row. Add the
 register re-key cases in the same file, asserted by reading each register after the run rather than by a
 `validate-maps` result: a run that renames a file rewrites that file's key in every path-keyed register
@@ -1063,15 +1253,10 @@ the other three passes carry: the dry-run output equals the applied diff for the
 file moves and the register re-key edits. The case is stated for this pass because the dry run is the
 entry criterion TOOL-1 gives for applying it, this is the pass whose applied change is the largest and the
 hardest to reverse, and no other listed test observes a divergence, since the register cases read the
-tree after the run and the identifier-resolution gate runs after the pass has been applied. Add the tier-0 assertion over
-`coordinatorHoldAllowedMethods` (`pkg/adapter/holdstate.go` line 54) stated in SPEC-2: an entry whose
-service part is `lenny.adapter.v1.Adapter` names a method or stream `Adapter_ServiceDesc` declares, and an
-entry whose service part is another service names a method of a service the adapter registers, which today
-is only the standard `grpc.health.v1.Health` service the two entries at lines 58 and 59 name. A literal
-rewritten to a method the proto no longer declares then fails at tier 0 rather than silently removing an
-RPC from the coordinator-hold allowlist. The assertion is verified green against the unmodified tree
-before the identifier pass runs, and the two health entries need no register entry, whose owner and expiry
-they could never retire against.
+tree after the run and the identifier-resolution gate runs after the pass has been applied. The tier-0 assertion over
+`coordinatorHoldAllowedMethods` (`pkg/adapter/holdstate.go` line 54) is not staged here. SPEC-2 lands it
+alongside the identifier-resolution gate, in the sub-step that runs the identifier pass over those
+literals, so the assertion is staged once and this proposal stages no file for it.
 
 Add the anchor pass's own cases in the same `run_test.go`, for the same reason the other three passes have
 them. No gate over the anchor classes distinguishes a correct run from a silent no-op or a
@@ -1094,7 +1279,11 @@ link into a surviving anchor is left untouched, which is the majority form insid
 line, and leaves the tree unmodified rather than substituting the anchor map's single successor; a bare
 citation the register records as citing carved-out material is rewritten to the surviving `spec/15`
 heading, taking the `MessageEnvelope` citation at `sdks/runtime/go/runtime/types.go` line 52 as the worked
-case; and the dry-run output equals the applied diff for the same input. Each case carries a
+case; a retired anchor carried in each file group of the write exclusion §4.6 states, including
+`proposals/`, the two historical audit records, and the two root planning documents, is left
+byte-identical and appears in neither the dry-run output nor the applied diff, while an equivalent
+citation in an ordinary carrier in the same run is rewritten; and the dry-run output equals the applied
+diff for the same input. Each case carries a
 `// spec:` tie to N8, the §28.1 citation rule.
 
 Add the line pass's own cases in the same `run_test.go`. The two gates §3.4 names for this class cannot
@@ -1136,7 +1325,14 @@ a wrap between the keyword and its first member, and a wrap that straddles a mem
 `desc:` struct tags on `pkg/chart/values/values.go`) is stripped while every other carrier is converted,
 with a case per carrier dialect; a stripped served-artifact citation whose authoring source carries no
 surviving spec tie after the strip fails the pass rather than being dropped silently, which is the case
-the three `pkg/chart/values/values.go` fields with no doc comment sit in per §4.6; a run that reduces a
+the three `pkg/chart/values/values.go` fields with no doc comment sit in per §4.6; a retired-form citation
+in each file group of the write exclusion §4.6 states, including `proposals/`, `BUILD-GAPS.md`,
+`TEST-GAPS.md`, and the two root planning documents, is left byte-identical and appears in neither the
+dry-run output nor the applied diff, while an equivalent citation in an ordinary carrier in the same run
+is converted; a citation in a file the per-file generated-artifact rule selects is left unmodified,
+including one in `charts/lenny/crds/`, which the rule selects through its producer-output disjunct rather
+than through a generation marker, so the pass does not write a file whose route to zero is regeneration; a
+run that reduces a
 file's citation count without emitting a corresponding anchor fails rather than reporting a retirement;
 and the dry-run output equals the applied diff for the same input. Each case carries a `// spec:` tie to N8, the §28.1 citation rule.
 
@@ -1164,6 +1360,35 @@ bare `§7` would resolve to `spec/07_session-lifecycle.md` under the repository'
 which is Session Lifecycle and states no verdict schema, so the harness would report the new tests as
 coverage of that section. The verdict schema is owned by `TESTING.md` §7, which TOOL-1 amends.
 
+Add a tier-11 reconciliation test in `tests/tier11_docs/verdict_enum_test.go` that pins the two amended
+`TESTING.md` §7 sentences to the constants the harness emits, because the drift TOOL-1 names is a CI
+consumer parsing `tests/results/latest.json` against a stale enumeration, and review does not fail when
+the next value is added. `.claude/rules/test-coverage.md` line 42 assigns documentation consistency to
+tier 11, `tests/tier11_docs/backup_status_enum_test.go` already reconciles a documented status enum
+against the constants the code emits in exactly this manner, and tier-11 tests already read `TESTING.md`
+directly (`tests/tier11_docs/docs_test.go` lines 54 through 72), so the surface is reachable with no new
+machinery beyond the constant move TOOL-1 stages. The test derives the expected sets by importing the
+constants rather than restating them. The precedent works only because its constants are exported from an
+importable library package: `backup_status_enum_test.go` is `package tier11_docs_test` and reads
+`backup.StatusPending` and its siblings from `pkg/ops/backup` (lines 21 through 41, against
+`pkg/ops/backup/service.go` line 16). Neither property holds for the constants as they stand today, since
+`cmd/lenny-test/verdict.go` declares `package main`, which Go forbids importing, and every identifier in
+the two blocks is unexported (`statusPass` through `statusNotSelected` at lines 24 through 28 and
+`verdictPASS` through `verdictINCONCLUSIVE` at lines 30 through 32). TOOL-1 therefore moves both blocks
+into the importable `cmd/lenny-test/verdictstatus` package as exported constants, and the test imports
+that package and reads the tier-status set and the verdict set from it, each including the value TOOL-1
+adds. The cases are: every verdict constant appears in the §7 verdict
+sentence; every tier-status constant appears in the §7 `tiers.<name>.status` sentence; and, for the reject
+direction, the same assertion run against a fixture sentence with one value removed fails and names the
+missing value, so a sentence that stops enumerating a constant cannot pass. The tier-status case is red
+against today's file for a reason predating this proposal, because `statusInconclusive` is emitted for a
+tier whose failure `classifyInfraFailure` reclassifies (`cmd/lenny-test/verdict.go` lines 236 and 237)
+while the §7 sentence enumerates `pass`, `fail`, `skipped`, and `not-selected` alone (`TESTING.md`
+line 522) and the lowercase value appears nowhere in the file. TOOL-1's amendment of that sentence
+therefore adds `inconclusive` alongside `unverified`, so the test is green at this sub-step's exit under
+decision 3. The cases carry no `// spec:` tie, matching the verdict cases above, because the harness
+verdict schema is owned by `TESTING.md` rather than by a spec section.
+
 Add the citation resolver's own cases, for the reason the ratchet and the change-graph check have theirs.
 The resolver lands green through a seeded baseline of roughly 1,500 pre-existing failures and is the exit
 criterion SPEC-3 rests its atomicity on, so a baseline load that degrades to exempting everything reports
@@ -1179,8 +1404,9 @@ and the same holds for the ratchet's per-file count over
 `tests/registers/line-citations.yaml`, so neither gate reads its own baseline as tree content; a baseline entry whose
 citation no longer exists in the tree is removed in the same run, so an exemption cannot outlive the
 citation it was written for; a range or multi-member citation fails unless every member resolves; a
-citation broken by a heading move fails rather than being absorbed by the baseline; and a malformed or
-missing `tests/registers/line-citation-resolution.yaml` fails rather than certifying the tree. Each case
+citation broken by a heading move fails rather than being absorbed by the baseline; a malformed or
+missing `tests/registers/line-citation-resolution.yaml` fails rather than certifying the tree; and a run
+whose walk selects zero files fails and names the resolver rather than reporting no failure. Each case
 carries a `// spec:` tie to N8, the §28.1 citation rule.
 
 Add the line-citation ratchet's own cases, which the five register-contract cases above do not supply because none of them is a
@@ -1203,7 +1429,8 @@ remaining spellings can regrow after retirement; a file at count zero fails on a
 across two comment lines, counted as one citation in each of the three wrap positions and in each carrier
 dialect, so the wrapped spelling cannot regrow either; a file renamed with its citation count
 unchanged passes and its register key moves with it, so a rename is not read as a new file at its first
-citation; and a file absent from the register fails on its first citation. The rise case is the boundary the mechanism exists for, and the fall
+citation; a file absent from the register fails on its first citation; and a run whose walk selects zero
+files fails and names the ratchet rather than reporting every count held. The rise case is the boundary the mechanism exists for, and the fall
 case mutates the gate's own baseline, so a downward rewrite that silently does not happen lets a file
 regrow to its old count with the gate green. Each case carries a `// spec:` tie to N8, the
 §28.1 citation rule.
@@ -1225,7 +1452,9 @@ which is the downward rewrite §4.7 rests the in-class residual entry's removal 
 rewrite whose reason returns to free text fails, so the remediation cannot be given back; a run that would
 add a site to the baseline fails, so the exemption cannot be given back; a malformed or missing
 `tests/registers/skip-reasons.yaml` fails rather than
-certifying the tree; and a file that does not parse fails rather than being skipped. The cases carry no
+certifying the tree; a file that does not parse fails rather than being skipped; and a run whose walk
+selects zero Go files, or that inspects zero skip call sites, fails and names the classifier rather than
+reporting the convention held. The cases carry no
 `// spec:` tie, matching the validator cases they sit beside, because the skip convention is test
 infrastructure.
 
@@ -1239,6 +1468,9 @@ while `buf` is installed as a system package (`scripts/setup-dev.sh` line 308). 
 reproduces the target's `PATH="$(go env GOPATH)/bin:$PATH"` prepend before it invokes `buf`
 (`Makefile` lines 91 through 100, with `GOPATH_BIN` defined at `Makefile` line 20), because without it a
 tree whose plugins are installed only in `GOPATH/bin` fails the test while `make generate-proto` succeeds.
+No continuous-integration job installs all four today, so TOOL-1 installs the whole set in every job that
+runs the static tier and bumps the shared `~/go/bin` cache key, per §4.6; without that the cases below
+would record `UNVERIFIED` on every run rather than on a degraded environment.
 The skip-reason classifier accepts a bare `t.Skip()`, so nothing else would catch a test that returns
 early when one of the four is missing. The cases
 are: committed stubs matching a reproduced `make generate-proto` run pass; a stub carrying a hand-edited
@@ -1271,7 +1503,237 @@ None. This proposal builds tooling for a migration and closes no `BUILD-GAPS.md`
 
 ## 9. Resolved in adversarial review
 
-Review rounds populate this section.
+### Pass 1 (2026-07-30, automated)
+
+- **TEST-1's name-pass case asserted the naming lint green, and the naming lint is not built here.** The
+  markdown-anchor accept case required the lint to be green on the same two sites, while TOOL-1 states the
+  lint is red against the unmodified tree and §7 lists it among the gates that land in 0064. The case now
+  keeps the pass-side accept assertion at `docs/reference/glossary.md` line 207 and `docs/api/internal.md`
+  line 229, and leaves the matching lint assertion to SPEC-1, where the lint lands, so this proposal
+  asserts nothing about a gate that does not exist at its exit.
+- **The gate tests' own fixtures had no disposition against the ratchet, the resolver, and the residual
+  scan.** Each accept, reject, and boundary case in TEST-1 has to present the retired citation form
+  verbatim, and the files carrying it are new, so they are absent from the baselines TOOL-1 seeds and the
+  ratchet fails them on their first citation while the resolver fails any that does not resolve. Seeding
+  is not available either, because the baselines are rewritten downward only and a fixture citation never
+  retires. §4.6 now excludes every `testdata/` directory from the read domain the resolver and the ratchet
+  share, on the argument it already makes for the two citation registers, extended from a gate's baseline
+  to a gate's input; §4.7 carries the same exclusion for the residual scan; TEST-1 holds every verbatim
+  fixture in a `testdata/` file rather than in a Go string literal; and §5 and §11 record the exclusion and
+  the new fixture directories. No tracked `testdata/` file carries the retired form today, measured over
+  `git ls-files`, so the exclusion removes nothing from the measured population.
+- **The `coordinatorHoldAllowedMethods` tier-0 assertion was staged both here and in 0064's SPEC-2.**
+  0064 states that landing point in its §3.5, in SPEC-2, and in its own review record, so applying both
+  proposals would have added the gate twice, against this proposal's rule that no gate is staged twice.
+  The assertion was also absent from TOOL-1's gate list and from §11, so nothing here staged the file it
+  lands in. TEST-1 now records that SPEC-2 lands it alongside the identifier-resolution gate and that this
+  proposal stages no file for it.
+- **The `testdata/` exclusion left §3.3's copy invariant false and silently re-described N3.** §3.3 stated
+  that the design sections are carried over unchanged, while the exclusion added to §4.6's read domain and
+  to §4.7's residual scan appears in neither of the corresponding paragraphs of 0064, which is approved
+  and lands afterward. 0064 measures SPEC-4's Target and its §11 against its own narrower read domain, and
+  §4.6's sentence comparing the citation list to the naming list N3 states silently widened N3's list,
+  whose text names only the audit records, the planning documents, and the build and queue records. §3.3
+  now records the divergence, states that the two paragraphs here supersede their counterparts in 0064 so
+  that 0064's read-domain measurements are taken over the domain these gates scan, and fixes N3's
+  exclusion list to the superseded citation list plus the three build and queue records.
+
+### Pass 2 (2026-07-30, automated)
+
+- **No continuous-integration job installs the proto producer's codegen plugins, so the proto no-drift
+  test could not reach a conclusion where the gate is enforced.** `scripts/setup-dev.sh` is the only
+  installer of `protoc-gen-go` and `protoc-gen-go-grpc` in the tree, and nothing under `.github/` installs
+  either one, while `schemas/buf.gen.yaml` declares both as `local:` plugins resolved from `PATH`. Every
+  job that runs the static tier would therefore record the test as `UNVERIFIED`, which ends the run
+  non-zero (`cmd/lenny-test/cmd_run.go` line 428), leaves tier 0 red on every pull request, and verifies
+  `pkg/proto/` nowhere, so decision 3 and TOOL-1's "verified green" claim were false in the enforcing
+  environment. §4.6 and TOOL-1 now stage the plugin install in every job that runs the static tier, which
+  are the `static` and `pr-fast` jobs in `.github/workflows/pr.yml`, the gate job in
+  `.github/workflows/phase-gate.yml`, and the full-system load job in `.github/workflows/weekly.yml`, add
+  the pair to the shared tool list in `.github/workflows/reusable/tool-cache.yml`, and bump the
+  `~/go/bin` cache key to `lenny-go-bin-v3` so an exact hit on the existing key cannot skip the install.
+  TOOL-1's Target, TEST-1's proto paragraph, and §11 carry the workflow files.
+- **§5's row for a gate that never runs pointed at §6 cases that did not exist.** No per-gate case stated
+  that a run inspecting zero members fails, so an exclusion list or walk root that selected nothing left
+  every listed case passing and the gate green, which is the silent no-op §5 said was not accepted. §6 now
+  states a zero-inspection case for the residual gate, the change-graph completeness check, the citation
+  resolver, the line-citation ratchet, and the skip-reason classifier, matching the zero-output case the
+  proto no-drift test already carried, and §5 splits the row: the gate that inspects nothing fails and
+  names itself, while a gate absent from the registered list is covered by the gate-integrity meta-gate,
+  which §7 already assigns to 0064.
+- **No listed case pinned the passes' write exclusion, the one destructive path no gate observes.** The
+  excluded files sit outside the read domain of the resolver, the ratchet, and the residual scan, so a
+  pass that wrote one of them would corrupt a historical record with every gate green, and the population
+  is 1,831 matching lines in `BUILD-GAPS.md` and 48 in `TEST-GAPS.md` at commit `c7d0f7f8`, plus
+  `proposals/`, the two root planning documents, and the three build and queue records. Only the name pass
+  carried an exclusion case, and it covered the generated-file branch the existing no-drift tests already
+  catch. TEST-1 now states the rationale once and adds a write-exclusion case to each of the four passes,
+  each asserting that the excluded file is byte-identical after an applied run and appears in neither the
+  dry-run output nor the applied diff while an equivalent site in an ordinary carrier is rewritten, with
+  the line pass additionally covering a citation in a file the per-file generated-artifact rule selects
+  through its producer-output disjunct, which is `charts/lenny/crds/`. §5 records the boundary.
+- **Correction: the new zero-inspection case failed the residual gate on a class the migration empties.**
+  As first written, the case failed a run whose class predicate selected zero members, which is the
+  terminal state of every class whose members can leave it, so the reserved-phrase class would have turned
+  tier 0 red at the exit of the sub-step that empties it. That reading contradicted the in-class removal
+  case two sentences earlier, §5's row for a member leaving its class, and §4.7's statement that the route
+  out of a class is the pass or the remediation making every member stop matching. §6 now fails only a scan
+  that selects zero files over a tracked tree that is not empty, and states that a predicate selecting zero
+  members over a scan that did select files stays green unless the class's residual register still carries
+  an `in-class` entry. §5's row carries the same split.
+- **Correction: §5's write-exclusion row claimed per-group cases the added cases do not state.** The row
+  asserted a byte-identical case for each excluded file group, while the four cases name `proposals/`, the
+  two historical audit records, and the two root planning documents, with the three build and queue records
+  in the name and identifier passes alone. The claim was also false for the two citation registers, which
+  the identifier pass rewrites on a rename per §4.6. The row now states the groups the cases cover, records
+  the generated-artifact coverage in the name and line passes, and states that the citation registers and
+  `testdata/` carry no byte-identity assertion, with the reason for each.
+- **Correction: §11 staged a `~/go/bin` cache-key bump in two workflows that restore no such cache.**
+  `.github/workflows/phase-gate.yml` and `.github/workflows/weekly.yml` carry no `lenny-go-bin` key, and
+  their only `cache:` entries are `actions/setup-go`'s module cache, so two of the five files the bullet
+  listed had no edit to apply. §4.6 and TOOL-1 already named the three workflows that restore the key. §11
+  now splits the bullet into the plugin install across `pr.yml`, `phase-gate.yml`, `weekly.yml`, and
+  `reusable/tool-cache.yml`, and the key bump across `pr.yml`, `nightly.yml`, and
+  `reusable/tool-cache.yml`, and TOOL-1's Target states why `nightly.yml` is in the list.
+
+### Pass 3 (2026-07-30, automated)
+
+- **The staged workflow change installed two of the proto producer's four binaries, so the new test would
+  have recorded `UNVERIFIED` on every run of the three static-tier jobs that install nothing.** Only the
+  tier-0 `static` job in `.github/workflows/pr.yml` installs any tool; the `pr-fast` job (`pr.yml` lines 29
+  through 44), the gate job in `.github/workflows/phase-gate.yml` (lines 27 through 42), and weekly's
+  `load-full-system` job (`.github/workflows/weekly.yml` lines 91 through 105) run only checkout, setup-go,
+  a build, and a group whose plan opens with the static tier, so `buf` and `goimports` are absent from them
+  as well as the two plugins. Under §4.6's own rule the test would have recorded `UNVERIFIED` there, which
+  ends the run non-zero (`cmd/lenny-test/cmd_run.go` line 428) and leaves three of the four enforcing jobs
+  permanently red, a weaker outcome than the fail-open skip it replaces
+  (`cmd/lenny-test/cmd_run.go` lines 493 through 495 and 556 through 559). §4.6, TOOL-1, TEST-1's proto
+  paragraph, and §11 now stage the producer's whole binary set: the `static` job's existing install step
+  gains the two plugins, and the other three jobs gain the `~/go/bin` cache restore, a conditional install
+  of all four binaries, and the `Add tool bin to PATH` step that the `static` job already carries, with
+  `pr-fast`'s timeout raised from 5 minutes to the 10 the `static` job uses so a cold install fits.
+- **The `TESTING.md` enum widening was closed by review alone, with no test that fails when the documented
+  enum drifts from the emitted one.** TOOL-1 names the hazard, which is a CI consumer parsing
+  `tests/results/latest.json` against a stale §7 enumeration, and `.claude/rules/test-coverage.md` line 42
+  assigns documentation consistency to tier 11, where `tests/tier11_docs/backup_status_enum_test.go`
+  already reconciles a documented status enum against the constants the code emits and where tier-11 tests
+  already read `TESTING.md` directly. TEST-1 now adds `tests/tier11_docs/verdict_enum_test.go`, which
+  derives both value sets from those constant blocks and asserts each §7 sentence
+  enumerates every one of them, with a reject case over a fixture sentence missing a value. The §3.2 class
+  row, TEST-1's Target, and §11 carry the file.
+- **Correction: the new tier-11 test is red against today's `TESTING.md` for a reason predating this
+  proposal.** `statusInconclusive` is emitted for a tier whose failure `classifyInfraFailure` reclassifies
+  (`cmd/lenny-test/verdict.go` lines 236 and 237), while the §7 tier-status sentence enumerates `pass`,
+  `fail`, `skipped`, and `not-selected` alone (`TESTING.md` line 522) and the lowercase value appears
+  nowhere in the file. TOOL-1's amendment of that sentence now adds `inconclusive` alongside `unverified`,
+  so the test is green at the sub-step's exit under decision 3. TEST-1 and §11 state the same.
+- **Correction: §11's cache-key bullet still described the pre-fix staging of `phase-gate.yml` and
+  `weekly.yml`.** It stated that those two files "restore no tool cache", which the preceding bullet
+  contradicts, because the widened workflow change gives the phase-gate `gate` job and weekly's
+  `load-full-system` job a `~/go/bin` restore step, and §4.6 states that the three restore steps TOOL-1
+  adds use the `lenny-go-bin-v3` key. §11 now states that `pr.yml`, `nightly.yml`, and
+  `reusable/tool-cache.yml` are the files carrying an existing `lenny-go-bin-v2` key, and that the restore
+  steps added to `phase-gate.yml` and `weekly.yml` are authored at `lenny-go-bin-v3` from the start, so
+  neither carries a key to bump.
+- **Correction: §4.6's rewritten CI measurement cited `cmd/lenny-test/tiers.go` for a plan that file does
+  not hold.** Weekly's `load-full-system` job runs the `phase-13.5-gate` group
+  (`.github/workflows/weekly.yml` line 105), and `tiersForGroup` has no case for it, so the plan resolves
+  from `tests/groups.yaml` lines 359 through 362 through `tiersForGroupFromYAML`
+  (`cmd/lenny-test/tiers.go` line 240). The per-phase cases also run to line 233 rather than line 215,
+  which sits inside the `phase-15-gate` plan. §4.6 now cites each source against the job it covers. The
+  measured claim is unchanged, because the `phase-13.5-gate` selector is `tiers: [static]`.
+
+### Pass 4 (2026-07-30, automated)
+
+- **The three staged `~/go/bin` cache steps shared the `static` job's key while installing a narrower
+  binary set, so an exact-key hit would have skipped the only install of `gofumpt` and `golangci-lint` and
+  both tier-0 checks would have passed on their absence.** The `static` job's step is a read-write
+  `actions/cache` (`.github/workflows/pr.yml` lines 57 through 64) whose install step is conditional on
+  `cache-hit != 'true'` (line 66) and is the sole installer of `gofumpt` and `golangci-lint` (lines 68 and
+  70), and `static` runs after `pr-fast` in the same workflow (line 50). A `pr-fast`, phase-gate, or
+  weekly job saving a four-binary `~/go/bin` under the shared `lenny-go-bin-v3` key would therefore poison
+  it for `static`, and both checks return a nil error when their binary does not resolve
+  (`cmd/lenny-test/cmd_run.go` lines 537 through 540 and 577 through 579), so the tier would stay green
+  while `gofumpt` stopped reporting unformatted files and `golangci-lint` stopped surfacing findings. A
+  cache written on `main` by the phase-gate or weekly job is also readable from every pull-request branch.
+  §4.6, TOOL-1, and §11 now state that the three added steps use `actions/cache/restore` at the pinned
+  `actions/cache` commit and never write the key. Pass 5 records the second writer this bullet missed,
+  which is the `mutation` job in `.github/workflows/nightly.yml`, and the conversion that makes the
+  `static` job the sole writer of a directory carrying the full six-binary set. Restore-only was chosen
+  over a second key namespace and over installing all six binaries in three jobs that do not need the lint pair, because it keeps one cache key
+  for one concern and adds no parallel surface.
+
+### Pass 5 (2026-07-30, automated)
+
+- **The "the `static` job is the sole writer of the `~/go/bin` cache key" invariant was false, and the
+  staged key bump carried the second writer forward.** The `mutation` job in
+  `.github/workflows/nightly.yml` restores `~/go/bin` with a read-write `actions/cache` step
+  (lines 184 through 189) whose primary key string is byte-identical to the `static` job's
+  (`.github/workflows/pr.yml` lines 57 through 64), and the only binary it installs is `go-mutesting`
+  (lines 190 through 195). Bumping both to `lenny-go-bin-v3` empties the namespace and lets that job save
+  a one-binary `~/go/bin` under the shared key. Nightly runs on a schedule against the default branch
+  (lines 9 through 11) while `pr.yml` never runs on `main` (`.github/workflows/pr.yml` lines 9 through
+  12), so the `mutation` job would be the only writer of a `main`-scoped cache under that key, and a
+  `main`-scoped cache is restorable from every pull-request branch. A `static` job taking an exact hit on
+  it skips the sole install of `gofumpt`, `goimports`, `golangci-lint`, and `buf`, which is the fail-open
+  Pass 4 introduced restore-only to close, and after this proposal also leaves the proto no-drift test
+  without its four producer binaries, so the run records `UNVERIFIED` and exits non-zero
+  (`cmd/lenny-test/cmd_run.go` line 428). TOOL-1 now converts that step to `actions/cache/restore` at the
+  same pinned commit in the same change, which costs the `mutation` job nothing because its
+  `go-mutesting` install is already conditional on a cache miss and carries `continue-on-error: true`.
+  Conversion was chosen over a separate key namespace for the mutation job and over adding `go-mutesting`
+  to the `static` job's install set, because it applies the rule §4.6 already states, which is that only
+  the job installing the complete set writes the shared key, rather than adding a second key or a binary
+  three other jobs do not need. §4.6, TOOL-1, §9 Pass 4, and §11 now state the writer set that holds after
+  the change rather than asserting it already held, and §11 lists the nightly cache step as a staged
+  change rather than a key-bump-only file.
+- **The staged tier-11 verdict-enum test could not derive its value sets from the constants it cited.**
+  The cited precedent works because `tests/tier11_docs/backup_status_enum_test.go` is
+  `package tier11_docs_test` and imports the exported `pkg/ops/backup` constants
+  (lines 21 through 41, against `pkg/ops/backup/service.go` line 16). `cmd/lenny-test/verdict.go` declares
+  `package main` (line 3), which Go forbids importing, and every identifier in the two cited blocks is
+  unexported (lines 23 through 33), so the specified derivation does not compile. Parsing the file as
+  source text is the new machinery the paragraph said was unnecessary, and restating the values
+  reintroduces the drift the test exists to catch. TOOL-1 now moves both blocks into a new exported
+  `cmd/lenny-test/verdictstatus` package and updates the callsites in `cmd/lenny-test/verdict.go` and
+  `cmd/lenny-test/cmd_run.go`, which are the only two files referencing them, and TEST-1 states that the
+  tier-11 test imports that package. The move was chosen over source parsing because
+  `cmd/lenny-ctl/runtimescaffold` is the in-tree pattern for an ordinary sub-package under `cmd/` that
+  `pkg/` and tests import (`pkg/ctlcli/runtime.go` line 15 and
+  `tests/tier3_contract/sdks/runtime_sdk_test.go` line 38), so it extends an existing surface instead of
+  adding a parallel one. §3.2's class row, TEST-1, and §11 carry the new package.
+- **Correction: the bullet above cited §3.4 for a row this document carries in §3.2.** The class row
+  naming `cmd/lenny-test/verdictstatus` is the `TESTING.md` contract-prose row inside `### 3.2 The
+  migration is script-driven`. This proposal has no §3.4, and the §3.3 cross-reference key maps only
+  SPEC-1 through SPEC-4, §3.5, §4.8, and §28.1 through §28.5, so a bare §3.4 resolved to nothing in
+  either document. The bullet now cites §3.2, matching the Pass 3 bullet that records the same row.
+- **Correction: TOOL-1's Target listed `nightly.yml` for the cache key alone, after this pass gave
+  TOOL-1 a second edit in that file.** §4.6, TOOL-1's body, and §11 all state that the `mutation` job's
+  read-write `actions/cache` step becomes `actions/cache/restore` at the same pinned commit, so an
+  implementor working from the Target's enumeration would have bumped the key and left the second writer
+  in place, which is the fail-open this pass exists to close. The Target now names both edits.
+
+### Pass 6 (2026-07-30, automated)
+
+- **The `testdata/` exclusion was not carried into N3, so the naming lint and the identifier-resolution
+  gate read fixture files no pass could write.** §4.6 states that `testdata/` sits outside the read domain
+  of the resolver, the ratchet, and the residual scan, and outside the write domain of every pass, and §5
+  repeats it, while §3.3 recorded the divergence from 0064 as covering two paragraphs and then fixed N3's
+  list as carrying no `testdata/` clause. N3's list in 0064 is the one the name pass, the identifier pass,
+  the naming lint, and the identifier-resolution gate all read, so the two statements left the same two
+  passes with incompatible write domains. Under §3.3's reading the name pass could not write the tracked
+  Go fixture TEST-1 stages for its Go-doc-comment case, while 0064's naming lint reads a Go doc comment in
+  any tracked Go file, which is the writerless-site failure N3's exclusion paragraph exists to prevent;
+  the same split applied to the identifier pass and its retired-spelling fixtures. §3.3 now records three
+  diverging passages and states that the `testdata/` exclusion extends N3's list as well, so all four
+  surfaces exclude `testdata/` and 0064's rule that every file those gates read has a pass that can write
+  it still holds. Extending the exclusion was chosen over holding the fixtures in a carrier outside N3's
+  domain, because §4.7 already requires that a class's residual scan range over the same domain as that
+  class's pass and gates, and a `.go.txt` carrier would put the name pass's Go-doc-comment case on a
+  surface the pass does not otherwise meet. §3.3 also records that no tracked `testdata/` file carries a
+  bare reserved phrase or a retired channel spelling today, measured over `git ls-files`, so the extension
+  removes nothing from the population SPEC-1 and SPEC-2 measure, and the sentence comparing the citation
+  list with the naming list now names the three build and queue records as the difference.
 
 ## 10. Open decisions for review
 
@@ -1290,7 +1752,38 @@ None.
   proposal seeds, which are the line-citation baselines, the citation-resolution baseline, the
   change-graph coverage register, the skip-reason register, and the residual registers for the classes
   this proposal seeds.
+- A `testdata/` fixture directory beside each of `scripts/specshift`, `cmd/lenny-test`, and
+  `tests/tier0_static/`, new, carrying the retired citation, anchor, and reserved-phrase text the gate
+  cases present verbatim, which §4.6 places outside every gate's read domain and every pass's write
+  domain, and carrying the fixture tree of excluded paths each pass's write-exclusion case runs against.
 - `tests/change-graph.json` and `tests/change-graph-pending.txt`, for the completeness check's baseline.
 - `TESTING.md`, for the §7 verdict-enum sentence, the §7 `tiers.<name>.status` enum sentence, and the
   §21.3 infrastructure-failure sentence, which the `UNVERIFIED` verdict state and the `unverified` tier
-  status make false.
+  status make false, with the tier-status sentence also gaining the `inconclusive` value the harness
+  already emits.
+- `cmd/lenny-test/verdictstatus`, new, holding the §7 verdict and tier-status constants as exported
+  identifiers moved out of `cmd/lenny-test/verdict.go`, with the callsites in `cmd/lenny-test/verdict.go`
+  and `cmd/lenny-test/cmd_run.go` updated, so that a tier-11 test can import them.
+- `tests/tier11_docs/verdict_enum_test.go`, new, reconciling both amended §7 sentences against the verdict
+  and tier-status constants it imports from `cmd/lenny-test/verdictstatus`.
+- `.github/workflows/pr.yml`, `.github/workflows/phase-gate.yml`, `.github/workflows/weekly.yml`, and
+  `.github/workflows/reusable/tool-cache.yml`, so that every job running the static tier carries the proto
+  producer's four binaries. The `static` job in `pr.yml` gains `protoc-gen-go` and `protoc-gen-go-grpc` in
+  its existing install step, the `pr-fast` job in `pr.yml`, the gate job in `phase-gate.yml`, and the
+  full-system load job in `weekly.yml` each gain a restore-only `~/go/bin` cache step
+  (`actions/cache/restore`), a conditional install of
+  `buf`, `goimports`, `protoc-gen-go`, and `protoc-gen-go-grpc`, and an `Add tool bin to PATH` step, with
+  `pr-fast`'s timeout raised from 5 minutes to 10, and the shared tool list in `reusable/tool-cache.yml`
+  gains the two plugins in its `buf` group. The three added steps do not write the `lenny-go-bin-v3` key,
+  per §4.6.
+- `.github/workflows/nightly.yml`, whose `mutation` job restores `~/go/bin` with a read-write
+  `actions/cache` step under a key string byte-identical to the `static` job's while installing
+  `go-mutesting` alone (lines 184 through 195). That step becomes `actions/cache/restore` at the same
+  pinned commit, which leaves the `static` job the sole writer of a directory that also carries `gofumpt`
+  and `golangci-lint`, per §4.6. The job's `go-mutesting` install is already conditional on a cache miss,
+  so it re-runs whenever the restore misses.
+- `.github/workflows/pr.yml`, `.github/workflows/nightly.yml`, and
+  `.github/workflows/reusable/tool-cache.yml`, for the `lenny-go-bin-v2` to `lenny-go-bin-v3` cache-key
+  bump that stops an existing cache from skipping the install. Those three are the workflows that carry an
+  existing `lenny-go-bin-v2` key. The restore steps this proposal adds to `phase-gate.yml` and
+  `weekly.yml` are authored at `lenny-go-bin-v3` from the start, so neither file carries a key to bump.
