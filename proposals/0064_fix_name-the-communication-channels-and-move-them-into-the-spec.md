@@ -282,7 +282,7 @@ from the source the passes rewrite rather than edited, and its gate is the exist
 | Regeneration of a derived artifact whose source the passes rewrite | the generated-artifact denylist in `scripts/specshift` | `make generate`, `make generate-proto`, `go generate ./pkg/gateway/mcpfabric/mcptools/...`, `go run ./cmd/lenny-chart-schema-gen`, `go run ./cmd/lenny-ocsf-mapping-gen`, the hand-applied CRD post-generation re-application, and the chart-to-embedded CRD re-copy, run as the exit criterion of the pass that touched the source | `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4`, `TestEmbeddedCRDsAreCopiesOfChartManifests_spec_10_437`, `TestEmbeddedCRDsCarrySchemaVersionAnnotation_spec_10_437`, `TestEmbeddedCRDsPreserveUnknownFields_spec_10_437`, the new tier-0 proto no-drift test, `TestGeneratedSchemasMatchOpenAPI_spec_15_2_1_1386`, `TestGeneratedToolsMatchOpenAPI_spec_25_12`, `TestSchemaIsCommitted_spec_17_6_655`, and `TestMappingYAMLInSync`, each of which fails on drift between a derived file and its source |
 | Specification prose, heading slugs, and intra-spec links pinned as Go string literals in a `tests/tier11_docs/` reconciliation test | the register of every Go string literal under `tests/tier11_docs/` that names a spec heading slug, an intra-spec markdown link, or pinned spec prose, which includes but is not limited to the `specSection`, `requireLine`, and `requireAllContain` literals | the `specshift` name pass and the reduction sub-steps, extended to those literals | tier 11, run as the exit criterion of every sub-step that edits pinned prose |
 | Specification index entries in `spec/README.md` | the `## N` and `### N.M` headings under `spec/`, the deeper headings the index already carries, and the §28.5 card headings | hand-authored in the same change as the heading | the heading walker, which fails an in-scope heading with no index entry whose anchor resolves |
-| Test-harness contract prose in `TESTING.md` that enumerates a value the tooling changes, which is every §7 field-semantics sentence closing an enum the producer widens plus the §21.3 infrastructure-failure sentence | the `UNVERIFIED` verdict state and the `unverified` tier status proposal 0065 adds | hand-authored in the same change as the constant, because no substitution rule produces the sentence | review, because no gate reads a prose enumeration; those sentences are outside every pass's scope even though the rest of the file is not, and proposal 0065 names them and the change that stages them |
+| Test-harness contract prose in `TESTING.md` that enumerates a value the tooling changes, which is every §7 field-semantics sentence closing an enum the producer widens plus the §21.3 infrastructure-failure sentence | the `UNVERIFIED` verdict state and the `unverified` tier status proposal 0065 adds | **not staged here.** Proposal 0065 hand-authors these sentences in the same change as the constant that falsifies them, so this proposal neither restates nor re-edits them; its own `TESTING.md` edits are the reserved-phrase and retired-identifier sites its passes rewrite | proposal 0065, whose review closes them |
 | Reserved noun phrases and retired channel identifiers in the tracked root-level contract documents `README.md` and `TESTING.md` | `tests/registers/reserved-phrase-senses.yaml` and `tests/registers/identifier-senses.yaml`, on the same per-occurrence terms as the `spec/` and `docs/` sites | the `specshift` name and identifier passes, whose walk covers tracked root-level markdown under the exclusion list N3 states | the naming lint and the identifier-resolution gate, whose scope is the same walk, so the gate that reads the whole tree has a pass that can write every file it reads |
 | Correcting a description the collision made wrong | `tests/registers/reserved-phrase-senses.yaml` | hand-authored | review, because no gate reads meaning; the naming lint and the identifier gate both pass a semantically wrong sentence that carries a canonical spelling |
 | A sentence that a reduction falsifies, where no pass repairs its meaning, because the sentence carries no line citation and no moved anchor, and any reserved phrase it carries is rewritten to the current spelling while the false statement stands | the reductions SPEC-3 lands | hand-authored in the same change as the reduction, and enumerated there; the members are the `spec/15` §15.3, §15.4.5, and `MessageEnvelope` sentences, the two §15.7 platform-MCP-tool sentences, the six §15.4.4 pseudocode comments that cite the retired §15.4.1 in the spelled-out `Section 15.4.1` form the anchor pass does not read, the `spec/21_planned-post-v1.md` line 31 link label that names the retired §15.4.1 in the same spelled-out form while its target anchor survives, the three shipped schema descriptions, the `docs/api/internal.md` binary-protocol pointer, the two `schemas/README.md` artifact-table rows, and the ten pointers that name §4.7 as the owner of relocated intra-pod material, nine of them `spec/` and `docs/` sentences, one of those nine being the §15.7 graceful-shutdown bullet, and the tenth the pair of `schemas/lenny-adapter.proto` comments on the intra-pod handshake, all of which SPEC-3 lists | review, plus the tier-11 successor-pointer check where the rewritten sentence names a successor heading |
@@ -381,8 +381,16 @@ The rules below are normative in §28.1.
   `BUILD-GAPS.md` and `TEST-GAPS.md`, the two root planning documents, and the build and queue records
   `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, excluded in the same way `proposals/` is,
   because each records findings, plans, and decisions as they were written rather than the current
-  contract. That exclusion list is the one the name pass, the identifier pass, the naming lint, and the
-  identifier-resolution gate all read, so every file those gates read has a pass that can write it. A
+  contract. Every `testdata/` directory is excluded as well, in the same way and for a different reason:
+  a fixture exists to carry the form its gate rejects, so a fixture holding a bare reserved phrase or a
+  retired identifier is correct rather than a violation, and a matcher that reads it reports the gate's own
+  test data as a defect. The exclusion is stated here rather than per-gate because it has to hold on both
+  sides at once. That exclusion list is the one the name pass, the identifier pass, the naming lint, and the
+  identifier-resolution gate all read, so every file those gates read has a pass that can write it, and a
+  `testdata/` fixture inside the lint's read domain but outside every pass's write domain is exactly the
+  writerless site this rule exists to prevent. No tracked `testdata/` file carries a bare reserved phrase
+  or a retired channel spelling today, measured over `git ls-files`, so the exclusion removes nothing from
+  the population SPEC-1 and SPEC-2 measure and no exit criterion below moves. A
   markdown anchor identifier is outside the reserved-phrase matcher in both spellings: a kramdown `{: #id }`
   attribute value and the fragment of an intra-repo markdown link are addressable link targets rather than
   prose, and rewriting one breaks every inbound link, including the untracked links this repository cannot
@@ -900,9 +908,12 @@ reproduces it before invoking `buf` (`Makefile` line 94, with `GOPATH_BIN` defin
 plugins, which `buf generate` resolves from `PATH`, and `scripts/setup-dev.sh` lines 390 and 391 install
 both into `GOPATH/bin` while `buf` itself is installed as a system package at line 308. The producer
 therefore depends on four external binaries, which are `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, and
-`goimports`, and the absence of any one of them is the condition TEST-1 requires the test to record as
-`UNVERIFIED`. Without the prepend, a tree whose plugins live only in `GOPATH/bin` would fail the test
-while `make generate-proto` succeeds there.
+`goimports`, and the absence of any one of them is the condition proposal 0065 requires the test to record
+as `UNVERIFIED`. Without the prepend, a tree whose plugins live only in `GOPATH/bin` would fail the test
+while `make generate-proto` succeeds there. The test, its cases, and the workflow changes that install
+those binaries in the enforcing environment are all built by proposal 0065; this paragraph states the
+producer's dependency because the regeneration §4.6 requires of a pass that rewrites a `.proto` source is
+what makes the test an exit criterion of the sub-steps below.
 
 ### 4.7 Measured populations, and the residual that catches what they miss
 
@@ -2919,7 +2930,15 @@ sense passes, with the cloud-storage prose at `spec/17_deployment-topology.md` l
 command arguments at lines 1490 and 1509 as the worked cases; a bare reserved noun phrase in each of the
 other domains N3 names fails, which is a `docs/` page, a `description` string in a `schemas/` JSON
 document, a Go doc comment, and `README.md` or `TESTING.md`; an occurrence in a file the N3 exclusion list
-names does not fail; the normative statement of N3 in `spec/28_communication-channels.md` passes, because
+names does not fail; a markdown anchor identifier passes in both of the forms N3 places outside the
+matcher, which are the kramdown `{: #id }` attribute at `docs/reference/glossary.md` line 207 and the
+same-page fragment link at `docs/api/internal.md` line 229, and this case is required rather than
+incidental because the anchor identifier carries the hyphenated compound spelling verbatim, so a matcher
+built to the compound case above and to no exclusion fails on a site the naming law exempts; a site under
+any `testdata/` directory passes, including a fixture that carries a bare reserved phrase in either
+spelling in order to exercise a gate that rejects it, because a matcher that reads a fixture reports the
+gate's own test data as a defect and puts that file inside the lint's read domain while every pass's write
+domain excludes it; the normative statement of N3 in `spec/28_communication-channels.md` passes, because
 it describes the two banned spellings rather than quoting them and no exclusion covers the file that
 states the rule; and a run that matches zero sites on a tree seeded with a known violation fails
 rather than reporting green.
@@ -5802,16 +5821,19 @@ question, and the re-review that follows treats them as closed.
   and the gates whose route to green is one of its content changes. `scripts/specshift` and `cmd/lenny-test`
   are read and run rather than written here: proposal 0065 builds them, and this proposal invokes the
   passes and adds entries to the registers they consume.
-- `TESTING.md`, for the §7 verdict-enum sentence at line 521, the §7 `tiers.<name>.status` enum sentence
-  at line 522, and the §21.3 infrastructure-failure sentence at line 2572, which the
-  `UNVERIFIED` verdict state and the `unverified` tier status make false, hand-authored in the same change
-  as the constant; for the
+- `TESTING.md`, for the
   retired identifier spellings at line 1996, which is the socket token in the Full-level conformance
   battery, and at line 1521, which is the schema path, the example-fixture glob, and the validating test
   name of the runtime-ops event schema; and for the reserved bare phrase at lines
   788, 858, 874, 993, 1315, 1527, 1972, 1996, and 2248, rewritten by script. Those nine lines are the same
   population SPEC-2 enumerates and the same count this section states above, and the two identifier lines
-  are the population SPEC-2 enumerates for the identifier pass.
+  are the population SPEC-2 enumerates for the identifier pass. The §7 verdict-enum sentence, the §7
+  `tiers.<name>.status` enum sentence, and the §21.3 infrastructure-failure sentence are **not** edited
+  here. Proposal 0065 hand-authors all three in the same change as the `UNVERIFIED` constant that falsifies
+  them, and it also gives the tier-status sentence the `inconclusive` value the harness already emits, so
+  restating them here would stage the same edit twice and risk reverting that addition. The line numbers
+  above are measured against the current file and shift once those edits land, which is immaterial because
+  the passes that rewrite these sites resolve them from their registers rather than from a line.
 - `README.md`, for the reserved bare phrase in the integration-level table at line 155, rewritten by
   script.
 - `.claude/rules/channel-naming.md`, new: N1 through N8, plus the two banned spellings verbatim as the

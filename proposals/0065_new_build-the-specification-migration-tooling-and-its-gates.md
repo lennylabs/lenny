@@ -145,9 +145,11 @@ follows.
 A reference of the form `§X lines N-M` inside a quoted or illustrative citation is an example of the
 citation form under discussion rather than a cross-reference, and is left as written.
 
-Three passages diverge from 0064. The read exclusion §4.6 states and the residual scan's first exclusion
+Two passages diverge from 0064. The read exclusion §4.6 states and the residual scan's first exclusion
 §4.7 states both exclude every `testdata/` directory here, and the corresponding paragraphs in 0064 do
-not. The third is N3's exclusion list in 0064, which the same clause extends: every `testdata/` directory
+not. N3's exclusion list is no longer among them: 0064 now states the same `testdata/` clause directly, so
+the two documents agree on it and no supersession is needed. The clause carries the same meaning in both,
+which is that every `testdata/` directory
 is outside the domain of the name pass, the identifier pass, the naming lint, and the
 identifier-resolution gate alike, so N3's rule that every file those gates read has a pass that can write
 it still holds, and the reserved-phrase and retired-identifier fixtures TEST-1 places under `testdata/`,
@@ -156,14 +158,15 @@ Without that extension the fixtures TEST-1 stages for the name pass's Go-doc-com
 the naming lint's read domain and outside the name pass's write domain, which is the condition N3 exists
 to prevent. No tracked `testdata/` file carries a bare reserved phrase or a retired channel spelling
 today, measured over `git ls-files`, so the extension removes nothing from the population SPEC-1 and
-SPEC-2 measure. The three paragraphs in this proposal supersede those in 0064, because the gates are built
+SPEC-2 measure, and 0064 states the same measurement for the same reason. The two paragraphs in this
+proposal supersede those in 0064, because the gates are built
 here and the exclusion is what lets their own fixtures carry the retired form. Every measurement 0064
 states against the read domain, including SPEC-4's Target and its zero exit criterion, is therefore
 measured over the domain the gates this proposal builds actually scan. One sentence in §4.6 depends on
 that supersession: where it says the citation list is narrower than the naming list N3 states, the
 citation list it compares against is the superseded one, and the two lists differ in the three build and
 queue records `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md` rather than in the `testdata/`
-clause, which the supersession puts in both.
+clause, which both documents now state.
 
 Nothing in this proposal is blocked on any of those. Each pass is built and tested against fixtures in its
 own test file, and each gate this proposal lands is green on the unmodified tree or against a baseline
