@@ -126,9 +126,14 @@ on them rather than as an attempt at enumeration.
 
 ### 3.3 How this document refers to proposal 0064
 
-The design sections and the staged changes below are the tooling half of 0064, carried over with one
-recorded divergence, so that the rewrite each pass performs and the population each gate measures are
-stated in the same words in both documents. That text refers to the four specification sub-steps of 0064 by their labels, and to
+The design sections and the staged changes below are the tooling half of 0064, carried over
+unchanged, so that the rewrite each pass performs and the population each gate measures are
+stated in the same words in both documents. Adversarial review then extended §4.6 here with the toolchain
+and workflow material the proto no-drift test needs in order to reach a conclusion in the enforcing
+environment. That material has no counterpart in 0064, which builds neither the test nor the workflow
+steps, so it adds to the carried text rather than diverging from it: every statement the two documents
+share, including the read exclusion, the residual scan's exclusions, and every population either measures,
+is stated identically in both. That text refers to the four specification sub-steps of 0064 by their labels, and to
 sections of 0064 by number. Those references are to the other document throughout, and they resolve as
 follows.
 
@@ -145,28 +150,18 @@ follows.
 A reference of the form `§X lines N-M` inside a quoted or illustrative citation is an example of the
 citation form under discussion rather than a cross-reference, and is left as written.
 
-Two passages diverge from 0064. The read exclusion §4.6 states and the residual scan's first exclusion
-§4.7 states both exclude every `testdata/` directory here, and the corresponding paragraphs in 0064 do
-not. N3's exclusion list is no longer among them: 0064 now states the same `testdata/` clause directly, so
-the two documents agree on it and no supersession is needed. The clause carries the same meaning in both,
-which is that every `testdata/` directory
-is outside the domain of the name pass, the identifier pass, the naming lint, and the
-identifier-resolution gate alike, so N3's rule that every file those gates read has a pass that can write
-it still holds, and the reserved-phrase and retired-identifier fixtures TEST-1 places under `testdata/`,
-including the ones a tracked Go file carries in a doc comment, are read by no gate and written by no pass.
-Without that extension the fixtures TEST-1 stages for the name pass's Go-doc-comment case would sit inside
-the naming lint's read domain and outside the name pass's write domain, which is the condition N3 exists
-to prevent. No tracked `testdata/` file carries a bare reserved phrase or a retired channel spelling
-today, measured over `git ls-files`, so the extension removes nothing from the population SPEC-1 and
-SPEC-2 measure, and 0064 states the same measurement for the same reason. The two paragraphs in this
-proposal supersede those in 0064, because the gates are built
-here and the exclusion is what lets their own fixtures carry the retired form. Every measurement 0064
-states against the read domain, including SPEC-4's Target and its zero exit criterion, is therefore
-measured over the domain the gates this proposal builds actually scan. One sentence in §4.6 depends on
-that supersession: where it says the citation list is narrower than the naming list N3 states, the
-citation list it compares against is the superseded one, and the two lists differ in the three build and
-queue records `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md` rather than in the `testdata/`
-clause, which both documents now state.
+The `testdata/` exclusion this proposal's §4.6 and §4.7 state, and the same clause in N3, are stated
+identically in 0064, so the two documents carry one domain rather than two readings of one. That
+matters because the gates read a single domain: every case here that must quote the retired citation
+form, a retired anchor, or a reserved noun phrase verbatim holds it in a `testdata/` fixture the
+test reads rather than in a Go string literal, so the quoted spellings do not enter the resolver's
+baseline, do not raise a per-file ratchet count, and are not reported as residuals. A fixture in the
+test source would fail all three, because the fixture files are new and are therefore absent from
+the baselines this proposal seeds from today's measured population, and those baselines are
+rewritten downward only. No tracked `testdata/` file carries a bare reserved phrase, a retired
+channel spelling, a retired citation, or a retired anchor today, measured over `git ls-files`, so
+the exclusion removes nothing from any population either document measures and no exit criterion in
+either moves.
 
 Nothing in this proposal is blocked on any of those. Each pass is built and tested against fixtures in its
 own test file, and each gate this proposal lands is green on the unmodified tree or against a baseline

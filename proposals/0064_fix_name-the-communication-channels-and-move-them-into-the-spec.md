@@ -538,10 +538,13 @@ That exclusion list has two levels, because a pass writes and a gate only reads.
 the resolver and the ratchet share, is `proposals/`, the historical audit records `BUILD-GAPS.md` and
 `TEST-GAPS.md`, the two root planning documents `gateway-runtime-comms.md` and
 `gateway-runtime-comms-remediation.md`, and the two citation registers the two gates themselves consume,
-`tests/registers/line-citation-resolution.yaml` and `tests/registers/line-citations.yaml`. The first four
+`tests/registers/line-citation-resolution.yaml` and `tests/registers/line-citations.yaml`, and every
+`testdata/` directory. The first four
 groups are excluded for the reason N3 gives, which is
 that they record findings as they were written rather than the current contract. The two registers are
-excluded because a gate cannot read its own baseline as tree content. The resolution baseline is keyed by
+excluded because a gate cannot read its own baseline as tree content. Every `testdata/` directory is
+excluded for the fixture reason N3 gives, which is that a fixture exists to carry the form its gate
+rejects, so a gate that read its own test data would report it as a defect. The resolution baseline is keyed by
 file and citation text, so it holds a copy of the text of every non-resolving citation in the tree. Inside
 the resolver's read domain each copy is a second occurrence of that citation, filed under the register's
 own path rather than under the file the citation was written for, and it is non-resolving by construction,
@@ -947,7 +950,9 @@ member and its class. Its read domain is stated rather than left to the implemen
 whose domain is the whole tree cannot land green. The residual scan reads a tracked file unless one of
 three exclusions covers it. The first is the read exclusion §4.6 states, which is `proposals/`, the
 historical audit records `BUILD-GAPS.md` and `TEST-GAPS.md`, and the two root planning documents
-`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, excluded for the reason N3 gives.
+`gateway-runtime-comms.md` and `gateway-runtime-comms-remediation.md`, excluded for the reason N3 gives,
+together with every `testdata/` directory, excluded for the fixture reason §4.6 states, so the residual
+scan does not report a gate's own fixture as an unclassified member of the class that fixture exercises.
 The second applies to the reserved-phrase class and the identifier class, whose scan additionally excludes
 the root-level records N3 names, `BUILD-PLAN.md`, `BUILD-PROGRESS.md`, and `PROPOSAL-QUEUE.md`, so the
 residual scan for a class ranges over the same domain as that class's pass and gates. The third is every
