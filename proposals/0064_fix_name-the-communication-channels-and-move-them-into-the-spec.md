@@ -1,7 +1,8 @@
 # Proposal: Name the communication channels, move their contract into the specification, and rewrite every reference by script
 
-- **Status:** **Verified (2026-07-29). Converged after 15 adversarial review rounds (36 findings fixed);
-  awaiting sign-off.** The decisions the earlier sign-off ratified are unchanged and still stand as
+- **Status:** **Approved (2026-07-30) by jaf sign-off.** Verified (2026-07-29), converged after 15
+  adversarial review rounds (36 findings fixed) across 3 full-pool sweeps, the certifying sweep running
+  every lens complete with zero confirmed findings. The decisions the earlier sign-off ratified are unchanged and still stand as
   staged: the tooling ships in this proposal rather than as its own; the wire-contract rename is in scope
   now, accepting that it breaks the runtime author contract, because deferring it costs more with every
   later step that lands first; and `spec/29` is a separate file from `spec/28`. The §28 and §29 line
