@@ -793,3 +793,102 @@ func TestValidateChangeGraphCompletenessUntrackedSourceTreeFails(t *testing.T) {
 	trackChangeGraphSources(t, root, "tests/harness/harness.go")
 	expectPass(t, runChangeGraphCompleteness(root))
 }
+
+// renameChangeGraphSource moves a tracked source path within the root
+// and stages the move, which is what an identifier pass does to a file
+// it renames.
+func renameChangeGraphSource(t *testing.T, root, from, to string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, to)), 0o755); err != nil {
+		t.Fatalf("mkdir for %s: %v", to, err)
+	}
+	cmd := exec.Command("git", "mv", from, to)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git mv %s %s: %v: %s", from, to, err, out)
+	}
+}
+
+// TestValidateChangeGraphCompletenessSurvivesRename pins the coverage
+// baseline to directory prefixes rather than file paths. A pass that
+// renames a source file inside a baselined directory leaves the check
+// green: the file has no glob key to re-key (that is why it is in the
+// baseline at all), and the baseline is rewritten downward only, so a
+// file-keyed entry would leave the renamed path covered by nothing with
+// no route back to green.
+func TestValidateChangeGraphCompletenessSurvivesRename(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/lifecyclechannel.go"}, nil, []string{"pkg/adapter/"})
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	renameChangeGraphSource(t, root,
+		"pkg/adapter/lifecyclechannel.go", "pkg/adapter/lifecycle_channel.go")
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "pkg/adapter/" {
+		t.Fatalf("the rename disturbed the baseline: %v", prefixes)
+	}
+
+	// A file-keyed entry does not survive the same move, which is why the
+	// baseline is seeded by directory.
+	root = changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/lifecyclechannel.go"}, nil,
+		[]string{"pkg/adapter/lifecyclechannel.go"})
+	expectPass(t, runChangeGraphCompleteness(root))
+	renameChangeGraphSource(t, root,
+		"pkg/adapter/lifecyclechannel.go", "pkg/adapter/lifecycle_channel.go")
+	expectFail(t, runChangeGraphCompleteness(root), "pkg/adapter/lifecycle_channel.go")
+}
+
+// TestValidateChangeGraphCompletenessKeepsNestedPrefixes pins the
+// attribution rule when a baselined directory sits inside another one:
+// each path counts against the longest prefix that covers it, so the
+// nested prefix keeps matching and survives the run. Attributing the
+// nested path to its ancestor would retire the nested prefix on the
+// first run, and the rewrite is one-way, so the surviving exemption
+// would silently widen to the whole ancestor directory.
+func TestValidateChangeGraphCompletenessKeepsNestedPrefixes(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"cmd/lenny-ctl/main.go", "cmd/lenny-ctl/runtimescaffold/probe.go"},
+		nil,
+		[]string{"cmd/lenny-ctl/", "cmd/lenny-ctl/runtimescaffold/"})
+
+	r := runChangeGraphCompleteness(root)
+	expectPass(t, r)
+	if strings.Contains(r.detail, "retired") {
+		t.Errorf("a run over an unchanged tree retired a prefix: %s", r.detail)
+	}
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 2 {
+		t.Fatalf("expected both prefixes to survive, got %v", prefixes)
+	}
+}
+
+// TestChangeGraphCoverageBaselineEntriesAreDirectories pins the seeded
+// baseline in tree to directory prefixes. A file-keyed entry covers one
+// path and nothing else, so any rename of that file fails the check with
+// no route to green, because the entry names no glob key to rewrite and
+// the baseline is never grown.
+func TestChangeGraphCoverageBaselineEntriesAreDirectories(t *testing.T) {
+	prefixes, err := readChangeGraphCoverageBaseline(
+		filepath.Join(repoRoot(), changeGraphCoverageBaseline),
+	)
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) == 0 {
+		t.Fatal("the seeded baseline carries no prefixes")
+	}
+	for _, p := range prefixes {
+		if !strings.HasSuffix(p, "/") {
+			t.Errorf("baseline entry %q is not a directory prefix", p)
+		}
+	}
+}

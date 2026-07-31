@@ -374,7 +374,12 @@ var (
 // or an ancestor directory of it, or when a prefix in
 // tests/registers/change-graph-coverage.yaml matches it. The baseline
 // carries the population that was already unmapped when the check
-// landed. It is rewritten downward only: a path that gains a glob key,
+// landed, keyed by directory prefix rather than by file path: an
+// identifier pass that renames a file inside a baselined directory has
+// no glob key to re-key for it, and a file-keyed entry would leave the
+// renamed path covered by nothing while the downward-only rewrite has
+// no way to accept the new name. It is rewritten downward only: a path
+// that gains a glob key,
 // or that leaves the tree, drops out of the baseline in the same run,
 // and the check never adds an entry, so an uncovered path that a later
 // change creates fails until the change graph gains its key.
@@ -471,11 +476,23 @@ func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	}
 	keys := make(map[string]bool, len(doc.Globs))
 	for key := range doc.Globs {
-		probe := strings.TrimSuffix(key, "/...")
-		probe = strings.TrimSuffix(probe, "/")
-		keys[probe] = true
+		keys[changeGraphGlobPrefix(key)] = true
 	}
 	return keys, nil
+}
+
+// changeGraphGlobPrefix normalizes a change-graph glob key to the path
+// prefix it names, stripping a trailing `/...` (Go-style recursive) or
+// `/` (directory hint). It is the one reading of a key the tree has:
+// the completeness check below treats the result as coverage, and
+// tiersForChangedPath resolves a changed path against the same result.
+// The two must agree, because a key this function accepted as coverage
+// while the selector matched nothing would certify a path for which
+// `--changed` selects no tiers, which is the fail-open outcome the
+// completeness check exists to prevent.
+func changeGraphGlobPrefix(key string) string {
+	key = strings.TrimSuffix(key, "/...")
+	return strings.TrimSuffix(key, "/")
 }
 
 // coveredByChangeGraphGlob reports whether a glob key names the path or
@@ -493,15 +510,31 @@ func coveredByChangeGraphGlob(path string, keys map[string]bool) bool {
 // path. A prefix ending in `/` matches every path beneath it; any other
 // prefix matches the path it names and any path that continues past a
 // path separator.
+//
+// When several prefixes match, the longest one wins. The baseline holds
+// a directory prefix for each directory that carried an unmapped path,
+// so a nested directory is covered by its own prefix as well as by its
+// ancestor's. Attributing the path to the ancestor would leave the
+// nested prefix matching nothing, and the downward rewrite would retire
+// it on the first run, irreversibly widening the remaining exemption to
+// the ancestor directory.
 func matchingCoveragePrefix(path string, prefixes []string) (string, bool) {
+	best := ""
 	for _, prefix := range prefixes {
-		if path == prefix ||
-			(strings.HasSuffix(prefix, "/") && strings.HasPrefix(path, prefix)) ||
-			strings.HasPrefix(path, prefix+"/") {
-			return prefix, true
+		if coveragePrefixMatches(path, prefix) && len(prefix) > len(best) {
+			best = prefix
 		}
 	}
-	return "", false
+	return best, best != ""
+}
+
+// coveragePrefixMatches reports whether one baseline prefix covers the
+// path.
+func coveragePrefixMatches(path, prefix string) bool {
+	if path == prefix || strings.HasPrefix(path, prefix+"/") {
+		return true
+	}
+	return strings.HasSuffix(prefix, "/") && strings.HasPrefix(path, prefix)
 }
 
 // changeGraphCoverageDoc is the baseline's schema. The file is a
@@ -560,12 +593,14 @@ func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
 	b.WriteString("#\n")
 	b.WriteString("# Change-graph coverage baseline.\n")
 	b.WriteString("#\n")
-	b.WriteString("# Every tracked source path listed here was already covered by no\n")
-	b.WriteString("# glob key in tests/change-graph.json when the completeness check in\n")
-	b.WriteString("# cmd/lenny-test/cmd_validate.go landed. The check rewrites this file\n")
-	b.WriteString("# downward: a path that gains a glob key drops out on the next run,\n")
-	b.WriteString("# and a path that is covered by neither fails the run rather than\n")
-	b.WriteString("# being added here.\n")
+	b.WriteString("# Every directory listed here carried tracked source paths that no\n")
+	b.WriteString("# glob key in tests/change-graph.json covered when the completeness\n")
+	b.WriteString("# check in cmd/lenny-test/cmd_validate.go landed. Entries are\n")
+	b.WriteString("# directory prefixes, so a file renamed inside a listed directory\n")
+	b.WriteString("# stays covered. The check rewrites this file downward: a prefix\n")
+	b.WriteString("# whose paths all gain a glob key drops out on the next run, and a\n")
+	b.WriteString("# path covered by neither a glob key nor a prefix here fails the run\n")
+	b.WriteString("# rather than being added here.\n")
 	fmt.Fprintf(&b, "kind: %s\nversion: 1\n", changeGraphCoverageKind)
 	if len(prefixes) == 0 {
 		// An explicit empty list, so an exhausted baseline stays

@@ -152,9 +152,21 @@ func tiersForChangedPath(path string) []string {
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return nil
 	}
+	return tiersForChangedPathIn(doc.Globs, path)
+}
+
+// tiersForChangedPathIn resolves a changed path against the change
+// graph's glob keys, reading each key through changeGraphGlobPrefix.
+// That is the same reading the change-graph completeness gate applies
+// when it decides a source path is covered, so a key that certifies
+// coverage there selects tiers here. Without the shared reading a key
+// spelled `pkg/foo/...` would pass the gate while matching no real
+// path in this selector, and a change under pkg/foo/ would run no
+// tests under `--changed`.
+func tiersForChangedPathIn(globs map[string]map[string][]string, path string) []string {
 	tiers := []string{}
-	for key, perTier := range doc.Globs {
-		if strings.HasPrefix(path, key) {
+	for key, perTier := range globs {
+		if strings.HasPrefix(path, changeGraphGlobPrefix(key)) {
 			for t := range perTier {
 				tiers = append(tiers, t)
 			}
