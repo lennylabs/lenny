@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+message LifecycleAck {
+  // Delivery flag for the lifecycle channel; false when the pod's runtime has
+  // no lifecycle
+  // channel of its own.
+  bool delivered = 1;
+}

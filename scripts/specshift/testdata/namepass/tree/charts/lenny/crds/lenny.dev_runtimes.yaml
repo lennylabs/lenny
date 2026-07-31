@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: runtimes.lenny.dev
+spec:
+  # The description below reaches this copy from the lifecycle channel field of
+  # the authored type, so its route out of the population is the regeneration of
+  # that type.
+  group: lenny.dev

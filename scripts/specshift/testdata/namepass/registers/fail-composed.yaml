@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+#
+# The substitution ends in a reserved word, and the text beside the site
+# opens with the head noun, so writing it composes a site again.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+    replacement: CH-PODLIFECYCLE lifecycle

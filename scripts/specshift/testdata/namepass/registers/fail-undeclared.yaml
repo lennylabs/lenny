@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The entry names an identifier the specification fixture declares
+# nowhere, so the run fails rather than writing it.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - CH-NOSUCHCONVERSATION

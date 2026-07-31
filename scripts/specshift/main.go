@@ -44,6 +44,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/line"
+	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
@@ -70,9 +71,12 @@ type options struct {
 //
 // The table is built per root rather than held as a package variable,
 // because a pass reads the tree it rewrites: the line pass resolves a
-// path-form citation against the sections under spec/ in the same tree.
+// path-form citation against the sections under spec/ in the same tree,
+// and the name pass holds every identifier it substitutes to the
+// identifier space those files declare.
 func builtPasses(root string) map[scope.Pass]pass.Rewriter {
 	return map[scope.Pass]pass.Rewriter{
+		scope.Name: name.New(scope.GitLister(root), scope.DirReader(root)),
 		scope.Line: line.New(scope.GitLister(root), scope.DirReader(root)),
 	}
 }

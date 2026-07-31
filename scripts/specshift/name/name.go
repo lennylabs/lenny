@@ -1,0 +1,266 @@
+// SPDX-License-Identifier: MIT
+
+// Package name holds the specshift name pass, which removes the bare
+// reserved noun phrases the naming law names from prose and writes the
+// canonical identifier that denotes the mechanism the prose meant.
+//
+// The pass is driven per occurrence. Every site is resolved from an
+// entry in the sense register, keyed by file and by the occurrence's
+// position in that file, and a site the register does not carry aborts
+// the run with the tree left byte-identical. Substituting a default at
+// an unresolved site is what silently converts an ambiguous sentence
+// into a precise false one: the result carries a canonical spelling, so
+// the naming lint and the identifier-resolution gate both pass it, and
+// no gate reads meaning. The reviewer resolves each site into the
+// register before the substitution runs rather than after.
+//
+// An entry names one or more identifiers out of the whole identifier
+// space the specification declares, which covers links, channels, and
+// registers rather than channels alone, because several sites denote the
+// connection rather than one of the conversations it carries. An
+// identifier the specification does not declare fails the run rather
+// than being written, so a typo in an entry cannot reach the tree. An
+// entry naming more than one identifier carries the replacement text
+// each identifier sits in, so a site whose sentence denotes two
+// mechanisms is written with both at the positions the entry records
+// rather than collapsed onto one of them.
+//
+// The matcher applies the shared continuation join before either
+// spelling, so an occurrence wrapped across two consecutive comment
+// lines is one site the register resolves rather than two half-sites
+// neither the pass nor the lint reads. Two populations are outside it. A
+// markdown anchor identifier is an addressable link target rather than
+// prose, so it needs no entry and is left as it stands; rewriting one
+// breaks every inbound link, including the untracked links this
+// repository cannot see. In a Go file the matcher reads comments alone,
+// because the naming law's domain there is the doc comment and a string
+// literal holds operator-facing text the law does not govern.
+//
+// The write domain, which excludes the historical audit records, the
+// staged proposals, the root build and queue records, and every file the
+// per-file generated-artifact rule selects, comes from the scope package
+// rather than from a list here. A generated artifact's route out of the
+// population is the regeneration of its source.
+//
+// This is migration tooling rather than a platform behavior, so it
+// carries no spec citation of its own.
+package name
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+
+	"github.com/lennylabs/lenny/scripts/specshift/pass"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
+)
+
+// Rewriter is the name pass. Its tree dependencies are injected so a
+// test drives it over a fixture tree.
+type Rewriter struct {
+	list scope.Lister
+	read scope.FileReader
+
+	// registerPath and senses are the driving register: the per-site
+	// senses, keyed by file and by occurrence within that file.
+	registerPath string
+	senses       map[string]map[int]Entry
+
+	// declared is the identifier space the specification declares,
+	// indexed on the first file the pass reads rather than at
+	// construction, because the pass reads the tree it rewrites. The
+	// harness rewrites one file at a time, so the field needs no lock.
+	declared map[string]bool
+}
+
+// New returns the name pass over the tree the lister and reader cover.
+func New(list scope.Lister, read scope.FileReader) *Rewriter {
+	return &Rewriter{list: list, read: read}
+}
+
+// Pass names the write domain the pass runs in.
+func (r *Rewriter) Pass() scope.Pass { return scope.Name }
+
+// LoadRegister reads and validates the per-site senses that drive the
+// pass. A missing or malformed register fails rather than loading as an
+// empty one: a run with no senses would rewrite no file and report the
+// zero work of a completed migration.
+func (r *Rewriter) LoadRegister(path string) error {
+	senses, err := loadSenses(path)
+	if err != nil {
+		return err
+	}
+	r.registerPath, r.senses = path, senses
+	return nil
+}
+
+// Rewrite substitutes the registered identifier at every reserved-phrase
+// site one file carries.
+func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) ([]byte, error) {
+	if r.senses == nil {
+		return nil, fmt.Errorf("the name pass ran with no register loaded")
+	}
+	// The whole register is checked against the declared identifier
+	// space before any file is rewritten, so an entry naming an
+	// identifier the specification does not declare fails the run rather
+	// than the file that happens to carry its site.
+	if err := r.checkDeclared(ctx); err != nil {
+		return nil, err
+	}
+	text := string(content)
+	sites, err := findSites(target, text)
+	if err != nil {
+		return nil, err
+	}
+	if len(sites) == 0 {
+		return content, nil
+	}
+	edits, err := r.plan(target, sites)
+	if err != nil {
+		return nil, err
+	}
+	after := splice(text, edits)
+	if err := standing(target, after); err != nil {
+		return nil, err
+	}
+	return []byte(after), nil
+}
+
+// plan resolves every site of one file against the register.
+//
+// Every unresolved site is collected before the plan fails, so one run
+// names the whole hand-correction population rather than its first
+// member. Nothing is written until the plan succeeds, so reporting them
+// all still leaves the tree byte-identical.
+func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
+	entries := r.senses[target]
+	edits := make([]edit, 0, len(sites))
+	var aborts []*pass.Abort
+	for i, s := range sites {
+		occurrence := i + 1
+		entry, ok := entries[occurrence]
+		if !ok {
+			aborts = append(aborts, &pass.Abort{
+				Path: target,
+				Line: s.line,
+				Reason: fmt.Sprintf("occurrence %d of a reserved noun phrase has no entry in %s, so its sense is unresolved",
+					occurrence, r.registerPath),
+			})
+			continue
+		}
+		edits = append(edits, edit{start: s.start, end: s.end, text: entry.substitution()})
+	}
+	if err := pass.Aborted(aborts); err != nil {
+		return nil, err
+	}
+	return edits, nil
+}
+
+// checkDeclared indexes the identifier space the specification declares
+// and holds every entry of the register to it. It runs once per run.
+//
+// An identifier no specification section declares is refused rather than
+// written, because the substitution reads as canonical to every gate
+// downstream: the naming lint sees no reserved phrase, and the
+// identifier-resolution gate sees one spelling of a name nothing else in
+// the tree carries, so a misspelled entry would land as a pointer to a
+// mechanism that does not exist.
+func (r *Rewriter) checkDeclared(ctx context.Context) error {
+	if r.declared != nil {
+		return nil
+	}
+	declared, err := declaredIdentifiers(ctx, r.list, r.read)
+	if err != nil {
+		return err
+	}
+	var undeclared []string
+	for _, target := range sortedKeys(r.senses) {
+		entries := r.senses[target]
+		for _, occurrence := range sortedOccurrences(entries) {
+			for _, id := range entries[occurrence].Identifiers {
+				if !declared[id] {
+					undeclared = append(undeclared, fmt.Sprintf("%s occurrence %d names %s", target, occurrence, id))
+				}
+			}
+		}
+	}
+	if len(undeclared) > 0 {
+		return fmt.Errorf("%s names %d identifier(s) the specification declares nowhere: %s",
+			r.registerPath, len(undeclared), strings.Join(undeclared, "; "))
+	}
+	r.declared = declared
+	return nil
+}
+
+// standing reports every reserved-phrase site the rewritten text still
+// carries.
+//
+// The pass substitutes at every site it read, so the rewritten text is
+// required to carry none. A site standing in it is one the substitution
+// itself composed, out of the identifier written at a site and the
+// carrier text beside it. It is reported for hand correction rather than
+// written, because the file would otherwise leave the pass with a site
+// the naming lint reads and no further pass writes, and a second run
+// over it would substitute against an entry keyed for a different
+// occurrence.
+func standing(target, after string) error {
+	sites, err := findSites(target, after)
+	if err != nil {
+		return err
+	}
+	var aborts []*pass.Abort
+	for _, s := range sites {
+		aborts = append(aborts, &pass.Abort{
+			Path: target,
+			Line: s.line,
+			Reason: fmt.Sprintf("substituting in this file composes a reserved noun phrase again out of an emitted identifier and the text beside it, as %q, so the site is left for hand correction",
+				s.text),
+		})
+	}
+	return pass.Aborted(aborts)
+}
+
+// edit is one substitution in a file, given as a byte span of the source
+// and the text that replaces it.
+type edit struct {
+	start int
+	end   int
+	text  string
+}
+
+// splice writes every edit into the text. The edits arrive in source
+// order and no two sites overlap, because each covers one match of the
+// matcher, so the result is assembled in one forward pass.
+func splice(text string, edits []edit) string {
+	var out strings.Builder
+	at := 0
+	for _, e := range edits {
+		out.WriteString(text[at:e.start])
+		out.WriteString(e.text)
+		at = e.end
+	}
+	out.WriteString(text[at:])
+	return out.String()
+}
+
+// sortedKeys returns the register's file keys in a stable order, so a
+// run reports the same failures in the same order.
+func sortedKeys(senses map[string]map[int]Entry) []string {
+	out := make([]string, 0, len(senses))
+	for target := range senses {
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// sortedOccurrences returns one file's occurrence numbers in order.
+func sortedOccurrences(entries map[int]Entry) []int {
+	out := make([]int, 0, len(entries))
+	for occurrence := range entries {
+		out = append(out, occurrence)
+	}
+	sort.Ints(out)
+	return out
+}

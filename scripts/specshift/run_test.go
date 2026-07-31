@@ -20,6 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
+	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/register"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -4007,5 +4008,468 @@ func TestTheServedArtifactsAreWritableCarriersOfTheTrackedTree(t *testing.T) {
 		if !writable {
 			t.Errorf("the line pass cannot write the served artifact %s", target)
 		}
+	}
+}
+
+// fixtureNamePass holds the name pass fixtures: the shared
+// specification that declares the identifier space every substitution is
+// held to, the tree the pass runs over, the expected content of every
+// file it rewrites, the trees whose carriers the pass fails on, and the
+// registers that drive each run. The reserved phrases the cases need sit
+// in those files rather than in a Go string literal here, for the reason
+// fixtureCitations states: testdata/ is outside the read domain of every
+// pass and every gate, so no gate reports this package's own input.
+const fixtureNamePass = "testdata/namepass"
+
+// nameTree assembles the tree one name pass case runs over, which is the
+// shared specification fixture plus the case's own carriers.
+func nameTree(t *testing.T, carriers string) string {
+	t.Helper()
+	root := t.TempDir()
+	copyTreeInto(t, filepath.Join(fixtureNamePass, "spec"), root)
+	copyTreeInto(t, filepath.Join(fixtureNamePass, carriers), root)
+	return root
+}
+
+// nameRewriter returns the name pass over the tree at root, driven by
+// the named register fixture.
+func nameRewriter(t *testing.T, root, register string) *name.Rewriter {
+	t.Helper()
+	r := name.New(scope.DirLister(root), scope.DirReader(root))
+	if err := r.LoadRegister(filepath.Join(fixtureNamePass, "registers", register)); err != nil {
+		t.Fatalf("load the name pass register %s: %v", register, err)
+	}
+	return r
+}
+
+// applyNamePass runs the name pass over the tree at root and returns the
+// applied diff.
+func applyNamePass(t *testing.T, root, register string) pass.Diff {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	diff, err := h.Apply(context.Background(), nameRewriter(t, root, register))
+	if err != nil {
+		t.Fatalf("apply the name pass: %v", err)
+	}
+	return diff
+}
+
+// planNamePass runs the name pass over the tree at root without writing,
+// and returns the error a fail-closed case expects.
+func planNamePass(t *testing.T, root, register string) (pass.Diff, error) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	return h.Plan(context.Background(), nameRewriter(t, root, register))
+}
+
+// assertSubstituted compares one rewritten carrier against the expected
+// content held beside the fixture tree.
+func assertSubstituted(t *testing.T, root, target string) {
+	t.Helper()
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	want := readFixtureFile(t, filepath.Join(fixtureNamePass, "want", target))
+	if after != want {
+		t.Fatalf("%s after the name pass is\n%s\nwant\n%s", target, after, want)
+	}
+}
+
+// TestNamePassAbortsAtAnUnregisteredSiteAndLeavesTheTreeUnmodified pins
+// the fail-closed rule the whole pass rests on. A site the sense
+// register does not carry aborts the run non-zero, names the file and
+// the line, and leaves every carrier byte-identical, including the
+// carrier whose own site the register does resolve. A default
+// substitution there would read as canonical to the naming lint and to
+// the identifier-resolution gate while stating the wrong mechanism, and
+// no gate reads meaning.
+//
+// spec: §28.1 (N3, the naming law: a bare reserved noun phrase is
+// replaced by the identifier its site denotes)
+func TestNamePassAbortsAtAnUnregisteredSiteAndLeavesTheTreeUnmodified(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "fail/unregistered")
+	before := treeSnapshot(t, root)
+	_, err := planNamePass(t, root, "fail-unregistered.yaml")
+	if err == nil {
+		t.Fatal("the name pass returned no error at an unregistered site")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/unregistered.go" || abort.Line != 5 {
+		t.Errorf("the abort names %s line %d, want pkg/carrier/unregistered.go line 5", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "fail-unregistered.yaml") {
+		t.Errorf("the abort does not name the register: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
+	}
+}
+
+// TestNamePassSubstitutesTheIdentifierEachSiteResolvesTo pins the
+// resolved substitution across the identifier classes the register draws
+// from. The specification carrier resolves to a link identifier rather
+// than to one of the conversations that link carries, because the
+// sentence describes the connection, and collapsing it onto a channel
+// would narrow a security-normative statement.
+//
+// spec: §28.1 (N3, the naming law: a site is replaced by the identifier
+// the register resolves it to, drawn from the whole identifier space)
+func TestNamePassSubstitutesTheIdentifierEachSiteResolvesTo(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	for _, tc := range []struct {
+		sense  string
+		target string
+	}{
+		{"a link identifier", "spec/13_security-model.md"},
+		{"a channel identifier in a schema description", "schemas/lenny-adapter.schema.json"},
+	} {
+		t.Run(tc.sense, func(t *testing.T) {
+			assertSubstituted(t, root, tc.target)
+		})
+	}
+}
+
+// TestNamePassFailsAnEntryNamingAnUndeclaredIdentifier pins that the
+// substitution is held to the identifier space the specification
+// declares. A misspelled entry would land as a canonical-looking pointer
+// to a mechanism that exists nowhere, which the naming lint reads as
+// clean and the identifier-resolution gate reads as one spelling of one
+// name.
+//
+// spec: §28.1 (N3, the naming law: an identifier the specification
+// declares is what replaces a site)
+func TestNamePassFailsAnEntryNamingAnUndeclaredIdentifier(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "fail/undeclared")
+	before := treeSnapshot(t, root)
+	_, err := planNamePass(t, root, "fail-undeclared.yaml")
+	if err == nil {
+		t.Fatal("the name pass accepted an entry naming an undeclared identifier")
+	}
+	if !strings.Contains(err.Error(), "CH-NOSUCHCONVERSATION") {
+		t.Errorf("the failure does not name the undeclared identifier: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestNamePassWritesEachIdentifierOfAMultiIdentifierEntry pins the site
+// whose sentence denotes two mechanisms. The entry records the
+// replacement each identifier sits in, so both are written at the
+// positions the entry gives rather than collapsed onto one of them.
+//
+// spec: §28.1 (N3, the naming law: a site denoting more than one
+// mechanism names each of them)
+func TestNamePassWritesEachIdentifierOfAMultiIdentifierEntry(t *testing.T) {
+	t.Parallel()
+	const target = "spec/16_observability.md"
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	assertSubstituted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	for _, id := range []string{"LNK-POD-GRPC", "CH-LLMPROXY"} {
+		if !strings.Contains(after, id) {
+			t.Errorf("%s does not carry %s after the pass:\n%s", target, id, after)
+		}
+	}
+}
+
+// TestNamePassWritesAGoCommentAndASchemaDescription pins that the pass
+// writes the surfaces the naming lint reads beyond markdown prose, which
+// are the comments of a tracked Go file and the description value of a
+// schema document. It pins the one carrier position outside the law's
+// domain at the same time: a phrase in a Go string literal is
+// operator-facing text this migration leaves as it stands.
+//
+// spec: §28.1 (N3, the naming law: the domain covers the schemas and the
+// doc comments of tracked Go files)
+func TestNamePassWritesAGoCommentAndASchemaDescription(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	for _, target := range []string{"pkg/carrier/carrier.go", "schemas/lenny-adapter.schema.json"} {
+		assertSubstituted(t, root, target)
+	}
+	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", "pkg/carrier/carrier.go"))
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash("pkg/carrier/carrier.go")))
+	literal := literalLine(t, before)
+	if !strings.Contains(after, literal) {
+		t.Errorf("the pass rewrote the string literal %q:\n%s", literal, after)
+	}
+}
+
+// literalLine returns the line of the Go carrier that holds the phrase
+// in a string literal, so a case states the expectation without holding
+// a copy of the phrase in this source.
+func literalLine(t *testing.T, content string) string {
+	t.Helper()
+	for _, line := range strings.Split(content, "\n") {
+		if strings.Contains(line, "validateUsage = ") {
+			return line
+		}
+	}
+	t.Fatal("the Go carrier fixture holds no string literal line")
+	return ""
+}
+
+// TestNamePassReadsAPhraseWrappedAcrossTwoCommentLinesAsOneSite pins the
+// continuation join the matcher applies before either spelling. A phrase
+// wrapped across two consecutive comment lines is one site the register
+// resolves and one site the pass writes, rather than two half-sites a
+// line-oriented matcher reads as neither.
+//
+// spec: §28.1 (N3, the naming law: the matcher applies the continuation
+// join before either spelling)
+func TestNamePassReadsAPhraseWrappedAcrossTwoCommentLinesAsOneSite(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	assertSubstituted(t, root, "schemas/lenny-adapter.proto")
+}
+
+// TestNamePassLeavesAMarkdownAnchorIdentifierUnmodified pins the one
+// population the matcher excludes. A kramdown anchor attribute and the
+// fragment of an intra-repo markdown link are addressable link targets
+// rather than prose, so neither takes a register entry and neither is
+// rewritten; rewriting one breaks every inbound link, including the
+// untracked links this repository cannot see. No assertion about the
+// naming lint is made here, because the lint does not exist yet.
+//
+// spec: §28.1 (N3, the naming law: a markdown anchor identifier is
+// outside the matcher)
+func TestNamePassLeavesAMarkdownAnchorIdentifierUnmodified(t *testing.T) {
+	t.Parallel()
+	const anchors = "docs/reference/glossary.md"
+	root := nameTree(t, "tree")
+	before := treeSnapshot(t, root)
+	planned, err := planNamePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the name pass: %v", err)
+	}
+	applied := applyNamePass(t, root, "tree.yaml")
+	if membership(planned.Paths())[anchors] || membership(applied.Paths())[anchors] {
+		t.Errorf("the name pass names the anchor carrier %s", anchors)
+	}
+	if got := treeSnapshot(t, root); got[anchors] != before[anchors] {
+		t.Errorf("the anchor carrier was rewritten:\n%s", got[anchors])
+	}
+	assertSubstituted(t, root, "spec/13_security-model.md")
+}
+
+// TestNamePassLeavesAGeneratedArtifactUnmodified pins that a file the
+// per-file generated-artifact rule selects is left as it stands, because
+// its route out of the population is the regeneration of its source. The
+// case runs over a CRD under charts/lenny/crds/, which the rule selects
+// through its producer-output disjunct rather than through a generation
+// marker.
+//
+// spec: §28.1 (N3, the naming law: a generated artifact leaves the
+// population through its producer)
+func TestNamePassLeavesAGeneratedArtifactUnmodified(t *testing.T) {
+	t.Parallel()
+	const generated = "charts/lenny/crds/lenny.dev_runtimes.yaml"
+	root := nameTree(t, "tree")
+	before := treeSnapshot(t, root)
+	planned, err := planNamePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the name pass: %v", err)
+	}
+	applied := applyNamePass(t, root, "tree.yaml")
+	if membership(planned.Paths())[generated] || membership(applied.Paths())[generated] {
+		t.Errorf("the name pass names the generated artifact %s", generated)
+	}
+	if got := treeSnapshot(t, root); got[generated] != before[generated] {
+		t.Errorf("the generated artifact was rewritten:\n%s", got[generated])
+	}
+	assertSubstituted(t, root, "spec/13_security-model.md")
+}
+
+// TestNamePassLeavesEveryWriteExcludedCarrierByteIdentical pins the
+// write exclusion of this class, which is wider than the citation
+// passes' by the three root build and queue records: a reserved phrase
+// in one of them is part of what was written at the time. Each member of
+// every excluded group is left exactly as it was written and appears in
+// neither the dry-run output nor the applied diff, while an equivalent
+// site in an ordinary carrier in the same run is substituted.
+//
+// spec: §28.1 (N3, the naming law: the excluded records are outside the
+// writable population)
+func TestNamePassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	excluded := []string{
+		"proposals/0001_example.md",
+		"BUILD-GAPS.md",
+		"TEST-GAPS.md",
+		"gateway-runtime-comms.md",
+		"gateway-runtime-comms-remediation.md",
+		"BUILD-PLAN.md",
+		"BUILD-PROGRESS.md",
+		"PROPOSAL-QUEUE.md",
+	}
+	before := treeSnapshot(t, root)
+	planned, err := planNamePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the name pass: %v", err)
+	}
+	applied := applyNamePass(t, root, "tree.yaml")
+	after := treeSnapshot(t, root)
+	inPlan, inApplied := membership(planned.Paths()), membership(applied.Paths())
+	for _, target := range excluded {
+		if before[target] == "" {
+			t.Fatalf("the fixture tree carries no %s", target)
+		}
+		if after[target] != before[target] {
+			t.Errorf("%s was rewritten:\n%s", target, after[target])
+		}
+		if inPlan[target] {
+			t.Errorf("the dry-run output names the excluded %s", target)
+		}
+		if inApplied[target] {
+			t.Errorf("the applied diff names the excluded %s", target)
+		}
+	}
+	assertSubstituted(t, root, "spec/13_security-model.md")
+}
+
+// TestNamePassRejectsAMalformedOrMissingSenseRegister pins that the pass
+// refuses to run rather than reporting the zero substitutions of a
+// completed migration. A register that loaded as empty would abort at
+// the first site in the tree, which reads as a register nobody seeded,
+// and over an already-rewritten tree it would report a migration it
+// never performed.
+//
+// spec: §28.1 (N3, the naming law: the removal is driven by the register
+// of senses)
+func TestNamePassRejectsAMalformedOrMissingSenseRegister(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	for _, tc := range []struct {
+		name     string
+		register string
+	}{
+		{"a missing register", "absent.yaml"},
+		{"a malformed register", "malformed.yaml"},
+		{"a register with no entries block", "no-entries-block.yaml"},
+		{"a register with no entry", "empty-entries.yaml"},
+		{"a register of another kind", "wrong-kind.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := name.New(scope.DirLister(root), scope.DirReader(root))
+			if err := r.LoadRegister(filepath.Join(fixtureNamePass, "registers", tc.register)); err == nil {
+				t.Fatalf("the name pass loaded %s", tc.name)
+			}
+			h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+			if _, err := h.Plan(context.Background(), r); err == nil {
+				t.Error("a pass with no register loaded reported a plan")
+			}
+		})
+	}
+}
+
+// TestNamePassDryRunOutputEqualsTheAppliedDiff pins the entry criterion
+// for applying the pass: what the dry run reports is what the apply
+// writes, so a reviewer reads the whole substitution before any file
+// moves.
+//
+// spec: §28.1 (N3, the naming law: the removal is reviewed before it is
+// applied)
+func TestNamePassDryRunOutputEqualsTheAppliedDiff(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	before := treeSnapshot(t, root)
+	planned, err := planNamePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the name pass: %v", err)
+	}
+	if len(planned.Files) == 0 {
+		t.Fatal("the dry run reports no work over the fixture tree")
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the dry run wrote to the tree")
+	}
+	applied := applyNamePass(t, root, "tree.yaml")
+	if !planned.Equal(applied) {
+		t.Fatalf("the applied diff differs from the dry run: %v vs %v", planned.Paths(), applied.Paths())
+	}
+}
+
+// TestNamePassRejectsEverySenseEntrySchemaDefect pins the entry schema
+// the substitution rests on: a site key of file and occurrence, declared
+// once, and one or more identifiers with the position of each recorded.
+// An entry naming more than one identifier without the replacement text
+// they sit in states no position for either, and a replacement that
+// omits an identifier the entry names never writes it. A substitution
+// that is itself a site of the class leaves the site standing after the
+// pass has run over the file, where the naming lint reads it and no
+// further pass writes it.
+//
+// spec: §28.1 (N3, the naming law: each identifier a site denotes is
+// written at the position the register records)
+func TestNamePassRejectsEverySenseEntrySchemaDefect(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		defect   string
+		register string
+		names    string
+	}{
+		{"an entry with no file", "invalid-no-file.yaml", "carries no file"},
+		{"an occurrence below one", "invalid-occurrence.yaml", "numbered from one"},
+		{"an entry naming no identifier", "invalid-no-identifier.yaml", "names no identifier"},
+		{"a site declared twice", "invalid-duplicate.yaml", "declared twice"},
+		{"two identifiers with no recorded position", "invalid-position-unstated.yaml", "position of each is unstated"},
+		{"a replacement omitting an identifier", "invalid-replacement-omits-identifier.yaml", "CH-LLMPROXY"},
+		{"a substitution that is itself a site", "invalid-reserved-replacement.yaml", "the class the pass removes"},
+	} {
+		t.Run(tc.defect, func(t *testing.T) {
+			t.Parallel()
+			r := name.New(scope.DirLister(fixtureNamePass), scope.DirReader(fixtureNamePass))
+			err := r.LoadRegister(filepath.Join(fixtureNamePass, "registers", tc.register))
+			if err == nil {
+				t.Fatalf("the name pass loaded a register carrying %s", tc.defect)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name the defect %q: %v", tc.names, err)
+			}
+		})
+	}
+}
+
+// TestNamePassFailsASubstitutionThatComposesASiteAgain pins the check
+// over the rewritten text. A substitution can compose a reserved noun
+// phrase out of the identifier it writes and the carrier text beside the
+// site, which leaves the file carrying a site after the pass has run
+// over it: the naming lint reads it, no further pass writes it, and a
+// second run resolves it against an entry keyed for another occurrence.
+// The site is reported for hand correction instead, with the tree left
+// byte-identical.
+//
+// spec: §28.1 (N3, the naming law: no bare reserved noun phrase stands
+// in a file the pass has written)
+func TestNamePassFailsASubstitutionThatComposesASiteAgain(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "fail/composed")
+	before := treeSnapshot(t, root)
+	_, err := planNamePass(t, root, "fail-composed.yaml")
+	if err == nil {
+		t.Fatal("the name pass wrote a substitution that composes a site again")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/carrier.go" {
+		t.Errorf("the abort names %s, want pkg/carrier/carrier.go", abort.Path)
+	}
+	if !strings.Contains(abort.Reason, "hand correction") {
+		t.Errorf("the abort does not report the site for hand correction: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
 	}
 }
