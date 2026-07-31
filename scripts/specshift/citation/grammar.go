@@ -77,8 +77,21 @@ var headExpr = regexp.MustCompile(
 		// uncounted by the ratchet.
 		`(?::` + joinClass + `?|(?:` + sp + `+|` + sp + `*(\()` + sp + `*(?:spec` + sp + `+)?)(lines?)` + sp + `+)` +
 		// The first member.
-		`([0-9]+(?:` + sp + `*[-\x{2013}\x{2014}]` + sp + `*[0-9]+)?)`,
+		`(` + memberBody + `)`,
 )
+
+// memberBody is one member: a single line number, or a range of two line
+// numbers written directly against the separator.
+//
+// The endpoints stand against the separator with no whitespace between them,
+// which is how the form is written and how every spelling in the tree is
+// written. Admitting whitespace there reads an ordinary prose aside written
+// after a single-line member as the range's second endpoint, as in
+// `line 277 — 129 runes`, which yields a descending range the resolver reports
+// as a straddle with nothing to correct and a citation text that runs past the
+// member into the sentence, so converting it to an anchor would delete the
+// sentence's own number.
+const memberBody = `[0-9]+(?:[-\x{2013}\x{2014}][0-9]+)?`
 
 // separatorExpr matches one member separator: a comma, a slash, a plus sign, or
 // the word `and`.
@@ -89,20 +102,30 @@ var separatorExpr = regexp.MustCompile(`^(?:` + sp + `*[,/+]|` + sp + `+and\b)` 
 var keywordExpr = regexp.MustCompile(`^lines?` + sp + `+`)
 
 // memberExpr matches one member.
-var memberExpr = regexp.MustCompile(`^[0-9]+(?:` + sp + `*[-\x{2013}\x{2014}]` + sp + `*[0-9]+)?`)
+var memberExpr = regexp.MustCompile(`^` + memberBody)
 
 // glossExpr matches the short trailing gloss naming what the cited line says,
 // written as a parenthesized phrase, a quoted fragment, or a bare word or two
 // with an optional parenthesized tail. The gloss is consumed with its member
 // rather than terminating the match.
 //
-// Every alternative is bounded to one line and to a short run of bytes. A gloss
-// alternative that admitted a newline and had no length bound would run from an
-// unpaired quote to the next quote anywhere in the file, and because the scan
-// resumes at the end of the consumed span every citation inside that run would
-// go unreturned: the resolver would not resolve it, the ratchet would not count
-// it, and the pass would rewrite the whole span, code included, to one anchor.
-// That is the failure the whole-citation rule exists to prevent.
+// A delimited alternative is bounded by its closing delimiter and by the line
+// it opened on, and the scanner bounds every alternative at the head of the
+// next citation. A gloss alternative that admitted a newline and closed on
+// nothing would run from an unpaired quote to the next quote anywhere in the
+// file, and because the scan resumes at the end of the consumed span every
+// citation inside that run would go unreturned: the resolver would not resolve
+// it, the ratchet would not count it, and the pass would rewrite the whole
+// span, code included, to one anchor. That is the failure the whole-citation
+// rule exists to prevent.
+//
+// No alternative is bounded by a byte count. A count long enough to be
+// invisible in review still rejects the gloss that exceeds it, and a rejected
+// gloss ends the member list, so every member written after a long gloss is
+// left unconsumed. That is the same head-matching failure in the other
+// direction: the resolver does not read the dropped members, the ratchet does
+// not count them, and the rewritten carrier reads as an anchor followed by
+// orphan integers.
 //
 // A quoted alternative also requires whitespace ahead of its opening quote,
 // because a quote written directly against a member's last digit is the closing
@@ -110,21 +133,26 @@ var memberExpr = regexp.MustCompile(`^[0-9]+(?:` + sp + `*[-\x{2013}\x{2014}]` +
 // neither opens a gloss.
 var glossExpr = regexp.MustCompile(
 	"^(?:" +
-		sp + `*\(` + glossBody + `{0,` + maxGlossBody + `}\)` +
-		`|` + sp + `+"[^"\n]{0,` + maxGlossBody + `}"` +
-		`|` + sp + `+'[^'\n]{0,` + maxGlossBody + `}'` +
-		"|" + sp + "+`[^`\n]{0," + maxGlossBody + "}`" +
-		`|` + sp + `+` + glossWord + `(?:` + sp + `+` + glossWord + `)?(?:` + sp + `*\(` + glossBody + `{0,` + maxGlossBody + `}\))?` +
+		sp + `*\(` + glossBody + `*\)` +
+		`|` + sp + `+"[^"\n]*"` +
+		`|` + sp + `+'[^'\n]*'` +
+		"|" + sp + "+`[^`\n]*`" +
+		`|` + sp + `+` + glossWord + `(?:` + sp + `+` + glossWord + `)?(?:` + sp + `*\(` + glossBody + `*\))?` +
 		")",
 )
 
 // glossBody is the byte class a parenthesized gloss admits, and glossWord is
-// one bare word of a gloss. maxGlossBody bounds every one of them, so a gloss
-// stays the short phrase the form admits.
+// one bare word of a gloss.
+//
+// A word carries a dot only when a word byte follows it, so a word that ends a
+// sentence ends the gloss with it. A word run that absorbed the terminating dot
+// would take the first word of the next sentence as its second word, and the
+// citation text a register is keyed by and the pass replaces would carry prose
+// the citation does not own, so converting the citation to an anchor would
+// delete the opening word of the following sentence.
 const (
-	glossBody    = `[^()\n]`
-	glossWord    = `[A-Za-z][A-Za-z0-9_./-]*`
-	maxGlossBody = "80"
+	glossBody = `[^()\n]`
+	glossWord = `[A-Za-z][A-Za-z0-9_/-]*(?:\.[A-Za-z0-9_/-]+)*`
 )
 
 // continuationExpr matches the join between two comment lines: the newline

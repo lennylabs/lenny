@@ -2185,6 +2185,71 @@ func TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt(t *testing.T) {
 	}
 }
 
+// TestFindWritesARangeEndpointDirectlyAgainstItsSeparator pins that a range's
+// two endpoints stand against the separator with no whitespace between them.
+// A separator that admitted whitespace reads an ordinary prose aside written
+// after a single-line member as the range's second endpoint, which produces a
+// descending range the resolver reports as a straddle with nothing to correct,
+// and a citation text that runs past the member into the sentence, so
+// converting the citation to an anchor deletes the sentence's own number.
+func TestFindWritesARangeEndpointDirectlyAgainstItsSeparator(t *testing.T) {
+	t.Parallel()
+	c := oneCitation(t, "emdash-aside.txt")
+	if c.Text != "§11.5 line 277" {
+		t.Errorf("citation text is %q, want it to end at the member", c.Text)
+	}
+	if got := members(c); !sameStrings(got, []string{"277-277"}) {
+		t.Errorf("members are %v, want the single cited line", got)
+	}
+	// The unspaced range spellings still read as ranges.
+	for _, fixture := range []string{"hyphen-range.txt", "endash-range.txt", "emdash-range.txt"} {
+		if got := members(oneCitation(t, fixture)); !sameStrings(got, []string{"263-291"}) {
+			t.Errorf("%s: members are %v, want 263-291", fixture, got)
+		}
+	}
+}
+
+// TestFindConsumesTheMembersWrittenAfterALongGloss pins that the length of a
+// gloss never ends the member list. A gloss bounded by a byte count rejects the
+// gloss that exceeds it, and a rejected gloss stops the scan, so every member
+// written after it is left unconsumed: the resolver does not read them, the
+// ratchet does not count them, and the rewritten carrier reads as an anchor
+// followed by orphan integers.
+func TestFindConsumesTheMembersWrittenAfterALongGloss(t *testing.T) {
+	t.Parallel()
+	c := oneCitation(t, "gloss-long-then-members.txt")
+	if got := members(c); !sameStrings(got, []string{"470-470", "440-440", "472-472"}) {
+		t.Errorf("members are %v, want all three", got)
+	}
+	if len(c.Members[0].Gloss) <= 80 {
+		t.Errorf("the fixture's first gloss is %d bytes, which no longer exceeds the bound the case pins", len(c.Members[0].Gloss))
+	}
+	if !strings.HasSuffix(c.Text, "line 472 (fail closed)") {
+		t.Errorf("citation text is %q, want it to run to the last member and its gloss", c.Text)
+	}
+}
+
+// TestFindEndsABareGlossAtASentenceTerminatingPeriod pins that a bare-word
+// gloss stops at the end of the sentence its member sits in. A word run that
+// absorbed the terminating period takes the first word of the next sentence as
+// its second word, and the citation text is what a register is keyed by and
+// what the pass replaces with an anchor, so the rewrite would delete that word.
+// A dotted identifier is one word, because its dots are followed by word bytes.
+func TestFindEndsABareGlossAtASentenceTerminatingPeriod(t *testing.T) {
+	t.Parallel()
+	sentence := oneCitation(t, "gloss-sentence-boundary.txt")
+	if sentence.Text != "§10.1 line 155 reassembly" {
+		t.Errorf("citation text is %q, want it to stop at the word ending the sentence", sentence.Text)
+	}
+	if sentence.Members[0].Gloss != "reassembly" {
+		t.Errorf("gloss is %q, want %q", sentence.Members[0].Gloss, "reassembly")
+	}
+	dotted := oneCitation(t, "gloss-dotted-word.txt")
+	if dotted.Members[0].Gloss != "lenny.dev/schema-version annotation" {
+		t.Errorf("gloss is %q, want the dotted identifier read as one word", dotted.Members[0].Gloss)
+	}
+}
+
 // TestFindJoinsAContinuationInEveryWrapPositionAndCarrierDialect pins the join
 // that lets a citation wrapped across two comment lines be read as one
 // citation. The three wrap positions are a wrap between the reference and the
@@ -2251,8 +2316,8 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 // through 19), §4.2.1 (17 through 19), §7, §7.1, §7.2, and, in a file carrying
 // two top-level headings, §25.1 (1 through 8), §25.1.1 (5 through 8), and §25.2
 // (9 through 11). A further file states its numbered title at level one and
-// carries a fenced code block with a numbered comment in it, giving §30 (1
-// through 11) and §30.1 (9 through 11).
+// carries a fenced code block with a numbered heading-like line in it, giving
+// §30.1 (9 through 11) and no section for the level-one title.
 func citationResolver(t *testing.T) *citation.Resolver {
 	t.Helper()
 	r, err := citation.NewResolver(context.Background(),
@@ -2295,38 +2360,36 @@ func TestSectionRangeCoversASectionAndItsSubsections(t *testing.T) {
 	}
 }
 
-// TestSectionRangeCoversAFileWhoseNumberedTitleIsLevelOne pins that a
-// specification file stating its numbered title at level one is indexed under
-// that number and spans its file. Excluding level one leaves the number absent,
-// so every section-level citation naming it is reported as a heading the
-// specification does not carry when the heading is there. The same walk skips
-// fenced code, because a numbered `#` line inside an example is a shell comment
-// and indexing it declares sections the specification does not have, including
-// one that collides with a genuine section number.
-func TestSectionRangeCoversAFileWhoseNumberedTitleIsLevelOne(t *testing.T) {
+// TestSectionIndexExcludesALevelOneHeading pins the heading rule the range
+// computation is stated over, which is the ## through ###### headings. A
+// specification file that states its number in a level-one title declares no
+// section under that number, so a section-level citation naming it is reported
+// as a heading the specification does not declare rather than resolving against
+// the whole file. Indexing level one instead widens the resolver's answer over
+// a population the seeded baseline is measured on. The file's own ## headings
+// are indexed as usual, and the walk skips fenced code, because a heading-like
+// line inside an example is a comment and indexing it declares sections the
+// specification does not have, including one that collides with a genuine
+// section number.
+func TestSectionIndexExcludesALevelOneHeading(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
-	top, ok := r.Section("30")
-	if !ok {
-		t.Fatal("§30 is absent from the resolver index")
-	}
-	if top.File != "spec/30_level-one-title.md" || top.Start != 1 || top.End != 11 {
-		t.Errorf("§30 is %v, want it to span the whole of its file", top)
+	if s, ok := r.Section("30"); ok {
+		t.Errorf("a level-one heading declared %v", s)
 	}
 	child, ok := r.Section("30.1")
-	if !ok || child.Start != 9 || child.End != 11 {
-		t.Errorf("§30.1 is %v (present=%v), want lines 9-11", child, ok)
+	if !ok || child.File != "spec/30_level-one-title.md" || child.Start != 9 || child.End != 11 {
+		t.Errorf("§30.1 is %v (present=%v), want lines 9-11 of the level-one-titled file", child, ok)
 	}
 	if s, ok := r.Section("1"); ok {
-		t.Errorf("a numbered comment inside a fenced code block declared %v", s)
+		t.Errorf("a numbered heading inside a fenced code block declared %v", s)
 	}
-	inside := oneCitation(t, "resolve/level-one-title.txt")
-	if f := r.Resolve(inside); len(f) != 0 {
-		t.Errorf("a citation naming the level-one section reported %v, want it to resolve", f)
+	top := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt"))
+	if len(top) != 1 || top[0].Kind != citation.UnknownSection {
+		t.Errorf("a citation naming the level-one heading reported %v, want one unknown-section failure", top)
 	}
-	outside := r.Resolve(oneCitation(t, "resolve/level-one-title-outside.txt"))
-	if len(outside) != 1 || outside[0].Kind != citation.OutsideSection {
-		t.Errorf("a citation past the end of the level-one section reported %v, want one outside-section failure", outside)
+	if f := r.Resolve(oneCitation(t, "resolve/level-one-subsection.txt")); len(f) != 0 {
+		t.Errorf("a citation naming the file's own subsection reported %v, want it to resolve", f)
 	}
 }
 

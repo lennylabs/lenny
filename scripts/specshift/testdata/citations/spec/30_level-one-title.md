@@ -3,7 +3,7 @@
 Prose in the section preamble.
 
 ```bash
-# 1. Not a heading
+## 1. Not a heading
 ```
 
 ## 30.1 First Subsection

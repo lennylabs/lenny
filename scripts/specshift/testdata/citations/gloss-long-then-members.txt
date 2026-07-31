@@ -1,0 +1,1 @@
+// spec: §8.3 line 470 (assign a credential from the parent pool whose provider appears in that intersection), line 440 (inherit), line 472 (fail closed)
