@@ -143,10 +143,22 @@ var generationDeclaration = regexp.MustCompile(`(?i)(?:^|[.;:!]\s+)(?:code gener
 // charts/lenny/values.schema.json's does.
 var metadataDeclaration = regexp.MustCompile(`(?i)(?:^|[.;:!,]\s+)(?:code generated\b|(?:auto-?generated|generated)\s+(?:by|from)\b|do not edit\b)`)
 
-// headerLines is how far into a file the header disjunct looks. A
-// generation declaration that sits below the header is prose about
-// generation rather than a declaration of it.
-const headerLines = 12
+// headerFloor is the number of leading lines the header disjunct always
+// reads, whatever those lines carry. It keeps a declaration that sits
+// just below an opening heading or an opening data key in scope, which a
+// scan bounded strictly by the leading comment block would drop.
+//
+// Beyond the floor the scan continues while the file is still inside its
+// leading run of comment and blank lines, and stops at the first line
+// that is neither. Reading the header block to its end rather than to a
+// fixed line count is what keeps this predicate over-broad, which is the
+// direction the rule has to err in: a header carries a licence line and
+// a multi-line doc comment above its generation marker often enough that
+// a fixed window cuts the marker off, and the file then enters every
+// pass's write domain as an ordinary carrier and matches no residual
+// class either. Every protoc-generated stub in this tree carries its
+// marker below the twelfth line.
+const headerFloor = 12
 
 // lineCommentPrefixes are the comment markers the header disjunct
 // accepts, which are the carrier dialects the citation form's
@@ -286,9 +298,15 @@ func headerDeclaresGeneration(ext string, content []byte) (bool, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	state := commentState{markup: markupFormats[ext]}
-	for i := 0; i < headerLines && scanner.Scan(); i++ {
-		body, ok := state.commentBody(scanner.Text())
+	for i := 0; scanner.Scan(); i++ {
+		line := scanner.Text()
+		body, ok := state.commentBody(line)
 		if !ok {
+			// Past the floor, the first line that is neither a comment nor
+			// blank closes the header block and ends the scan.
+			if i >= headerFloor && strings.TrimSpace(line) != "" {
+				break
+			}
 			continue
 		}
 		if generationDeclaration.MatchString(body) {

@@ -501,6 +501,41 @@ func TestGeneratedRuleSelectsAMarkedHeader(t *testing.T) {
 	}
 }
 
+// TestGeneratedRuleSelectsAMarkerBelowTheLeadingLines pins the header
+// disjunct on the convention this tree actually uses: a licence line, a
+// blank line, and a multi-line doc comment sit above the generation
+// marker, which puts the marker below the leading lines a fixed window
+// would read. The carrier sits outside every producer output set, so
+// only the header disjunct can select it. A scan that stops above the
+// marker reports the file as an ordinary carrier and admits a generated
+// artifact to every pass's write domain, and because the same predicate
+// defines the generated-artifact class, the misclassified file cannot
+// surface as a residual either.
+func TestGeneratedRuleSelectsAMarkerBelowTheLeadingLines(t *testing.T) {
+	t.Parallel()
+	list, read := treeDomain(t)
+	const target = "pkg/generated/deep-header.go"
+	for _, p := range scope.Producers() {
+		for _, out := range p.Outputs {
+			if target == out || (strings.HasSuffix(out, "/") && strings.HasPrefix(target, out)) {
+				t.Fatalf("%s is in the output set of %q, so the test cannot isolate the header disjunct", target, p.Command)
+			}
+		}
+	}
+	if got, err := scope.Generated(target, read); err != nil || got != scope.HeaderMarker {
+		t.Fatalf("Generated(%s) = %q, %v; want %q", target, got, err, scope.HeaderMarker)
+	}
+	for _, p := range scope.Passes() {
+		domain, err := scope.WriteDomain(context.Background(), list, p, read)
+		if err != nil {
+			t.Fatalf("WriteDomain(%s): %v", p, err)
+		}
+		if membership(domain)[target] {
+			t.Errorf("%s pass write domain includes the generated artifact %s", p, target)
+		}
+	}
+}
+
 // TestGeneratedRuleTreatsProseAboutGenerationAsAuthored pins that the
 // header disjunct reads a declaration rather than any sentence that
 // mentions generation. A file the rule wrongly selects is removed from
