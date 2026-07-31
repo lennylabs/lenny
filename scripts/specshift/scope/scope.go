@@ -307,12 +307,8 @@ func ReadableForClass(c Class, target string) (bool, error) {
 	if !Readable(target) {
 		return false, nil
 	}
-	if planningExcludedClasses[c] {
-		for _, rec := range planningRecords {
-			if target == rec {
-				return false, nil
-			}
-		}
+	if excludesPlanningRecord(c, target) {
+		return false, nil
 	}
 	for _, reg := range classRegisters[c] {
 		if target == reg {
@@ -322,12 +318,39 @@ func ReadableForClass(c Class, target string) (bool, error) {
 	return true, nil
 }
 
+// excludesPlanningRecord reports whether the class excludes the named
+// root-level planning record. The reserved-phrase and identifier classes
+// do, and their passes take the same exclusion, so the pass and the
+// residual scan that follows it agree on the record.
+func excludesPlanningRecord(c Class, target string) bool {
+	if !planningExcludedClasses[c] {
+		return false
+	}
+	for _, rec := range planningRecords {
+		if target == rec {
+			return true
+		}
+	}
+	return false
+}
+
 // Writable reports whether the pass may write the tracked path. The
-// site-rewrite domain is the class read domain less every file the
-// per-file generated-artifact rule selects. It fails rather than
+// site-rewrite domain is the shared read domain, less the root-level
+// planning records for the name and identifier passes, less every file
+// the per-file generated-artifact rule selects. It fails rather than
 // answering when the generated-artifact rule cannot read the file,
 // because a pass that wrote a file it could not classify would write a
 // derived artifact.
+//
+// The class register exclusion is deliberately absent here. That
+// exclusion belongs to the residual scan, which cannot read its own
+// class's registers as tree content. It is not a write exclusion: a
+// class's sense register and residual register are ordinary members of
+// the shared read domain, so the naming lint, the identifier-resolution
+// gate, and the citation gates all read them and report the sites they
+// carry. Folding the residual scan's exclusion into the write domain
+// would leave those sites with no pass able to rewrite them, which is a
+// readable file with no route to a zero count.
 //
 // This answer governs site rewriting alone. The key rewrite over the
 // path-keyed registers runs through KeyWritable, so a register excluded
@@ -337,11 +360,10 @@ func Writable(p Pass, target string, read FileReader) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	inClass, err := ReadableForClass(c, target)
-	if err != nil {
-		return false, err
+	if !Readable(target) {
+		return false, nil
 	}
-	if !inClass {
+	if excludesPlanningRecord(c, target) {
 		return false, nil
 	}
 	disjunct, err := Generated(target, read)
