@@ -4736,3 +4736,188 @@ func TestNamePassFailsAnEntryNoSiteInTheTreeClaims(t *testing.T) {
 		})
 	}
 }
+
+// pinnedRegisterFixture is the tree path of the register naming the
+// string literals of the tier-11 reconciliation carriers that pin
+// specification prose, a heading slug, or an intra-spec link. A case
+// that exercises a defective register rewrites the copy inside the tree
+// it runs over.
+const pinnedRegisterFixture = "tests/registers/pinned-spec-literals.yaml"
+
+// writePinnedRegister replaces the pinned-literal register of a copied
+// fixture tree with the body a case needs.
+func writePinnedRegister(t *testing.T, root, body string) {
+	t.Helper()
+	target := filepath.Join(root, filepath.FromSlash(pinnedRegisterFixture))
+	if err := os.WriteFile(target, []byte(body), 0o644); err != nil {
+		t.Fatalf("write the pinned-literal register: %v", err)
+	}
+}
+
+// TestNamePassWritesAPinnedSpecLiteralAndLeavesAnUnpinnedOne pins the
+// second position the naming law governs in a Go carrier. A tier-11
+// reconciliation test pins specification prose, a specification heading
+// slug, or an intra-spec markdown link as a string literal, so the run
+// that rewrites such a sentence in the specification rewrites the
+// literal that pins it in the same diff. Leaving the literal behind
+// leaves tier 11 red with a reader on the sentence and no pass able to
+// write it. Every other string literal stays outside the pass, which the
+// case pins in the same carrier: the register names one literal, and the
+// operator-facing literal beside it is byte-identical afterwards.
+//
+// spec: §28.1 (N3, the naming law: the sites of a Go carrier are its doc
+// comments and the literals that pin the specification)
+func TestNamePassWritesAPinnedSpecLiteralAndLeavesAnUnpinnedOne(t *testing.T) {
+	t.Parallel()
+	const target = "tests/tier11_docs/route_test.go"
+	root := nameTree(t, "tree")
+	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", target))
+	applied := applyNamePass(t, root, "tree.yaml")
+	if !membership(applied.Paths())[target] {
+		t.Fatalf("the applied diff does not name %s", target)
+	}
+	assertSubstituted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	pinned := fixtureLine(t, before, "requireLine = ")
+	if strings.Contains(after, pinned) {
+		t.Errorf("the pass left the pinned literal %q unwritten:\n%s", pinned, after)
+	}
+	unpinned := fixtureLine(t, before, "skipReason = ")
+	if !strings.Contains(after, unpinned) {
+		t.Errorf("the pass rewrote the unpinned literal %q:\n%s", unpinned, after)
+	}
+}
+
+// TestNamePassRejectsAMissingOrMalformedPinnedLiteralRegister pins the
+// fail-closed rule over the second driving register. A tree carrying a
+// tier-11 reconciliation Go carrier and no readable register for its
+// pinned literals would run with those literals silently outside the
+// pass, which is the writerless site the shared domain exists to
+// prevent, so the run fails and the tree is left byte-identical.
+//
+// spec: §28.1 (N3, the naming law: every site of a carrier the law
+// governs has a pass able to write it)
+func TestNamePassRejectsAMissingOrMalformedPinnedLiteralRegister(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		defect string
+		body   string
+		names  string
+	}{
+		{"a malformed register", "kind: [", "parse the pinned-literal register"},
+		{"a register of another kind", "kind: reserved-phrase-senses\nversion: 1\nentries: []\n", "expected kind"},
+		{"a register of another version", "kind: pinned-spec-literals\nversion: 2\nentries: []\n", "expected version"},
+		{"a register with no entries block", "kind: pinned-spec-literals\nversion: 1\n", "carries no entries block"},
+		{"a register with no entry", "kind: pinned-spec-literals\nversion: 1\nentries: []\n", "carries no entry"},
+	} {
+		t.Run(tc.defect, func(t *testing.T) {
+			t.Parallel()
+			root := nameTree(t, "tree")
+			writePinnedRegister(t, root, tc.body)
+			before := treeSnapshot(t, root)
+			_, err := applyNamePassErr(t, root, "tree.yaml")
+			if err == nil {
+				t.Fatalf("the name pass ran with %s", tc.defect)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name the defect %q: %v", tc.names, err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}
+
+// TestNamePassFailsWhenTheTreeCarriesNoPinnedLiteralRegister pins the
+// same rule for the register's absence, which is how the population
+// reaches a run that was never seeded for it. The failure names the
+// register the run needs rather than narrowing the pass to the doc
+// comments in silence.
+//
+// spec: §28.1 (N3, the naming law: every site of a carrier the law
+// governs has a pass able to write it)
+func TestNamePassFailsWhenTheTreeCarriesNoPinnedLiteralRegister(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	if err := os.Remove(filepath.Join(root, filepath.FromSlash(pinnedRegisterFixture))); err != nil {
+		t.Fatalf("remove the pinned-literal register: %v", err)
+	}
+	before := treeSnapshot(t, root)
+	_, err := applyNamePassErr(t, root, "tree.yaml")
+	if err == nil {
+		t.Fatal("the name pass ran over a tier-11 carrier with no pinned-literal register")
+	}
+	if !strings.Contains(err.Error(), pinnedRegisterFixture) {
+		t.Errorf("the failure does not name the register the run needs: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestNamePassFailsAPinnedLiteralEntryNoLiteralClaims pins the
+// register-tree consistency of the pinned-literal register in the
+// direction the walk does not cover, and pins its carrier population. An
+// entry keyed to a file the tree does not carry or to a position above
+// the count of string literals its file holds names no literal, so the
+// site a reviewer resolved would be left unwritten by a run that exited
+// zero. An entry keyed outside the tier-11 reconciliation tests would
+// admit an operator-facing literal, which the naming law does not
+// govern, into the pass.
+//
+// spec: §28.1 (N3, the naming law: the literals that pin the
+// specification are resolved per occurrence before the substitution
+// runs)
+func TestNamePassFailsAPinnedLiteralEntryNoLiteralClaims(t *testing.T) {
+	t.Parallel()
+	const head = "kind: pinned-spec-literals\nversion: 1\nentries:\n"
+	for _, tc := range []struct {
+		entry string
+		body  string
+		names string
+	}{
+		{
+			"a position above the literal count",
+			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 9\n",
+			"literal 9",
+		},
+		{
+			"a file the tree does not carry",
+			head + "  - file: tests/tier11_docs/absent_test.go\n    literal: 1\n",
+			"tests/tier11_docs/absent_test.go",
+		},
+		{
+			"a carrier outside the reconciliation tests",
+			head + "  - file: pkg/carrier/carrier.go\n    literal: 1\n",
+			"not a Go carrier under",
+		},
+		{
+			"a position below one",
+			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 0\n",
+			"numbered from one",
+		},
+		{
+			"a literal declared twice",
+			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 1\n  - file: tests/tier11_docs/route_test.go\n    literal: 1\n",
+			"declared twice",
+		},
+	} {
+		t.Run(tc.entry, func(t *testing.T) {
+			t.Parallel()
+			root := nameTree(t, "tree")
+			writePinnedRegister(t, root, tc.body)
+			before := treeSnapshot(t, root)
+			_, err := applyNamePassErr(t, root, "tree.yaml")
+			if err == nil {
+				t.Fatalf("the name pass ran with %s in the pinned-literal register", tc.entry)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name the entry %q: %v", tc.names, err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}

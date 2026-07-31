@@ -33,10 +33,22 @@
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this
 // repository cannot see. In a Go file the matcher reads the file's
-// leading comments and the comments documenting a declaration, because
-// that is the naming law's domain there: a string literal and an
-// implementation comment hold operator-facing and internal text the law
-// does not govern.
+// leading comments, the comments documenting a declaration, and the
+// string literals the pinned-literal register names, because those are
+// the naming law's positions there. An implementation comment holds
+// internal text the law does not govern, and so does every string
+// literal the pinned-literal register does not name.
+//
+// That register covers the string literals under tests/tier11_docs/ that
+// pin specification prose, a specification heading slug, or an
+// intra-spec markdown link. They are positions of this pass because the
+// run that rewrites such a sentence in the specification has to rewrite
+// the literal that pins it in the same diff; otherwise tier 11 goes red
+// with a reader on the sentence and no pass able to write the literal.
+// The register names each literal rather than the pass walking every
+// string of the file, so the operator-facing help text a tier-11 carrier
+// happens to hold stays outside the pass and the enumeration the sense
+// register is keyed by stays defined.
 //
 // The carriers the matcher reads are the ones the naming law names,
 // which the scope package states: the specification, the documentation,
@@ -82,6 +94,13 @@ type Rewriter struct {
 	registerPath string
 	senses       map[string]map[int]Entry
 
+	// pinned holds, per tier-11 reconciliation carrier, the string
+	// literals the pinned-literal register resolves as pinning
+	// specification prose, a heading slug, or an intra-spec link. It is
+	// read out of the tree the pass runs over, alongside the identifier
+	// space, because both are properties of that tree.
+	pinned map[string]map[int]bool
+
 	// declared is the identifier space the specification declares,
 	// indexed on the first file the pass reads rather than at
 	// construction, because the pass reads the tree it rewrites. The
@@ -125,7 +144,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 		return nil, err
 	}
 	text := string(content)
-	sites, err := findSites(target, text)
+	sites, err := findSites(target, text, r.pinned[target])
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +156,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 		return nil, err
 	}
 	after := splice(text, edits)
-	if err := standing(target, after); err != nil {
+	if err := standing(target, after, r.pinned[target]); err != nil {
 		return nil, err
 	}
 	return []byte(after), nil
@@ -190,11 +209,21 @@ func (r *Rewriter) checkRegister(ctx context.Context) error {
 	if r.declared != nil {
 		return nil
 	}
+	tracked, err := trackedPaths(ctx, r.list)
+	if err != nil {
+		return err
+	}
+	// The pinned-literal register is read before any site is enumerated,
+	// because the literals it resolves are positions of the enumeration
+	// the sense register's occurrence numbers are keyed by.
+	if err := r.loadPinned(tracked); err != nil {
+		return err
+	}
 	declared, err := declaredIdentifiers(ctx, r.list, r.read)
 	if err != nil {
 		return err
 	}
-	if err := r.checkClaimed(ctx); err != nil {
+	if err := r.checkClaimed(ctx, tracked); err != nil {
 		return err
 	}
 	var undeclared []string
@@ -228,11 +257,7 @@ func (r *Rewriter) checkRegister(ctx context.Context) error {
 // file granularity for a register that carries no entry. An off-by-one
 // enumeration and a misspelled path are the two ways an entry lands in
 // that position.
-func (r *Rewriter) checkClaimed(ctx context.Context) error {
-	tracked, err := trackedPaths(ctx, r.list)
-	if err != nil {
-		return err
-	}
+func (r *Rewriter) checkClaimed(ctx context.Context, tracked map[string]bool) error {
 	var unclaimed []string
 	for _, target := range sortedKeys(r.senses) {
 		if err := ctx.Err(); err != nil {
@@ -273,7 +298,7 @@ func (r *Rewriter) unclaimedReason(target string, tracked map[string]bool) (stri
 	if err != nil {
 		return "", fmt.Errorf("read %s for the reserved-phrase sense register check: %w", target, err)
 	}
-	sites, err := findSites(target, string(content))
+	sites, err := findSites(target, string(content), r.pinned[target])
 	if err != nil {
 		return "", err
 	}
@@ -314,8 +339,8 @@ func trackedPaths(ctx context.Context, list scope.Lister) (map[string]bool, erro
 // the naming lint reads and no further pass writes, and a second run
 // over it would substitute against an entry keyed for a different
 // occurrence.
-func standing(target, after string) error {
-	sites, err := findSites(target, after)
+func standing(target, after string, pinned map[int]bool) error {
+	sites, err := findSites(target, after, pinned)
 	if err != nil {
 		return err
 	}

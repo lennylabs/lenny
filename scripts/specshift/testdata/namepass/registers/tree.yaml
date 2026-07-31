@@ -38,9 +38,11 @@ entries:
     identifiers:
       - CH-PODLIFECYCLE
   # The first two sites of this carrier sit in its header comment block,
-  # which the build constraint separates from the package clause, and the
-  # third sits in a comment documenting a declaration. Each names a
-  # distinct identifier, so an enumeration that skipped the header block
+  # which the build constraint separates from the package clause, the
+  # third sits in the string literal the pinned-literal register names as
+  # pinning a sentence of the specification, and the fourth sits in a
+  # comment documenting a declaration. Each names a distinct identifier,
+  # so an enumeration that skipped the header block or the pinned literal
   # would write a resolved identifier at the wrong site.
   - file: tests/tier11_docs/route_test.go
     occurrence: 1
@@ -52,5 +54,9 @@ entries:
       - CH-ADAPTEREVENTS
   - file: tests/tier11_docs/route_test.go
     occurrence: 3
+    identifiers:
+      - LNK-GWCONTROL
+  - file: tests/tier11_docs/route_test.go
+    occurrence: 4
     identifiers:
       - LNK-GWCONTROL

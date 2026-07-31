@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
@@ -67,17 +68,19 @@ func (s span) covers(other span) bool { return other.lo >= s.lo && other.hi <= s
 
 // findSites returns every reserved-phrase site one file carries, in
 // source order, which is the order the register's occurrence numbers are
-// assigned in.
+// assigned in. The pinned set names the string literals of a tier-11
+// reconciliation carrier the pinned-literal register resolves, and is
+// empty for every other carrier.
 //
 // The continuation join is applied before the matcher, so a phrase
 // wrapped across two comment lines is one site rather than two half
 // sites neither the pass nor the naming lint reads. A match inside a
 // markdown anchor identifier is not a site and takes no occurrence
 // number, because it needs no register entry.
-func findSites(target, content string) ([]site, error) {
+func findSites(target, content string, pinned map[int]bool) ([]site, error) {
 	joined, offsets := citation.Join(content)
 	excluded := anchorSpans(joined)
-	admits, err := carrierFilter(target, content)
+	admits, err := carrierFilter(target, content, pinned)
 	if err != nil {
 		return nil, err
 	}
@@ -174,25 +177,94 @@ func covered(spans []span, match span) bool {
 // so the doc comments of the Go runtime SDK are read here.
 //
 // A carrier inside the domain is read whole except for Go, where the
-// law's domain is the doc comment: a site in a function-body comment, in
-// a trailing inline comment, or in a string literal is outside it.
-// `lenny runtime validate` prints such a literal as operator-facing help
-// text, which this migration leaves unchanged.
-func carrierFilter(target, content string) (func(int) bool, error) {
+// pass holds two positions. The first is the doc comment, so a site in a
+// function-body comment or in a trailing inline comment is outside the
+// pass. The second is the string literal the pinned-literal register
+// names, which is how the specification prose, heading slugs, and
+// intra-spec links a tier-11 reconciliation test pins are rewritten by
+// the same run that rewrites the specification they pin. Every other
+// string literal is outside the pass: `lenny runtime validate` prints
+// one as operator-facing help text, which this migration leaves
+// unchanged.
+func carrierFilter(target, content string, pinned map[int]bool) (func(int) bool, error) {
 	if !scope.ReservedPhraseCarrier(target) {
 		return func(int) bool { return false }, nil
 	}
 	if filepath.Ext(target) != ".go" {
 		return func(int) bool { return true }, nil
 	}
-	comments, err := goDocCommentSpans(target, content)
+	admitted, err := goAdmittedSpans(target, content, pinned)
 	if err != nil {
 		return nil, err
 	}
-	return func(at int) bool { return within(comments, at) }, nil
+	return func(at int) bool { return within(admitted, at) }, nil
 }
 
-// goDocCommentSpans returns the byte span of every comment of a Go file
+// goAdmittedSpans returns the byte spans of a Go carrier the matcher
+// reads a site in, which are the comments documenting the package or a
+// declaration together with the string literals the pinned-literal
+// register resolves for this carrier.
+func goAdmittedSpans(target, content string, pinned map[int]bool) ([]span, error) {
+	fset, file, err := parseGo(target, content)
+	if err != nil {
+		return nil, err
+	}
+	out := docCommentSpans(fset, file)
+	for i, literal := range stringLiteralSpans(fset, file) {
+		if pinned[i+1] {
+			out = append(out, literal)
+		}
+	}
+	return out, nil
+}
+
+// goStringLiteralCount returns how many string literals a Go carrier
+// holds, which is what the pinned-literal register's positions are
+// numbered against.
+func goStringLiteralCount(target, content string) (int, error) {
+	fset, file, err := parseGo(target, content)
+	if err != nil {
+		return 0, err
+	}
+	return len(stringLiteralSpans(fset, file)), nil
+}
+
+// parseGo parses a Go carrier with its comments.
+//
+// A file the parser cannot read fails the run rather than being read
+// whole or skipped. Reading it whole would rewrite an implementation
+// comment and an operator-facing literal the law does not govern, and
+// skipping it would leave every doc comment and every pinned literal it
+// carries with no pass able to write them, which is the writerless site
+// the shared domain exists to prevent.
+func parseGo(target, content string) (*token.FileSet, *ast.File, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read the doc comments of %s: %w", target, err)
+	}
+	return fset, file, nil
+}
+
+// stringLiteralSpans returns the byte span of every string literal of a
+// Go file, in source order, which is the order the pinned-literal
+// register's positions are assigned in.
+func stringLiteralSpans(fset *token.FileSet, file *ast.File) []span {
+	var out []span
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		lo := fset.Position(lit.Pos()).Offset
+		out = append(out, span{lo: lo, hi: lo + len(lit.Value)})
+		return true
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].lo < out[j].lo })
+	return out
+}
+
+// docCommentSpans returns the byte span of every comment of a Go file
 // that documents the package or a declaration, which is the position the
 // naming law governs in a Go carrier and the position the naming lint
 // reads.
@@ -207,19 +279,7 @@ func carrierFilter(target, content string) (func(int) bool, error) {
 // this pass's occurrence numbering from the enumeration the register is
 // keyed by in any file carrying both a header site and an attached one,
 // which writes a resolved identifier at the wrong site.
-//
-// A file the parser cannot read fails the run rather than being read
-// whole or skipped. Reading it whole would rewrite a string literal and
-// an implementation comment the law does not govern, and skipping it
-// would leave every doc comment it carries with no pass able to write
-// them, which is the writerless site the shared domain exists to
-// prevent.
-func goDocCommentSpans(target, content string) ([]span, error) {
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
-	if err != nil {
-		return nil, fmt.Errorf("read the doc comments of %s: %w", target, err)
-	}
+func docCommentSpans(fset *token.FileSet, file *ast.File) []span {
 	var out []span
 	add := func(group *ast.CommentGroup) {
 		if group == nil {
@@ -252,5 +312,5 @@ func goDocCommentSpans(target, content string) ([]span, error) {
 		}
 		return true
 	})
-	return out, nil
+	return out
 }
