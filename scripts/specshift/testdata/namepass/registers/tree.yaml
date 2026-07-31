@@ -48,10 +48,11 @@ entries:
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
-  # The site of this carrier opens its own line inside an element of a
-  # package-level composite literal, which the parser attaches to
-  # nothing. The trailing comment of the same carrier is outside the
-  # position the law governs, so it takes no entry.
+  # The site of this carrier stands in the comment documenting a
+  # declaration. The comment between the elements of the package-level
+  # literal below it and the comment trailing the code it annotates are
+  # both outside the doc-comment position the law governs, so neither
+  # takes an entry.
   - file: pkg/catalog/catalog.go
     occurrence: 1
     identifiers:
@@ -66,6 +67,14 @@ entries:
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
+  # The site of this schema document wraps across two of its comment
+  # lines. A number sign opens a comment in a YAML document, so the fold
+  # is one comment there even though the same marker opens a heading in a
+  # markdown document.
+  - file: schemas/lenny-adapter-defaults.yaml
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
   - file: schemas/lenny-adapter.proto
     occurrence: 1
     identifiers:
@@ -74,26 +83,20 @@ entries:
     occurrence: 2
     identifiers:
       - CH-PODLIFECYCLE
-  # The first two sites of this carrier sit in its header comment block,
-  # which the build constraint separates from the package clause, the
-  # third sits in the string literal the pinned-literal register names as
-  # pinning a sentence of the specification, and the fourth sits in a
-  # comment documenting a declaration. Each names a distinct identifier,
-  # so an enumeration that skipped the header block or the pinned literal
-  # would write a resolved identifier at the wrong site.
+  # The header comment block of this carrier is separated from the
+  # package clause by the build constraint, so it is no doc comment and
+  # the phrase it wraps across two of its lines takes no entry. The first
+  # site is the string literal the pinned-literal register names as
+  # pinning a sentence of the specification, and the second is the
+  # comment documenting a declaration below it. The two name distinct
+  # identifiers, so an enumeration reading the header block or the
+  # unpinned literal as a site would write a resolved identifier at the
+  # wrong site.
   - file: tests/tier11_docs/route_test.go
     occurrence: 1
     identifiers:
-      - CH-PODLIFECYCLE
+      - LNK-GWCONTROL
   - file: tests/tier11_docs/route_test.go
     occurrence: 2
     identifiers:
-      - CH-ADAPTEREVENTS
-  - file: tests/tier11_docs/route_test.go
-    occurrence: 3
-    identifiers:
-      - LNK-GWCONTROL
-  - file: tests/tier11_docs/route_test.go
-    occurrence: 4
-    identifiers:
-      - LNK-GWCONTROL
+      - CH-PODLIFECYCLE

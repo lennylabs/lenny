@@ -19,10 +19,26 @@ const JoinByte = joinByte
 // way a citation does, and a line-oriented matcher reads neither line as a
 // site, so the wrapped occurrence is written by no pass and read by no gate.
 // One implementation keeps the two matchers reading one population. A matcher
-// that also has to decide whether the two joined lines belong to one paragraph
+// that also has to decide whether the two joined lines belong to one comment
 // answers that after the join, over the joined text, rather than by reading a
 // carrier under a join of its own.
 func Join(content string) (string, []int) { return join(content) }
+
+// ContinuationMarker returns the comment marker Join consumed at a source
+// offset, which is the offset a join byte of the joined text maps back to, or
+// the empty string when no continuation stands there.
+//
+// It is exported, with LineOpenMarker, for the caller that has to decide
+// whether the two lines a join folded together belong to one comment. The
+// marker set is this package's statement of a carrier's comment syntax, and a
+// caller re-deriving it would answer against a population the join does not
+// produce.
+func ContinuationMarker(content string, at int) string { return continuationMarker(content, at) }
+
+// LineOpenMarker returns the marker the source line holding an offset opens
+// with, or the empty string when the line opens on anything else. It is the
+// other half of the pair ContinuationMarker documents.
+func LineOpenMarker(content string, at int) string { return lineOpenMarker(content, at) }
 
 // LineOf returns the 1-based source line the byte offset sits on. It is
 // exported for the same reason Join is: a pass reporting a site for hand

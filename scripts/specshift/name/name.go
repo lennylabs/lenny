@@ -31,11 +31,13 @@
 // neither the pass nor the lint reads. It is the one join the citation
 // matcher applies, over every carrier, so the two read one wrapped
 // population. A match the join folded together is held to one comment
-// afterwards: the line it opens on has to carry a comment marker of its
-// own, so a heading, a list item, or an emphasis run opening the line
-// after a markdown paragraph line stands as the author wrote it rather
-// than fusing onto the paragraph above it. Two populations are outside
-// the matcher. A
+// afterwards: both lines of the fold have to open behind the same
+// comment marker of the carrier's own format. A number sign, an
+// asterisk, and a pair of hyphens are markup in a markdown document, so
+// a heading, a list item, or an emphasis run there stands as the author
+// wrote it rather than fusing onto the line above it, while the same
+// number sign opens a comment in a YAML document and folds. Two
+// populations are outside the matcher. A
 // markdown anchor identifier is an addressable link target rather than
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this
@@ -43,15 +45,16 @@
 // the pass writes against the same statement of it the naming lint
 // reads, and it reaches the fragment of a link rather than the whole
 // destination: a phrase in the path half is a site the register
-// resolves. In a Go file the matcher reads the prose comment position
-// the scope package states, which is the file's leading comments, the
-// comments documenting a declaration, and a comment that opens its own
-// line outside every function body, together with the string literals
+// resolves. In a Go file the matcher reads the doc comment position the
+// scope package states, which is the group the parser attaches to the
+// package clause or to a declaration, together with the string literals
 // the pinned-literal register names, because those are the naming law's
-// positions there. An implementation comment inside a function body and
-// a comment trailing the code it annotates hold internal text the law
-// does not govern, and so does every string literal the pinned-literal
-// register does not name.
+// positions there. Every other comment holds internal text the law does
+// not govern, among them a header block a build constraint detaches from
+// the package clause, a comment between the elements of a package-level
+// literal, a comment trailing the code it annotates, and an
+// implementation comment inside a function body, and so does every
+// string literal the pinned-literal register does not name.
 //
 // That register covers the string literals under tests/tier11_docs/ that
 // pin specification prose, a specification heading slug, or an

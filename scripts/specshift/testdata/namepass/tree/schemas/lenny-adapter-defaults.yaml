@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+#
+# The defaults of the adapter schema. This comment wraps across two of
+# its lines, and a number sign opens a comment in a YAML document, so the
+# phrase folded across the wrap below names one site: the lifecycle
+# channel of the pod.
+version: 1

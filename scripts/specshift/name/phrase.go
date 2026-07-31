@@ -71,7 +71,7 @@ func (s span) covers(other span) bool { return other.lo >= s.lo && other.hi <= s
 // sites neither the pass nor the naming lint reads. It is the one join
 // the citation matcher applies, over every carrier, so the two matchers
 // enumerate one wrapped population. A match that spans a join is then
-// held to one comment by the paragraph rule below. A match inside a
+// held to one comment by the rule below. A match inside a
 // markdown anchor identifier is not a site and takes no occurrence
 // number, because it needs no register entry.
 func findSites(target, content string, pinned map[int]bool) ([]site, error) {
@@ -88,7 +88,7 @@ func findSites(target, content string, pinned map[int]bool) ([]site, error) {
 			continue
 		}
 		source := span{lo: offsets[match.lo], hi: offsets[match.hi]}
-		if !oneParagraph(joined[match.lo:match.hi], content, source.lo) {
+		if !oneComment(target, joined, match, content, offsets) {
 			continue
 		}
 		// A wrapped site is admitted on the offset it opens at. Its span
@@ -108,50 +108,75 @@ func findSites(target, content string, pinned map[int]bool) ([]site, error) {
 	return out, nil
 }
 
-// oneParagraph reports whether a match stands inside a single run of
-// prose. A match carrying no join byte spans one line and always does. A
-// match the join folded together spans two lines, and it is one site
-// only when the line it opens on is itself written behind a comment
-// marker, which is what makes the marker on the following line the
-// continuation of the same comment.
+// oneComment reports whether a match stands inside a single comment. A
+// match carrying no join byte spans one line and always does. A match
+// the join folded together spans a line break, and it is one site only
+// when both lines of every fold it spans open behind the same comment
+// marker of the carrier's own format, which is what makes the second
+// line the continuation of the comment the first line opens.
 //
 // The rule is answered here, over the joined text, rather than by
 // reading some carriers under a join of their own, because the join is
 // one join and the naming lint reads the population this matcher
 // enumerates. It bounds the hazard a markdown document carries: a number
-// sign, an asterisk, or a pair of hyphens opening a line of a markdown
-// paragraph is a heading, a list item, or an emphasis run, each of which
-// may interrupt a paragraph legally. The paragraph line above it carries
-// no marker, so the two lines are two paragraphs and the fold across
-// them is no site. Without the rule the pass would either abort at a
-// position that is no bare noun phrase or splice a substitution over the
-// newline, deleting the heading or the list marker between them and the
-// anchor derived from the heading with it.
-func oneParagraph(match, content string, at int) bool {
-	if !strings.ContainsRune(match, rune(citation.JoinByte)) {
-		return true
-	}
-	return commentedLine(content, at)
-}
-
-// commentedLine reports whether the source line holding an offset opens
-// behind one of the comment markers the continuation join consumes.
-func commentedLine(content string, at int) bool {
-	start := strings.LastIndexByte(content[:at], '\n') + 1
-	line := strings.TrimLeft(content[start:], " \t")
-	for _, marker := range commentMarkers {
-		if strings.HasPrefix(line, marker) {
-			return true
+// sign, an asterisk, or a pair of hyphens opening a markdown line is a
+// heading, a list item, or an emphasis run rather than a comment, so a
+// fold between two headings or two list items is no site, and neither is
+// a fold from a paragraph line onto a heading below it. Without the rule
+// the pass would either abort at a position that is no bare noun phrase,
+// with no hand correction available, or splice a substitution over the
+// newline, deleting the heading or the list marker between the two lines
+// and the anchor derived from the heading with it, which the anchor pass
+// and the fragment-link gate resolve against.
+func oneComment(target, joined string, match span, content string, offsets []int) bool {
+	ext := strings.ToLower(filepath.Ext(target))
+	for i := match.lo; i < match.hi; i++ {
+		if joined[i] != citation.JoinByte {
+			continue
+		}
+		opened := commentDialect(ext, citation.LineOpenMarker(content, offsets[i]))
+		if opened == "" || opened != commentDialect(ext, citation.ContinuationMarker(content, offsets[i])) {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
-// commentMarkers are the markers the continuation join consumes, which
-// are the line comment of the slash dialects, the number-sign dialects,
-// the double-hyphen dialects, and the leading star of a block comment
-// together with the opener that introduces it.
-var commentMarkers = []string{"//", "/*", "#", "--", "*"}
+// commentDialect names the comment dialect a line-opening marker writes
+// in a carrier of the given format, and returns the empty string when
+// the marker is not a comment marker there at all.
+//
+// The markers the continuation join consumes are shared across formats,
+// and the same bytes carry different meanings in different ones. A
+// number sign, an asterisk, and a pair of hyphens open a heading, a list
+// item, and an emphasis run in a markdown document, so a markdown
+// carrier admits only the slash line comment, which a fenced snippet
+// holds. A JSON document carries no comment syntax at all. A format this
+// migration does not name admits none either, so a fold in one is no
+// site rather than a site the pass writes blind.
+//
+// The block-comment opener and the star a block comment continues on are
+// one dialect, so a phrase wrapped inside a block comment is one site.
+func commentDialect(ext, marker string) string {
+	switch ext {
+	case ".go", ".proto":
+		switch {
+		case strings.HasPrefix(marker, "//"):
+			return "//"
+		case marker == "/*" || marker == "*":
+			return "/*"
+		}
+	case ".yaml", ".yml":
+		if strings.HasPrefix(marker, "#") {
+			return "#"
+		}
+	case ".md", ".json":
+		if strings.HasPrefix(marker, "//") {
+			return "//"
+		}
+	}
+	return ""
+}
 
 // render writes the join byte back as a space, so a wrapped site reads
 // as one line of text in a failure message.
@@ -225,11 +250,12 @@ func covered(spans []span, match span) bool {
 // so the doc comments of the Go runtime SDK are read here.
 //
 // A carrier inside the domain is read whole except for Go, where the
-// pass holds two positions. The first is the prose comment the scope
-// package's position rule states, so a site in a function-body comment
-// or in a trailing inline comment is outside the pass while a site in a
-// header block, in the documentation of a declaration, or between the
-// elements of a package-level literal is inside it. The second is the
+// pass holds two positions. The first is the doc comment the scope
+// package's position rule states, so a site in the documentation of the
+// package clause or of a declaration is inside the pass while a site in
+// a detached header block, in a comment between the elements of a
+// package-level literal, in a trailing inline comment, or in a
+// function-body comment is outside it. The second is the
 // string literal the pinned-literal register
 // names, which is how the specification prose, heading slugs, and
 // intra-spec links a tier-11 reconciliation test pins are rewritten by
@@ -252,7 +278,7 @@ func carrierFilter(target, content string, pinned map[int]bool) (func(int) bool,
 }
 
 // goAdmittedSpans returns the byte spans of a Go carrier the matcher
-// reads a site in, which are the prose comments the scope package's
+// reads a site in, which are the doc comments the scope package's
 // position rule governs together with the string literals the
 // pinned-literal register resolves for this carrier.
 func goAdmittedSpans(target, content string, pinned map[int]bool) ([]span, error) {
@@ -260,12 +286,12 @@ func goAdmittedSpans(target, content string, pinned map[int]bool) ([]span, error
 	if err != nil {
 		return nil, err
 	}
-	prose, err := scope.GoProseCommentSpans(target, content)
+	docs, err := scope.GoDocCommentSpans(target, content)
 	if err != nil {
 		return nil, err
 	}
 	var out []span
-	for _, p := range prose {
+	for _, p := range docs {
 		out = append(out, span{lo: p[0], hi: p[1]})
 	}
 	for i, literal := range stringLiteralSpans(fset, file) {
@@ -288,7 +314,7 @@ func goStringLiteralCount(target, content string) (int, error) {
 }
 
 // parseGo parses a Go carrier, which is what the string literals the
-// pinned-literal register numbers are enumerated from. The prose
+// pinned-literal register numbers are enumerated from. The doc
 // comments the same carrier holds come from the scope package, which
 // states the position rule the naming lint reads against.
 //

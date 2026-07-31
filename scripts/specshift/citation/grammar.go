@@ -269,6 +269,47 @@ var continuationExpr = regexp.MustCompile(
 	continuationLead + `(?:` + continuationMarkers + `)[ \t]*`,
 )
 
+// continuationMarkerExpr matches one continuation anchored at the offset the
+// join consumed it from, capturing the marker itself, and lineOpenerExpr
+// captures the marker a source line opens with. The opener set carries the
+// block-comment opener beside the markers a continuation may lead with, because
+// a block comment opens on `/*` and continues on the star the join consumes.
+//
+// Both are held here beside the marker set, so a caller deciding whether two
+// joined lines belong to one comment reads the same statement of a carrier's
+// comment syntax the join itself is defined against.
+var (
+	continuationMarkerExpr = regexp.MustCompile(`^` + continuationLead + `(` + continuationMarkers + `)[ \t]*`)
+	lineOpenerExpr         = regexp.MustCompile(`^[ \t]*(/\*|` + continuationMarkers + `)`)
+)
+
+// continuationMarker returns the marker the continuation join consumed at a
+// source offset, or the empty string when no continuation stands there.
+func continuationMarker(content string, at int) string {
+	if at < 0 || at > len(content) {
+		return ""
+	}
+	m := continuationMarkerExpr.FindStringSubmatch(content[at:])
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
+// lineOpenMarker returns the marker the source line holding an offset opens
+// with, or the empty string when the line opens on anything else.
+func lineOpenMarker(content string, at int) string {
+	if at < 0 || at > len(content) {
+		return ""
+	}
+	start := strings.LastIndexByte(content[:at], '\n') + 1
+	m := lineOpenerExpr.FindStringSubmatch(content[start:])
+	if m == nil {
+		return ""
+	}
+	return m[1]
+}
+
 // join collapses every continuation into a single joinByte and returns the
 // joined text together with the source offset of each of its bytes. The offset
 // slice carries one further entry holding the length of the source, so the end

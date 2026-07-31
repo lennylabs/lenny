@@ -3,8 +3,9 @@
 
 // The header of this carrier is a prose block the build constraint above
 // separates from the package clause by a blank line, so the parser
-// attaches it to nothing. It names the lifecycle channel here, and it
-// names the lifecycle channel again in this second sentence.
+// attaches it to no declaration. It is no doc comment, so the lifecycle
+// channel it names here is outside the position the law governs and
+// takes no register entry.
 
 package docs
 
@@ -18,7 +19,7 @@ const requireLine = "The base policy allows only the gRPC control channel (port 
 // stands.
 const skipReason = "skipped: the lifecycle channel fixture is unavailable"
 
-// Route documents the control channel in a comment the parser does
-// attach to a declaration, which takes the occurrence number after the
-// header block's sites and after the pinned literal.
+// Route documents the lifecycle channel in a comment the parser attaches
+// to a declaration, which takes the occurrence number after the pinned
+// literal above it.
 func Route() {}
