@@ -429,6 +429,14 @@
       "static": ["tests/tier0_static/..."],
       "unit": ["cmd/lenny-test/..."]
     },
+    "cmd/lenny-test/verdictstatus": {
+      "static": ["tests/tier0_static/..."],
+      "unit": ["cmd/lenny-test/verdictstatus/..."],
+      "docs": ["tests/tier11_docs/verdict_enum_test.go"]
+    },
+    "TESTING.md": {
+      "docs": ["tests/tier11_docs/verdict_enum_test.go"]
+    },
     "cmd/lenny-test-cached": {
       "static": ["tests/tier0_static/..."],
       "unit": ["cmd/lenny-test-cached/..."]

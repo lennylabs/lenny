@@ -518,8 +518,8 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
 
 ### Field semantics
 
-- `verdict` is one of `PASS`, `FAIL`, `INCONCLUSIVE`. `INCONCLUSIVE` means the harness could not complete the run (for example, infrastructure failed to start).
-- `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, `not-selected`. `skipped` carries a `reason`.
+- `verdict` is one of `PASS`, `FAIL`, `INCONCLUSIVE`, and `UNVERIFIED`. `INCONCLUSIVE` means the harness could not complete the run (for example, infrastructure failed to start), and the harness exits 2. `UNVERIFIED` means a check could not reach a conclusion, so the run establishes neither success nor failure, and the harness exits 3.
+- `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, `inconclusive`, `unverified`, and `not-selected`. `skipped` carries a `reason`. `inconclusive` marks a tier whose failure the harness classified as infrastructure-class rather than a test failure. `unverified` marks a tier in which a check could not reach a conclusion.
 - `next_action` is one short, machine-readable sentence describing what the implementing agent should do next.
 - `spec_section_status` aggregates test results by spec section. An agent working on section 4.2 reads this field to know whether the section is currently green.
 - `rerun_command` is a copy-paste-ready command that runs the single failing test.
@@ -2570,6 +2570,8 @@ The annotation is a hint, not a verdict. The author confirms the cause.
 ### 21.3 Infrastructure failures
 
 A test that fails because infrastructure failed (testcontainer crash, Kind cluster bring-up timeout, cloud quota exceeded) reports `verdict: INCONCLUSIVE`. The harness retries up to two times with fresh infrastructure before declaring `FAIL`.
+
+A check that completes without reaching a conclusion (for example, a tool the check invokes is absent from the environment) reports `verdict: UNVERIFIED`. The harness does not retry that run, because fresh infrastructure supplies no conclusion the check was unable to reach. The run is resolved by making the check able to run and running it again.
 
 ### 21.4 Tracking
 
