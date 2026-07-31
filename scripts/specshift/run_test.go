@@ -1821,6 +1821,36 @@ func sameSnapshot(a, b map[string]string) bool {
 // ratchet, and the residual scan, so no gate reports its own input.
 const fixtureCitations = "testdata/citations"
 
+// TestTheToolingSourceHoldsTheRetiredFormOnlyInFixtures pins the rule the
+// fixture layout exists for: every verbatim copy of the retired citation form
+// this package's own cases need sits in a testdata/ file, so no copy of it
+// lands in a Go source the resolver, the ratchet, and the residual scan read.
+// A copy in a Go source names no section anyone will retire, and its route out
+// of the population is the deletion of the case rather than a retirement, so a
+// per-file count or a resolution-baseline entry seeded for it would never fall
+// and the zero end state would be unreachable.
+func TestTheToolingSourceHoldsTheRetiredFormOnlyInFixtures(t *testing.T) {
+	t.Parallel()
+	list, read := scope.DirLister("."), scope.DirReader(".")
+	paths, err := list(context.Background())
+	if err != nil {
+		t.Fatalf("list the tooling source: %v", err)
+	}
+	for _, path := range paths {
+		if filepath.Ext(path) != ".go" || !scope.Readable(path) {
+			continue
+		}
+		data, err := read(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		for _, c := range citation.FindIn(path, string(data)) {
+			t.Errorf("%s line %d carries the retired citation form %q; hold it in a testdata/ fixture instead",
+				c.Path, c.Line, c.Text)
+		}
+	}
+}
+
 // citationFixture reads one such fixture.
 func citationFixture(t *testing.T, name string) string {
 	t.Helper()
@@ -1829,6 +1859,30 @@ func citationFixture(t *testing.T, name string) string {
 		t.Fatalf("read citation fixture %s: %v", name, err)
 	}
 	return string(data)
+}
+
+// wantCitations reads the citation text a fixture's case expects, held in the
+// fixture's companion `.want` file, one citation per line. The expected text is
+// a verbatim copy of the retired form, so it is held beside the fixture for the
+// reason fixtureCitations states rather than in a Go string literal here.
+func wantCitations(t *testing.T, fixture string) []string {
+	t.Helper()
+	name := strings.TrimSuffix(fixture, filepath.Ext(fixture)) + ".want"
+	content := strings.TrimSuffix(citationFixture(t, name), "\n")
+	if content == "" {
+		t.Fatalf("expectation fixture %s is empty", name)
+	}
+	return strings.Split(content, "\n")
+}
+
+// wantCitation reads the single citation text a fixture's case expects.
+func wantCitation(t *testing.T, fixture string) string {
+	t.Helper()
+	texts := wantCitations(t, fixture)
+	if len(texts) != 1 {
+		t.Fatalf("expectation fixture for %s carries %d citations, want 1", fixture, len(texts))
+	}
+	return texts[0]
 }
 
 // oneCitation reads a fixture and returns the single citation it carries.
@@ -1875,71 +1929,35 @@ func TestFindReadsEverySpellingOfTheRetiredCitationForm(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		fixture   string
-		text      string
 		ref       string
 		qualifier string
 		members   []string
 	}{
-		{"section-level.txt", "§10 line 437", "§10", "", []string{"437-437"}},
-		{"hyphen-range.txt", "§4.4 lines 263-291", "§4.4", "", []string{"263-291"}},
-		{"endash-range.txt", "§4.4 lines 263–291", "§4.4", "", []string{"263-291"}},
-		{"emdash-range.txt", "§4.4 lines 263—291", "§4.4", "", []string{"263-291"}},
-		{"comma-members.txt", "§4.8 lines 1057-1058, 1077", "§4.8", "", []string{"1057-1058", "1077-1077"}},
-		{"repeated-keyword.txt", "§10.6 line 601, line 629", "§10.6", "", []string{"601-601", "629-629"}},
-		{"slash-members.txt", "§10.7 line 694 / line 743", "§10.7", "", []string{"694-694", "743-743"}},
-		{"and-members.txt", "§12.5 line 315 and line 321", "§12.5", "", []string{"315-315", "321-321"}},
-		{
-			"plus-members.txt",
-			`§10 line 437 ("annotation") + line 443 ("check")`,
-			"§10", "",
-			[]string{"437-437", "443-443"},
-		},
-		{"qualifier-item.txt", "§11.7 item 3 line 364", "§11.7", "item 3", []string{"364-364"}},
-		{"qualifier-identifier.txt", "§16.4 NET-063 line 88", "§16.4", "NET-063", []string{"88-88"}},
-		{"qualifier-table.txt", "§17.2 table line 12", "§17.2", "table", []string{"12-12"}},
-		{
-			"qualifier-parenthetical.txt",
-			"§10.3 NET-063 (spec line 327)",
-			"§10.3", "NET-063",
-			[]string{"327-327"},
-		},
-		{
-			"qualifier-words.txt",
-			"§10.3 revocation deny list (spec line 352)",
-			"§10.3", "revocation deny list",
-			[]string{"352-352"},
-		},
-		{
-			"qualifier-parenthetical-preamble.txt",
-			"§24 preamble (line 17)",
-			"§24", "preamble",
-			[]string{"17-17"},
-		},
-		{"gloss-trailing.txt", "§7.3 line 408 step (e)", "§7.3", "", []string{"408-408"}},
-		{"gloss-bare.txt", "§9.2 line 240 messagingScope", "§9.2", "", []string{"240-240"}},
-		{
-			"path-form.txt",
-			"spec/04_system-components.md line 1145",
-			"spec/04_system-components.md", "",
-			[]string{"1145-1145"},
-		},
-		{
-			"path-form-bare-prefix.txt",
-			"15_external-api-surface.md line 1315",
-			"spec/15_external-api-surface.md", "",
-			[]string{"1315-1315"},
-		},
-		{"colon-section.txt", "§17.6:404", "§17.6", "", []string{"404-404"}},
-		{
-			"colon-path.txt",
-			"spec/15_external-api-surface.md:1315",
-			"spec/15_external-api-surface.md", "",
-			[]string{"1315-1315"},
-		},
+		{"section-level.txt", "§10", "", []string{"437-437"}},
+		{"hyphen-range.txt", "§4.4", "", []string{"263-291"}},
+		{"endash-range.txt", "§4.4", "", []string{"263-291"}},
+		{"emdash-range.txt", "§4.4", "", []string{"263-291"}},
+		{"comma-members.txt", "§4.8", "", []string{"1057-1058", "1077-1077"}},
+		{"repeated-keyword.txt", "§10.6", "", []string{"601-601", "629-629"}},
+		{"slash-members.txt", "§10.7", "", []string{"694-694", "743-743"}},
+		{"and-members.txt", "§12.5", "", []string{"315-315", "321-321"}},
+		{"plus-members.txt", "§10", "", []string{"437-437", "443-443"}},
+		{"qualifier-item.txt", "§11.7", "item 3", []string{"364-364"}},
+		{"qualifier-identifier.txt", "§16.4", "NET-063", []string{"88-88"}},
+		{"qualifier-table.txt", "§17.2", "table", []string{"12-12"}},
+		{"qualifier-parenthetical.txt", "§10.3", "NET-063", []string{"327-327"}},
+		{"qualifier-words.txt", "§10.3", "revocation deny list", []string{"352-352"}},
+		{"qualifier-parenthetical-preamble.txt", "§24", "preamble", []string{"17-17"}},
+		{"gloss-trailing.txt", "§7.3", "", []string{"408-408"}},
+		{"gloss-bare.txt", "§9.2", "", []string{"240-240"}},
+		{"path-form.txt", "spec/04_system-components.md", "", []string{"1145-1145"}},
+		{"path-form-bare-prefix.txt", "spec/15_external-api-surface.md", "", []string{"1315-1315"}},
+		{"colon-section.txt", "§17.6", "", []string{"404-404"}},
+		{"colon-path.txt", "spec/15_external-api-surface.md", "", []string{"1315-1315"}},
 	} {
 		c := oneCitation(t, tc.fixture)
-		if c.Text != tc.text {
-			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, tc.text)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
 		}
 		if c.Ref() != tc.ref {
 			t.Errorf("%s: reference is %q, want %q", tc.fixture, c.Ref(), tc.ref)
@@ -1966,8 +1984,8 @@ func TestFindRequiresTheColonMemberToStandAgainstTheReference(t *testing.T) {
 		t.Errorf("Find over prose colons returned %v, want no citation", found)
 	}
 	spaced := oneCitation(t, "colon-qualifier-then-prose.txt")
-	if spaced.Text != "§25.2 line 396" {
-		t.Errorf("citation text is %q, want %q", spaced.Text, "§25.2 line 396")
+	if want := wantCitation(t, "colon-qualifier-then-prose.txt"); spaced.Text != want {
+		t.Errorf("citation text is %q, want %q", spaced.Text, want)
 	}
 	if got := members(spaced); !sameStrings(got, []string{"396-396"}) {
 		t.Errorf("members are %v, want the cited line rather than the prose behind the colon", got)
@@ -1997,8 +2015,8 @@ func TestFindRefusesAColonBehindAQualifier(t *testing.T) {
 func TestFindJoinsAWrappedColonCitation(t *testing.T) {
 	t.Parallel()
 	c := oneCitation(t, "colon-wrapped.txt")
-	if c.Text != "spec/25_example-operability.md: 9-11" {
-		t.Errorf("joined citation text is %q, want the wrapped colon citation", c.Text)
+	if want := wantCitation(t, "colon-wrapped.txt"); c.Text != want {
+		t.Errorf("joined citation text is %q, want %q", c.Text, want)
 	}
 	if c.File != "spec/25_example-operability.md" {
 		t.Errorf("reference is %q, want the path form", c.Ref())
@@ -2023,8 +2041,8 @@ func TestFindConsumesMembersWrittenAfterTheHeadClosingParenthesis(t *testing.T) 
 	if got := members(c); !sameStrings(got, []string{"3333-3358", "3404-3406"}) {
 		t.Errorf("members are %v, want both the parenthesized and the trailing member", got)
 	}
-	if c.Text != "§25.8 Image Resolution (lines 3333-3358), line 3404-3406" {
-		t.Errorf("citation text is %q, want it to run to the last member", c.Text)
+	if want := wantCitation(t, "members-after-close-paren.txt"); c.Text != want {
+		t.Errorf("citation text is %q, want it to run to the last member (%q)", c.Text, want)
 	}
 	if c.Qualifier != "Image Resolution" {
 		t.Errorf("qualifier is %q, want %q", c.Qualifier, "Image Resolution")
@@ -2091,30 +2109,21 @@ func TestFindConsumesATrailingGlossWithItsMember(t *testing.T) {
 // rule exists to prevent.
 func TestFindBoundsTheGlossSoItDoesNotSwallowTheNextCitation(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		fixture string
-		texts   []string
-	}{
-		{"gloss-unpaired-quote.txt", []string{"§8.6 line 675", "§15.1 line 1080"}},
-		{"gloss-apostrophe.txt", []string{"§10.5 line 417", "§4.2 line 157 rule also"}},
-		{
-			"adjacent-path-citations.txt",
-			[]string{
-				"spec/15_external-api-surface.md:1315",
-				"spec/04_system-components.md line 1145",
-			},
-		},
+	for _, fixture := range []string{
+		"gloss-unpaired-quote.txt",
+		"gloss-apostrophe.txt",
+		"adjacent-path-citations.txt",
 	} {
-		found := citation.Find(citationFixture(t, tc.fixture))
+		found := citation.Find(citationFixture(t, fixture))
 		got := make([]string, 0, len(found))
 		for _, c := range found {
 			got = append(got, c.Text)
 			if strings.Contains(c.Text, "\n") {
-				t.Errorf("%s: citation text %q spans a line the join did not consume", tc.fixture, c.Text)
+				t.Errorf("%s: citation text %q spans a line the join did not consume", fixture, c.Text)
 			}
 		}
-		if !sameStrings(got, tc.texts) {
-			t.Errorf("%s: Find returned %q, want %q", tc.fixture, got, tc.texts)
+		if want := wantCitations(t, fixture); !sameStrings(got, want) {
+			t.Errorf("%s: Find returned %q, want %q", fixture, got, want)
 		}
 	}
 }
@@ -2129,15 +2138,10 @@ func TestFindLeavesASeparatorWithNoMemberOutsideTheCitation(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		fixture string
-		texts   []string
 		glosses []string
 	}{
-		{"separator-then-prose.txt", []string{"§4.7 line 900"}, []string{""}},
-		{
-			"gloss-then-separator.txt",
-			[]string{"§12.6 lines 589-607 interfaces", "§13.1 lines 6-8 baseline"},
-			[]string{"interfaces", "baseline"},
-		},
+		{"separator-then-prose.txt", []string{""}},
+		{"gloss-then-separator.txt", []string{"interfaces", "baseline"}},
 	} {
 		found := citation.Find(citationFixture(t, tc.fixture))
 		texts := make([]string, 0, len(found))
@@ -2146,8 +2150,8 @@ func TestFindLeavesASeparatorWithNoMemberOutsideTheCitation(t *testing.T) {
 			texts = append(texts, c.Text)
 			glosses = append(glosses, c.Members[0].Gloss)
 		}
-		if !sameStrings(texts, tc.texts) {
-			t.Errorf("%s: Find returned %q, want %q", tc.fixture, texts, tc.texts)
+		if want := wantCitations(t, tc.fixture); !sameStrings(texts, want) {
+			t.Errorf("%s: Find returned %q, want %q", tc.fixture, texts, want)
 		}
 		if !sameStrings(glosses, tc.glosses) {
 			t.Errorf("%s: glosses are %q, want %q", tc.fixture, glosses, tc.glosses)
@@ -2210,8 +2214,8 @@ func TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt(t *testing.T) {
 func TestFindWritesARangeEndpointDirectlyAgainstItsSeparator(t *testing.T) {
 	t.Parallel()
 	c := oneCitation(t, "emdash-aside.txt")
-	if c.Text != "§11.5 line 277" {
-		t.Errorf("citation text is %q, want it to end at the member", c.Text)
+	if want := wantCitation(t, "emdash-aside.txt"); c.Text != want {
+		t.Errorf("citation text is %q, want it to end at the member (%q)", c.Text, want)
 	}
 	if got := members(c); !sameStrings(got, []string{"277-277"}) {
 		t.Errorf("members are %v, want the single cited line", got)
@@ -2253,8 +2257,8 @@ func TestFindConsumesTheMembersWrittenAfterALongGloss(t *testing.T) {
 func TestFindEndsABareGlossAtASentenceTerminatingPeriod(t *testing.T) {
 	t.Parallel()
 	sentence := oneCitation(t, "gloss-sentence-boundary.txt")
-	if sentence.Text != "§10.1 line 155 reassembly" {
-		t.Errorf("citation text is %q, want it to stop at the word ending the sentence", sentence.Text)
+	if want := wantCitation(t, "gloss-sentence-boundary.txt"); sentence.Text != want {
+		t.Errorf("citation text is %q, want it to stop at the word ending the sentence (%q)", sentence.Text, want)
 	}
 	if sentence.Members[0].Gloss != "reassembly" {
 		t.Errorf("gloss is %q, want %q", sentence.Members[0].Gloss, "reassembly")
@@ -2277,20 +2281,19 @@ func TestFindJoinsAContinuationInEveryWrapPositionAndCarrierDialect(t *testing.T
 	t.Parallel()
 	for _, tc := range []struct {
 		fixture string
-		text    string
 		members []string
 		line    int
 	}{
-		{"wrap-reference-keyword-slash.txt", "§4.8 line 1060", []string{"1060-1060"}, 1},
-		{"wrap-keyword-member-slash.txt", "§15.4 lines 1672-1721", []string{"1672-1721"}, 1},
-		{"wrap-member-list-slash.txt", "§8.8 lines 806-823, 897-917", []string{"806-823", "897-917"}, 1},
-		{"wrap-reference-keyword-hash.txt", "§17.9.1 line 1350", []string{"1350-1350"}, 1},
-		{"wrap-member-list-dash.txt", "§12.5 line 315, 321-325", []string{"315-315", "321-325"}, 1},
-		{"wrap-keyword-member-block.txt", "§10.1 line 51", []string{"51-51"}, 2},
+		{"wrap-reference-keyword-slash.txt", []string{"1060-1060"}, 1},
+		{"wrap-keyword-member-slash.txt", []string{"1672-1721"}, 1},
+		{"wrap-member-list-slash.txt", []string{"806-823", "897-917"}, 1},
+		{"wrap-reference-keyword-hash.txt", []string{"1350-1350"}, 1},
+		{"wrap-member-list-dash.txt", []string{"315-315", "321-325"}, 1},
+		{"wrap-keyword-member-block.txt", []string{"51-51"}, 2},
 	} {
 		c := oneCitation(t, tc.fixture)
-		if c.Text != tc.text {
-			t.Errorf("%s: joined citation text is %q, want %q", tc.fixture, c.Text, tc.text)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: joined citation text is %q, want %q", tc.fixture, c.Text, want)
 		}
 		if got := members(c); !sameStrings(got, tc.members) {
 			t.Errorf("%s: members are %v, want %v", tc.fixture, got, tc.members)
@@ -2326,13 +2329,15 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 	}
 }
 
-// citationResolver builds the resolver over the fixture specification tree,
-// whose sections are §4 (lines 1 through 19), §4.1 (5 through 12), §4.2 (13
-// through 19), §4.2.1 (17 through 19), §7, §7.1, §7.2, and, in a file carrying
-// two top-level headings, §25.1 (1 through 8), §25.1.1 (5 through 8), and §25.2
-// (9 through 11). A further file states its numbered title at level one and
-// carries a fenced code block with a numbered heading-like line in it, giving
-// §30.1 (9 through 11) and no section for the level-one title.
+// citationResolver builds the resolver over the fixture specification tree.
+// That tree carries a section with two subsections and one nested
+// sub-subsection, a second file with two subsections, a third file with two
+// top-level headings so a section-level range ends before the next heading of
+// its own level, and a fourth file that states its numbered title at level one
+// and carries a fenced code block with a numbered heading-like line in it, so
+// neither the title nor the fenced line declares a section. The ranges the
+// cases below state are the tree's, and the fixture files themselves are the
+// statement of record.
 func citationResolver(t *testing.T) *citation.Resolver {
 	t.Helper()
 	r, err := citation.NewResolver(context.Background(),

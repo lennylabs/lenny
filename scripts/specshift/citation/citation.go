@@ -171,9 +171,11 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // continuation member, closes the parenthesis a head that opened one closes
 // with, and keeps consuming past that parenthesis.
 //
-// A member list may resume after the head's closing parenthesis, as in
-// `§25.8 Image Resolution (lines 3333-3358), line 3404-3406`. Stopping at the
-// parenthesis would leave those members in place, where the resolver does not
+// A member list may resume after the head's closing parenthesis, which happens
+// when a qualified citation parenthesizes its first range and then writes a
+// further member behind the closing parenthesis. The fixture
+// `testdata/citations/members-after-close-paren.txt` carries that spelling.
+// Stopping at the parenthesis would leave those members in place, where the resolver does not
 // read them and the ratchet does not count them, and the rewritten carrier
 // would read as an anchor followed by orphan integers while its file reached a
 // zero count with a stale pointer surviving.

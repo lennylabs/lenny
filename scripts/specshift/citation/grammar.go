@@ -82,8 +82,10 @@ var headExpr = regexp.MustCompile(
 		// sub-element name: `line 315 and line 321` is two members.
 		`(?:` + sp + `+([A-Za-z]+` + sp + `+[0-9A-Za-z]+|[A-Za-z]+(?:` + sp + `+[A-Za-z]+){2}|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
 		// The keyword itself. It may open a parenthesis of the carrier's own,
-		// with or without the word `spec` behind it, so a citation written as
-		// `§10.3 NET-063 (spec line 327)` is read whole. A matcher requiring
+		// with or without the word `spec` behind it, so a qualified citation
+		// whose keyword and member sit inside a parenthesis is read whole; the
+		// fixture `testdata/citations/qualifier-parenthetical.txt` carries that
+		// spelling. A matcher requiring
 		// the keyword to follow the reference or the qualifier immediately
 		// leaves that spelling unconverted, unread by the resolver, and
 		// uncounted by the ratchet.
