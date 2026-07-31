@@ -1,0 +1,4 @@
+# The compose stack the session runs against.
+#
+# spec: §4.6
+services: {}

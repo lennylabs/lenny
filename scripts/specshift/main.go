@@ -43,6 +43,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
@@ -63,10 +64,18 @@ type options struct {
 	domain   bool
 }
 
-// builtPasses maps a pass name to its implementation. Each pass lands in
-// the change that seeds the register driving it, so the table is empty
-// in the engine skeleton.
-var builtPasses = map[scope.Pass]pass.Rewriter{}
+// builtPasses returns the pass implementations over the tree at root.
+// Each pass lands in the change that seeds the register driving it, so
+// the table names only the passes that are built.
+//
+// The table is built per root rather than held as a package variable,
+// because a pass reads the tree it rewrites: the line pass resolves a
+// path-form citation against the sections under spec/ in the same tree.
+func builtPasses(root string) map[scope.Pass]pass.Rewriter {
+	return map[scope.Pass]pass.Rewriter{
+		scope.Line: line.New(scope.GitLister(root), scope.DirReader(root)),
+	}
+}
 
 // rewriterFor returns the pass implementation for a name from a pass
 // table. A request for a pass that is not built fails rather than
@@ -131,12 +140,15 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 }
 
 // runWith is run over a supplied pass table, so a caller drives the
-// engine with the passes it built.
-func runWith(ctx context.Context, passes map[scope.Pass]pass.Rewriter, args []string, out io.Writer) error {
+// engine with the passes it built. The table is taken as a function of
+// the root, because a pass is built over the tree it rewrites and the
+// root is resolved from the command line.
+func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pass.Rewriter, args []string, out io.Writer) error {
 	opts, err := parseArgs(ctx, args)
 	if err != nil {
 		return err
 	}
+	passes := passesFor(opts.root)
 	harness := pass.NewHarness(opts.root)
 	if opts.domain {
 		return printWriteDomain(ctx, harness, opts.pass, out)

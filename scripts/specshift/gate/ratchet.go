@@ -271,46 +271,59 @@ type ratchetCount struct {
 	Count int    `yaml:"count"`
 }
 
-// loadBaseline reads and validates the baseline into the per-file counts
-// it carries. A missing, unreadable, or malformed baseline is an error
-// rather than an empty set: a load that degraded to carrying nothing
-// would report every file in the tree as a first citation, and a load
-// that degraded to carrying an unbounded count would exempt the growth
-// the gate exists to stop.
+// loadBaseline reads and validates the gate's own baseline.
 func (g *Ratchet) loadBaseline() (map[string]int, error) {
 	if g.Baseline == "" {
 		return nil, fmt.Errorf("no baseline path is configured")
 	}
-	data, err := g.Read(g.Baseline)
+	return LoadRatchetBaseline(g.Read, g.Baseline)
+}
+
+// LoadRatchetBaseline reads and validates a per-file citation-count
+// baseline into the counts it carries. A missing, unreadable, or
+// malformed baseline is an error rather than an empty set: a load that
+// degraded to carrying nothing would report every file in the tree as a
+// first citation, and a load that degraded to carrying an unbounded
+// count would exempt the growth the gate exists to stop.
+//
+// It is exported because the same document drives the line pass, which
+// rewrites a file only against the count the baseline carries for it.
+// One reader of the schema keeps the gate and the pass reading the same
+// population.
+func LoadRatchetBaseline(read scope.FileReader, path string) (map[string]int, error) {
+	if read == nil {
+		return nil, fmt.Errorf("read citation-count baseline %s: no reader is configured", path)
+	}
+	data, err := read(path)
 	if err != nil {
-		return nil, fmt.Errorf("read citation-count baseline %s: %w", g.Baseline, err)
+		return nil, fmt.Errorf("read citation-count baseline %s: %w", path, err)
 	}
 	var doc ratchetDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse citation-count baseline %s: %w", g.Baseline, err)
+		return nil, fmt.Errorf("parse citation-count baseline %s: %w", path, err)
 	}
 	if doc.Kind != ratchetBaselineKind {
 		return nil, fmt.Errorf("citation-count baseline %s: expected kind %q, got %q",
-			g.Baseline, ratchetBaselineKind, doc.Kind)
+			path, ratchetBaselineKind, doc.Kind)
 	}
 	if doc.Version != ratchetBaselineVersion {
 		return nil, fmt.Errorf("citation-count baseline %s: expected version %d, got %d",
-			g.Baseline, ratchetBaselineVersion, doc.Version)
+			path, ratchetBaselineVersion, doc.Version)
 	}
 	if doc.Files == nil {
-		return nil, fmt.Errorf("citation-count baseline %s: carries no files block", g.Baseline)
+		return nil, fmt.Errorf("citation-count baseline %s: carries no files block", path)
 	}
 	carried := map[string]int{}
 	for _, entry := range *doc.Files {
 		if strings.TrimSpace(entry.Path) == "" {
-			return nil, fmt.Errorf("citation-count baseline %s: carries an entry with no path", g.Baseline)
+			return nil, fmt.Errorf("citation-count baseline %s: carries an entry with no path", path)
 		}
 		if _, ok := carried[entry.Path]; ok {
-			return nil, fmt.Errorf("citation-count baseline %s: file %s is declared twice", g.Baseline, entry.Path)
+			return nil, fmt.Errorf("citation-count baseline %s: file %s is declared twice", path, entry.Path)
 		}
 		if entry.Count < 1 {
 			return nil, fmt.Errorf("citation-count baseline %s: file %s carries a count of %d, and a file at zero holds no entry",
-				g.Baseline, entry.Path, entry.Count)
+				path, entry.Path, entry.Count)
 		}
 		carried[entry.Path] = entry.Count
 	}

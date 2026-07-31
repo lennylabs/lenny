@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: MIT
+#
+# The tree register with one carrier's count disagreeing with what the
+# file carries.
+kind: line-citation-count-baseline
+version: 1
+files:
+    - path: BUILD-PLAN.md
+      count: 1
+    - path: BUILD-PROGRESS.md
+      count: 1
+    - path: PROPOSAL-QUEUE.md
+      count: 1
+    - path: compose/keyword.yaml
+      count: 1
+    - path: compose/members.yaml
+      count: 1
+    - path: compose/reference.yaml
+      count: 1
+    - path: migrations/keyword.sql
+      count: 1
+    - path: migrations/members.sql
+      count: 1
+    - path: migrations/reference.sql
+      count: 1
+    - path: pkg/chart/values/values.go
+      count: 2
+    - path: pkg/gateway/externalapi/openapi/openapi.json
+      count: 2
+    - path: pkg/gateway/mcpfabric/mcptools/mcptools.go
+      count: 3
+    - path: pkg/spellings/and-list.go
+      count: 1
+    - path: pkg/spellings/colon-path.go
+      count: 1
+    - path: pkg/spellings/colon-section.go
+      count: 1
+    - path: pkg/spellings/comma-list.go
+      count: 1
+    - path: pkg/spellings/dotted.go
+      count: 2
+    - path: pkg/spellings/emdash-range.go
+      count: 1
+    - path: pkg/spellings/endash-range.go
+      count: 1
+    - path: pkg/spellings/hyphen-range.go
+      count: 1
+    - path: pkg/spellings/path-bare-prefix.go
+      count: 1
+    - path: pkg/spellings/path-form.go
+      count: 1
+    - path: pkg/spellings/plus-gloss.go
+      count: 1
+    - path: pkg/spellings/qualifier.go
+      count: 1
+    - path: pkg/spellings/repeated-keyword.go
+      count: 1
+    - path: pkg/spellings/section-level.go
+      count: 1
+    - path: pkg/spellings/slash-list.go
+      count: 1
+    - path: pkg/wrapped/keyword.go
+      count: 1
+    - path: pkg/wrapped/members.go
+      count: 1
+    - path: pkg/wrapped/reference.go
+      count: 1

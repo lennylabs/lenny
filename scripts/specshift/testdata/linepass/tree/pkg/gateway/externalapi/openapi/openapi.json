@@ -1,0 +1,13 @@
+{
+  "openapi": "3.1.0",
+  "components": {
+    "schemas": {
+      "Sandbox": {
+        "description": "§4.6 line 5 — The claim is a lease the gateway grants.",
+        "properties": {
+          "lease": { "type": "string", "description": "The lease renews while the session runs. §4.6 line 6." }
+        }
+      }
+    }
+  }
+}

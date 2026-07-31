@@ -240,6 +240,15 @@ func (r *Resolver) Section(number string) (Section, bool) {
 	return s, ok
 }
 
+// Containing returns the deepest section of the file that contains the
+// 1-based line, which is the section a path-form citation of that line means.
+// It is what the line pass reads to infer the anchor a path-form citation
+// converts to, so the pass and the resolver agree on which section a line
+// belongs to.
+func (r *Resolver) Containing(file string, line int) (Section, bool) {
+	return deepest(r.byFile[file], line)
+}
+
 // Resolve reports every reason the citation does not resolve. An empty result
 // means every member falls inside the section the citation names.
 //

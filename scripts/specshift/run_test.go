@@ -10,12 +10,14 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v3"
 
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/register"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -942,7 +944,9 @@ func TestLoadRejectsAMissingOrMalformedRegister(t *testing.T) {
 func TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite(t *testing.T) {
 	t.Parallel()
 	stub := &suffixRewriter{p: scope.Line, suffix: "// rewritten\n", registerKind: "line-citations"}
-	passes := map[scope.Pass]pass.Rewriter{scope.Line: stub}
+	passes := func(string) map[scope.Pass]pass.Rewriter {
+		return map[scope.Pass]pass.Rewriter{scope.Line: stub}
+	}
 	var out bytes.Buffer
 	err := runWith(context.Background(), passes, []string{
 		"-root", fixtureTreeRoot(t),
@@ -1704,11 +1708,19 @@ func fixtureTreeRoot(t *testing.T) string {
 func copyFixtureTree(t *testing.T) string {
 	t.Helper()
 	dst := t.TempDir()
-	err := filepath.WalkDir(fixtureTree, func(p string, d os.DirEntry, err error) error {
+	copyTreeInto(t, fixtureTree, dst)
+	return dst
+}
+
+// copyTreeInto copies one fixture directory into dst, so a case
+// assembles the tree it runs over from the fixture parts it needs.
+func copyTreeInto(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(fixtureTree, p)
+		rel, err := filepath.Rel(src, p)
 		if err != nil {
 			return err
 		}
@@ -1723,9 +1735,8 @@ func copyFixtureTree(t *testing.T) string {
 		return os.WriteFile(target, content, 0o644)
 	})
 	if err != nil {
-		t.Fatalf("copy the fixture tree: %v", err)
+		t.Fatalf("copy the fixture tree %s: %v", src, err)
 	}
-	return dst
 }
 
 // dirWriterFor returns a writer rooted at dir.
@@ -3101,5 +3112,543 @@ func TestNewResolverFailsWithoutAListerOrReader(t *testing.T) {
 	}
 	if _, err := citation.NewResolver(context.Background(), scope.DirLister(fixtureCitations), nil); err == nil {
 		t.Error("NewResolver without a reader returned no error")
+	}
+}
+
+// fixtureLinePass holds the line pass fixtures: the shared
+// specification the citations resolve against, the tree the pass runs
+// over, the expected content of every file it rewrites, the trees whose
+// single carrier the pass fails on, and the registers that drive each
+// run. The trees are held apart from the specification so a case
+// assembles the carriers it needs against one section index.
+const fixtureLinePass = "testdata/linepass"
+
+// lineTree assembles the tree one line pass case runs over, which is the
+// shared specification fixture plus the case's own carriers.
+func lineTree(t *testing.T, carriers string) string {
+	t.Helper()
+	root := t.TempDir()
+	copyTreeInto(t, filepath.Join(fixtureLinePass, "spec"), root)
+	copyTreeInto(t, filepath.Join(fixtureLinePass, carriers), root)
+	return root
+}
+
+// lineRewriter returns the line pass over the tree at root, driven by
+// the named register fixture.
+func lineRewriter(t *testing.T, root, register string) *line.Rewriter {
+	t.Helper()
+	r := line.New(scope.DirLister(root), scope.DirReader(root))
+	if err := r.LoadRegister(filepath.Join(fixtureLinePass, "registers", register)); err != nil {
+		t.Fatalf("load the line pass register %s: %v", register, err)
+	}
+	return r
+}
+
+// applyLinePass runs the line pass over the tree at root and returns the
+// applied diff.
+func applyLinePass(t *testing.T, root, register string) pass.Diff {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	diff, err := h.Apply(context.Background(), lineRewriter(t, root, register))
+	if err != nil {
+		t.Fatalf("apply the line pass: %v", err)
+	}
+	return diff
+}
+
+// planLinePass runs the line pass over the tree at root without writing,
+// and returns the error a fail-closed case expects.
+func planLinePass(t *testing.T, root, register string) (pass.Diff, error) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	return h.Plan(context.Background(), lineRewriter(t, root, register))
+}
+
+// assertConverted compares one rewritten carrier against the expected
+// content held beside the fixture tree, and checks the two properties
+// the expectation alone does not state: the file carries no citation of
+// the retired form any more, and no member of the citations it carried
+// is left standing as an orphan integer.
+func assertConverted(t *testing.T, root, target string) {
+	t.Helper()
+	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", target))
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	want := readFixtureFile(t, filepath.Join(fixtureLinePass, "want", target))
+	if after != want {
+		t.Fatalf("%s after the line pass is\n%s\nwant\n%s", target, after, want)
+	}
+	if left := citation.Find(after); len(left) > 0 {
+		t.Errorf("%s still carries %v", target, left)
+	}
+	for _, c := range citation.Find(before) {
+		for _, m := range c.Members {
+			// The member is looked for as a number standing on its own,
+			// so a digit of the anchor's own section number does not read
+			// as an orphan.
+			orphan := regexp.MustCompile(`(?:^|[^0-9.])` + regexp.QuoteMeta(m.Text) + `(?:[^0-9]|$)`)
+			if orphan.MatchString(after) {
+				t.Errorf("%s left the member %q standing", target, m.Text)
+			}
+		}
+	}
+}
+
+// readFixtureFile reads a file of the fixture tree or of the tree a case
+// wrote.
+func readFixtureFile(t *testing.T, path string) string {
+	t.Helper()
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(content)
+}
+
+// TestLinePassConvertsEverySpellingToASingleAnchorCitation pins the
+// conversion against one carrier per spelling of the retired form. Each
+// carrier becomes the anchor for the section it names, with no line
+// number and no orphan integer left behind, and a qualifier is carried
+// through the conversion.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names)
+func TestLinePassConvertsEverySpellingToASingleAnchorCitation(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	for _, tc := range []struct {
+		spelling string
+		target   string
+	}{
+		{"dotted section number", "pkg/spellings/dotted.go"},
+		{"section level", "pkg/spellings/section-level.go"},
+		{"comma-separated members", "pkg/spellings/comma-list.go"},
+		{"slash-separated members", "pkg/spellings/slash-list.go"},
+		{"and-separated members", "pkg/spellings/and-list.go"},
+		{"plus-separated members with glosses", "pkg/spellings/plus-gloss.go"},
+		{"a member list repeating the keyword", "pkg/spellings/repeated-keyword.go"},
+		{"a qualifier", "pkg/spellings/qualifier.go"},
+		{"a hyphenated range", "pkg/spellings/hyphen-range.go"},
+		{"an en-dash range", "pkg/spellings/endash-range.go"},
+		{"an em-dash range", "pkg/spellings/emdash-range.go"},
+		{"the colon standing in for the keyword", "pkg/spellings/colon-section.go"},
+		{"the colon against a path reference", "pkg/spellings/colon-path.go"},
+		{"a path reference", "pkg/spellings/path-form.go"},
+		{"a path reference with the prefix absent", "pkg/spellings/path-bare-prefix.go"},
+	} {
+		t.Run(tc.spelling, func(t *testing.T) {
+			assertConverted(t, root, tc.target)
+		})
+	}
+}
+
+// TestLinePassConvertsAWrappedCitationInEveryPositionAndDialect pins the
+// conversion of a citation wrapped across two comment lines, which the
+// continuation join reads as one citation. The cases are one per wrap
+// position, which are a wrap between the reference and the keyword, a
+// wrap between the keyword and its first member, and a wrap inside the
+// member list, in each of the carrier dialects.
+//
+// spec: §28.1 (N8, the citation rule: a wrapped citation is one citation
+// and is retired whole)
+func TestLinePassConvertsAWrappedCitationInEveryPositionAndDialect(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	for _, dialect := range []struct {
+		name   string
+		prefix string
+		suffix string
+	}{
+		{"slash comments", "pkg/wrapped/", ".go"},
+		{"hash comments", "compose/", ".yaml"},
+		{"dash comments", "migrations/", ".sql"},
+	} {
+		for _, position := range []string{"reference", "keyword", "members"} {
+			t.Run(dialect.name+" wrapped at the "+position, func(t *testing.T) {
+				assertConverted(t, root, dialect.prefix+position+dialect.suffix)
+			})
+		}
+	}
+}
+
+// TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier pins the
+// served client artifacts: a citation in the text a client reads is
+// removed rather than converted, because a specification anchor is not
+// part of the client contract, while the same run converts the citation
+// an ordinary carrier holds. The cases are one per served dialect, which
+// are the served JSON values, the Go string literals of the served tool
+// definitions, and the struct tags the chart schema is generated from.
+// The Go doc comments of a served carrier are ordinary authoring sites
+// and convert.
+//
+// spec: §28.1 (N8, the citation rule: the retired form leaves the tree,
+// and a served artifact carries no anchor in its place)
+func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	for _, tc := range []struct {
+		dialect string
+		target  string
+	}{
+		{"served JSON values", "pkg/gateway/externalapi/openapi/openapi.json"},
+		{"served tool definitions", "pkg/gateway/mcpfabric/mcptools/mcptools.go"},
+		{"generated chart schema descriptions", "pkg/chart/values/values.go"},
+	} {
+		t.Run(tc.dialect, func(t *testing.T) {
+			assertConverted(t, root, tc.target)
+			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(tc.target)))
+			if strings.Contains(after, "line 5") || strings.Contains(after, "line 6") {
+				t.Errorf("%s carries a line number after the strip:\n%s", tc.target, after)
+			}
+		})
+	}
+	// The ordinary carrier in the same run is converted rather than
+	// stripped, so the strip is a property of the served artifact.
+	assertConverted(t, root, "pkg/spellings/dotted.go")
+}
+
+// TestLinePassFailsAStraddlingRangeRatherThanGuessingAnAnchor pins the
+// first fail-and-report case. A range whose endpoints fall in two
+// sections names no single anchor, so the pass reports it for hand
+// correction and the harness leaves the tree byte-identical.
+//
+// spec: §28.1 (N8, the citation rule: a citation that cannot be retired
+// mechanically is reported rather than converted against a guess)
+func TestLinePassFailsAStraddlingRangeRatherThanGuessingAnAnchor(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "fail/straddling-range")
+	before := treeSnapshot(t, root)
+	_, err := planLinePass(t, root, "fail-straddling-range.yaml")
+	if err == nil {
+		t.Fatal("the line pass converted a straddling range")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the straddling range was not reported as a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/straddle.go" || abort.Line == 0 {
+		t.Errorf("the abort does not name the carrier and the line: %v", abort)
+	}
+	if !strings.Contains(abort.Reason, "straddles") {
+		t.Errorf("the abort does not name the straddle: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestLinePassFailsAPathFormCitationNamingAnUnresolvedFile pins the
+// second fail-and-report case. A path-form citation names no section, so
+// a file that does not resolve under spec/ leaves no anchor to infer and
+// the pass reports the citation rather than converting it against a
+// guessed file.
+//
+// spec: §28.1 (N8, the citation rule: a citation that cannot be retired
+// mechanically is reported rather than converted against a guess)
+func TestLinePassFailsAPathFormCitationNamingAnUnresolvedFile(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "fail/unknown-file")
+	before := treeSnapshot(t, root)
+	_, err := planLinePass(t, root, "fail-unknown-file.yaml")
+	if err == nil {
+		t.Fatal("the line pass converted a path-form citation naming a file that does not resolve")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the unresolved path was not reported as a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/unknown.go" {
+		t.Errorf("the abort does not name the carrier: %v", abort)
+	}
+	if !strings.Contains(abort.Reason, "does not resolve") {
+		t.Errorf("the abort does not name the unresolved file: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestLinePassFailsAStrippedServedCitationWithNoSurvivingTie pins the
+// third fail-and-report case. A citation stripped from a served artifact
+// is removed rather than replaced, so the tie has to stand in the
+// authoring source the strip leaves behind. A field whose struct tag is
+// the only carrier of the tie fails instead, because stripping it would
+// delete the tie rather than relocate it, and a deleted citation reads
+// to the ratchet and the resolver as a retirement.
+//
+// spec: §28.1 (N8, the citation rule: a retired citation leaves a
+// standing tie to the section it named)
+func TestLinePassFailsAStrippedServedCitationWithNoSurvivingTie(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "fail/served-no-tie")
+	before := treeSnapshot(t, root)
+	_, err := planLinePass(t, root, "fail-served-no-tie.yaml")
+	if err == nil {
+		t.Fatal("the line pass stripped the only carrier of a tie")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the missing tie was not reported as a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/chart/values/values.go" {
+		t.Errorf("the abort does not name the served carrier: %v", abort)
+	}
+	if !strings.Contains(abort.Reason, "tie") {
+		t.Errorf("the abort does not name the tie the strip would delete: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestLinePassLeavesEveryWriteExcludedCarrierByteIdentical pins the
+// write exclusion. A citation in the staged proposal tree, in either
+// historical audit record, and in either root planning document is left
+// exactly as it was written and appears in neither the dry-run output
+// nor the applied diff, while an equivalent citation in an ordinary
+// carrier in the same run is converted.
+//
+// spec: §28.1 (N8, the citation rule: the excluded records are outside
+// the writable population)
+func TestLinePassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "tree")
+	excluded := []string{
+		"proposals/0001_example.md",
+		"BUILD-GAPS.md",
+		"TEST-GAPS.md",
+		"gateway-runtime-comms.md",
+		"gateway-runtime-comms-remediation.md",
+	}
+	before := treeSnapshot(t, root)
+	planned, err := planLinePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the line pass: %v", err)
+	}
+	applied := applyLinePass(t, root, "tree.yaml")
+	after := treeSnapshot(t, root)
+	inPlan, inApplied := membership(planned.Paths()), membership(applied.Paths())
+	for _, target := range excluded {
+		if before[target] == "" {
+			t.Fatalf("the fixture tree carries no %s", target)
+		}
+		if after[target] != before[target] {
+			t.Errorf("%s was rewritten:\n%s", target, after[target])
+		}
+		if inPlan[target] {
+			t.Errorf("the dry-run output names the excluded %s", target)
+		}
+		if inApplied[target] {
+			t.Errorf("the applied diff names the excluded %s", target)
+		}
+	}
+	assertConverted(t, root, "pkg/spellings/dotted.go")
+}
+
+// TestLinePassLeavesAGeneratedArtifactUnmodified pins that a file the
+// per-file generated-artifact rule selects is left as it stands, because
+// its route to a zero count is the regeneration of its source rather
+// than a rewrite. The case runs over a CRD under charts/lenny/crds/,
+// which the rule selects through its producer-output disjunct rather
+// than through a generation marker.
+//
+// spec: §28.1 (N8, the citation rule: a generated artifact reaches zero
+// through its producer)
+func TestLinePassLeavesAGeneratedArtifactUnmodified(t *testing.T) {
+	t.Parallel()
+	const generated = "charts/lenny/crds/lenny.dev_runtimes.yaml"
+	root := lineTree(t, "tree")
+	before := treeSnapshot(t, root)
+	if len(citation.Find(before[generated])) == 0 {
+		t.Fatalf("the generated fixture %s carries no citation", generated)
+	}
+	planned, err := planLinePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the line pass: %v", err)
+	}
+	applied := applyLinePass(t, root, "tree.yaml")
+	if membership(planned.Paths())[generated] || membership(applied.Paths())[generated] {
+		t.Errorf("the line pass names the generated artifact %s", generated)
+	}
+	if got := treeSnapshot(t, root); got[generated] != before[generated] {
+		t.Errorf("the generated artifact was rewritten:\n%s", got[generated])
+	}
+	assertConverted(t, root, "pkg/spellings/dotted.go")
+}
+
+// TestLinePassDryRunOutputEqualsTheAppliedDiff pins the entry criterion
+// for applying the pass: what the dry run reports is what the apply
+// writes, so a reviewer reads the whole change before any file moves.
+//
+// spec: §28.1 (N8, the citation rule: the retirement is reviewed before
+// it is applied)
+func TestLinePassDryRunOutputEqualsTheAppliedDiff(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "tree")
+	before := treeSnapshot(t, root)
+	planned, err := planLinePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the line pass: %v", err)
+	}
+	if len(planned.Files) == 0 {
+		t.Fatal("the dry run reports no work over the fixture tree")
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the dry run wrote to the tree")
+	}
+	applied := applyLinePass(t, root, "tree.yaml")
+	if !planned.Equal(applied) {
+		t.Fatalf("the applied diff differs from the dry run: %v vs %v", planned.Paths(), applied.Paths())
+	}
+}
+
+// TestLinePassFailsARunThatRetiresACitationWithNoAnchor pins the
+// accounting identity the pass checks over every file it rewrites. A
+// citation deleted rather than converted reads to the per-file ratchet
+// and to the resolver as a retirement, so the run that reduced the count
+// without emitting the anchor that replaces it fails instead.
+//
+// spec: §28.1 (N8, the citation rule: a count falls only when an anchor
+// replaces the citation)
+func TestLinePassFailsARunThatRetiresACitationWithNoAnchor(t *testing.T) {
+	t.Parallel()
+	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", "pkg/spellings/dotted.go"))
+	converted := readFixtureFile(t, filepath.Join(fixtureLinePass, "want", "pkg/spellings/dotted.go"))
+	if err := line.Account(before, converted, 0); err != nil {
+		t.Fatalf("the accounting rejected a conversion that emitted its anchor: %v", err)
+	}
+	cited := citation.Find(before)
+	if len(cited) != 1 {
+		t.Fatalf("the fixture carries %d citations, want 1", len(cited))
+	}
+	deleted := before[:cited[0].Offset] + before[cited[0].Offset+len(cited[0].Raw):]
+	if err := line.Account(before, deleted, 0); err == nil {
+		t.Error("the accounting accepted a citation deleted with no anchor in its place")
+	}
+	// A strip is the one retirement that emits no anchor, and it is
+	// accounted for by being declared.
+	if err := line.Account(before, deleted, 1); err != nil {
+		t.Errorf("the accounting rejected a declared strip: %v", err)
+	}
+}
+
+// TestLinePassRefusesAFileTheRegisterDoesNotAccountFor pins the driving
+// register. The pass rewrites a file only against the count the register
+// carries for it, so a carrier the enumeration missed, and a carrier
+// whose count disagrees with what the file holds, each abort the run
+// with the tree byte-identical rather than being retired against a count
+// nobody measured.
+//
+// spec: §28.1 (N8, the citation rule: the retirement ranges over the
+// enumerated population)
+func TestLinePassRefusesAFileTheRegisterDoesNotAccountFor(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		register string
+		reason   string
+	}{
+		{"no count for the carrier", "tree-no-count.yaml", "carries no count"},
+		{"a count that disagrees", "tree-wrong-count.yaml", "citation(s) where"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := lineTree(t, "tree")
+			before := treeSnapshot(t, root)
+			_, err := planLinePass(t, root, tc.register)
+			if err == nil {
+				t.Fatal("the line pass rewrote a file the register does not account for")
+			}
+			abort, ok := pass.AsAbort(err)
+			if !ok {
+				t.Fatalf("the register failure was not reported as a fail-closed abort: %v", err)
+			}
+			if !strings.Contains(abort.Reason, tc.reason) {
+				t.Errorf("the abort does not state why the register refused the file: %v", abort)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}
+
+// TestTheDriverCarriesTheLinePass pins that the pass the driver runs is
+// the built one, so a run of the engine over a checkout retires
+// citations rather than reporting a pass that is not built.
+//
+// spec: §28.1 (N8, the citation rule: the retirement is performed by the
+// committed tooling)
+func TestTheDriverCarriesTheLinePass(t *testing.T) {
+	t.Parallel()
+	built := builtPasses(repoRoot(t))
+	r, ok := built[scope.Line]
+	if !ok {
+		t.Fatal("the driver carries no line pass")
+	}
+	if r.Pass() != scope.Line {
+		t.Errorf("the built pass names the %s write domain", r.Pass())
+	}
+}
+
+// TestLinePassFailsACitationWhoseHeadParenthesisNeverCloses pins the
+// fourth fail-and-report case. A citation whose head opened a
+// parenthesis that nothing closes inside its bounds cannot be replaced
+// by an anchor without stranding the carrier's closing parenthesis and
+// the prose between them, so the pass reports the punctuation for hand
+// correction.
+//
+// spec: §28.1 (N8, the citation rule: a citation that cannot be retired
+// mechanically is reported rather than converted against a guess)
+func TestLinePassFailsACitationWhoseHeadParenthesisNeverCloses(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "fail/unbalanced")
+	before := treeSnapshot(t, root)
+	_, err := planLinePass(t, root, "fail-unbalanced.yaml")
+	if err == nil {
+		t.Fatal("the line pass converted a citation with an unpaired parenthesis")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the unpaired parenthesis was not reported as a fail-closed abort: %v", err)
+	}
+	if !strings.Contains(abort.Reason, "parenthesis") {
+		t.Errorf("the abort does not name the parenthesis: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestTheServedArtifactsAreWritableCarriersOfTheTrackedTree pins the set
+// the strip rule ranges over and that each member is a file the pass can
+// reach. A served artifact outside the write domain would leave its
+// citations with no route out of the population, because the strip is
+// the only route they have.
+//
+// spec: §28.1 (N8, the citation rule: every carrier has a route to a
+// zero count)
+func TestTheServedArtifactsAreWritableCarriersOfTheTrackedTree(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	read := scope.DirReader(root)
+	served := line.ServedArtifacts()
+	want := []string{
+		"pkg/chart/values/values.go",
+		"pkg/gateway/externalapi/openapi/openapi.json",
+		"pkg/gateway/mcpfabric/mcptools/mcptools.go",
+	}
+	if !sameStrings(served, want) {
+		t.Fatalf("the served client artifacts are %v, want %v", served, want)
+	}
+	for _, target := range served {
+		writable, err := scope.Writable(scope.Line, target, read)
+		if err != nil {
+			t.Fatalf("write domain for %s: %v", target, err)
+		}
+		if !writable {
+			t.Errorf("the line pass cannot write the served artifact %s", target)
+		}
 	}
 }
