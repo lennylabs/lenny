@@ -44,10 +44,12 @@ func runRatchet(t *testing.T, root string) RatchetReport {
 	return rep
 }
 
+// spec: §28.1 (N8, the citation rule: a file whose citation population
+// has reached zero holds no entry in the count baseline, so the writer
+// drops it rather than emitting a document its own loader rejects)
+//
 // The writer is the one producer of the baseline, so the counts it
-// writes are the counts the loader accepts. A file at zero holds no
-// entry, and the loader rejects one, so the writer drops it rather than
-// emitting a document its own loader fails.
+// writes are the counts the loader accepts.
 func TestRatchetBaselineWriterDropsAZeroCount(t *testing.T) {
 	t.Parallel()
 	root := ratchetRoot(t, "two-citations.txt")
@@ -69,9 +71,9 @@ func TestRatchetBaselineWriterDropsAZeroCount(t *testing.T) {
 	}
 }
 
-// A caller that passed the same file twice would produce a document the
-// loader rejects for declaring one file twice, so the writer reports it
-// rather than writing it.
+// spec: §28.1 (N8, the citation rule: the count baseline holds one count
+// per file, so the writer reports a caller that declared one file twice
+// rather than writing a document the loader rejects)
 func TestRatchetBaselineWriterRejectsARepeatedFile(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
@@ -87,9 +89,10 @@ func TestRatchetBaselineWriterRejectsARepeatedFile(t *testing.T) {
 	}
 }
 
-// A gate with no writer configured cannot record a fall, and a run that
-// reported the fall without writing it would let the file regrow to its
-// old count while the gate stayed green.
+// spec: §28.1 (N8, the citation rule: a count that falls rewrites the
+// baseline downward in the same run, so a run that cannot record the
+// fall fails rather than letting the file regrow to its old count while
+// the gate stays green)
 func TestRatchetFailsToRecordAFallWithNoWriter(t *testing.T) {
 	t.Parallel()
 	root := ratchetRoot(t, "carrier.txt")
@@ -100,8 +103,9 @@ func TestRatchetFailsToRecordAFallWithNoWriter(t *testing.T) {
 	}
 }
 
-// A run cancelled mid-scan reports the cancellation rather than the
-// counts it had reached, which would read as a completed inspection.
+// spec: §28.1 (N8, the citation rule: a run certifies the tree only from
+// a completed inspection of it, so a run cancelled mid-scan reports the
+// cancellation rather than the counts it had reached)
 func TestRatchetReportsACancelledScan(t *testing.T) {
 	t.Parallel()
 	root := ratchetRoot(t, "carrier.txt")
@@ -114,9 +118,10 @@ func TestRatchetReportsACancelledScan(t *testing.T) {
 	}
 }
 
-// The gate over a git checkout carries the shared read domain, the
-// tracked-tree lister, and the baseline path, so a caller cannot
-// assemble one that reads a different population.
+// spec: §28.1 (N8, the citation rule: the gate reads the shared citation
+// domain, so the gate over a git checkout carries the tracked-tree
+// lister and the count baseline path rather than a population a caller
+// assembled)
 func TestNewRatchetCarriesTheSharedDomain(t *testing.T) {
 	t.Parallel()
 	g := NewRatchet(t.TempDir())
