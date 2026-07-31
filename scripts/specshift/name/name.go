@@ -41,8 +41,10 @@
 // The carriers the matcher reads are the ones the naming law names,
 // which the scope package states: the specification, the documentation,
 // the schemas, a tracked Go file, and a tracked root-level markdown
-// document. A carrier outside that list, such as a chart values file or
-// a runtime SDK source, holds text the law does not govern, so a phrase
+// document, wherever in the tree it sits, so a Go file under sdks/ is
+// read through its doc comments like any other. A carrier outside that
+// list, such as a chart values file or a runtime SDK source written in
+// another language, holds text the law does not govern, so a phrase
 // there is neither a site nor an abort.
 //
 // The register is held to the tree as well as driving it. An entry no

@@ -167,9 +167,11 @@ func covered(spans []span, match span) bool {
 // fail-closed rule aborts on. That domain is the one the scope package
 // states, and it is what makes the pass's population the population the
 // naming lint reads: chart values, chart templates, scaffold templates,
-// and the runtime SDK sources all carry the phrase in text the law does
-// not govern, and a pass reading them would abort at every one while the
-// lint reported none.
+// and the runtime SDK sources of the languages other than Go all carry
+// the phrase in text the law does not govern, and a pass reading them
+// would abort at every one while the lint reported none. A tracked Go
+// file under sdks/ is inside the domain like any other tracked Go file,
+// so the doc comments of the Go runtime SDK are read here.
 //
 // A carrier inside the domain is read whole except for Go, where the
 // law's domain is the doc comment: a site in a function-body comment, in

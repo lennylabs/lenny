@@ -386,9 +386,11 @@ var reservedPhrasePrefixes = []string{"spec/", "docs/", "schemas/"}
 // tracked tree less the read, planning, and generated exclusions. A
 // carrier outside this list holds text the prohibition does not govern,
 // among them chart values, chart templates, the runtime scaffold
-// templates, and the runtime SDK sources, and reading a site in one
-// would abort a fail-closed pass at a site the register is never seeded
-// for.
+// templates, and the runtime SDK sources of the languages other than
+// Go, and reading a site in one would abort a fail-closed pass at a site
+// the register is never seeded for. A tracked Go file under sdks/ is a
+// carrier through its doc comments like any other tracked Go file,
+// including its test files.
 //
 // The predicate is held here rather than in the pass, so the pass that
 // writes the sites and the lint that reads them share one statement of

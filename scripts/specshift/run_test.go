@@ -4062,6 +4062,16 @@ func planNamePass(t *testing.T, root, register string) (pass.Diff, error) {
 	return h.Plan(context.Background(), nameRewriter(t, root, register))
 }
 
+// applyNamePassErr runs the name pass over the tree at root through the
+// writing path and returns the error a fail-closed case expects. The
+// harness has a writer, so a run that raised its abort after a write
+// rather than before one would leave the tree changed.
+func applyNamePassErr(t *testing.T, root, register string) (pass.Diff, error) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	return h.Apply(context.Background(), nameRewriter(t, root, register))
+}
+
 // assertSubstituted compares one rewritten carrier against the expected
 // content held beside the fixture tree.
 func assertSubstituted(t *testing.T, root, target string) {
@@ -4082,13 +4092,19 @@ func assertSubstituted(t *testing.T, root, target string) {
 // the identifier-resolution gate while stating the wrong mechanism, and
 // no gate reads meaning.
 //
+// The run goes through the writing path rather than the dry run, so the
+// byte-identity assertion covers a run that had a writer and a
+// resolvable sibling carrier it would otherwise have rewritten. The
+// abort is raised before any file is written, so no partially rewritten
+// tree is left behind.
+//
 // spec: §28.1 (N3, the naming law: a bare reserved noun phrase is
 // replaced by the identifier its site denotes)
 func TestNamePassAbortsAtAnUnregisteredSiteAndLeavesTheTreeUnmodified(t *testing.T) {
 	t.Parallel()
 	root := nameTree(t, "fail/unregistered")
 	before := treeSnapshot(t, root)
-	_, err := planNamePass(t, root, "fail-unregistered.yaml")
+	_, err := applyNamePassErr(t, root, "fail-unregistered.yaml")
 	if err == nil {
 		t.Fatal("the name pass returned no error at an unregistered site")
 	}
@@ -4321,18 +4337,28 @@ func TestNamePassLeavesAMarkdownAnchorIdentifierUnmodified(t *testing.T) {
 	assertSubstituted(t, root, "spec/13_security-model.md")
 }
 
-// TestNamePassLeavesAGeneratedArtifactUnmodified pins that a file the
+// TestNamePassLeavesAGeneratedCarrierUnmodified pins that a file the
 // per-file generated-artifact rule selects is left as it stands, because
-// its route out of the population is the regeneration of its source. The
-// case runs over a CRD under charts/lenny/crds/, which the rule selects
-// through its producer-output disjunct rather than through a generation
-// marker.
+// its route out of the population is the regeneration of its source.
+//
+// Both carriers the case runs over are inside this pass's own carrier
+// domain and hold a reserved-phrase site in a doc comment the register
+// carries no entry for, so the exclusion is what keeps the run from
+// aborting at them. A generated file outside the carrier domain would
+// pin nothing here: the domain filter alone would leave it unread.
+// One carrier is selected through the producer-output disjunct and
+// through its header marker, as the proto stubs are; the other sits
+// under no producer's output set, so the header marker is the only
+// disjunct that reaches it.
 //
 // spec: §28.1 (N3, the naming law: a generated artifact leaves the
 // population through its producer)
-func TestNamePassLeavesAGeneratedArtifactUnmodified(t *testing.T) {
+func TestNamePassLeavesAGeneratedCarrierUnmodified(t *testing.T) {
 	t.Parallel()
-	const generated = "charts/lenny/crds/lenny.dev_runtimes.yaml"
+	generated := []string{
+		"pkg/proto/adapter/v1/lenny-adapter.pb.go",
+		"pkg/apis/lenny/v1alpha1/zz_generated.deepcopy.go",
+	}
 	root := nameTree(t, "tree")
 	before := treeSnapshot(t, root)
 	planned, err := planNamePass(t, root, "tree.yaml")
@@ -4340,11 +4366,18 @@ func TestNamePassLeavesAGeneratedArtifactUnmodified(t *testing.T) {
 		t.Fatalf("plan the name pass: %v", err)
 	}
 	applied := applyNamePass(t, root, "tree.yaml")
-	if membership(planned.Paths())[generated] || membership(applied.Paths())[generated] {
-		t.Errorf("the name pass names the generated artifact %s", generated)
-	}
-	if got := treeSnapshot(t, root); got[generated] != before[generated] {
-		t.Errorf("the generated artifact was rewritten:\n%s", got[generated])
+	inPlan, inApplied := membership(planned.Paths()), membership(applied.Paths())
+	after := treeSnapshot(t, root)
+	for _, target := range generated {
+		if before[target] == "" {
+			t.Fatalf("the fixture tree carries no %s", target)
+		}
+		if inPlan[target] || inApplied[target] {
+			t.Errorf("the name pass names the generated carrier %s", target)
+		}
+		if after[target] != before[target] {
+			t.Errorf("the generated carrier was rewritten:\n%s", after[target])
+		}
 	}
 	assertSubstituted(t, root, "spec/13_security-model.md")
 }
@@ -4567,6 +4600,30 @@ func TestNamePassReadsNoSiteInACarrierOutsideTheNamingLawDomain(t *testing.T) {
 		t.Errorf("the out-of-domain carrier was rewritten:\n%s", got[outside])
 	}
 	assertSubstituted(t, root, "spec/13_security-model.md")
+}
+
+// TestNamePassWritesADocCommentOfAGoFileUnderSdks pins that the carrier
+// domain follows the file's language rather than its directory: a
+// tracked Go file under sdks/ carries the prohibition in its doc
+// comments like any other tracked Go file, including a test file. The
+// runtime SDK's Go sources hold wrapped doc-comment sites, and a domain
+// that placed them outside would leave them with a reader in the naming
+// lint and no writer in this pass.
+//
+// spec: §28.1 (N3, the naming law: the prohibition covers the doc
+// comment of a tracked Go file)
+func TestNamePassWritesADocCommentOfAGoFileUnderSdks(t *testing.T) {
+	t.Parallel()
+	const target = "sdks/runtime/go/runtime/lifecycle_test.go"
+	if !scope.ReservedPhraseCarrier(target) {
+		t.Fatalf("%s is outside the reserved-phrase carrier domain", target)
+	}
+	root := nameTree(t, "tree")
+	applied := applyNamePass(t, root, "tree.yaml")
+	if !membership(applied.Paths())[target] {
+		t.Errorf("the applied diff does not name %s", target)
+	}
+	assertSubstituted(t, root, target)
 }
 
 // TestNamePassReadsNoSiteInAGoCommentOutsideADocComment pins the in-file

@@ -19,6 +19,12 @@ entries:
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
+  # A tracked Go file under sdks/ is a carrier like any other tracked Go
+  # file, and this site wraps across two comment lines.
+  - file: sdks/runtime/go/runtime/lifecycle_test.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
   - file: schemas/lenny-adapter.schema.json
     occurrence: 1
     identifiers:
