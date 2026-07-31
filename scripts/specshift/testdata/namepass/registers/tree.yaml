@@ -5,6 +5,13 @@
 kind: reserved-phrase-senses
 version: 1
 entries:
+  # The path half of a link destination is prose the register resolves.
+  # The fragment of the same destination is an addressable link target,
+  # so it takes no entry and is left as it stands.
+  - file: docs/reference/links.md
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
   - file: spec/13_security-model.md
     occurrence: 1
     identifiers:

@@ -32,7 +32,11 @@
 // markdown anchor identifier is an addressable link target rather than
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this
-// repository cannot see. In a Go file the matcher reads the file's
+// repository cannot see. That exclusion comes from the scope package, so
+// the pass writes against the same statement of it the naming lint
+// reads, and it reaches the fragment of a link rather than the whole
+// destination: a phrase in the path half is a site the register
+// resolves. In a Go file the matcher reads the file's
 // leading comments, the comments documenting a declaration, and the
 // string literals the pinned-literal register names, because those are
 // the naming law's positions there. An implementation comment holds

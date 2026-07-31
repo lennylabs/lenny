@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -407,6 +408,49 @@ func ReservedPhraseCarrier(target string) bool {
 		return true
 	}
 	return !strings.Contains(target, "/") && filepath.Ext(target) == ".md"
+}
+
+// markdownAnchorExprs match the two markdown anchor identifiers the
+// naming law's reserved-phrase prohibition places outside its matcher,
+// which are the kramdown attribute that declares an anchor and the
+// fragment of an intra-repo markdown link.
+//
+// Each expression carries one capture group naming the span the
+// prohibition does not reach. The group is the whole attribute for the
+// kramdown form, whose text exists only to declare the identifier, and
+// the fragment alone for the link form. The path half of a link
+// destination is ordinary prose the register resolves like any other
+// site, so an expression spanning the whole destination would leave a
+// phrase there with no pass able to write it and no lint able to report
+// it.
+var markdownAnchorExprs = []*regexp.Regexp{
+	regexp.MustCompile(`(\{:[^}\n]*#[A-Za-z0-9._-]+[^}\n]*\})`),
+	regexp.MustCompile(`\]\([^)\n]*(#[A-Za-z0-9._-]+)\)`),
+}
+
+// MarkdownAnchorIdentifiers returns the byte span of every markdown
+// anchor identifier a text carries, each as a half-open [lo, hi) pair.
+// An anchor identifier is an addressable link target rather than prose,
+// so a reserved noun phrase inside one needs no sense-register entry and
+// is left as it stands: rewriting one breaks every inbound link,
+// including the untracked links this repository cannot see.
+//
+// The exclusion is held here rather than in the pass, so the name pass
+// that writes the reserved-phrase sites and the naming lint that reads
+// them share one statement of it, as they share ReservedPhraseCarrier.
+// A lint that re-derived the exclusion would report a site the pass
+// cannot write, or pass over one the pass would abort at.
+func MarkdownAnchorIdentifiers(text string) [][2]int {
+	var out [][2]int
+	for _, expr := range markdownAnchorExprs {
+		for _, m := range expr.FindAllStringSubmatchIndex(text, -1) {
+			if len(m) < 4 || m[2] < 0 {
+				continue
+			}
+			out = append(out, [2]int{m[2], m[3]})
+		}
+	}
+	return out
 }
 
 // hasSegment reports whether a slash-separated path carries the named

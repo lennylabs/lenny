@@ -4337,6 +4337,77 @@ func TestNamePassLeavesAMarkdownAnchorIdentifierUnmodified(t *testing.T) {
 	assertSubstituted(t, root, "spec/13_security-model.md")
 }
 
+// TestMarkdownAnchorIdentifiersAreOneSharedExclusion pins where the
+// anchor-identifier exclusion lives and how far it reaches. The naming
+// law gives the pass that writes the reserved-phrase sites and the lint
+// that reads them one exclusion, so it sits on the shared file-domain
+// surface beside the carrier predicate rather than inside either
+// consumer; an exclusion restated in the lint would report a site the
+// pass cannot write. Its extent inside a markdown link is the fragment,
+// leaving the path half of the destination a site the register resolves.
+//
+// spec: §28.1 (N3, the naming law: the lint reads the same
+// markdown-anchor-identifier exclusion the name pass reads)
+func TestMarkdownAnchorIdentifiersAreOneSharedExclusion(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		text string
+		want []string
+	}{
+		{
+			name: "the kramdown attribute is excluded whole",
+			text: "## Lifecycle\n{: #lifecycle-channel }\n",
+			want: []string{"{: #lifecycle-channel }"},
+		},
+		{
+			name: "a link is excluded from its fragment alone",
+			text: "see [the overview](../lifecycle-channel/overview.md#control-channel).\n",
+			want: []string{"#control-channel"},
+		},
+		{
+			name: "a link carrying no fragment is excluded nowhere",
+			text: "see [the overview](../lifecycle-channel/overview.md).\n",
+			want: nil,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got []string
+			for _, s := range scope.MarkdownAnchorIdentifiers(tc.text) {
+				got = append(got, tc.text[s[0]:s[1]])
+			}
+			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+				t.Errorf("the excluded spans of %q are %q, want %q", tc.text, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestNamePassSubstitutesInTheLinkPathBesideAnExcludedFragment pins the
+// extent of the anchor-identifier exclusion inside a markdown link. The
+// naming law places the fragment of an intra-repo link outside the
+// matcher and leaves the rest of the destination inside it, so the path
+// half is a site the sense register resolves and the substitution
+// carries into it while the fragment beside it in the same destination
+// is left as it stands with no entry. An exclusion spanning the whole
+// destination would leave a phrase in the path with no pass able to
+// write it, which is a site the naming lint reports and nothing can
+// clear.
+//
+// spec: §28.1 (N3, the naming law: a markdown anchor identifier is
+// outside the matcher, which for a link is its fragment)
+func TestNamePassSubstitutesInTheLinkPathBesideAnExcludedFragment(t *testing.T) {
+	t.Parallel()
+	const target = "docs/reference/links.md"
+	root := nameTree(t, "tree")
+	applied := applyNamePass(t, root, "tree.yaml")
+	if !membership(applied.Paths())[target] {
+		t.Errorf("the name pass does not name the link carrier %s", target)
+	}
+	assertSubstituted(t, root, target)
+}
+
 // TestNamePassLeavesAGeneratedCarrierUnmodified pins that a file the
 // per-file generated-artifact rule selects is left as it stands, because
 // its route out of the population is the regeneration of its source.

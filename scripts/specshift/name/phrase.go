@@ -35,18 +35,6 @@ var reservedExpr = regexp.MustCompile(
 // a regular-expression escape.
 var joinClass = fmt.Sprintf(`\x{%04x}`, citation.JoinByte)
 
-// anchorExprs match the markdown anchor identifiers the naming law
-// places outside the matcher, which are the kramdown attribute that
-// declares an anchor and the fragment of an intra-repo markdown link. An
-// anchor identifier is an addressable link target rather than prose, so
-// a site inside one needs no register entry and is left as it stands:
-// rewriting one breaks every inbound link, including the untracked links
-// this repository cannot see.
-var anchorExprs = []*regexp.Regexp{
-	regexp.MustCompile(`\{:[^}\n]*#[A-Za-z0-9._-]+[^}\n]*\}`),
-	regexp.MustCompile(`\]\([^)\n]*#[A-Za-z0-9._-]+\)`),
-}
-
 // site is one occurrence of a reserved noun phrase, given as a byte span
 // of the source together with the line it opens on and the text it
 // covers with the continuation join rendered as a space.
@@ -131,13 +119,16 @@ func isWordByte(b byte) bool {
 	return false
 }
 
-// anchorSpans returns the markdown anchor identifiers of a text.
+// anchorSpans returns the markdown anchor identifiers of a text, which
+// the naming law places outside the matcher. The exclusion itself comes
+// from the scope package, so the pass writes against the same statement
+// of it the naming lint reads. The path half of a link destination is
+// outside the exclusion, so a phrase there is a site the register
+// resolves like any other.
 func anchorSpans(joined string) []span {
 	var out []span
-	for _, expr := range anchorExprs {
-		for _, m := range expr.FindAllStringIndex(joined, -1) {
-			out = append(out, span{lo: m[0], hi: m[1]})
-		}
+	for _, m := range scope.MarkdownAnchorIdentifiers(joined) {
+		out = append(out, span{lo: m[0], hi: m[1]})
 	}
 	return out
 }
