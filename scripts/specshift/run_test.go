@@ -3309,17 +3309,20 @@ func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T)
 	assertConverted(t, root, "pkg/spellings/dotted.go")
 }
 
-// TestLinePassReadsAServedLiteralTieFromItsDeclarationDocComment pins
-// where the tie of a served Go literal stands. A served string literal
-// spans several lines and its doc comment stands over the declaration
-// rather than over the line the citation sits on, so a strip whose tie
-// is looked for on the preceding source line would report a tie the
-// declaration plainly carries as missing and stop the pass on every such
+// TestLinePassReadsAServedToolSchemaTieFromItsWholeAuthoringSource pins
+// where the tie of a served tool schema stands. The strip removes text a
+// client reads and leaves the Go source that authored it, so the tie it
+// has to leave standing is any reference to the section in that source.
+// A served schema literal spans several lines, and the section it names
+// is often tied by a comment over another declaration of the same file,
+// so a tie looked for on the preceding source line, or in the doc
+// comment of the one declaration the literal sits in, would report a tie
+// the file plainly carries as missing and stop the pass on every such
 // site.
 //
 // spec: §28.1 (N8, the citation rule: a stripped citation leaves a
 // standing tie to the section it named)
-func TestLinePassReadsAServedLiteralTieFromItsDeclarationDocComment(t *testing.T) {
+func TestLinePassReadsAServedToolSchemaTieFromItsWholeAuthoringSource(t *testing.T) {
 	t.Parallel()
 	const target = "pkg/gateway/mcpfabric/mcptools/mcptools.go"
 	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", target))
@@ -3352,6 +3355,33 @@ func TestLinePassReadsAServedLiteralTieFromItsDeclarationDocComment(t *testing.T
 	}
 	if !strings.Contains(after, "§4.8") {
 		t.Errorf("the strip left no tie to the section the served literal named:\n%s", after)
+	}
+	// The tie of the served description inside registerMemoryTools stands
+	// in another declaration's doc comment, so a tie read from the
+	// enclosing declaration alone would abort the whole run here.
+	if !strings.Contains(after, `Description: "Write a memory to the store."`) {
+		t.Errorf("the served description tied elsewhere in the file was not stripped:\n%s", after)
+	}
+}
+
+// TestLinePassConvertsAnMCPErrorMessageOutsideAToolSchema pins the served
+// surface of the MCP tool source. What the gateway serves as a tool
+// schema is the tool definition's description and input schema, so a
+// citation in any other string literal of that file, such as the message
+// a handler returns when an argument is missing, is an ordinary
+// authoring site and converts to an anchor.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names)
+func TestLinePassConvertsAnMCPErrorMessageOutsideAToolSchema(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/gateway/mcpfabric/mcptools/mcptools.go"
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	assertConverted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	if !strings.Contains(after, `"content is required (§4.6)"`) {
+		t.Errorf("the error message outside a tool schema was not converted to its anchor:\n%s", after)
 	}
 }
 
@@ -3696,10 +3726,27 @@ func TestLinePassFailsARunThatRetiresACitationWithNoAnchor(t *testing.T) {
 	}
 }
 
+// TestLinePassRewritesAFileWhoseCountFellBelowItsRegisterEntry pins the
+// direction the driving register is one-sided in. A hand correction that
+// retires a citation before the run leaves the file carrying fewer
+// citations than the register counts, and that is the retirement the
+// register absorbs downward. Refusing the file would stop the pass on
+// every carrier a reported straddling range was corrected in, so the
+// re-run the correction exists to enable could never write.
+//
+// spec: §28.1 (N8, the citation rule: a count that falls is a
+// retirement and the remaining citations are still retired)
+func TestLinePassRewritesAFileWhoseCountFellBelowItsRegisterEntry(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree-count-fallen.yaml")
+	assertConverted(t, root, "pkg/spellings/dotted.go")
+}
+
 // TestLinePassRefusesAFileTheRegisterDoesNotAccountFor pins the driving
 // register. The pass rewrites a file only against the count the register
 // carries for it, so a carrier the enumeration missed, and a carrier
-// whose count disagrees with what the file holds, each abort the run
+// carrying more citations than the register counts, each abort the run
 // with the tree byte-identical rather than being retired against a count
 // nobody measured.
 //
@@ -3713,7 +3760,7 @@ func TestLinePassRefusesAFileTheRegisterDoesNotAccountFor(t *testing.T) {
 		reason   string
 	}{
 		{"no count for the carrier", "tree-no-count.yaml", "carries no count"},
-		{"a count that disagrees", "tree-wrong-count.yaml", "citation(s) where"},
+		{"a count above the registered one", "tree-count-risen.yaml", "citation(s) where"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := lineTree(t, "tree")

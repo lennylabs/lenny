@@ -34,3 +34,20 @@ var sendMessageInputSchema = `{
 		"body": { "description": "The plan the message carries. §4.8 line 14." }
 	}
 }`
+
+// registerMemoryTools returns the memory tool definition together with
+// the message the handler returns when its input is missing.
+//
+// spec: §4.6
+func registerMemoryTools() (tool, string) {
+	writeMemory := tool{
+		Name: "lenny/write_memory",
+		// The description is served text, and the section it names is
+		// tied elsewhere in this file rather than in the doc comment
+		// over this declaration.
+		Description: "Write a memory to the store (spec: §4.8 line 14).",
+	}
+	// An error message is not a served tool schema, so its citation is
+	// an ordinary authoring site and converts.
+	return writeMemory, "content is required (§4.6 line 5)"
+}

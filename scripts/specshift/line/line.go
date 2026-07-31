@@ -16,9 +16,10 @@
 // and a specification anchor is not part of the client contract. The
 // artifacts are named in servedArtifacts, and a strip that would delete
 // the site's only tie to the specification fails instead. The tie of a
-// Go carrier stands in the doc comment of the declaration the served
-// text sits in. A data artifact has no comment channel, so its tie
-// stands in the document itself and is decided against the text the run
+// `desc:` struct tag stands in the doc comment of the field it
+// annotates, because the generated schema pairs one description with one
+// field. Every other served tie stands anywhere in the authoring source
+// the strip leaves behind and is decided against the text the run
 // leaves behind.
 //
 // The pass fails closed. A straddling range, a path-form citation naming
@@ -132,7 +133,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, path string, content []byte) ([]
 		return nil, err
 	}
 	after := applyEdits(text, edits)
-	if err := documentTies(path, after, strips); err != nil {
+	if err := fileTies(path, after, strips); err != nil {
 		return nil, err
 	}
 	// The accounting identity is checked against the text rather than
@@ -179,16 +180,16 @@ func plan(sections *citation.Resolver, path, text string, found []citation.Citat
 	return edits, strips, nil
 }
 
-// documentTies holds every strip from a data artifact to the tie it has
-// to leave standing in the rewritten document, and reports all of the
-// ones that keep none.
-func documentTies(path, after string, strips []strip) error {
+// fileTies holds every strip whose tie is decided against the whole
+// authoring source to the tie it has to leave standing in the rewritten
+// file, and reports all of the ones that keep none.
+func fileTies(path, after string, strips []strip) error {
 	var aborts []*pass.Abort
 	for _, s := range strips {
-		if !s.document {
+		if !s.fileTie {
 			continue
 		}
-		if err := documentTie(after, s); err != nil {
+		if err := fileTie(after, s); err != nil {
 			aborts = append(aborts, abortAt(path, s.site, err))
 		}
 	}
@@ -203,10 +204,17 @@ func abortAt(path string, c citation.Citation, cause error) *pass.Abort {
 }
 
 // checkRegister holds the run to the population the register measured. A
-// file carrying a citation the register has no count for, or a count
-// that disagrees with what the file carries, aborts: the register is the
-// enumeration the migration is proved against, and rewriting a file
-// outside it would retire pointers nobody counted.
+// file carrying a citation the register has no count for, and a file
+// carrying more citations than the register counts, each abort: the
+// register is the enumeration the migration is proved against, and
+// rewriting a site outside it would retire a pointer nobody counted.
+//
+// A count below the registered one is the retirement the register
+// absorbs downward, so it is rewritten rather than aborted. Holding the
+// pass to an equality would stop it on every file whose citations a hand
+// correction retired before the run, which is the state the tree is in
+// between a reported straddling range and the re-run that converts the
+// rest of the file.
 func (r *Rewriter) checkRegister(path string, found []citation.Citation) error {
 	if r.counts == nil {
 		return fmt.Errorf("the line pass ran with no register loaded")
@@ -215,7 +223,7 @@ func (r *Rewriter) checkRegister(path string, found []citation.Citation) error {
 	if !ok {
 		return abortAt(path, found[0], fmt.Errorf("%s carries no count for this file", r.registerPath))
 	}
-	if registered != len(found) {
+	if len(found) > registered {
 		return abortAt(path, found[0], fmt.Errorf("the file carries %d citation(s) where %s carries %d",
 			len(found), r.registerPath, registered))
 	}

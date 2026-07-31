@@ -22,11 +22,12 @@ const (
 	// servedDocument is a data artifact whose whole content is served, so
 	// every citation it carries sits in text a client reads.
 	servedDocument servedKind = iota
-	// servedLiterals is a Go source whose string literals become the
-	// served artifact. A citation in one of those literals is served; a
-	// citation in a comment of the same file is an ordinary authoring
-	// site and converts like any other comment.
-	servedLiterals
+	// servedToolSchemas is a Go source whose tool-definition literals
+	// become the served MCP tool schemas. Only the text of a tool
+	// description or an input schema is served; a comment, an error
+	// message, and every other literal of the file are ordinary authoring
+	// sites and convert like any other carrier.
+	servedToolSchemas
 	// servedDescTags is a Go source whose `desc:` struct-tag values are
 	// copied verbatim into a generated document an operator reads. Only
 	// the text inside a `desc:` value is served; every other literal of
@@ -46,7 +47,7 @@ const (
 // rather than converted.
 var servedArtifacts = map[string]servedKind{
 	"pkg/gateway/externalapi/openapi/openapi.json": servedDocument,
-	"pkg/gateway/mcpfabric/mcptools/mcptools.go":   servedLiterals,
+	"pkg/gateway/mcpfabric/mcptools/mcptools.go":   servedToolSchemas,
 	"pkg/chart/values/values.go":                   servedDescTags,
 }
 
@@ -88,12 +89,21 @@ func servedSites(path, text string) (*servedSpans, error) {
 	if err != nil {
 		return nil, err
 	}
-	spans := src.stringLiteralSpans()
+	spans := src.toolSchemaSpans()
 	if kind == servedDescTags {
 		spans = src.descTagSpans()
 	}
 	return &servedSpans{kind: kind, spans: spans, src: src}, nil
 }
+
+// tieInFile reports where the tie a strip leaves behind is decided. A
+// served document and a served tool schema are both decided against the
+// authoring source the strip leaves behind, so a section named anywhere
+// else in the same file is a surviving tie. A `desc:` struct tag is
+// decided against the doc comment of the field it annotates, because the
+// generated schema pairs one description with one field and a tie
+// standing over another field says nothing about this one.
+func (s *servedSpans) tieInFile() bool { return s.kind != servedDescTags }
 
 // covers reports whether the citation sits in served text.
 func (s *servedSpans) covers(c citation.Citation) bool {
@@ -131,12 +141,48 @@ func (g *goSource) offset(p token.Pos) int { return g.fset.Position(p).Offset }
 // span returns the byte span of a node.
 func (g *goSource) span(n ast.Node) [2]int { return [2]int{g.offset(n.Pos()), g.offset(n.End())} }
 
-// stringLiteralSpans returns the byte span of every string literal in
-// the source.
-func (g *goSource) stringLiteralSpans() [][2]int {
+// schemaFields are the tool-definition field names whose value is served
+// to a client, which are the tool's description and its input schema.
+var schemaFields = map[string]bool{"Description": true, "InputSchema": true}
+
+// schemaVarSuffix ends the name of a variable holding a served tool
+// schema, which is how a schema declared away from its tool definition
+// is reached.
+const schemaVarSuffix = "Schema"
+
+// toolSchemaSpans returns the byte span of every string literal that
+// becomes served tool-schema text, which is the value of a tool
+// definition's description or input-schema field and the initializer of
+// a schema variable. Every other literal of the file, including an error
+// message a handler returns, is an ordinary authoring site and converts,
+// the same way only a `desc:` value of the chart values source is
+// served.
+func (g *goSource) toolSchemaSpans() [][2]int {
 	var spans [][2]int
 	ast.Inspect(g.file, func(n ast.Node) bool {
-		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+		switch node := n.(type) {
+		case *ast.KeyValueExpr:
+			if key, ok := node.Key.(*ast.Ident); ok && schemaFields[key.Name] {
+				spans = append(spans, g.stringLiteralSpansIn(node.Value)...)
+			}
+		case *ast.ValueSpec:
+			for i, name := range node.Names {
+				if i < len(node.Values) && strings.HasSuffix(name.Name, schemaVarSuffix) {
+					spans = append(spans, g.stringLiteralSpansIn(node.Values[i])...)
+				}
+			}
+		}
+		return true
+	})
+	return spans
+}
+
+// stringLiteralSpansIn returns the byte span of every string literal
+// inside the node.
+func (g *goSource) stringLiteralSpansIn(n ast.Node) [][2]int {
+	var spans [][2]int
+	ast.Inspect(n, func(node ast.Node) bool {
+		if lit, ok := node.(*ast.BasicLit); ok && lit.Kind == token.STRING {
 			spans = append(spans, g.span(lit))
 		}
 		return true
@@ -271,26 +317,26 @@ func within(span [2]int, offset int) bool { return offset >= span[0] && offset <
 type strip struct {
 	site   citation.Citation
 	number string
-	// document records that the tie stands in the artifact itself rather
-	// than in a doc comment, which is where a data artifact holds one: it
-	// has no comment channel, so the document is the only authoring
-	// channel it has, and whether the tie stands there is decided against
-	// the text the run leaves behind.
-	document bool
+	// fileTie records that the tie stands anywhere in the authoring
+	// source the strip leaves behind rather than in the doc comment of
+	// one declaration, which is how a served document and a served tool
+	// schema hold one. Whether it stands there is decided against the
+	// text the run leaves behind, so the caller decides it.
+	fileTie bool
 }
 
 // stripSite returns the edit that removes a served citation, together
 // with the tie the strip has to leave standing, and fails when the site
-// keeps no tie. The tie of a Go carrier is decided here against the doc
-// comment of the declaration the site sits in. The tie of a data
-// artifact is decided by the caller against the rewritten document.
+// keeps no tie. The tie of a `desc:` struct tag is decided here against
+// the doc comment of the field the tag annotates. Every other served tie
+// is decided by the caller against the rewritten file.
 func stripSite(sections *citation.Resolver, text string, c citation.Citation, served *servedSpans) (edit, strip, error) {
 	number, err := anchorNumber(sections, c)
 	if err != nil {
 		return edit{}, strip{}, err
 	}
-	record := strip{site: c, number: number, document: served.kind == servedDocument}
-	if !record.document && !anchorOf(number).MatchString(served.src.docRun(c.Offset)) {
+	record := strip{site: c, number: number, fileTie: served.tieInFile()}
+	if !record.fileTie && !anchorOf(number).MatchString(served.src.docRun(c.Offset)) {
 		return edit{}, strip{}, fmt.Errorf(
 			"stripping the served citation would delete the site's only tie, because the doc comment over its declaration names no §%s", number,
 		)
@@ -299,14 +345,14 @@ func stripSite(sections *citation.Resolver, text string, c citation.Citation, se
 	return edit{start: start, end: end}, record, nil
 }
 
-// documentTie reports whether the section a data artifact's stripped
-// citation named is still named in the document the run leaves behind.
-func documentTie(after string, s strip) error {
+// fileTie reports whether the section a stripped citation named is still
+// named in the authoring source the run leaves behind.
+func fileTie(after string, s strip) error {
 	if anchorOf(s.number).MatchString(after) {
 		return nil
 	}
 	return fmt.Errorf(
-		"stripping the served citation would delete the document's only tie, because nothing else in it names §%s", s.number,
+		"stripping the served citation would delete the file's only tie, because nothing else in it names §%s", s.number,
 	)
 }
 

@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 #
-# The tree register with one carrier's count disagreeing with what the
-# file carries.
+# The tree register with one carrier registered above the count the file
+# carries, which is the retirement a hand correction made before the run.
 kind: line-citation-count-baseline
 version: 1
 files:
@@ -28,7 +28,7 @@ files:
     - path: pkg/gateway/externalapi/openapi/openapi.json
       count: 2
     - path: pkg/gateway/mcpfabric/mcptools/mcptools.go
-      count: 7
+      count: 9
     - path: pkg/spellings/and-list.go
       count: 1
     - path: pkg/spellings/colon-path.go

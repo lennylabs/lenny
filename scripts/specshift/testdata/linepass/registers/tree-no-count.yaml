@@ -28,7 +28,7 @@ files:
     - path: pkg/gateway/externalapi/openapi/openapi.json
       count: 2
     - path: pkg/gateway/mcpfabric/mcptools/mcptools.go
-      count: 7
+      count: 9
     - path: pkg/spellings/and-list.go
       count: 1
     - path: pkg/spellings/colon-path.go
