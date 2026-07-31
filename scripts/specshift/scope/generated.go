@@ -6,7 +6,9 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -42,6 +44,19 @@ type Producer struct {
 	// Outputs are repo-relative paths. An entry ending in a slash names
 	// a directory subtree; any other entry names one file.
 	Outputs []string
+	// MirrorOf, when set, names the source directory a copying producer
+	// mirrors, and qualifies every directory entry in Outputs: a file
+	// under such a directory is producer output only when a file of the
+	// same name exists under MirrorOf.
+	//
+	// A copy target directory holds authored files beside the copies.
+	// pkg/embedded/crds/ holds the embedding package's own source and its
+	// test alongside the five copied manifests, and that test carries
+	// line citations. Selecting the whole directory would take those
+	// authored files out of every pass's write domain while the citation
+	// gates keep counting them, which is what leaves the per-file count
+	// unable to reach zero.
+	MirrorOf string
 }
 
 // producers is the producer list the generated-artifact rule's third
@@ -64,9 +79,10 @@ var producers = []Producer{
 		},
 	},
 	{
-		Command: "the chart-to-embedded CRD copy",
-		Source:  "charts/lenny/crds",
-		Outputs: []string{"pkg/embedded/crds/"},
+		Command:  "the chart-to-embedded CRD copy",
+		Source:   "charts/lenny/crds",
+		Outputs:  []string{"pkg/embedded/crds/"},
+		MirrorOf: "charts/lenny/crds/",
 	},
 	{
 		Command: "make generate-proto",
@@ -159,7 +175,11 @@ var metadataFields = []string{"description", "title", "$comment"}
 // It fails rather than answering when the file cannot be read, so a
 // caller never treats an unreadable file as an ordinary carrier.
 func Generated(target string, read FileReader) (Disjunct, error) {
-	if producerOutput(target) {
+	output, err := producerOutput(target, read)
+	if err != nil {
+		return NotGenerated, fmt.Errorf("generated-artifact rule for %s: %w", target, err)
+	}
+	if output {
 		return ProducerOutput, nil
 	}
 	if read == nil {
@@ -186,22 +206,55 @@ func Generated(target string, read FileReader) (Disjunct, error) {
 }
 
 // producerOutput reports whether the path is a member of some producer's
-// output set.
-func producerOutput(target string) bool {
+// output set. A directory entry of a copying producer is qualified by the
+// mirror test, so an authored file that sits beside the copies stays an
+// ordinary carrier.
+func producerOutput(target string, read FileReader) (bool, error) {
 	for _, p := range producers {
 		for _, out := range p.Outputs {
-			if strings.HasSuffix(out, "/") {
-				if strings.HasPrefix(target, out) {
-					return true
+			if !strings.HasSuffix(out, "/") {
+				if target == out {
+					return true, nil
 				}
 				continue
 			}
-			if target == out {
-				return true
+			if !strings.HasPrefix(target, out) {
+				continue
+			}
+			if p.MirrorOf == "" {
+				return true, nil
+			}
+			mirrored, err := mirrors(p.MirrorOf, strings.TrimPrefix(target, out), read)
+			if err != nil {
+				return false, err
+			}
+			if mirrored {
+				return true, nil
 			}
 		}
 	}
-	return false
+	return false, nil
+}
+
+// mirrors reports whether the copying producer's source directory holds a
+// file of the same name, which is what makes the target one of its
+// copies.
+//
+// It fails rather than answering when the source cannot be read for a
+// reason other than its absence, so a file is never classified from an
+// unresolved read. An absent source file is the answer that the target is
+// not a copy: the copy would have put it there.
+func mirrors(sourceDir, name string, read FileReader) (bool, error) {
+	if read == nil {
+		return false, fmt.Errorf("mirror test for %s%s: no file reader", sourceDir, name)
+	}
+	if _, err := read(sourceDir + name); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("mirror test for %s%s: %w", sourceDir, name, err)
+	}
+	return true, nil
 }
 
 // headerDeclaresGeneration reports whether the file's header carries a
