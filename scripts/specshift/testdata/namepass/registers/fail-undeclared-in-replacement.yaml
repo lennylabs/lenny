@@ -1,7 +1,10 @@
 # SPDX-License-Identifier: MIT
 #
-# The senses driving the name pass over the fixture tree, keyed by file
-# and by the occurrence's position in that file.
+# The senses driving the name pass over the fixture tree, with every
+# site of the tree resolved and one entry whose replacement carries a
+# third identifier the specification fixture declares nowhere. The
+# replacement is written at the site verbatim, so the run fails on that
+# spelling rather than landing it in the tree.
 kind: reserved-phrase-senses
 version: 1
 entries:
@@ -14,7 +17,7 @@ entries:
     identifiers:
       - LNK-POD-GRPC
       - CH-LLMPROXY
-    replacement: LNK-POD-GRPC and CH-LLMPROXY links
+    replacement: LNK-POD-GRPC and CH-LLMPROXY and CH-BOGUS links
   - file: pkg/carrier/carrier.go
     occurrence: 1
     identifiers:

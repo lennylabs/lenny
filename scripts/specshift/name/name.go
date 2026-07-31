@@ -32,10 +32,11 @@
 // markdown anchor identifier is an addressable link target rather than
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this
-// repository cannot see. In a Go file the matcher reads the doc comments
-// alone, because that is the naming law's domain there: a string literal
-// and an implementation comment hold operator-facing and internal text
-// the law does not govern.
+// repository cannot see. In a Go file the matcher reads the file's
+// leading comments and the comments documenting a declaration, because
+// that is the naming law's domain there: a string literal and an
+// implementation comment hold operator-facing and internal text the law
+// does not govern.
 //
 // The carriers the matcher reads are the ones the naming law names,
 // which the scope package states: the specification, the documentation,
@@ -179,7 +180,10 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 // every gate downstream: the naming lint sees no reserved phrase, and
 // the identifier-resolution gate sees one spelling of a name nothing
 // else in the tree carries, so a misspelled entry would land as a
-// pointer to a mechanism that does not exist.
+// pointer to a mechanism that does not exist. The check ranges over the
+// text the pass writes rather than over the entry's identifier list
+// alone, so an identifier carried only by a replacement is held to the
+// same declaration.
 func (r *Rewriter) checkRegister(ctx context.Context) error {
 	if r.declared != nil {
 		return nil
@@ -195,7 +199,7 @@ func (r *Rewriter) checkRegister(ctx context.Context) error {
 	for _, target := range sortedKeys(r.senses) {
 		entries := r.senses[target]
 		for _, occurrence := range sortedOccurrences(entries) {
-			for _, id := range entries[occurrence].Identifiers {
+			for _, id := range entries[occurrence].written() {
 				if !declared[id] {
 					undeclared = append(undeclared, fmt.Sprintf("%s occurrence %d names %s", target, occurrence, id))
 				}

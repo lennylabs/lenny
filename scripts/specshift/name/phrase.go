@@ -195,6 +195,17 @@ func carrierFilter(target, content string) (func(int) bool, error) {
 // naming law governs in a Go carrier and the position the naming lint
 // reads.
 //
+// The leading comments of the file, meaning every group positioned
+// before the package clause, are read alongside the groups the parser
+// attaches to a declaration. A header prose block separated from the
+// package clause by a blank line is attached to nothing, and a build
+// constraint forces exactly that blank line, so a rule resting on
+// attachment alone would leave the header of every build-tagged file
+// with no writer while the naming lint read it. It would also offset
+// this pass's occurrence numbering from the enumeration the register is
+// keyed by in any file carrying both a header site and an attached one,
+// which writes a resolved identifier at the wrong site.
+//
 // A file the parser cannot read fails the run rather than being read
 // whole or skipped. Reading it whole would rewrite a string literal and
 // an implementation comment the law does not govern, and skipping it
@@ -217,7 +228,11 @@ func goDocCommentSpans(target, content string) ([]span, error) {
 			out = append(out, span{lo: lo, hi: lo + len(c.Text)})
 		}
 	}
-	add(file.Doc)
+	for _, group := range file.Comments {
+		if group.End() <= file.Package {
+			add(group)
+		}
+	}
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch decl := n.(type) {
 		case *ast.FuncDecl:

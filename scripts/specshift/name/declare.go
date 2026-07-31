@@ -19,10 +19,32 @@ import (
 // whose spelling no register carries.
 const channelSectionPrefix = "spec/28"
 
-// identifierExpr matches a canonical identifier, which the naming law
-// writes uppercase and hyphenated under one of the class prefixes: a
-// link, a channel, or a register.
-var identifierExpr = regexp.MustCompile(`^(?:LNK|CH|REG)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
+// identifierPattern is the spelling of a canonical identifier, which the
+// naming law writes uppercase and hyphenated under one of the class
+// prefixes: a link, a channel, or a register. It is held once, because
+// the declaration index reads a whole table cell against it while the
+// substitution check reads the tokens of a replacement text against the
+// same spelling, and two copies would let the two checks disagree about
+// what an identifier is.
+const identifierPattern = `(?:LNK|CH|REG)-[A-Z0-9]+(?:-[A-Z0-9]+)*`
+
+// identifierExpr matches a whole candidate that is a canonical
+// identifier.
+var identifierExpr = regexp.MustCompile(`^` + identifierPattern + `$`)
+
+// identifierTokenExpr matches a canonical identifier standing on word
+// boundaries inside a longer text, which is how an identifier appears in
+// the replacement text a multi-identifier entry records.
+var identifierTokenExpr = regexp.MustCompile(`\b` + identifierPattern + `\b`)
+
+// identifierTokens returns every identifier-shaped token of a text, in
+// source order. It is what holds the text the pass writes to the
+// declared identifier space rather than holding the entry's identifier
+// list alone: the replacement is written at the site verbatim, so a
+// token it carries beyond the identifiers the entry names reaches the
+// tree with the same canonical spelling and the same silence from every
+// gate downstream.
+func identifierTokens(text string) []string { return identifierTokenExpr.FindAllString(text, -1) }
 
 // rowExpr matches a table row, whose cells carry the identifier a
 // register row is keyed by.

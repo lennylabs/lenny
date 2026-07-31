@@ -4158,6 +4158,66 @@ func TestNamePassFailsAnEntryNamingAnUndeclaredIdentifier(t *testing.T) {
 	}
 }
 
+// TestNamePassFailsAnUndeclaredIdentifierCarriedOnlyByAReplacement pins
+// that the declaration check ranges over the text the pass writes rather
+// than over the entry's identifier list alone. A replacement is written
+// at the site verbatim and the schema check requires only that it carry
+// each identifier the entry names, so an entry whose replacement adds a
+// further spelling would otherwise land that spelling in the tree, where
+// the naming lint reads no reserved phrase and the
+// identifier-resolution gate reads one spelling of a name nothing else
+// carries.
+//
+// spec: §28.1 (N3, the naming law: an identifier the specification
+// declares is what replaces a site)
+func TestNamePassFailsAnUndeclaredIdentifierCarriedOnlyByAReplacement(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	before := treeSnapshot(t, root)
+	_, err := planNamePass(t, root, "fail-undeclared-in-replacement.yaml")
+	if err == nil {
+		t.Fatal("the name pass accepted a replacement carrying an undeclared identifier")
+	}
+	if !strings.Contains(err.Error(), "CH-BOGUS") {
+		t.Errorf("the failure does not name the undeclared identifier: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestNamePassEnumeratesAndWritesAGoHeaderCommentBlock pins the Go
+// position rule against the layout a build constraint forces. A header
+// prose block behind the blank line the constraint requires is attached
+// to no declaration, so a rule resting on parser attachment alone would
+// leave it with no writer while the naming lint read it, and in a file
+// carrying an attached comment too it would offset this pass's
+// occurrence numbering from the enumeration the register is keyed by.
+// The case pins both halves: each header site takes an occurrence number
+// ahead of the file's attached site, and each is substituted with the
+// identifier its own entry resolves it to.
+//
+// spec: §28.1 (N3, the naming law: the Go domain is the comment text of
+// a tracked Go file)
+func TestNamePassEnumeratesAndWritesAGoHeaderCommentBlock(t *testing.T) {
+	t.Parallel()
+	const target = "tests/tier11_docs/route_test.go"
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	assertSubstituted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	header := strings.Index(after, "CH-PODLIFECYCLE")
+	second := strings.Index(after, "CH-ADAPTEREVENTS")
+	attached := strings.Index(after, "LNK-GWCONTROL")
+	if header < 0 || second < 0 || attached < 0 {
+		t.Fatalf("%s is missing a substitution after the pass:\n%s", target, after)
+	}
+	if header >= second || second >= attached {
+		t.Errorf("the substitutions land at offsets %d, %d, and %d, so the header block is enumerated out of source order:\n%s",
+			header, second, attached, after)
+	}
+}
+
 // TestNamePassWritesEachIdentifierOfAMultiIdentifierEntry pins the site
 // whose sentence denotes two mechanisms. The entry records the
 // replacement each identifier sits in, so both are written at the

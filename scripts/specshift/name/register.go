@@ -47,6 +47,31 @@ func (e Entry) substitution() string {
 	return e.Identifiers[0]
 }
 
+// written returns every identifier the entry puts into the tree, which
+// is the identifiers it names together with the identifier-shaped tokens
+// of the text the pass writes at the site.
+//
+// The two differ whenever an entry records a replacement, because the
+// replacement is written verbatim and the schema check requires only
+// that it carry each identifier the entry names. A token beyond that set
+// is a spelling nothing declares, landing at the site as a
+// canonical-looking pointer to a mechanism that exists nowhere, so the
+// declared-identifier check reads this list rather than the entry's own.
+func (e Entry) written() []string {
+	out := append([]string(nil), e.Identifiers...)
+	seen := make(map[string]bool, len(out))
+	for _, id := range out {
+		seen[id] = true
+	}
+	for _, token := range identifierTokens(e.substitution()) {
+		if !seen[token] {
+			seen[token] = true
+			out = append(out, token)
+		}
+	}
+	return out
+}
+
 // senseDocument is the register as it is written.
 type senseDocument struct {
 	Kind    string `yaml:"kind"`
