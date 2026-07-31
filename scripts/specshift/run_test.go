@@ -1974,6 +1974,21 @@ func TestFindRequiresTheColonMemberToStandAgainstTheReference(t *testing.T) {
 	}
 }
 
+// TestFindRefusesAColonBehindAQualifier pins the other half of the same rule:
+// the colon stands directly against the reference, so no qualifier may sit
+// between the two. A qualifier admitted there absorbs a prose word together
+// with the digits of an unrelated number, which turns `§17.1 flat` wrapped onto
+// `maxUnavailable:1` and `§25.11 daily 03:30 UTC` into citations that name a
+// section, carry a member, and resolve nowhere. Each would be seeded into the
+// resolution baseline, counted by the per-file ratchet, and rewritten by the
+// line pass, so the only route to a zero count is the pass rewriting prose.
+func TestFindRefusesAColonBehindAQualifier(t *testing.T) {
+	t.Parallel()
+	if found := citation.Find(citationFixture(t, "colon-after-qualifier.txt")); len(found) != 0 {
+		t.Errorf("Find over a qualified prose colon returned %v, want no citation", found)
+	}
+}
+
 // TestFindJoinsAWrappedColonCitation pins the one spaced colon spelling the
 // form admits, which is a colon citation wrapped across two comment lines. The
 // space stands for the wrap the join consumed rather than for whitespace an

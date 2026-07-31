@@ -59,23 +59,36 @@ var headExpr = regexp.MustCompile(
 	// The reference, by section number with any number of dotted components
 	// or by file path with the spec/ prefix optional.
 	`(?:§` + sp + `*(\d+(?:\.\d+)*)|(?:spec/)?(\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md))` +
+		// The keyword branch and the colon branch, ordered with the colon
+		// first because only the colon branch stands directly against the
+		// reference.
+		`(?:` +
+		// The colon standing in for the keyword. It is written directly
+		// against the reference, with no qualifier between the two, and the
+		// member is written directly against it. A wrap the join consumed is
+		// admitted after the colon, and nothing else is: an authored space
+		// after a colon belongs to English or to YAML rather than to the form,
+		// and a qualifier ahead of the colon absorbs a prose word and the
+		// digits of an unrelated number, so `§17.1 flat` wrapped onto
+		// `maxUnavailable:1` and `§25.11 daily 03:30 UTC` both read as
+		// citations. Each such phantom enters the per-file count of a file
+		// that carries no citation, and its only route to zero is the pass
+		// rewriting prose.
+		`:` + joinClass + `?` +
+		`|` +
 		// The optional short qualifier naming a sub-element of the section.
 		// A qualifier of three words is spelled in words alone, because a
 		// numbered third token belongs to a member list rather than to a
 		// sub-element name: `line 315 and line 321` is two members.
 		`(?:` + sp + `+([A-Za-z]+` + sp + `+[0-9A-Za-z]+|[A-Za-z]+(?:` + sp + `+[A-Za-z]+){2}|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
-		// The keyword, or the colon standing in for it with the member written
-		// directly against it. A wrap the join consumed is admitted after the
-		// colon, and nothing else is: an authored space after a colon belongs
-		// to English or to YAML rather than to the form.
-		//
-		// The keyword may open a parenthesis of the carrier's own, with or
-		// without the word `spec` behind it, so a citation written as
+		// The keyword itself. It may open a parenthesis of the carrier's own,
+		// with or without the word `spec` behind it, so a citation written as
 		// `§10.3 NET-063 (spec line 327)` is read whole. A matcher requiring
 		// the keyword to follow the reference or the qualifier immediately
 		// leaves that spelling unconverted, unread by the resolver, and
 		// uncounted by the ratchet.
-		`(?::` + joinClass + `?|(?:` + sp + `+|` + sp + `*(\()` + sp + `*(?:spec` + sp + `+)?)(lines?)` + sp + `+)` +
+		`(?:` + sp + `+|` + sp + `*(\()` + sp + `*(?:spec` + sp + `+)?)(lines?)` + sp + `+` +
+		`)` +
 		// The first member.
 		`(` + memberBody + `)`,
 )
