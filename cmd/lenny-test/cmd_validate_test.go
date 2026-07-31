@@ -385,13 +385,41 @@ func trackChangeGraphSources(t *testing.T, root string, paths ...string) {
 	}
 }
 
-// changeGraphCompletenessRoot builds a temp git repo root holding the
+// changeGraphCompletenessFillers is one tracked source path per tree in
+// the check's source domain, with the glob key that covers it. The check
+// requires every tree to contribute at least one tracked source path, so
+// a fixture that means to exercise the coverage predicate rather than
+// the per-tree guard carries these alongside its own sources.
+var (
+	changeGraphCompletenessFillers = []string{
+		"cmd/filler/main.go", "pkg/filler/filler.go",
+		"scripts/filler.sh", "tests/filler/filler.go",
+	}
+	changeGraphCompletenessFillerGlobs = []string{
+		"cmd/filler", "pkg/filler", "scripts/filler.sh", "tests/filler",
+	}
+)
+
+// changeGraphCompletenessRoot builds a bare root that additionally
+// carries a tracked, glob-covered source path in every tree of the
+// check's domain, so the per-tree selection guard is satisfied and the
+// fixture's own sources are what the run turns on.
+func changeGraphCompletenessRoot(t *testing.T, sources, globs, prefixes []string) string {
+	t.Helper()
+	return changeGraphCompletenessBareRoot(t,
+		append(append([]string{}, sources...), changeGraphCompletenessFillers...),
+		append(append([]string{}, globs...), changeGraphCompletenessFillerGlobs...),
+		prefixes)
+}
+
+// changeGraphCompletenessBareRoot builds a temp git repo root holding the
 // given tracked source files (each written under its path and added to
 // the index), every source tree the check requires, a change-graph whose
 // globs block carries the given keys, and a coverage baseline carrying
 // the given prefixes. It returns the root so a caller can re-read the
-// baseline after a run rewrote it.
-func changeGraphCompletenessRoot(t *testing.T, sources, globs, prefixes []string) string {
+// baseline after a run rewrote it. Nothing is added beyond what the
+// caller names, so a tree can be left contributing no tracked path.
+func changeGraphCompletenessBareRoot(t *testing.T, sources, globs, prefixes []string) string {
 	t.Helper()
 	root := t.TempDir()
 	initCmd := exec.Command("git", "init", "-q")
@@ -555,7 +583,11 @@ func TestValidateChangeGraphCompletenessRatchetsDownward(t *testing.T) {
 	}
 
 	// Dropping the glob key again does not restore the exemption.
-	raw, err := json.Marshal(map[string]any{"version": 1, "globs": map[string]any{}})
+	remainingGlobs := map[string]any{}
+	for _, g := range changeGraphCompletenessFillerGlobs {
+		remainingGlobs[g] = map[string]any{"unit": []string{"pkg/..."}}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": remainingGlobs})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -615,7 +647,7 @@ func TestValidateChangeGraphCompletenessUnreadableInputs(t *testing.T) {
 
 	// An enumeration that selects no tracked source path fails and names
 	// the check, rather than reporting a fully covered tree.
-	root = changeGraphCompletenessRoot(t, nil, []string{"pkg/adapter"}, nil)
+	root = changeGraphCompletenessBareRoot(t, nil, []string{"pkg/adapter"}, nil)
 	expectFail(t, runChangeGraphCompleteness(root), "change-graph completeness", "no tracked source path")
 }
 
@@ -696,21 +728,68 @@ func TestValidateChangeGraphCompletenessMissingSourceTreeFails(t *testing.T) {
 	}
 }
 
-// TestValidateChangeGraphCompletenessRejectsUnselectableGlobKey pins the
-// coverage predicate to the selector's predicate. tiersForChangedPath
-// matches a changed path against a glob key with a literal prefix
-// comparison, so a key spelled with a trailing `/...` selects no tiers
-// for any path. Accepting it as coverage would certify a path the graph
-// resolves nothing for, so the key spelling fails the check instead.
-func TestValidateChangeGraphCompletenessRejectsUnselectableGlobKey(t *testing.T) {
+// TestValidateChangeGraphCompletenessAcceptsRecursiveGlobKey pins the
+// coverage predicate to the one key contract the tree states elsewhere:
+// validateChangeGraphFileExistence probes a key with its trailing `/...`
+// or `/` stripped, and tests/change-graph-pending.txt tells authors to
+// write the key in either spelling. A key ending in `/...` therefore
+// covers the directory it names, and the completeness check fails a
+// tracked source path no key covers rather than failing a key spelling.
+func TestValidateChangeGraphCompletenessAcceptsRecursiveGlobKey(t *testing.T) {
+	// A recursive key covers the directory it names and the paths beneath
+	// it, so the run passes with no baseline prefix.
 	r := changeGraphCompletenessFixture(t,
-		[]string{"pkg/adapter/adapter.go"}, []string{"pkg/adapter/..."}, nil)
-	expectFail(t, r, "pkg/adapter/...")
+		[]string{"pkg/adapter/adapter.go", "pkg/adapter/inner/inner.go"},
+		[]string{"pkg/adapter/..."}, nil)
+	expectPass(t, r)
 
-	// The same key form fails even when another key already covers the
-	// path, so no run certifies a tree carrying one.
+	// A recursive key elsewhere in the graph does not disturb a run whose
+	// own paths are covered by a plain key.
 	r = changeGraphCompletenessFixture(t,
 		[]string{"pkg/adapter/adapter.go"},
 		[]string{"pkg/adapter", "cmd/lenny-ctl/..."}, nil)
-	expectFail(t, r, "cmd/lenny-ctl/...")
+	expectPass(t, r)
+
+	// The key form still covers only what it names: a sibling directory
+	// outside it is uncovered and fails.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "pkg/preflight/preflight.go"},
+		[]string{"pkg/adapter/..."}, nil)
+	expectFail(t, r, "pkg/preflight/preflight.go")
+}
+
+// TestValidateChangeGraphCompletenessUntrackedSourceTreeFails pins the
+// per-tree selection guard against the variant the directory probe
+// misses. The source domain comes from the git index, so a tree that
+// exists on disk but has nothing tracked under it (an export, a
+// partially added clone, a wholly ignored tree) passes an existence
+// probe while contributing nothing. Without the guard the run reaches
+// the downward rewrite and drops every baseline prefix beneath that
+// tree, irreversibly, while reporting full coverage.
+func TestValidateChangeGraphCompletenessUntrackedSourceTreeFails(t *testing.T) {
+	root := changeGraphCompletenessBareRoot(t,
+		[]string{"cmd/lenny-ctl/main.go", "pkg/adapter/adapter.go", "scripts/lint.sh"},
+		nil,
+		[]string{"cmd/lenny-ctl/", "pkg/adapter/", "scripts/", "tests/harness/"})
+
+	// tests/ exists and carries files, but none of them is a tracked
+	// source path.
+	writeChangeGraphSource(t, root, "tests/harness/harness.go")
+
+	expectFail(t, runChangeGraphCompleteness(root), "tests/", "no tracked source path")
+
+	// The failing run wrote nothing, so the prefixes under the tree it
+	// never inspected survive.
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 4 {
+		t.Fatalf("a run over a tree that contributed nothing rewrote the baseline: %v", prefixes)
+	}
+
+	// Tracking a source path under the tree brings it into the domain and
+	// the run proceeds.
+	trackChangeGraphSources(t, root, "tests/harness/harness.go")
+	expectPass(t, runChangeGraphCompleteness(root))
 }

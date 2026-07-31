@@ -380,11 +380,11 @@ var (
 // change creates fails until the change graph gains its key.
 //
 // The check fails rather than reporting coverage when the change graph
-// or the baseline is missing or malformed, when one of the source trees
-// is absent or unreadable, and when the enumeration selects no tracked
-// source path at all, because a gate that inspects nothing must not
-// certify the tree, and because the downward rewrite would otherwise
-// retire every baseline prefix under a tree the run never inspected.
+// or the baseline is missing or malformed, and when a source tree is
+// absent, unreadable, or contributes no tracked source path, because a
+// gate that inspects nothing must not certify the tree, and because the
+// downward rewrite would otherwise retire every baseline prefix under a
+// tree the run never inspected.
 func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string) checkResult {
 	const name = "change-graph completeness"
 
@@ -400,12 +400,6 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 	if err != nil {
 		return newResult(name, false, err.Error())
 	}
-	if len(sources) == 0 {
-		return newResult(name, false,
-			"the change-graph completeness enumeration selected no tracked source path; "+
-				"a gate that inspects nothing cannot certify the tree")
-	}
-
 	unmapped := []string{}
 	for _, p := range sources {
 		if coveredByChangeGraphGlob(p, globs) {
@@ -456,15 +450,11 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 }
 
 // readChangeGraphGlobKeys returns the glob keys of the change graph with
-// any trailing `/` stripped, so a key can be matched as a directory
-// prefix.
-//
-// A key spelled with a trailing `/...` is rejected rather than accepted
-// as a directory prefix. The selector that consumes the graph matches a
-// changed path against a key with a plain prefix comparison
-// (tiersForChangedPath), so a `pkg/foo/...` key matches no path and
-// selects no tiers. Treating it as coverage here would certify a path
-// the graph selects nothing for, which is the hole this check closes.
+// any trailing `/...` (Go-style recursive) or `/` (directory hint)
+// stripped, so a key can be matched as a directory prefix. Both
+// spellings name the directory, the same reading
+// validateChangeGraphFileExistence applies when it probes a key on disk
+// and the one tests/change-graph-pending.txt documents to authors.
 func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -481,13 +471,9 @@ func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	}
 	keys := make(map[string]bool, len(doc.Globs))
 	for key := range doc.Globs {
-		if strings.HasSuffix(key, "/...") {
-			return nil, fmt.Errorf(
-				"change graph %s: glob key %q ends in /..., which the change selector matches as a literal prefix and therefore never selects; key the directory instead",
-				path, key,
-			)
-		}
-		keys[strings.TrimSuffix(key, "/")] = true
+		probe := strings.TrimSuffix(key, "/...")
+		probe = strings.TrimSuffix(probe, "/")
+		keys[probe] = true
 	}
 	return keys, nil
 }
@@ -598,10 +584,17 @@ func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
 }
 
 // trackedSourcePaths returns every repo-relative path in the tracked
-// source domain, sorted. A source tree that is absent or unreadable is a
-// failure rather than a skip: the run that inspects less than the tree
-// would still rewrite the baseline downward, retiring every prefix under
-// the tree it never looked at, and the rewrite is one-way.
+// source domain, sorted. A source tree that is absent, unreadable, or
+// that contributes no tracked source path is a failure rather than a
+// skip: the run that inspects less than the tree would still rewrite the
+// baseline downward, retiring every prefix under the tree it never
+// looked at, and the rewrite is one-way.
+//
+// The per-tree count is what enforces that, rather than the directory
+// existing on disk. The domain comes from the git index, so a tree that
+// exists but is untracked or wholly ignored (an export, a partially
+// added clone) yields nothing while its directory stats fine, and the
+// rewrite would then drop every baseline prefix beneath it.
 func trackedSourcePaths(root string) ([]string, error) {
 	for _, tree := range changeGraphSourceTrees {
 		if _, err := os.Stat(filepath.Join(root, tree)); err != nil {
@@ -615,9 +608,23 @@ func trackedSourcePaths(root string) ([]string, error) {
 		return nil, err
 	}
 	out := make([]string, 0, len(tracked))
+	perTree := map[string]int{}
 	for _, p := range tracked {
-		if isTrackedSourceFile(path.Base(p)) {
-			out = append(out, p)
+		if !isTrackedSourceFile(path.Base(p)) {
+			continue
+		}
+		out = append(out, p)
+		if i := strings.Index(p, "/"); i > 0 {
+			perTree[p[:i]]++
+		}
+	}
+	for _, tree := range changeGraphSourceTrees {
+		if perTree[tree] == 0 {
+			return nil, fmt.Errorf(
+				"change-graph completeness: source tree %s/ contributed no tracked source path; "+
+					"a gate that inspects less than the tree cannot certify it, and the coverage "+
+					"baseline is rewritten downward only", tree,
+			)
 		}
 	}
 	sort.Strings(out)
