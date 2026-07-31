@@ -196,8 +196,12 @@ func TestRecordTierUnverifiedRaisesVerdict(t *testing.T) {
 }
 
 // TestRecordTierUnverifiedPrecedence pins the precedence of UNVERIFIED
-// against FAIL and PASS in both record orders. The overall verdict must
-// not depend on which tier ran first.
+// against FAIL, INCONCLUSIVE, and PASS in both record orders. The
+// overall verdict must not depend on which tier ran first. INCONCLUSIVE
+// outranks UNVERIFIED so an infrastructure-class failure still reports
+// the verdict whose exit code drives the documented retry path
+// (TESTING.md §21.3), instead of being masked by an unrelated check
+// that could not reach a conclusion.
 func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -208,6 +212,8 @@ func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 		{"unverified then fail", []string{verdictstatus.Unverified, verdictstatus.Fail}, verdictstatus.VerdictFail},
 		{"pass then unverified", []string{verdictstatus.Pass, verdictstatus.Unverified}, verdictstatus.VerdictUnverified},
 		{"unverified then pass", []string{verdictstatus.Unverified, verdictstatus.Pass}, verdictstatus.VerdictUnverified},
+		{"inconclusive then unverified", []string{verdictstatus.Inconclusive, verdictstatus.Unverified}, verdictstatus.VerdictInconclusive},
+		{"unverified then inconclusive", []string{verdictstatus.Unverified, verdictstatus.Inconclusive}, verdictstatus.VerdictInconclusive},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -219,6 +225,40 @@ func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 				t.Fatalf("recording %v gave verdict %q; want %q", tc.statuses, v.Verdict, tc.want)
 			}
 		})
+	}
+}
+
+// TestUnverifiedTierKeepsInfraFailureRetryable pins the exit code a run
+// reports when an infrastructure-class failure and an unverified check
+// land in the same run. The harness retries an infrastructure failure
+// with fresh infrastructure on the INCONCLUSIVE exit code (TESTING.md
+// §21.3), and a degraded environment where part of the toolchain is
+// absent is also where infrastructure fails to start, so the two
+// statuses coincide. The run must still exit 2 in either record order.
+func TestUnverifiedTierKeepsInfraFailureRetryable(t *testing.T) {
+	infraFailure := func(v *verdict) {
+		v.recordTier("integration", verdictstatus.Fail, time.Millisecond, "docker daemon not running")
+	}
+	unverified := func(v *verdict) {
+		v.recordTier("static", verdictstatus.Unverified, time.Millisecond, "protoc not on PATH")
+	}
+	orders := [][2]func(v *verdict){
+		{infraFailure, unverified},
+		{unverified, infraFailure},
+	}
+	for _, order := range orders {
+		v := newVerdict(selector{maxTier: "integration"})
+		order[0](v)
+		order[1](v)
+		if v.Verdict != verdictstatus.VerdictInconclusive {
+			t.Fatalf("verdict %q; want %q so the infrastructure failure stays retryable", v.Verdict, verdictstatus.VerdictInconclusive)
+		}
+		if got := exitCodeFor(v.Verdict); got != 2 {
+			t.Fatalf("exit code %d; want 2 so CI takes the infrastructure retry path", got)
+		}
+		if stat := v.Tiers["integration"]; stat.Status != verdictstatus.Inconclusive {
+			t.Fatalf("infra-class failure recorded as %q; want %q", stat.Status, verdictstatus.Inconclusive)
+		}
 	}
 }
 

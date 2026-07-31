@@ -275,19 +275,21 @@ func (v *verdict) promoteVerdict(candidate string) {
 
 // verdictRank orders the verdict values from weakest to strongest
 // claim about the run. FAIL outranks every other value, so a real test
-// failure earlier or later in the run stays surfaced. UNVERIFIED
-// outranks INCONCLUSIVE and PASS, because a check that could not reach
-// a conclusion leaves the run unproven, while an infrastructure-class
-// failure is already described by INCONCLUSIVE's retry path. An
-// unrecognized value ranks with PASS so it cannot displace a verdict a
-// tier established.
+// failure earlier or later in the run stays surfaced. INCONCLUSIVE
+// outranks UNVERIFIED, because an infrastructure-class failure carries
+// the retry-then-FAIL path the harness runs on exit code 2 (TESTING.md
+// §21.3), and ranking an unrelated unverified check above it would hide
+// that failure behind a verdict CI does not retry. UNVERIFIED outranks
+// PASS, because a check that could not reach a conclusion leaves the
+// run unproven. An unrecognized value ranks with PASS so it cannot
+// displace a verdict a tier established.
 func verdictRank(verdict string) int {
 	switch verdict {
 	case verdictstatus.VerdictFail:
 		return 3
-	case verdictstatus.VerdictUnverified:
-		return 2
 	case verdictstatus.VerdictInconclusive:
+		return 2
+	case verdictstatus.VerdictUnverified:
 		return 1
 	}
 	return 0
