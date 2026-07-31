@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -352,4 +353,236 @@ func TestHasAnnotationBefore(t *testing.T) {
 			t.Errorf("%s: hasAnnotationBefore(%q) = %v; want %v", c.name, c.marker, got, c.want)
 		}
 	}
+}
+
+// changeGraphCompletenessRoot builds a temp repo root holding the given
+// tracked source files (each written under its path), a change-graph
+// whose globs block carries the given keys, and a coverage baseline
+// carrying the given prefixes. It returns the root so a caller can
+// re-read the baseline after a run rewrote it.
+func changeGraphCompletenessRoot(t *testing.T, sources, globs, prefixes []string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, p := range sources {
+		full := filepath.Join(root, p)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", full, err)
+		}
+	}
+	globMap := map[string]any{}
+	for _, g := range globs {
+		globMap[g] = map[string]any{"unit": []string{"pkg/..."}}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": globMap})
+	if err != nil {
+		t.Fatalf("marshal change graph: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tests", "registers"), 0o755); err != nil {
+		t.Fatalf("mkdir registers: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	if err := writeChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline), prefixes); err != nil {
+		t.Fatalf("write baseline: %v", err)
+	}
+	return root
+}
+
+// runChangeGraphCompleteness runs the check over a root built by
+// changeGraphCompletenessRoot.
+func runChangeGraphCompleteness(root string) checkResult {
+	return validateChangeGraphCompleteness(
+		filepath.Join(root, "tests", "change-graph.json"),
+		filepath.Join(root, changeGraphCoverageBaseline),
+		root,
+	)
+}
+
+// changeGraphCompletenessFixture builds a root and runs the check on it.
+func changeGraphCompletenessFixture(t *testing.T, sources, globs, prefixes []string) checkResult {
+	t.Helper()
+	return runChangeGraphCompleteness(changeGraphCompletenessRoot(t, sources, globs, prefixes))
+}
+
+// TestValidateChangeGraphCompleteness pins the completeness predicate on
+// tests/change-graph.json: a tracked source path covered by no glob key
+// and no coverage-baseline prefix fails the validate-maps check and is
+// named. It is the reverse of validateChangeGraphFileExistence, which
+// fails a glob key that resolves to nothing; nothing before this check
+// failed a source path the graph does not know about, so a change to
+// such a path selected no tests under `--changed` and passed unnoticed.
+func TestValidateChangeGraphCompleteness(t *testing.T) {
+	// A tracked source path covered by neither a glob key nor a baseline
+	// prefix fails, and the detail names the path.
+	r := changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"}, nil, nil)
+	expectFail(t, r, "pkg/adapter/adapter.go")
+
+	// A path covered by a baseline prefix passes.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"}, nil, []string{"pkg/adapter/"})
+	expectPass(t, r)
+
+	// A path covered by a change-graph glob key passes, whether the key
+	// names the file's directory, an ancestor of it, or the file itself.
+	for _, key := range []string{"pkg/adapter", "pkg/adapter/...", "pkg", "pkg/adapter/adapter.go"} {
+		r = changeGraphCompletenessFixture(t,
+			[]string{"pkg/adapter/adapter.go"}, []string{key}, nil)
+		expectPass(t, r)
+	}
+
+	// A fully mapped tree passes with no baseline at all.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "cmd/lenny-ctl/main.go", "scripts/lint.sh"},
+		[]string{"pkg/adapter", "cmd/lenny-ctl", "scripts/lint.sh"}, nil)
+	expectPass(t, r)
+
+	// A test file, and a file outside the source extensions, are outside
+	// the tracked source domain and need no key.
+	r = changeGraphCompletenessFixture(t,
+		[]string{
+			"pkg/adapter/adapter.go", "pkg/adapter/adapter_test.go",
+			"tests/registers/notes.yaml", "pkg/adapter/data.json",
+		},
+		[]string{"pkg/adapter"}, nil)
+	expectPass(t, r)
+
+	// A tree outside the domain needs no key either.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go", "sdks/go/client.go", "migrations/0001_init.go"},
+		[]string{"pkg/adapter"}, nil)
+	expectPass(t, r)
+}
+
+// TestValidateChangeGraphCompletenessNewPathNeedsAGlob pins the case
+// that puts the obligation on every later change: a source file created
+// in a tree the change graph does not key, with no baseline prefix
+// covering it, fails. The baseline carries the population that was
+// already unmapped when the check landed and is never grown, so a new
+// path is mapped in tests/change-graph.json or it fails the run.
+func TestValidateChangeGraphCompletenessNewPathNeedsAGlob(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go"}, nil, []string{"pkg/adapter/"})
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	// The later change creates a source tree of its own.
+	newFile := filepath.Join(root, "scripts", "specshift", "run.go")
+	if err := os.MkdirAll(filepath.Dir(newFile), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(newFile, []byte("package main\n"), 0o644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	r := runChangeGraphCompleteness(root)
+	expectFail(t, r, "scripts/specshift/run.go")
+
+	// The baseline is not grown to accommodate it: the prefix set on
+	// disk is unchanged by the failing run.
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "pkg/adapter/" {
+		t.Fatalf("baseline grew or changed on a failing run: %v", prefixes)
+	}
+}
+
+// TestValidateChangeGraphCompletenessRatchetsDownward pins the rewrite
+// rule: a path that gains a glob key loses its baseline prefix in the
+// same run, so coverage once given cannot be handed back by a later
+// change that drops the key.
+func TestValidateChangeGraphCompletenessRatchetsDownward(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go", "pkg/preflight/preflight.go"},
+		[]string{"pkg/adapter"},
+		[]string{"pkg/adapter/", "pkg/preflight/"})
+
+	r := runChangeGraphCompleteness(root)
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "1 baseline prefix(es) retired") {
+		t.Errorf("expected the mapped prefix to be retired: %s", r.detail)
+	}
+
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "pkg/preflight/" {
+		t.Fatalf("expected only the still-unmapped prefix to survive, got %v", prefixes)
+	}
+
+	// Re-running over the rewritten baseline is stable and retires nothing.
+	r = runChangeGraphCompleteness(root)
+	expectPass(t, r)
+	if strings.Contains(r.detail, "retired") {
+		t.Errorf("second run retired a prefix again: %s", r.detail)
+	}
+
+	// Dropping the glob key again does not restore the exemption.
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": map[string]any{}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "pkg/adapter/adapter.go")
+}
+
+// TestValidateChangeGraphCompletenessUnreadableInputs pins the
+// fail-closed cases: the check reports a failure rather than certifying
+// the tree when an input it depends on is missing or malformed, and when
+// its walk selects no tracked source path at all.
+func TestValidateChangeGraphCompletenessUnreadableInputs(t *testing.T) {
+	// A missing coverage baseline fails.
+	root := changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+		[]string{"pkg/adapter"}, nil)
+	if err := os.Remove(filepath.Join(root, changeGraphCoverageBaseline)); err != nil {
+		t.Fatalf("remove baseline: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "coverage baseline")
+
+	// A malformed coverage baseline fails.
+	for _, body := range []string{
+		"kind: change-graph-coverage-baseline\nversion: 1\nprefixes: [\n",
+		"kind: change-graph-coverage-baseline\nversion: 1\n",
+		"kind: change-graph-coverage-baseline\nversion: 2\nprefixes: []\n",
+		"version: 1\nprefixes: []\n",
+		"kind: change-graph-coverage-baseline\nversion: 1\nprefixes:\n  - \"\"\n",
+	} {
+		root = changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+			[]string{"pkg/adapter"}, nil)
+		if err := os.WriteFile(filepath.Join(root, changeGraphCoverageBaseline), []byte(body), 0o644); err != nil {
+			t.Fatalf("write baseline: %v", err)
+		}
+		expectFail(t, runChangeGraphCompleteness(root), "coverage baseline")
+	}
+
+	// A missing change graph fails.
+	root = changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+		[]string{"pkg/adapter"}, nil)
+	if err := os.Remove(filepath.Join(root, "tests", "change-graph.json")); err != nil {
+		t.Fatalf("remove change graph: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "change graph")
+
+	// A malformed change graph, and one carrying no globs block, fail
+	// rather than treating every source path as unmapped or as covered.
+	for _, body := range []string{"{\n", "{\"version\": 1}\n"} {
+		root = changeGraphCompletenessRoot(t, []string{"pkg/adapter/adapter.go"},
+			[]string{"pkg/adapter"}, nil)
+		if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write change graph: %v", err)
+		}
+		expectFail(t, runChangeGraphCompleteness(root), "change graph")
+	}
+
+	// A walk that selects no tracked source path fails and names the
+	// check, rather than reporting a fully covered tree.
+	root = changeGraphCompletenessRoot(t, nil, []string{"pkg/adapter"}, nil)
+	expectFail(t, runChangeGraphCompleteness(root), "change-graph completeness", "no tracked source path")
 }

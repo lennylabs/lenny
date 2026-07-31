@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // runValidateMaps validates that tests/spec-map.json and tests/change-graph.json
@@ -50,6 +52,8 @@ func runValidateMaps(args []string) int {
 		validateSpecMapPaths(specMapPath, root),
 		validateChangeGraphPaths(changeGraphPath, root),
 		validateChangeGraphFileExistence(changeGraphPath, root),
+		validateChangeGraphCompleteness(changeGraphPath,
+			filepath.Join(root, changeGraphCoverageBaseline), root),
 		validateTestFilesMapped(specMapPath, root),
 		validateSpecMapCoverage(specMapPath, exceptionsPath),
 		validateSpecMapTestFiles(specMapPath, exceptionsPath,
@@ -319,6 +323,313 @@ func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult 
 	}
 	return newResult("change-graph file-existence", true,
 		fmt.Sprintf("%d glob(s); every path resolves on disk", len(doc.Globs)))
+}
+
+// changeGraphCoverageBaseline is the repo-relative path of the coverage
+// baseline validateChangeGraphCompleteness reads and rewrites.
+const changeGraphCoverageBaseline = "tests/registers/change-graph-coverage.yaml"
+
+// changeGraphSourceTrees and changeGraphSourceExts define the tracked
+// source domain of the completeness check. See
+// validateChangeGraphCompleteness for what the domain means and why it
+// is drawn here.
+var (
+	changeGraphSourceTrees = []string{"cmd", "pkg", "scripts", "tests"}
+	changeGraphSourceExts  = []string{".go", ".sh"}
+)
+
+// changeGraphSkippedDirs are directory names the source walk never
+// descends into: dot-directories hold tooling state, and vendor and
+// node_modules hold third-party code that no change-graph glob owns.
+var changeGraphSkippedDirs = map[string]bool{"vendor": true, "node_modules": true}
+
+// validateChangeGraphCompleteness is the reverse predicate of
+// validateChangeGraphFileExistence. That check walks the glob keys of
+// tests/change-graph.json and fails a key that resolves to nothing on
+// disk. This one walks the tracked source tree and fails a source path
+// that no glob key covers, so a change to a package the graph does not
+// know about cannot pass unnoticed with `--changed` selecting nothing
+// for it.
+//
+// The tracked source domain is exactly:
+//
+//   - the top-level trees cmd/, pkg/, scripts/, and tests/. tests/ and
+//     scripts/ are in the domain because the change graph already keys
+//     entries under both (tests/testinfra/containers,
+//     scripts/lint-schema.sh, scripts/lint-queries.sh), so a harness or
+//     script change propagates to a test selection the same way a pkg/
+//     change does. Every other tree (schemas/, migrations/, charts/,
+//     sdks/, docs/, spec/, deploy/, compose/) is outside this check and
+//     is keyed in the graph without being gated by it.
+//   - the file extensions .go and .sh, excluding _test.go. A test file
+//     is a target of the graph rather than a source of it, and the
+//     spec-map gates already account for it. Data, configuration, and
+//     documentation files under those trees are outside the domain, so
+//     a YAML register (this baseline included) needs no glob key.
+//
+// A path is covered when a glob key of tests/change-graph.json names it
+// or an ancestor directory of it, or when a prefix in
+// tests/registers/change-graph-coverage.yaml matches it. The baseline
+// carries the population that was already unmapped when the check
+// landed. It is rewritten downward only: a path that gains a glob key,
+// or that leaves the tree, drops out of the baseline in the same run,
+// and the check never adds an entry, so an uncovered path that a later
+// change creates fails until the change graph gains its key.
+//
+// The check fails rather than reporting coverage when the change graph
+// or the baseline is missing or malformed, and when the walk selects no
+// tracked source path at all, because a gate that inspects nothing must
+// not certify the tree.
+func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string) checkResult {
+	const name = "change-graph completeness"
+
+	globs, err := readChangeGraphGlobKeys(changeGraphPath)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	baseline, err := readChangeGraphCoverageBaseline(baselinePath)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	sources, err := walkTrackedSourcePaths(root)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	if len(sources) == 0 {
+		return newResult(name, false,
+			"the change-graph completeness walk selected no tracked source path; "+
+				"a gate that inspects nothing cannot certify the tree")
+	}
+
+	unmapped := []string{}
+	for _, p := range sources {
+		if coveredByChangeGraphGlob(p, globs) {
+			continue
+		}
+		unmapped = append(unmapped, p)
+	}
+
+	uncovered := []string{}
+	kept := map[string]bool{}
+	for _, p := range unmapped {
+		prefix, ok := matchingCoveragePrefix(p, baseline)
+		if !ok {
+			uncovered = append(uncovered, p)
+			continue
+		}
+		kept[prefix] = true
+	}
+	if len(uncovered) > 0 {
+		sort.Strings(uncovered)
+		preview := uncovered
+		if len(preview) > 5 {
+			preview = append(append([]string{}, preview[:5]...),
+				fmt.Sprintf("... (%d more)", len(uncovered)-5))
+		}
+		return newResult(name, false,
+			fmt.Sprintf("%d tracked source path(s) covered by no change-graph glob and no coverage-baseline prefix: %s",
+				len(uncovered), strings.Join(preview, "; ")))
+	}
+
+	retired := len(baseline) - len(kept)
+	if retired > 0 {
+		remaining := make([]string, 0, len(kept))
+		for prefix := range kept {
+			remaining = append(remaining, prefix)
+		}
+		sort.Strings(remaining)
+		if err := writeChangeGraphCoverageBaseline(baselinePath, remaining); err != nil {
+			return newResult(name, false, err.Error())
+		}
+	}
+	detail := fmt.Sprintf("%d tracked source path(s); %d covered by the baseline",
+		len(sources), len(unmapped))
+	if retired > 0 {
+		detail += fmt.Sprintf("; %d baseline prefix(es) retired", retired)
+	}
+	return newResult(name, true, detail)
+}
+
+// readChangeGraphGlobKeys returns the glob keys of the change graph with
+// any trailing `/...` or `/` stripped, so a key can be matched as a
+// directory prefix.
+func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read change graph: %w", err)
+	}
+	var doc struct {
+		Globs map[string]any `json:"globs"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return nil, fmt.Errorf("parse change graph %s: %w", path, err)
+	}
+	if doc.Globs == nil {
+		return nil, fmt.Errorf("change graph %s: carries no globs block", path)
+	}
+	keys := make(map[string]bool, len(doc.Globs))
+	for key := range doc.Globs {
+		probe := strings.TrimSuffix(key, "/...")
+		probe = strings.TrimSuffix(probe, "/")
+		keys[probe] = true
+	}
+	return keys, nil
+}
+
+// coveredByChangeGraphGlob reports whether a glob key names the path or
+// one of its ancestor directories.
+func coveredByChangeGraphGlob(path string, keys map[string]bool) bool {
+	for probe := path; probe != "." && probe != "/"; probe = filepath.Dir(probe) {
+		if keys[probe] {
+			return true
+		}
+	}
+	return false
+}
+
+// matchingCoveragePrefix returns the baseline prefix that covers the
+// path. A prefix ending in `/` matches every path beneath it; any other
+// prefix matches the path it names and any path that continues past a
+// path separator.
+func matchingCoveragePrefix(path string, prefixes []string) (string, bool) {
+	for _, prefix := range prefixes {
+		if path == prefix ||
+			(strings.HasSuffix(prefix, "/") && strings.HasPrefix(path, prefix)) ||
+			strings.HasPrefix(path, prefix+"/") {
+			return prefix, true
+		}
+	}
+	return "", false
+}
+
+// changeGraphCoverageDoc is the baseline's schema. The file is a
+// baseline rather than an exception register (tests/registers/README.md):
+// a path with no change-graph glob key names no open item a blocker
+// could resolve to and carries no date on which it becomes wrong, so the
+// shared entry schema does not fit it.
+type changeGraphCoverageDoc struct {
+	Kind     string    `yaml:"kind"`
+	Version  int       `yaml:"version"`
+	Prefixes *[]string `yaml:"prefixes"`
+}
+
+const changeGraphCoverageKind = "change-graph-coverage-baseline"
+
+// readChangeGraphCoverageBaseline reads the coverage baseline. A missing,
+// unparseable, or misdeclared file is an error rather than an empty
+// baseline, so a lost file cannot silently turn the check into a
+// no-op-passing gate over an unmapped tree.
+func readChangeGraphCoverageBaseline(path string) ([]string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read coverage baseline: %w", err)
+	}
+	var doc changeGraphCoverageDoc
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("parse coverage baseline %s: %w", path, err)
+	}
+	if doc.Kind != changeGraphCoverageKind {
+		return nil, fmt.Errorf("coverage baseline %s: expected kind %q, got %q",
+			path, changeGraphCoverageKind, doc.Kind)
+	}
+	if doc.Version != 1 {
+		return nil, fmt.Errorf("coverage baseline %s: expected version 1, got %d", path, doc.Version)
+	}
+	if doc.Prefixes == nil {
+		return nil, fmt.Errorf("coverage baseline %s: carries no prefixes block", path)
+	}
+	out := make([]string, 0, len(*doc.Prefixes))
+	for _, p := range *doc.Prefixes {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			return nil, fmt.Errorf("coverage baseline %s: carries an empty prefix", path)
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
+// writeChangeGraphCoverageBaseline rewrites the baseline with the
+// prefixes that still cover an unmapped path. The check calls it only
+// when the set shrank.
+func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
+	var b strings.Builder
+	b.WriteString("# Change-graph coverage baseline.\n")
+	b.WriteString("#\n")
+	b.WriteString("# Every tracked source path listed here was already covered by no\n")
+	b.WriteString("# glob key in tests/change-graph.json when the completeness check in\n")
+	b.WriteString("# cmd/lenny-test/cmd_validate.go landed. The check rewrites this file\n")
+	b.WriteString("# downward: a path that gains a glob key drops out on the next run,\n")
+	b.WriteString("# and a path that is covered by neither fails the run rather than\n")
+	b.WriteString("# being added here.\n")
+	fmt.Fprintf(&b, "kind: %s\nversion: 1\n", changeGraphCoverageKind)
+	if len(prefixes) == 0 {
+		// An explicit empty list, so an exhausted baseline stays
+		// distinguishable from a file whose prefixes block was lost.
+		b.WriteString("prefixes: []\n")
+	} else {
+		b.WriteString("prefixes:\n")
+		for _, p := range prefixes {
+			fmt.Fprintf(&b, "  - %s\n", p)
+		}
+	}
+	if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+		return fmt.Errorf("rewrite coverage baseline %s: %w", path, err)
+	}
+	return nil
+}
+
+// walkTrackedSourcePaths returns every repo-relative path in the tracked
+// source domain, sorted. A tree that is absent from the checkout is
+// skipped; the caller fails the run when the whole walk selects nothing.
+func walkTrackedSourcePaths(root string) ([]string, error) {
+	out := []string{}
+	for _, tree := range changeGraphSourceTrees {
+		base := filepath.Join(root, tree)
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			name := d.Name()
+			if d.IsDir() {
+				if path != base && (strings.HasPrefix(name, ".") || changeGraphSkippedDirs[name]) {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if !isTrackedSourceFile(name) {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return fmt.Errorf("relativize %s: %w", path, err)
+			}
+			out = append(out, filepath.ToSlash(rel))
+			return nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("walk %s: %w", tree, err)
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// isTrackedSourceFile reports whether a file name is in the tracked
+// source domain: a source extension, and not a test file.
+func isTrackedSourceFile(name string) bool {
+	if strings.HasSuffix(name, "_test.go") {
+		return false
+	}
+	for _, ext := range changeGraphSourceExts {
+		if strings.HasSuffix(name, ext) {
+			return true
+		}
+	}
+	return false
 }
 
 // validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
