@@ -34,6 +34,21 @@ const (
 // tab, or the byte a consumed continuation left behind.
 const sp = "[ \t\x1f]"
 
+// glossSp is the whitespace class a trailing gloss admits, which is a space or
+// a tab alone. The continuation join is honored in the three wrap positions the
+// form states, which are a wrap between the reference and the keyword, a wrap
+// between the keyword and its first member, and a wrap inside a member list. A
+// gloss is written against its member on the line that carries it, so the join
+// byte is outside its whitespace class.
+//
+// Admitting the join byte here reads across the wrap into the following comment
+// line and takes its first word or two as the gloss, so the citation text a
+// register is keyed by carries prose the citation does not own and the pass
+// converting the citation to a single anchor deletes the newline, the following
+// line's comment marker, and its opening words. In the # dialect that removal
+// also stops the following text being a comment.
+const glossSp = "[ \t]"
+
 // render returns text with every consumed continuation shown as the space it
 // stands for, so a citation's text, gloss, and members read as one line.
 func render(s string) string { return strings.ReplaceAll(s, string(joinByte), " ") }
@@ -142,17 +157,21 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // not count them, and the rewritten carrier reads as an anchor followed by
 // orphan integers.
 //
+// Every alternative is written against its member with glossSp whitespace, so a
+// gloss opens on the line its member sits on rather than across a continuation
+// the join consumed.
+//
 // A quoted alternative also requires whitespace ahead of its opening quote,
 // because a quote written directly against a member's last digit is the closing
 // quote of the carrier's own string literal or an English apostrophe, and
 // neither opens a gloss.
 var glossExpr = regexp.MustCompile(
 	"^(?:" +
-		sp + `*\(` + glossBody + `*\)` +
-		`|` + sp + `+"[^"\n]*"` +
-		`|` + sp + `+'[^'\n]*'` +
-		"|" + sp + "+`[^`\n]*`" +
-		`|` + sp + `+` + glossWord + `(?:` + sp + `+` + glossWord + `)?(?:` + sp + `*\(` + glossBody + `*\))?` +
+		glossSp + `*\(` + glossBody + `*\)` +
+		`|` + glossSp + `+"[^"\n]*"` +
+		`|` + glossSp + `+'[^'\n]*'` +
+		"|" + glossSp + "+`[^`\n]*`" +
+		`|` + glossSp + `+` + glossWord + `(?:` + glossSp + `+` + glossWord + `)?(?:` + glossSp + `*\(` + glossBody + `*\))?` +
 		")",
 )
 

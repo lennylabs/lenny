@@ -2329,6 +2329,40 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 	}
 }
 
+// TestFindEndsACitationAtTheCommentLineThatCarriesIt pins the gloss to the
+// source line its member sits on. The continuation join covers three wrap
+// positions, which are a wrap between the reference and the keyword, a wrap
+// between the keyword and its first member, and a wrap inside a member list. A
+// gloss that read across a consumed continuation would take the opening word or
+// two of the following comment line, so the citation text a register is keyed
+// by would carry prose the citation does not own and the anchor the pass writes
+// in place of the whole citation would delete the newline, the following line's
+// comment marker, and its opening words, merging two comment lines and, in the
+// # dialect, leaving the following text outside any comment.
+func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		gloss   string
+	}{
+		{"citation-then-comment-slash.txt", ""},
+		{"citation-then-comment-hash.txt", ""},
+		{"gloss-then-comment-slash.txt", "messagingScope"},
+		{"gloss-then-comment-hash.txt", "tombstone"},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want it to end on its own line (%q)", tc.fixture, c.Text, want)
+		}
+		if strings.Contains(c.Raw, "\n") {
+			t.Errorf("%s: raw citation %q spans the following comment line", tc.fixture, c.Raw)
+		}
+		if got := c.Members[len(c.Members)-1].Gloss; got != tc.gloss {
+			t.Errorf("%s: gloss is %q, want %q", tc.fixture, got, tc.gloss)
+		}
+	}
+}
+
 // citationResolver builds the resolver over the fixture specification tree.
 // That tree carries a section with two subsections and one nested
 // sub-subsection, a second file with two subsections, a third file with two
