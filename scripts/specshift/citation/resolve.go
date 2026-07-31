@@ -52,12 +52,6 @@ const (
 	// UnknownFile is a path-form reference naming a file that does not
 	// resolve under spec/.
 	UnknownFile FailureKind = "unknown-file"
-	// UnclosedParenthesis is a citation whose head opened a parenthesis of the
-	// carrier's own that no parenthesis closes inside the citation. The line
-	// pass cannot convert it to an anchor without leaving the matching
-	// delimiter behind, so it is reported for hand correction the way a
-	// straddling range is.
-	UnclosedParenthesis FailureKind = "unclosed-parenthesis"
 )
 
 // Failure is one reason a citation did not resolve. Member is the zero value
@@ -242,23 +236,11 @@ func (r *Resolver) Section(number string) (Section, bool) {
 // citation resolves against the section of the named file that contains the
 // cited line, so it is the containing section that is inferred rather than the
 // membership that is checked.
-//
-// A citation the matcher marked unconvertible is reported under its own kind
-// ahead of its members. The occurrence is a stale pointer like any other, so
-// the resolver reports it and the ratchet counts it, and its remedy is a hand
-// correction because the pass declines to rewrite an unbalanced span.
 func (r *Resolver) Resolve(c Citation) []Failure {
-	var out []Failure
-	if c.Unconvertible {
-		out = append(out, Failure{
-			Kind:   UnclosedParenthesis,
-			Detail: "opens a parenthesis that does not close inside the citation",
-		})
-	}
 	if c.Section != "" {
-		return append(out, r.resolveSection(c)...)
+		return r.resolveSection(c)
 	}
-	return append(out, r.resolvePath(c)...)
+	return r.resolvePath(c)
 }
 
 // Resolves reports whether the citation resolves with no failure.

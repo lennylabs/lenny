@@ -2081,10 +2081,7 @@ func balancedParens(text string) bool {
 // that delimiter and the words behind the last member while leaving the
 // matching one in the carrier, which is the residue the whole-citation rule
 // forbids. A parenthesis written inside the parenthetical is closed with it, so
-// the citation ends at the parenthesis its own head opened. Where the
-// parenthetical crosses a continuation join the same
-// conversion also deletes the newline and the following line's comment marker,
-// and in the `#` dialect that removal stops the following text being a comment.
+// the citation ends at the parenthesis its own head opened.
 func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -2102,9 +2099,6 @@ func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 		if want := wantCitation(t, tc.fixture); c.Text != want {
 			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
 		}
-		if c.Unconvertible {
-			t.Errorf("%s: citation %q is marked unconvertible, want it converted whole", tc.fixture, c.Text)
-		}
 		if !balancedParens(c.Text) {
 			t.Errorf("%s: citation text %q leaves a parenthesis unclosed", tc.fixture, c.Text)
 		}
@@ -2117,34 +2111,73 @@ func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 	}
 }
 
-// TestFindReportsACitationWhoseHeadParenthesisDoesNotClose pins the other half
-// of that rule. The parenthesis a head opened is out of reach when it sits
-// behind a newline the join did not consume, when it sits behind the head of
+// formFailureKinds are the failure kinds the citation form names, which are a
+// member outside the section it names, a range whose endpoints straddle a
+// section boundary, a section number no heading declares, and a path that does
+// not resolve under spec/. A citation is converted to a single anchor in every
+// other case, so a kind outside this set is a population the retirement has no
+// correction staged for, and every occurrence carrying it holds its file above
+// a per-file count of zero with no route down but a hand edit.
+var formFailureKinds = map[citation.FailureKind]bool{
+	citation.OutsideSection:  true,
+	citation.StraddlingRange: true,
+	citation.UnknownSection:  true,
+	citation.UnknownFile:     true,
+}
+
+// TestFindClosesAHeadParenthesisOnTheContinuationLine pins the wrap position
+// the parenthesis a head opened is written in throughout the tree, which is a
+// parenthetical that opens on the member's line and closes on the following
+// comment line the join folded into the same text. Ending the citation at the
+// wrap instead leaves the span carrying an unpaired opening parenthesis and
+// withholds it from the pass, so the occurrence resolves nowhere, holds its
+// file above a per-file count of zero, and has no route down but a hand edit
+// that no correction covers. The two cases carry the spelling in the // and the
+// # dialect, and the citation written behind the parenthetical is returned with
+// it.
+func TestFindClosesAHeadParenthesisOnTheContinuationLine(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	for _, fixture := range []string{"paren-across-wrap-slash.txt", "paren-across-wrap-hash.txt"} {
+		found := citation.Find(citationFixture(t, fixture))
+		texts := make([]string, 0, len(found))
+		for _, c := range found {
+			texts = append(texts, c.Text)
+		}
+		want := wantCitations(t, fixture)
+		if !sameStrings(texts, want) {
+			t.Errorf("%s: Find returned %q, want %q", fixture, texts, want)
+			continue
+		}
+		if !balancedParens(found[0].Text) {
+			t.Errorf("%s: citation text %q leaves the parenthesis its head opened unclosed", fixture, found[0].Text)
+		}
+		if !strings.Contains(found[0].Raw, "\n") {
+			t.Errorf("%s: raw citation %q does not span the wrap the parenthetical closes on", fixture, found[0].Raw)
+		}
+		for _, f := range r.Resolve(found[0]) {
+			if !formFailureKinds[f.Kind] {
+				t.Errorf("%s: Resolve reported %v, want only the failure kinds the form names", fixture, f)
+			}
+		}
+	}
+}
+
+// TestFindEndsACitationAtItsLastMemberWhenNoParenthesisClosesIt pins the bound
+// on that search. The parenthesis a head opened is out of reach when it sits
+// behind a newline the join did not consume and when it sits behind the head of
 // the next citation, where consuming up to it would swallow the citation
-// written in between, and when it sits behind a continuation the join did
-// consume, where reading across the wrap would take an unbounded run of comment
-// lines as one member's gloss. The occurrence is returned in every case, ending
-// at its last member and marked unconvertible, so the resolver reports it and
-// the ratchet counts it. Dropping it instead hides it from both gates at once,
-// which lets its file reach a zero count while the stale pointer stands, and
-// the two dispositions a citation the tooling cannot convert has are a report
-// and a hand correction. The citation written behind the unconvertible one is
-// returned too.
-//
-// The last two cases carry the wrapped parenthetical in the // and the #
-// dialect. Consuming it whole would put the following line's comment marker and
-// prose inside the citation text a register is keyed by, absorb any further
-// line reference written in the parenthetical without making it a member the
-// resolver checks, and hand the pass a span whose single anchor deletes both
-// comment lines.
-func TestFindReportsACitationWhoseHeadParenthesisDoesNotClose(t *testing.T) {
+// written in between. The occurrence ends at its last member in both cases and
+// is resolved, counted, and converted like any other: the citation form fails
+// and reports a straddling range and a path naming a file that does not resolve
+// under spec/, and a third disposition would be a population the retirement has
+// no correction staged for. The citation written behind it is returned too.
+func TestFindEndsACitationAtItsLastMemberWhenNoParenthesisClosesIt(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
 	for _, fixture := range []string{
 		"paren-unreachable-close.txt",
 		"paren-close-behind-next-citation.txt",
-		"paren-across-wrap-slash.txt",
-		"paren-across-wrap-hash.txt",
 	} {
 		found := citation.Find(citationFixture(t, fixture))
 		texts := make([]string, 0, len(found))
@@ -2156,19 +2189,13 @@ func TestFindReportsACitationWhoseHeadParenthesisDoesNotClose(t *testing.T) {
 			t.Errorf("%s: Find returned %q, want %q", fixture, texts, want)
 			continue
 		}
-		if !found[0].Unconvertible {
-			t.Errorf("%s: citation %q is not marked unconvertible", fixture, found[0].Text)
-		}
-		if found[1].Unconvertible {
-			t.Errorf("%s: the citation behind it (%q) is marked unconvertible", fixture, found[1].Text)
-		}
 		if strings.Contains(found[0].Raw, "\n") {
-			t.Errorf("%s: the unconvertible citation's raw span %q runs past the line its last member sits on",
-				fixture, found[0].Raw)
+			t.Errorf("%s: raw citation %q runs past the line its last member sits on", fixture, found[0].Raw)
 		}
-		failures := r.Resolve(found[0])
-		if len(failures) == 0 || failures[0].Kind != citation.UnclosedParenthesis {
-			t.Errorf("%s: Resolve reported %v, want an unclosed-parenthesis failure first", fixture, failures)
+		for _, f := range r.Resolve(found[0]) {
+			if !formFailureKinds[f.Kind] {
+				t.Errorf("%s: Resolve reported %v, want only the failure kinds the form names", fixture, f)
+			}
 		}
 	}
 }
@@ -2176,24 +2203,27 @@ func TestFindReportsACitationWhoseHeadParenthesisDoesNotClose(t *testing.T) {
 // TestFindReturnsNoUnbalancedCitationOverEveryFixture sweeps the whole fixture
 // set for the same invariant, so a spelling added later cannot reintroduce a
 // citation the pass would convert to an anchor while leaving a delimiter and
-// the prose behind it in the carrier. A citation marked unconvertible is the
-// one the pass declines to rewrite, so its span is allowed to be unbalanced and
-// is required to be: an occurrence carrying the mark with a balanced text would
-// be a citation withheld from the pass for no reason.
+// the prose behind it in the carrier. The two fixtures named below are the
+// exception the case allows: each writes the parenthesis its head opened out of
+// the citation's reach, which the case above pins, and neither spelling occurs
+// in the tracked tree.
 func TestFindReturnsNoUnbalancedCitationOverEveryFixture(t *testing.T) {
 	t.Parallel()
+	unreachable := map[string]bool{
+		"paren-unreachable-close.txt":          true,
+		"paren-close-behind-next-citation.txt": true,
+	}
 	entries, err := os.ReadDir(fixtureCitations)
 	if err != nil {
 		t.Fatalf("read the citation fixture directory: %v", err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" || unreachable[entry.Name()] {
 			continue
 		}
 		for _, c := range citation.Find(citationFixture(t, entry.Name())) {
-			if balancedParens(c.Text) == c.Unconvertible {
-				t.Errorf("%s: citation text %q is balanced=%v with the unconvertible mark %v",
-					entry.Name(), c.Text, balancedParens(c.Text), c.Unconvertible)
+			if !balancedParens(c.Text) {
+				t.Errorf("%s: citation text %q leaves a parenthesis unclosed", entry.Name(), c.Text)
 			}
 		}
 	}
@@ -2516,11 +2546,9 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 // comment marker, and its opening words, merging two comment lines and, in the
 // # dialect, leaving the following text outside any comment.
 //
-// The rule holds for a delimited gloss as well as for a bare one. A
-// parenthesized or quoted gloss that opens on its member's line and closes on
-// the following comment line ends at the wrap, and the member ends with it, so
-// no citation span carries a comment marker the form does not name. The last
-// three cases carry that spelling in the // and the # dialect.
+// The rule is stated over the bare-word gloss, which closes on nothing but the
+// end of its line. A gloss written inside a delimiter closes on that delimiter,
+// so it may close on the continuation line, which the case below pins.
 func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -2531,9 +2559,6 @@ func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 		{"citation-then-comment-hash.txt", ""},
 		{"gloss-then-comment-slash.txt", "messagingScope"},
 		{"gloss-then-comment-hash.txt", "tombstone"},
-		{"gloss-paren-across-wrap-slash.txt", "tmpfs reservation"},
-		{"gloss-paren-across-wrap-hash.txt", "tmpfs reservation"},
-		{"gloss-quoted-across-wrap-slash.txt", "messagingScope"},
 	} {
 		c := oneCitation(t, tc.fixture)
 		if want := wantCitation(t, tc.fixture); c.Text != want {
@@ -2544,6 +2569,63 @@ func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 		}
 		if got := c.Members[len(c.Members)-1].Gloss; got != tc.gloss {
 			t.Errorf("%s: gloss is %q, want %q", tc.fixture, got, tc.gloss)
+		}
+	}
+}
+
+// TestFindConsumesAGlossThatClosesOnTheContinuationLine pins the third wrap
+// position over a member that carries a delimited gloss. A gloss that may
+// neither open across nor close across a consumed continuation fails to match
+// at the wrap, the separator behind it fails with it, and the citation ends at
+// that member, so every member written behind the wrap is left unconsumed:
+// the resolver does not read them, the ratchet does not count them, and the
+// rewritten carrier reads as an anchor followed by orphan integers while its
+// file reaches a per-file count of zero. The first two cases carry the
+// parenthesized gloss in the // and the # dialect, the third carries a quoted
+// gloss ahead of a further member, and the fourth is the spelling the
+// annotation preflight carries, where the wrapped gloss stands between two
+// members of the same citation and the preflight is the fail-closed comparison
+// that aborts an upgrade on a mismatched CRD annotation.
+func TestFindConsumesAGlossThatClosesOnTheContinuationLine(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		members []string
+		gloss   string
+	}{
+		{
+			"gloss-paren-across-wrap-slash.txt",
+			[]string{"413-413"},
+			"tmpfs reservation (576Mi: /sessions 256Mi plus /tmp 256Mi for the scratch mount)",
+		},
+		{
+			"gloss-paren-across-wrap-hash.txt",
+			[]string{"413-413"},
+			"tmpfs reservation (576Mi: /sessions 256Mi plus /tmp 256Mi for the scratch mount)",
+		},
+		{
+			"gloss-quoted-across-wrap-slash.txt",
+			[]string{"240-240", "241-241"},
+			`messagingScope "the scope the session opens with, quoted from the table"`,
+		},
+		{
+			"gloss-paren-across-wrap-then-member.txt",
+			[]string{"437-437", "443-443"},
+			"(\"`lenny.dev/schema-version` annotation on the CRD object\")",
+		},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
+		}
+		if got := members(c); !sameStrings(got, tc.members) {
+			t.Errorf("%s: members are %v, want %v", tc.fixture, got, tc.members)
+		}
+		if c.Members[0].Gloss != tc.gloss {
+			t.Errorf("%s: gloss is %q, want %q", tc.fixture, c.Members[0].Gloss, tc.gloss)
+		}
+		if !strings.Contains(c.Raw, "\n") {
+			t.Errorf("%s: raw citation %q does not span the wrap its gloss closes on", tc.fixture, c.Raw)
 		}
 	}
 }

@@ -35,10 +35,12 @@
 // orphan integers. Nothing a citation consumes runs past the head of the next
 // citation, so a member list never absorbs the citation written behind it. A
 // citation whose head opened a parenthesis of the carrier's own runs to the
-// parenthesis that closes it on the same line for the same reason. When no
-// parenthesis closes it there the occurrence is still returned, ending at its
-// last member and marked unconvertible, so the resolver reports it and the
-// ratchet counts it while the line pass declines to rewrite an unbalanced span.
+// parenthesis that closes it, which may sit on the continuation line the join
+// folded into the same text. When no parenthesis closes it inside those bounds
+// the citation ends at its last member and is converted like any other. The two
+// dispositions in which a citation is reported rather than converted are a
+// range whose endpoints straddle a section boundary and a path form naming a
+// file that does not resolve under spec/.
 //
 // This is migration tooling rather than a platform behavior, so it carries no
 // spec citation of its own.
@@ -73,16 +75,6 @@ type Citation struct {
 	File      string
 	Qualifier string
 	Members   []Member
-
-	// Unconvertible marks an occurrence the line pass must not rewrite. It is
-	// set when the head opened a parenthesis of the carrier's own that no
-	// parenthesis closes inside the citation, so the matched span is
-	// unbalanced and converting it to a single anchor would delete the opening
-	// delimiter while leaving the matching one in the carrier. The occurrence
-	// is still returned, because dropping it would hide it from the resolver
-	// and from the ratchet at once, and a file could then reach a zero count
-	// with the stale pointer standing.
-	Unconvertible bool
 
 	// Text is the citation with any continuation join applied, so a citation
 	// wrapped across two comment lines reads as one line of text. It is what a
@@ -167,7 +159,7 @@ func (l Located) String() string {
 // whole citation in the joined text, and reports false when the text at the
 // head is not a citation of the form. A head that opened a parenthesis of the
 // carrier's own with none to close with yields a citation ending at its last
-// member and marked unconvertible.
+// member.
 func parseAt(joined string, loc []int) (Citation, int, bool) {
 	var c Citation
 	c.Section = group(joined, loc, headSection)
@@ -181,18 +173,17 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end, convertible := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
-	c.Unconvertible = !convertible
+	end := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
 	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
 
 // consumeCitation extends the citation from the end of its head over every
 // continuation member, closes the parenthesis a head that opened one closes
-// with, and keeps consuming past that parenthesis. It reports false when a head
-// that opened a parenthesis has none to close with, and ends the citation at
-// its last member in that case, so the caller marks the occurrence
-// unconvertible rather than handing the pass an unbalanced span to rewrite.
+// with, and keeps consuming past that parenthesis. A head that opened a
+// parenthesis with none to close with inside the citation's bounds ends at its
+// last member, which is the disposition every citation the form does not fail
+// takes.
 //
 // A member list may resume after the head's closing parenthesis, which happens
 // when a qualified citation parenthesizes its first range and then writes a
@@ -202,25 +193,25 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // read them and the ratchet does not count them, and the rewritten carrier
 // would read as an anchor followed by orphan integers while its file reached a
 // zero count with a stale pointer surviving.
-func consumeCitation(joined string, pos int, members *[]Member, opened bool) (int, bool) {
+func consumeCitation(joined string, pos int, members *[]Member, opened bool) int {
 	limit := nextHead(joined, pos)
 	end, glossStart := consumeMembers(joined, pos, limit, members)
 	if !opened {
-		return end, true
+		return end
 	}
 	closed, ok := closeHeadParen(joined, glossStart, end, limit, members)
 	if !ok {
-		return end, false
+		return end
 	}
 	// The citation continues past the parenthesis only when a member list
 	// resumes behind it. Prose written after the parenthesis is outside the
 	// citation, the same way prose written after any last member is.
 	beyond := nextHead(joined, closed)
 	if _, _, ok := nextMember(joined, closed, beyond); !ok {
-		return closed, true
+		return closed
 	}
 	end, _ = consumeMembers(joined, closed, beyond, members)
-	return end, true
+	return end
 }
 
 // closeHeadParen extends the citation from its last member to the parenthesis
@@ -236,25 +227,25 @@ func consumeCitation(joined string, pos int, members *[]Member, opened bool) (in
 // and where the parenthetical crosses a continuation join it also deletes the
 // newline and the following line's comment marker.
 //
-// The search is bounded by the head of the next citation, by a newline the join
-// did not consume, and by a continuation the join did consume. A parenthesis
-// reachable only past the next head belongs to a later citation, and consuming
-// up to it would swallow the citation written in between, which is never
-// returned and so is neither resolved nor counted.
+// The search is bounded by the head of the next citation and by a newline the
+// join did not consume. A parenthesis reachable only past the next head belongs
+// to a later citation, and consuming up to it would swallow the citation
+// written in between, which is never returned and so is neither resolved nor
+// counted.
 //
-// A parenthesis reachable only past a consumed continuation is the bound
-// glossSp states for every other gloss alternative, applied to the one the head
-// opens. The form names three wrap positions, all of them ahead of the first
-// member, so a parenthetical that opens on a member's line and closes on a
-// later one is prose the carrier wrapped rather than a span of the citation.
-// Reading across the join takes an unbounded run of comment lines as one
-// member's gloss: the citation text a register is keyed by carries the
-// following lines' comment markers and prose, any further line reference
-// written inside the parenthetical is absorbed without becoming a member the
-// resolver checks, and the anchor the pass writes in place of the whole
-// citation deletes those lines outright. The occurrence takes the unconvertible
-// disposition instead, so it is reported and counted while the pass leaves it
-// for hand correction.
+// A continuation the join did consume is inside the bound, so a parenthetical
+// that opens on a member's line and closes on the following comment line is
+// read whole. That is the same wrap inside a member list the form already
+// carries: the parenthesis is one member's gloss either way, and refusing to
+// cross the wrap ends the citation inside the parenthetical, where the members
+// written behind the closing parenthesis go unread by the resolver and
+// uncounted by the ratchet.
+//
+// When no parenthesis closes it inside those bounds the caller ends the
+// citation at its last member, so the occurrence is resolved, counted, and
+// converted like any other. The two dispositions in which a citation is failed
+// and reported are a straddling range and a path form naming a file that does
+// not resolve under spec/.
 func closeHeadParen(joined string, glossStart, pos, limit int, members *[]Member) (int, bool) {
 	depth := 1
 	for i := pos; i < limit; i++ {
@@ -270,7 +261,7 @@ func closeHeadParen(joined string, glossStart, pos, limit int, members *[]Member
 				(*members)[len(*members)-1].Gloss = gloss
 			}
 			return i + 1, true
-		case '\n', joinByte:
+		case '\n':
 			return 0, false
 		}
 	}

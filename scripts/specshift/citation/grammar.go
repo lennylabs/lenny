@@ -34,20 +34,31 @@ const (
 // tab, or the byte a consumed continuation left behind.
 const sp = "[ \t\x1f]"
 
-// glossSp is the whitespace class a trailing gloss admits, which is a space or
-// a tab alone. The continuation join is honored in the three wrap positions the
-// form states, which are a wrap between the reference and the keyword, a wrap
-// between the keyword and its first member, and a wrap inside a member list. A
-// gloss is written against its member on the line that carries it, so the join
-// byte is outside its whitespace class.
+// glossWordSp is the whitespace class the bare-word gloss admits, which is a
+// space or a tab alone. A bare word run has no closing delimiter, so nothing
+// but the end of its line bounds it. Admitting the join byte there reads across
+// the wrap into the following comment line and takes its first word or two as
+// the gloss, so the citation text a register is keyed by carries prose the
+// citation does not own and the pass converting the citation to a single anchor
+// deletes the newline, the following line's comment marker, and its opening
+// words. In the # dialect that removal also stops the following text being a
+// comment.
 //
-// Admitting the join byte here reads across the wrap into the following comment
-// line and takes its first word or two as the gloss, so the citation text a
-// register is keyed by carries prose the citation does not own and the pass
-// converting the citation to a single anchor deletes the newline, the following
-// line's comment marker, and its opening words. In the # dialect that removal
-// also stops the following text being a comment.
-const glossSp = "[ \t]"
+// glossDelimSp is the whitespace class a delimited gloss admits ahead of its
+// opening delimiter, which additionally admits the byte a consumed continuation
+// left behind. A delimited gloss is bounded by the delimiter that closes it, so
+// a wrap between the member and the gloss, or between the gloss's opening and
+// closing delimiters, is the same wrap inside a member list the form already
+// carries. Refusing it there ends the member list at the wrapped member and
+// drops every member written behind the wrap, which is the head-matching
+// failure the whole-citation rule exists to prevent: the resolver does not read
+// the dropped members, the ratchet does not count them, and the rewritten
+// carrier reads as an anchor followed by orphan integers while its file reaches
+// a zero count.
+const (
+	glossWordSp  = "[ \t]"
+	glossDelimSp = sp
+)
 
 // render returns text with every consumed continuation shown as the space it
 // stands for, so a citation's text, gloss, and members read as one line.
@@ -184,15 +195,12 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // not count them, and the rewritten carrier reads as an anchor followed by
 // orphan integers.
 //
-// Every alternative is written against its member with glossSp whitespace, so a
-// gloss opens on the line its member sits on rather than across a continuation
-// the join consumed, and no alternative's body admits the join byte, so a gloss
-// that opened on its member's line also closes on that line. A delimited
-// alternative whose body admitted the join would close on the following comment
-// line, which is a fourth wrap position the form does not carry: the citation
-// text a register is keyed by would carry that line's marker and prose, and the
-// anchor the pass writes in place of the whole citation would delete the
-// newline, the comment marker, and the words ahead of the closing delimiter.
+// A delimited alternative admits the join byte ahead of its opening delimiter
+// and inside its body, so a gloss that opens on its member's line closes on the
+// continuation line the join folded into it and the separator and member
+// written behind the closing delimiter are consumed as members. The bare-word
+// alternative admits glossWordSp alone, because a word run closes on nothing
+// and would otherwise take the opening words of the following comment line.
 //
 // A quoted alternative also requires whitespace ahead of its opening quote,
 // because a quote written directly against a member's last digit is the closing
@@ -200,11 +208,11 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // neither opens a gloss.
 var glossExpr = regexp.MustCompile(
 	"^(?:" +
-		glossSp + `*\(` + glossBody + `*\)` +
-		`|` + glossSp + `+"[^"\n` + joinClass + `]*"` +
-		`|` + glossSp + `+'[^'\n` + joinClass + `]*'` +
-		"|" + glossSp + "+`[^`\n" + joinClass + "]*`" +
-		`|` + glossSp + `+` + glossWord + `(?:` + glossSp + `+` + glossWord + `)?(?:` + glossSp + `*\(` + glossBody + `*\))?` +
+		glossDelimSp + `*\(` + glossBody + `*\)` +
+		`|` + glossDelimSp + `+"[^"\n]*"` +
+		`|` + glossDelimSp + `+'[^'\n]*'` +
+		"|" + glossDelimSp + "+`[^`\n]*`" +
+		`|` + glossWordSp + `+` + glossWord + `(?:` + glossWordSp + `+` + glossWord + `)?(?:` + glossDelimSp + `*\(` + glossBody + `*\))?` +
 		")",
 )
 
@@ -218,7 +226,7 @@ var glossExpr = regexp.MustCompile(
 // the citation does not own, so converting the citation to an anchor would
 // delete the opening word of the following sentence.
 const (
-	glossBody = `[^()\n` + joinClass + `]`
+	glossBody = `[^()\n]`
 	glossWord = `[A-Za-z][A-Za-z0-9_/-]*(?:\.[A-Za-z0-9_/-]+)*`
 )
 
