@@ -36,17 +36,28 @@
 // citation, so a member list never absorbs the citation written behind it. A
 // citation whose head opened a parenthesis of the carrier's own runs to the
 // parenthesis that closes it, which may sit on the continuation line the join
-// folded into the same text. When no parenthesis closes it inside those bounds
-// the citation ends at its last member and is converted like any other. The two
-// dispositions in which a citation is reported rather than converted are a
-// range whose endpoints straddle a section boundary and a path form naming a
-// file that does not resolve under spec/.
+// folded into the same text.
+//
+// Every occurrence the grammar reads is returned, so every occurrence is
+// resolved by the resolver and counted by the ratchet. An occurrence the pass
+// cannot convert without leaving a residue is reported for hand correction
+// instead, which is what the resolver's failure kinds carry. Two of those kinds
+// are properties of the text the grammar read rather than of the section it
+// names: a head that opened a parenthesis with none to close it inside the
+// citation's bounds, whose span carries an unpaired delimiter that converting to
+// a single anchor would strand the carrier's closing parenthesis behind; and a
+// member whose digits do not fit a line number, whose endpoints cannot be
+// checked against a section range. The remaining kinds are a member outside the
+// section it names, a range whose endpoints straddle a section boundary, a
+// section number no heading declares, and a path form naming a file that does
+// not resolve under spec/.
 //
 // This is migration tooling rather than a platform behavior, so it carries no
 // spec citation of its own.
 package citation
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -59,6 +70,12 @@ type Member struct {
 	Start int
 	End   int
 	Gloss string
+	// OutOfRange reports that an endpoint's digits do not fit a line number,
+	// in which case that endpoint holds outOfRangeLine. The member is kept
+	// rather than dropped, so the member list is consumed whole and the
+	// citation is still returned, resolved, and counted; the resolver reports
+	// it for hand correction.
+	OutOfRange bool
 	// Text is the member as written, which is the line number or the range
 	// alone. The gloss is held beside it, so a failure message names the
 	// numbers that did not resolve rather than the prose written against them.
@@ -87,6 +104,14 @@ type Citation struct {
 	// source line the citation starts on.
 	Offset int
 	Line   int
+
+	// Unbalanced reports that the head opened a parenthesis of the carrier's
+	// own that no parenthesis closes inside the citation's bounds, so Text
+	// carries an unpaired opening delimiter. The occurrence is returned, so it
+	// is resolved and counted, and the resolver reports it for hand correction
+	// rather than letting a pass convert the span to a single anchor and strand
+	// the carrier's closing parenthesis behind it.
+	Unbalanced bool
 }
 
 // Ref returns the reference as written, which is the section number with its
@@ -159,7 +184,7 @@ func (l Located) String() string {
 // whole citation in the joined text, and reports false when the text at the
 // head is not a citation of the form. A head that opened a parenthesis of the
 // carrier's own with none to close with yields a citation ending at its last
-// member.
+// member, marked unbalanced so the resolver reports it.
 func parseAt(joined string, loc []int) (Citation, int, bool) {
 	var c Citation
 	c.Section = group(joined, loc, headSection)
@@ -173,17 +198,23 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	end, unbalanced := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	c.Unbalanced = unbalanced
 	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
 
 // consumeCitation extends the citation from the end of its head over every
 // continuation member, closes the parenthesis a head that opened one closes
-// with, and keeps consuming past that parenthesis. A head that opened a
-// parenthesis with none to close with inside the citation's bounds ends at its
-// last member, which is the disposition every citation the form does not fail
-// takes.
+// with, and keeps consuming past that parenthesis. It reports whether the
+// citation's span carries a parenthesis its head opened and nothing closed.
+//
+// A head that opened a parenthesis with none to close with inside the
+// citation's bounds ends at its last member and is reported as unbalanced. The
+// occurrence is still returned, so the resolver resolves it and the ratchet
+// counts it; what the report withholds is the conversion, because replacing a
+// span carrying an unpaired `(` with a single anchor strands the carrier's `)`
+// and the prose between them.
 //
 // A member list may resume after the head's closing parenthesis, which happens
 // when a qualified citation parenthesizes its first range and then writes a
@@ -193,25 +224,25 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // read them and the ratchet does not count them, and the rewritten carrier
 // would read as an anchor followed by orphan integers while its file reached a
 // zero count with a stale pointer surviving.
-func consumeCitation(joined string, pos int, members *[]Member, opened bool) int {
+func consumeCitation(joined string, pos int, members *[]Member, opened bool) (int, bool) {
 	limit := nextHead(joined, pos)
 	end, glossStart := consumeMembers(joined, pos, limit, members)
 	if !opened {
-		return end
+		return end, false
 	}
 	closed, ok := closeHeadParen(joined, glossStart, end, limit, members)
 	if !ok {
-		return end
+		return end, true
 	}
 	// The citation continues past the parenthesis only when a member list
 	// resumes behind it. Prose written after the parenthesis is outside the
 	// citation, the same way prose written after any last member is.
 	beyond := nextHead(joined, closed)
 	if _, _, ok := nextMember(joined, closed, beyond); !ok {
-		return closed
+		return closed, false
 	}
 	end, _ = consumeMembers(joined, closed, beyond, members)
-	return end
+	return end, false
 }
 
 // closeHeadParen extends the citation from its last member to the parenthesis
@@ -242,10 +273,8 @@ func consumeCitation(joined string, pos int, members *[]Member, opened bool) int
 // uncounted by the ratchet.
 //
 // When no parenthesis closes it inside those bounds the caller ends the
-// citation at its last member, so the occurrence is resolved, counted, and
-// converted like any other. The two dispositions in which a citation is failed
-// and reported are a straddling range and a path form naming a file that does
-// not resolve under spec/.
+// citation at its last member and marks it unbalanced, so the occurrence is
+// resolved and counted while the resolver reports it for hand correction.
 func closeHeadParen(joined string, glossStart, pos, limit int, members *[]Member) (int, bool) {
 	depth := 1
 	for i := pos; i < limit; i++ {
@@ -438,22 +467,53 @@ func nextMember(joined string, pos, limit int) (int, Member, bool) {
 }
 
 // parseMember reads a single line number or a range into its endpoints.
+//
+// An endpoint whose digits do not fit a line number yields a member marked out
+// of range rather than no member at all. Dropping it would end the member list
+// at that point when it is a continuation member, and discard the whole
+// occurrence when it is the head's own member. Either way the members behind it
+// go unread by the resolver and uncounted by the ratchet, and a file whose only
+// citation carries such a member reaches a per-file count of zero while the
+// pointer stands. The resolver reports the member for hand correction instead.
 func parseMember(text string) (Member, bool) {
 	m := Member{Text: text}
 	lo, hi, ranged := splitRange(text)
-	start, err := strconv.Atoi(strings.TrimSpace(lo))
-	if err != nil {
+	start, startFits, ok := parseLineNumber(lo)
+	if !ok {
 		return Member{}, false
 	}
 	m.Start, m.End = start, start
+	m.OutOfRange = !startFits
 	if ranged {
-		endLine, err := strconv.Atoi(strings.TrimSpace(hi))
-		if err != nil {
+		endLine, endFits, ok := parseLineNumber(hi)
+		if !ok {
 			return Member{}, false
 		}
 		m.End = endLine
+		m.OutOfRange = m.OutOfRange || !endFits
 	}
 	return m, true
+}
+
+// outOfRangeLine is the endpoint an out-of-range member carries. It is outside
+// every section's range, so a caller that checks membership without reading
+// OutOfRange still reports the member rather than resolving it.
+const outOfRangeLine = -1
+
+// parseLineNumber reads one endpoint of a member. fits is false when the digits
+// do not fit a line number, in which case the endpoint is outOfRangeLine. ok is
+// false only for text the member expression cannot produce, which is text that
+// is not a run of digits.
+func parseLineNumber(text string) (value int, fits, ok bool) {
+	n, err := strconv.Atoi(strings.TrimSpace(text))
+	switch {
+	case err == nil:
+		return n, true, true
+	case errors.Is(err, strconv.ErrRange):
+		return outOfRangeLine, false, true
+	default:
+		return 0, false, false
+	}
 }
 
 // splitRange splits a member on the range separator, which is an ASCII hyphen,

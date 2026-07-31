@@ -2113,16 +2113,30 @@ func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 
 // formFailureKinds are the failure kinds the citation form names, which are a
 // member outside the section it names, a range whose endpoints straddle a
-// section boundary, a section number no heading declares, and a path that does
-// not resolve under spec/. A citation is converted to a single anchor in every
-// other case, so a kind outside this set is a population the retirement has no
-// correction staged for, and every occurrence carrying it holds its file above
-// a per-file count of zero with no route down but a hand edit.
+// section boundary, a section number no heading declares, a path that does not
+// resolve under spec/, a member whose digits are not a line number, and a
+// citation carrying a parenthesis its head opened and nothing closed. A
+// citation is converted to a single anchor in every other case, so a kind
+// outside this set is a population the retirement has no correction staged for,
+// and every occurrence carrying it holds its file above a per-file count of
+// zero with no route down but a hand edit.
 var formFailureKinds = map[citation.FailureKind]bool{
-	citation.OutsideSection:  true,
-	citation.StraddlingRange: true,
-	citation.UnknownSection:  true,
-	citation.UnknownFile:     true,
+	citation.OutsideSection:     true,
+	citation.StraddlingRange:    true,
+	citation.UnknownSection:     true,
+	citation.UnknownFile:        true,
+	citation.OutOfRangeMember:   true,
+	citation.UnbalancedCitation: true,
+}
+
+// reportedKinds renders the failure kinds a resolution produced, so a case
+// states the report it expects without restating the resolver's messages.
+func reportedKinds(failures []citation.Failure) []string {
+	out := make([]string, 0, len(failures))
+	for _, f := range failures {
+		out = append(out, string(f.Kind))
+	}
+	return out
 }
 
 // TestFindClosesAHeadParenthesisOnTheContinuationLine pins the wrap position
@@ -2163,16 +2177,19 @@ func TestFindClosesAHeadParenthesisOnTheContinuationLine(t *testing.T) {
 	}
 }
 
-// TestFindEndsACitationAtItsLastMemberWhenNoParenthesisClosesIt pins the bound
-// on that search. The parenthesis a head opened is out of reach when it sits
-// behind a newline the join did not consume and when it sits behind the head of
-// the next citation, where consuming up to it would swallow the citation
-// written in between. The occurrence ends at its last member in both cases and
-// is resolved, counted, and converted like any other: the citation form fails
-// and reports a straddling range and a path naming a file that does not resolve
-// under spec/, and a third disposition would be a population the retirement has
-// no correction staged for. The citation written behind it is returned too.
-func TestFindEndsACitationAtItsLastMemberWhenNoParenthesisClosesIt(t *testing.T) {
+// TestFindReportsACitationWhoseHeadParenthesisNeverCloses pins the bound on
+// that search and the disposition of the occurrence it leaves. The parenthesis
+// a head opened is out of reach when it sits behind a newline the join did not
+// consume and when it sits behind the head of the next citation, where
+// consuming up to it would swallow the citation written in between. The
+// occurrence ends at its last member in both cases and is still returned, so
+// the resolver resolves it and the ratchet counts it, and it is marked
+// unbalanced so the resolver reports it for hand correction. Converting a span
+// carrying an unpaired opening parenthesis to a single anchor instead deletes
+// that parenthesis and strands the carrier's closing one with the prose between
+// them, which is the residue the whole-citation rule forbids. The citation
+// written behind it is returned too, and carries no such report.
+func TestFindReportsACitationWhoseHeadParenthesisNeverCloses(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
 	for _, fixture := range []string{
@@ -2192,40 +2209,129 @@ func TestFindEndsACitationAtItsLastMemberWhenNoParenthesisClosesIt(t *testing.T)
 		if strings.Contains(found[0].Raw, "\n") {
 			t.Errorf("%s: raw citation %q runs past the line its last member sits on", fixture, found[0].Raw)
 		}
+		if !found[0].Unbalanced {
+			t.Errorf("%s: citation %q carries an unpaired parenthesis and is not marked unbalanced",
+				fixture, found[0].Text)
+		}
+		if !hasKind(r.Resolve(found[0]), citation.UnbalancedCitation) {
+			t.Errorf("%s: Resolve reported %v, want the unbalanced citation among them",
+				fixture, reportedKinds(r.Resolve(found[0])))
+		}
 		for _, f := range r.Resolve(found[0]) {
 			if !formFailureKinds[f.Kind] {
 				t.Errorf("%s: Resolve reported %v, want only the failure kinds the form names", fixture, f)
 			}
 		}
+		if found[1].Unbalanced {
+			t.Errorf("%s: citation %q is balanced and is marked unbalanced", fixture, found[1].Text)
+		}
 	}
+}
+
+// hasKind reports whether a resolution carries a failure of the kind.
+func hasKind(failures []citation.Failure, kind citation.FailureKind) bool {
+	for _, f := range failures {
+		if f.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // TestFindReturnsNoUnbalancedCitationOverEveryFixture sweeps the whole fixture
 // set for the same invariant, so a spelling added later cannot reintroduce a
 // citation the pass would convert to an anchor while leaving a delimiter and
-// the prose behind it in the carrier. The two fixtures named below are the
-// exception the case allows: each writes the parenthesis its head opened out of
-// the citation's reach, which the case above pins, and neither spelling occurs
-// in the tracked tree.
+// the prose behind it in the carrier. A citation whose text carries an unpaired
+// parenthesis is admitted only when it is marked unbalanced, which is what
+// withholds it from the pass and routes it to a hand correction; the sweep
+// reads that mark rather than a list of exempt fixtures, so a later spelling
+// that leaves an unpaired delimiter unmarked is caught here.
 func TestFindReturnsNoUnbalancedCitationOverEveryFixture(t *testing.T) {
 	t.Parallel()
-	unreachable := map[string]bool{
-		"paren-unreachable-close.txt":          true,
-		"paren-close-behind-next-citation.txt": true,
-	}
 	entries, err := os.ReadDir(fixtureCitations)
 	if err != nil {
 		t.Fatalf("read the citation fixture directory: %v", err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" || unreachable[entry.Name()] {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" {
 			continue
 		}
 		for _, c := range citation.Find(citationFixture(t, entry.Name())) {
-			if !balancedParens(c.Text) {
-				t.Errorf("%s: citation text %q leaves a parenthesis unclosed", entry.Name(), c.Text)
+			if balancedParens(c.Text) == c.Unbalanced {
+				t.Errorf("%s: citation text %q is %s and Unbalanced is %v",
+					entry.Name(), c.Text, balanceOf(c.Text), c.Unbalanced)
 			}
 		}
+	}
+}
+
+// balanceOf names a citation text's delimiter balance for a failure message.
+func balanceOf(text string) string {
+	if balancedParens(text) {
+		return "delimiter-balanced"
+	}
+	return "carrying an unpaired parenthesis"
+}
+
+// TestFindKeepsAMemberWhoseDigitsAreNotALineNumber pins the disposition of a
+// member the grammar reads but no line number fits. The member is kept and
+// reported rather than dropped: dropping a continuation member ends the member
+// list there, and dropping a head member discards the occurrence whole, so the
+// resolver does not read what is left, the ratchet does not count it, and a
+// file whose only citation carries such a member reaches a per-file count of
+// zero while the pointer stands. The three fixtures carry the digits in a
+// continuation member, in the sole member of a citation, and in the second
+// endpoint of a range.
+func TestFindKeepsAMemberWhoseDigitsAreNotALineNumber(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	for _, tc := range []struct {
+		fixture string
+		members int
+	}{
+		{"member-out-of-range.txt", 3},
+		{"member-out-of-range-alone.txt", 1},
+		{"member-out-of-range-endpoint.txt", 1},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
+		}
+		if len(c.Members) != tc.members {
+			t.Errorf("%s: citation carries %d members, want %d", tc.fixture, len(c.Members), tc.members)
+			continue
+		}
+		out := r.Resolve(c)
+		if !hasKind(out, citation.OutOfRangeMember) {
+			t.Errorf("%s: Resolve reported %v, want the out-of-range member among them",
+				tc.fixture, reportedKinds(out))
+		}
+		for _, f := range out {
+			if f.Kind == citation.OutOfRangeMember && f.Member.Text == "" {
+				t.Errorf("%s: the out-of-range failure names no member", tc.fixture)
+			}
+			if !formFailureKinds[f.Kind] {
+				t.Errorf("%s: Resolve reported %v, want only the failure kinds the form names", tc.fixture, f)
+			}
+		}
+	}
+}
+
+// TestResolveResolvesTheMembersWrittenBesideAnOutOfRangeOne pins that the
+// members the citation carries beside an unreadable one are still checked, so
+// one report names everything a hand correction has to settle. The fixture
+// cites two lines inside the section it names on either side of the unreadable
+// member, which resolve, so the out-of-range member is the only failure.
+func TestResolveResolvesTheMembersWrittenBesideAnOutOfRangeOne(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	c := oneCitation(t, "member-out-of-range.txt")
+	got := reportedKinds(r.Resolve(c))
+	if want := []string{string(citation.OutOfRangeMember)}; !sameStrings(got, want) {
+		t.Errorf("Resolve reported %v, want %v", got, want)
+	}
+	if r.Resolves(c) {
+		t.Error("Resolves accepted a citation carrying a member that is not a line number")
 	}
 }
 

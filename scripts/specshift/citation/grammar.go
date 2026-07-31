@@ -148,8 +148,11 @@ var headExpr = regexp.MustCompile(
 		// spelling. A matcher requiring the keyword to follow the reference or
 		// the qualifier immediately leaves that spelling unconverted, unread by
 		// the resolver, and uncounted by the ratchet. The scanner closes that
-		// parenthesis with the citation, and refuses the occurrence when it does
-		// not close, so the matched span never carries an unpaired delimiter.
+		// parenthesis with the citation. When nothing closes it inside the
+		// citation's bounds the occurrence is still returned, so it is resolved
+		// and counted, and it is marked unbalanced so the resolver reports it
+		// for hand correction rather than a pass converting a span carrying an
+		// unpaired delimiter to a single anchor.
 		`(?:` + sp + `+|` + sp + `*(?P<` + headParen + `>\()` + sp + `*(?:spec` + sp + `+)?)(?:lines?)` + sp + `+` +
 		`)` +
 		// The first member.

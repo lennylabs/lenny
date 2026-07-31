@@ -36,8 +36,10 @@ func (s Section) String() string {
 // because their remedies are: a member outside its section is a stale pointer
 // to correct, a straddling range is a citation whose two endpoints disagree
 // about which section it means, an unknown section names a heading the
-// specification does not carry, and an unknown file names a path that does not
-// resolve under spec/. Collapsing them would report a typo in a file name as a
+// specification does not carry, an unknown file names a path that does not
+// resolve under spec/, an out-of-range member carries digits that are not a
+// line number, and an unbalanced citation carries a parenthesis its head opened
+// and nothing closed. Collapsing them would report a typo in a file name as a
 // stale line number.
 type FailureKind string
 
@@ -52,6 +54,13 @@ const (
 	// UnknownFile is a path-form reference naming a file that does not
 	// resolve under spec/.
 	UnknownFile FailureKind = "unknown-file"
+	// OutOfRangeMember is a member whose digits do not fit a line number, so
+	// its endpoints cannot be checked against a section's range.
+	OutOfRangeMember FailureKind = "out-of-range-member"
+	// UnbalancedCitation is a citation whose head opened a parenthesis of the
+	// carrier's own that nothing closes inside the citation's bounds, so its
+	// span carries an unpaired opening delimiter.
+	UnbalancedCitation FailureKind = "unbalanced-citation"
 )
 
 // Failure is one reason a citation did not resolve. Member is the zero value
@@ -238,11 +247,23 @@ func (r *Resolver) Section(number string) (Section, bool) {
 // citation resolves against the section of the named file that contains the
 // cited line, so it is the containing section that is inferred rather than the
 // membership that is checked.
+//
+// A citation whose span carries a parenthesis its head opened and nothing
+// closed fails on that alone, ahead of its members, because the remedy is the
+// carrier's punctuation rather than any line number. Its members are checked
+// too, so one report names everything the hand correction has to settle.
 func (r *Resolver) Resolve(c Citation) []Failure {
-	if c.Section != "" {
-		return r.resolveSection(c)
+	var out []Failure
+	if c.Unbalanced {
+		out = append(out, Failure{
+			Kind:   UnbalancedCitation,
+			Detail: "opens a parenthesis nothing closes inside the citation",
+		})
 	}
-	return r.resolvePath(c)
+	if c.Section != "" {
+		return append(out, r.resolveSection(c)...)
+	}
+	return append(out, r.resolvePath(c)...)
 }
 
 // Resolves reports whether the citation resolves with no failure.
@@ -259,6 +280,10 @@ func (r *Resolver) resolveSection(c Citation) []Failure {
 	}
 	var out []Failure
 	for _, m := range c.Members {
+		if f, bad := outOfRangeFailure(m); bad {
+			out = append(out, f)
+			continue
+		}
 		startIn, endIn := sec.Contains(m.Start), sec.Contains(m.End)
 		switch {
 		case startIn && endIn:
@@ -308,6 +333,10 @@ func (r *Resolver) resolvePath(c Citation) []Failure {
 	}
 	var out []Failure
 	for _, m := range c.Members {
+		if f, bad := outOfRangeFailure(m); bad {
+			out = append(out, f)
+			continue
+		}
 		anchor, startOK := deepest(sections, m.Start)
 		end, endOK := deepest(sections, m.End)
 		switch {
@@ -326,6 +355,22 @@ func (r *Resolver) resolvePath(c Citation) []Failure {
 		}
 	}
 	return out
+}
+
+// outOfRangeFailure reports the member whose digits do not fit a line number.
+// Such a member is reported on its own terms rather than checked against a
+// section range, where its sentinel endpoint would read as an ordinary stale
+// pointer and send the hand correction after a line number the carrier does not
+// carry.
+func outOfRangeFailure(m Member) (Failure, bool) {
+	if !m.OutOfRange {
+		return Failure{}, false
+	}
+	return Failure{
+		Kind:   OutOfRangeMember,
+		Member: m,
+		Detail: "carries digits that are not a line number",
+	}, true
 }
 
 // deepest returns the most specific section of a file containing the line,
