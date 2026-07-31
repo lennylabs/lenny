@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
 // The three YAML configuration files under tests/ — groups.yaml,
@@ -300,6 +303,278 @@ func validateFlakeBudgetYAML(path string) checkResult {
 	}
 	return newResult("flake-budget.yaml", true,
 		fmt.Sprintf("%d quarantined test(s); every entry valid", len(doc.Quarantined)))
+}
+
+// ---- the shared register contract ---------------------------------
+
+// A register is a YAML file under tests/registers/ recording the
+// violations one gate accepts for now, so that gate can fail everything
+// else. The pattern is generalized from the two in-tree pending lists
+// and from validateFlakeBudgetYAML, which already dates and owns each
+// quarantine entry. Every register shares one entry schema, carrying a
+// subject, a verdict, an owner, an opened_at date, an expiry, a
+// blocker, and a reason, and one set of ratchet rules:
+//
+//   - a violation with no entry fails, so an exemption is written down
+//     before a gate lets it through;
+//   - an entry whose expiry has passed fails, so an exemption ends;
+//   - an entry whose blocker resolves to no open item fails, so an
+//     exemption names outstanding work.
+//
+// The residual registers at tests/registers/residual-<class>.yaml
+// deliberately do not use this schema. A residual entry carries a
+// member, a class, an in-class or excluded disposition, and a reason.
+// An exclusion is permanent, and an in-class entry is retired by the
+// event that takes its member out of its class, so neither carries a
+// date on which it becomes wrong nor an open item a blocker could name,
+// and the expiry and blocker rules would fail every such entry. The
+// residual gate validates those files against their own schema.
+type registerEntry struct {
+	// Subject is the violation the entry exempts, in whatever
+	// vocabulary the gate that reads the register measures.
+	Subject string `yaml:"subject"`
+	// Verdict is the outcome the gate would report for Subject if the
+	// entry did not exist.
+	Verdict string `yaml:"verdict"`
+	// Owner is the person accountable for closing the entry.
+	Owner string `yaml:"owner"`
+	// OpenedAt is the date the entry was written, in YYYY-MM-DD.
+	OpenedAt string `yaml:"opened_at"`
+	// Expiry is the date the entry stops holding, in YYYY-MM-DD.
+	Expiry string `yaml:"expiry"`
+	// Blocker names the open item whose closure retires the entry.
+	Blocker string `yaml:"blocker"`
+	// Reason states why the violation is accepted for now.
+	Reason string `yaml:"reason"`
+}
+
+// registerFile is one parsed register.
+type registerFile struct {
+	Version int             `yaml:"version"`
+	Entries []registerEntry `yaml:"entries"`
+}
+
+// registerRules carries the two dependencies the ratchet rules need.
+// Both are injected so a case can pin an expiry boundary and an
+// open-item domain without reaching for the wall clock or the tracked
+// audit records.
+type registerRules struct {
+	// now is the instant the expiry rule compares against.
+	now time.Time
+	// openItem reports whether a blocker names an item that is still
+	// open. A nil resolver resolves nothing, so the blocker rule fails
+	// closed rather than certifying every entry.
+	openItem func(blocker string) bool
+}
+
+// resolvesBlocker reports whether blocker names an open item.
+func (r registerRules) resolvesBlocker(blocker string) bool {
+	if r.openItem == nil {
+		return false
+	}
+	return r.openItem(blocker)
+}
+
+// loadRegisterFile reads and parses one register. A missing or
+// unparseable file is an error: a register that cannot be read exempts
+// nothing, and a gate that treated it as empty would certify a tree it
+// never measured.
+func loadRegisterFile(path string) (*registerFile, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read register %s: %w", path, err)
+	}
+	var doc registerFile
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return nil, fmt.Errorf("parse register %s: %w", path, err)
+	}
+	if doc.Version != 1 {
+		return nil, fmt.Errorf("register %s: expected version 1, got %d", path, doc.Version)
+	}
+	return &doc, nil
+}
+
+// registerVerdicts are the verdicts a register entry may record. An
+// entry exists to hold back a failing outcome, so verdictstatus.
+// VerdictPass and VerdictInconclusive are rejected: the first records
+// no violation at all, and the second is the harness's own
+// infrastructure-failure state rather than a gate result about the
+// tree.
+func registerVerdicts() map[string]bool {
+	return map[string]bool{
+		verdictstatus.VerdictFail:       true,
+		verdictstatus.VerdictUnverified: true,
+	}
+}
+
+// registerEntryProblems applies the entry schema and the expiry and
+// blocker ratchet rules to every entry, and returns one message per
+// violation.
+func registerEntryProblems(doc *registerFile, rules registerRules) []string {
+	var problems []string
+	today := rules.now.UTC().Truncate(24 * time.Hour)
+	allowedVerdicts := registerVerdicts()
+	seen := map[string]int{}
+	for i, e := range doc.Entries {
+		subject := strings.TrimSpace(e.Subject)
+		if subject == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d]: missing subject", i))
+			continue
+		}
+		if prev, dup := seen[subject]; dup {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): subject already declared at entry[%d]", i, subject, prev))
+		}
+		seen[subject] = i
+		if !allowedVerdicts[e.Verdict] {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): verdict must be %s or %s; got %q",
+				i, subject, verdictstatus.VerdictFail, verdictstatus.VerdictUnverified, e.Verdict))
+		}
+		if strings.TrimSpace(e.Owner) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing owner", i, subject))
+		}
+		if strings.TrimSpace(e.Reason) == "" {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing reason", i, subject))
+		}
+		problems = append(problems, registerDateProblems(i, subject, e, today)...)
+		switch blocker := strings.TrimSpace(e.Blocker); {
+		case blocker == "":
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing blocker", i, subject))
+		case !rules.resolvesBlocker(blocker):
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): blocker %q does not resolve to an open item", i, subject, blocker))
+		}
+	}
+	return problems
+}
+
+// registerDateProblems checks the opened_at and expiry dates of one
+// entry, and applies the ratchet rule that a passed expiry fails.
+func registerDateProblems(i int, subject string, e registerEntry, today time.Time) []string {
+	var problems []string
+	if strings.TrimSpace(e.OpenedAt) == "" {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing opened_at", i, subject))
+	} else if _, err := time.Parse("2006-01-02", e.OpenedAt); err != nil {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): opened_at %q not YYYY-MM-DD", i, subject, e.OpenedAt))
+	}
+	expiry := strings.TrimSpace(e.Expiry)
+	if expiry == "" {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing expiry", i, subject))
+		return problems
+	}
+	t, err := time.Parse("2006-01-02", expiry)
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): expiry %q not YYYY-MM-DD", i, subject, expiry))
+		return problems
+	}
+	if t.Before(today) {
+		problems = append(problems, fmt.Sprintf("entry[%d] (%q): expiry %s has passed; close the entry or reopen it against a current blocker", i, subject, expiry))
+	}
+	return problems
+}
+
+// checkRegister runs the shared contract over one register and the
+// violations the calling gate measured against the tree. Every gate
+// that exempts anything routes through this function, so the three
+// ratchet rules cannot drift between gates. Passing a nil violation
+// slice validates the register alone.
+func checkRegister(name, path string, violations []string, rules registerRules) checkResult {
+	doc, err := loadRegisterFile(path)
+	if err != nil {
+		return newResult(name, false, err.Error())
+	}
+	problems := registerEntryProblems(doc, rules)
+	registered := map[string]bool{}
+	for _, e := range doc.Entries {
+		if s := strings.TrimSpace(e.Subject); s != "" {
+			registered[s] = true
+		}
+	}
+	for _, v := range violations {
+		if !registered[v] {
+			problems = append(problems, fmt.Sprintf("unregistered violation %q: add an entry or fix it", v))
+		}
+	}
+	if len(problems) > 0 {
+		return newResult(name, false, summarizeProblems(problems))
+	}
+	return newResult(name, true,
+		fmt.Sprintf("%d entr(ies); every entry is owned, dated, and blocked on an open item", len(doc.Entries)))
+}
+
+// validateRegistersDir validates every register under tests/registers/
+// against the shared contract. Gates supply their own violation sets
+// when they run; this check confirms the registers themselves hold, so
+// an entry that has outlived its expiry or its blocker fails the tier
+// even before the gate that reads it runs. Residual registers carry a
+// different schema and are excluded here.
+func validateRegistersDir(dir string, rules registerRules) checkResult {
+	const name = "tests/registers"
+	if _, err := os.Stat(dir); err != nil {
+		return newResult(name, false, fmt.Sprintf("could not read directory: %v", err))
+	}
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	if err != nil {
+		return newResult(name, false, fmt.Sprintf("could not list: %v", err))
+	}
+	sort.Strings(files)
+	var problems []string
+	validated := 0
+	for _, f := range files {
+		if strings.HasPrefix(filepath.Base(f), "residual-") {
+			continue
+		}
+		validated++
+		if r := checkRegister(name, f, nil, rules); !r.ok {
+			problems = append(problems, fmt.Sprintf("%s: %s", filepath.Base(f), r.detail))
+		}
+	}
+	if len(problems) > 0 {
+		return newResult(name, false, summarizeProblems(problems))
+	}
+	return newResult(name, true, fmt.Sprintf("%d register(s) hold the shared contract", validated))
+}
+
+// repoRegisterRules builds the register rules the harness runs with:
+// the wall clock, and the open findings of the tracked audit records as
+// the open-item domain a blocker resolves against.
+func repoRegisterRules(root string) registerRules {
+	open := openFindingIDs(root)
+	return registerRules{
+		now: time.Now().UTC(),
+		openItem: func(blocker string) bool {
+			return open[strings.TrimSpace(blocker)]
+		},
+	}
+}
+
+// openFindingIDs returns the identifiers of the findings still marked
+// OPEN in the tracked audit records. Each finding heading is a
+// checklist line whose identifier follows the checkbox and whose status
+// marker closes the line, per the format both records state.
+func openFindingIDs(root string) map[string]bool {
+	out := map[string]bool{}
+	for _, rec := range []string{"BUILD-GAPS.md", "TEST-GAPS.md"} {
+		body, err := os.ReadFile(filepath.Join(root, rec))
+		if err != nil {
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			if !strings.HasPrefix(line, "#") || !strings.HasSuffix(strings.TrimSpace(line), "— OPEN") {
+				continue
+			}
+			_, after, found := strings.Cut(line, "- [ ] ")
+			if !found {
+				continue
+			}
+			id, _, found := strings.Cut(after, " —")
+			if !found {
+				continue
+			}
+			if id = strings.TrimSpace(id); id != "" {
+				out[id] = true
+			}
+		}
+	}
+	return out
 }
 
 // validateParityMatrixYAML enforces TESTING.md §12.6 on

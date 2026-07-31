@@ -392,3 +392,252 @@ func TestValidateParityMatrixAbsent(t *testing.T) {
 	r := validateParityMatrixYAML(filepath.Join(t.TempDir(), "missing.yaml"))
 	expectPass(t, r)
 }
+
+// ---- the shared register contract ---------------------------------
+//
+// These cases carry no `// spec:` annotation, matching the validator
+// cases they sit beside: the register contract is test infrastructure
+// rather than a spec behavior. Every gate that exempts anything lands
+// green by seeding its register, so a ratchet rule that is silently a
+// no-op would certify an exempted tree indefinitely, and each rule
+// therefore carries a case of its own.
+
+// testRegisterRules pins the two injected dependencies: a fixed clock
+// and an open-item domain holding one identifier.
+func testRegisterRules() registerRules {
+	return registerRules{
+		now: time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC),
+		openItem: func(blocker string) bool {
+			return blocker == "F-1.2.3"
+		},
+	}
+}
+
+// wellFormedRegister is one entry that satisfies every rule under
+// testRegisterRules.
+const wellFormedRegister = `
+version: 1
+entries:
+  - subject: spec/04_system-components.md line 437
+    verdict: FAIL
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-1.2.3
+    reason: The citation resolves once the section split lands.
+`
+
+func TestCheckRegisterWellFormed(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", wellFormedRegister)
+	r := checkRegister("register", path, []string{"spec/04_system-components.md line 437"}, testRegisterRules())
+	expectPass(t, r)
+}
+
+func TestCheckRegisterUnregisteredViolationFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", wellFormedRegister)
+	r := checkRegister("register", path,
+		[]string{"spec/04_system-components.md line 437", "spec/10_gateway.md line 12"},
+		testRegisterRules())
+	expectFail(t, r, "unregistered violation", "spec/10_gateway.md line 12")
+}
+
+func TestCheckRegisterPassedExpiryFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", `
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: FAIL
+    owner: alice
+    opened_at: 2026-01-01
+    expiry: 2026-07-30
+    blocker: F-1.2.3
+    reason: Stale entry.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expiry 2026-07-30 has passed")
+}
+
+func TestCheckRegisterBlockerWithNoOpenItemFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", `
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: FAIL
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-9.9.9
+    reason: Blocked on work that is already closed.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
+		"F-9.9.9", "does not resolve to an open item")
+}
+
+// TestCheckRegisterNilResolverFailsClosed pins that a register read
+// with no open-item resolver rejects every blocker rather than
+// accepting each one.
+func TestCheckRegisterNilResolverFailsClosed(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", wellFormedRegister)
+	rules := registerRules{now: testRegisterRules().now}
+	expectFail(t, checkRegister("register", path, nil, rules), "does not resolve to an open item")
+}
+
+func TestCheckRegisterMissingFileFails(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing.yaml")
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "read register")
+}
+
+func TestCheckRegisterMalformedFileFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", "version: 1\nentries: [oops\n")
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "parse register")
+}
+
+func TestCheckRegisterWrongVersionFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", "version: 2\nentries: []\n")
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expected version 1")
+}
+
+func TestCheckRegisterIncompleteEntryFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", `
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: PASS
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
+		"verdict must be", "missing owner", "missing opened_at", "missing expiry")
+}
+
+func TestCheckRegisterDuplicateSubjectFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", `
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: FAIL
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-1.2.3
+    reason: First.
+  - subject: spec/10_gateway.md line 12
+    verdict: UNVERIFIED
+    owner: bob
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-1.2.3
+    reason: Second.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "already declared")
+}
+
+func TestValidateRegistersDirAcceptsWellFormedRegister(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", wellFormedRegister)
+	r := validateRegistersDir(filepath.Dir(path), testRegisterRules())
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "1 register") {
+		t.Errorf("detail should count the register: %s", r.detail)
+	}
+}
+
+func TestValidateRegistersDirReportsBadRegister(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", "version: 1\nentries: [oops\n")
+	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
+		"line-citations.yaml", "parse register")
+}
+
+// TestValidateRegistersDirMissingDirectoryFails pins that a register
+// directory that is not there fails rather than reporting an empty set
+// of registers as a clean tree.
+func TestValidateRegistersDirMissingDirectoryFails(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "absent")
+	expectFail(t, validateRegistersDir(dir, testRegisterRules()), "could not read directory")
+}
+
+// TestValidateRegistersDirSkipsResidualRegisters pins the divergence
+// the contract's doc comment states: a residual register carries a
+// member, a class, a disposition, and a reason, and the shared
+// contract's expiry and blocker rules do not range over it.
+func TestValidateRegistersDirSkipsResidualRegisters(t *testing.T) {
+	dir := t.TempDir()
+	residual := filepath.Join(dir, "residual-line-citations.yaml")
+	if err := os.WriteFile(residual, []byte(`
+version: 1
+entries:
+  - member: spec/10_gateway.md
+    class: line-citations
+    disposition: excluded
+    reason: The record states findings as they were written.
+`), 0o644); err != nil {
+		t.Fatalf("write %s: %v", residual, err)
+	}
+	r := validateRegistersDir(dir, testRegisterRules())
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "0 register") {
+		t.Errorf("residual register should not be counted: %s", r.detail)
+	}
+}
+
+func TestOpenFindingIDsReadsTrackedRecords(t *testing.T) {
+	dir := t.TempDir()
+	body := "### - [ ] F-1.2.3 — Something is missing [High] — OPEN\n" +
+		"### - [x] F-1.2.4 — Something else [High] — RESOLVED abc123\n" +
+		"Every finding heading is a checklist line ending in ` — OPEN`.\n"
+	if err := os.WriteFile(filepath.Join(dir, "BUILD-GAPS.md"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write BUILD-GAPS.md: %v", err)
+	}
+	open := openFindingIDs(dir)
+	if !open["F-1.2.3"] {
+		t.Errorf("F-1.2.3 should be open: %v", open)
+	}
+	if open["F-1.2.4"] {
+		t.Errorf("F-1.2.4 is resolved and must not be open: %v", open)
+	}
+	if len(open) != 1 {
+		t.Errorf("prose should not register an identifier: %v", open)
+	}
+}
+
+// TestRepoRegisterRulesResolveTrackedOpenFindings pins that the rules
+// the harness runs with read a real open-item domain, so the blocker
+// rule is not a no-op against the tracked tree.
+func TestRepoRegisterRulesResolveTrackedOpenFindings(t *testing.T) {
+	rules := repoRegisterRules(repoRoot())
+	if rules.openItem == nil {
+		t.Fatal("harness rules must carry an open-item resolver")
+	}
+	if len(openFindingIDs(repoRoot())) == 0 {
+		t.Skip("not-yet-applicable: the tracked audit records carry no open finding")
+	}
+	if rules.resolvesBlocker("no-such-finding") {
+		t.Error("an identifier no record carries must not resolve")
+	}
+}
+
+func TestCheckRegisterNonDateFieldsFail(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", `
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: UNVERIFIED
+    owner: alice
+    opened_at: yesterday
+    expiry: soon
+    blocker: F-1.2.3
+    reason: Dates written in prose.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
+		"opened_at \"yesterday\" not YYYY-MM-DD", "expiry \"soon\" not YYYY-MM-DD")
+}
+
+func TestCheckRegisterMissingSubjectFails(t *testing.T) {
+	path := writeYAML(t, "line-citations.yaml", `
+version: 1
+entries:
+  - verdict: FAIL
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-1.2.3
+    reason: No subject.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "missing subject")
+}

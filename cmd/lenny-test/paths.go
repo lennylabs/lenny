@@ -54,6 +54,10 @@ const (
 	// flakeBudgetFile lists quarantined tests per §21.4.
 	flakeBudgetFile = "tests/flake-budget.yaml"
 
+	// registersDir holds the gate registers that share one entry
+	// schema and one set of ratchet rules.
+	registersDir = "tests/registers"
+
 	// parityMatrixFile lists every cloud capability and the
 	// providers it is validated against.
 	parityMatrixFile = "tests/tier6_e2e_cloud/parity-matrix.yaml"

@@ -57,6 +57,7 @@ func runValidateMaps(args []string) int {
 		validateSpecMapExceptionsYAML(exceptionsPath),
 		validateFlakeBudgetYAML(flakeBudgetPath),
 		validateParityMatrixYAML(parityMatrixPath),
+		validateRegistersDir(filepath.Join(root, registersDir), repoRegisterRules(root)),
 	}
 
 	failed := 0
