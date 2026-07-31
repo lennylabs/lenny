@@ -273,7 +273,13 @@ var continuationExpr = regexp.MustCompile(
 // joined text together with the source offset of each of its bytes. The offset
 // slice carries one further entry holding the length of the source, so the end
 // of a match that runs to the end of the text maps back.
-func join(content string) (string, []int) {
+func join(content string) (string, []int) { return joinWith(continuationExpr, content) }
+
+// joinWith is join under one carrier's continuation expression. A nil
+// expression states a carrier whose lines carry no comment marker, where every
+// line break stands as the author wrote it and the joined text differs from the
+// source only where the source itself carries the join byte.
+func joinWith(expr *regexp.Regexp, content string) (string, []int) {
 	joined := make([]byte, 0, len(content))
 	offsets := make([]int, 0, len(content)+1)
 	copyRun := func(from, to int) {
@@ -290,7 +296,7 @@ func join(content string) (string, []int) {
 		}
 	}
 	last := 0
-	for _, m := range continuationExpr.FindAllStringIndex(content, -1) {
+	for _, m := range continuations(expr, content) {
 		start, end := m[0], m[1]
 		copyRun(last, start)
 		joined = append(joined, joinByte)
@@ -300,4 +306,13 @@ func join(content string) (string, []int) {
 	copyRun(last, len(content))
 	offsets = append(offsets, len(content))
 	return string(joined), offsets
+}
+
+// continuations returns the spans one carrier's continuation expression matches,
+// and none at all for a carrier that states no expression.
+func continuations(expr *regexp.Regexp, content string) [][]int {
+	if expr == nil {
+		return nil
+	}
+	return expr.FindAllStringIndex(content, -1)
 }

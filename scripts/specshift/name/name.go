@@ -28,7 +28,12 @@
 // The matcher applies the shared continuation join before either
 // spelling, so an occurrence wrapped across two consecutive comment
 // lines is one site the register resolves rather than two half-sites
-// neither the pass nor the lint reads. Two populations are outside it. A
+// neither the pass nor the lint reads. The join reads the carrier's own
+// comment dialect, which the scope package states: a markdown or schema
+// carrier has no comment syntax, so a heading, a list item, or an
+// emphasis run opening the line after a paragraph line is left standing
+// rather than read as the continuation of a comment. Two populations are
+// outside the matcher. A
 // markdown anchor identifier is an addressable link target rather than
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this
@@ -36,12 +41,15 @@
 // the pass writes against the same statement of it the naming lint
 // reads, and it reaches the fragment of a link rather than the whole
 // destination: a phrase in the path half is a site the register
-// resolves. In a Go file the matcher reads the file's
-// leading comments, the comments documenting a declaration, and the
-// string literals the pinned-literal register names, because those are
-// the naming law's positions there. An implementation comment holds
-// internal text the law does not govern, and so does every string
-// literal the pinned-literal register does not name.
+// resolves. In a Go file the matcher reads the prose comment position
+// the scope package states, which is the file's leading comments, the
+// comments documenting a declaration, and a comment that opens its own
+// line outside every function body, together with the string literals
+// the pinned-literal register names, because those are the naming law's
+// positions there. An implementation comment inside a function body and
+// a comment trailing the code it annotates hold internal text the law
+// does not govern, and so does every string literal the pinned-literal
+// register does not name.
 //
 // That register covers the string literals under tests/tier11_docs/ that
 // pin specification prose, a specification heading slug, or an

@@ -12,8 +12,8 @@ const validateUsage = "Validate a runtime manifest, including its lifecycle chan
 
 // Ack reports delivery.
 func Ack() bool {
-	// The implementation comment here names the control channel. A comment
-	// inside a function body is a comment of a tracked Go file like any other,
-	// so it is a site the pass writes and the register resolves.
+	// The implementation comment here names the lifecycle channel, which sits
+	// outside the doc-comment position the law governs in a Go carrier, so the
+	// pass reads no site at it.
 	return true
 }
