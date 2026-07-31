@@ -551,6 +551,78 @@ func TestValidateChangeGraphCompletenessNewPathNeedsAGlob(t *testing.T) {
 	}
 }
 
+// TestValidateChangeGraphCompletenessBaselineStopsAtItsDirectory pins
+// the reach of a baseline entry: it covers the files directly inside
+// the directory it names and nothing deeper. Reading an entry as its
+// whole subtree would extend the seeded exemption to directories that
+// did not exist when the baseline was measured, so a source tree
+// created later under a baselined directory would land with no glob key
+// and a change under it would select no tiers under `--changed`.
+func TestValidateChangeGraphCompletenessBaselineStopsAtItsDirectory(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"scripts/lint.sh"}, nil, []string{"scripts/"})
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	// A later change creates a source tree beneath the baselined
+	// directory. The entry above it does not cover it.
+	writeChangeGraphSource(t, root, "scripts/specshift/run.go")
+	trackChangeGraphSources(t, root, "scripts/specshift/run.go")
+	expectFail(t, runChangeGraphCompleteness(root), "scripts/specshift/run.go")
+
+	// A glob key of its own is the route to green, and the directly
+	// covered path keeps its baseline entry.
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": map[string]any{
+		"scripts/specshift/...": map[string]any{"unit": []string{"pkg/..."}},
+		"cmd/filler":            map[string]any{"unit": []string{"pkg/..."}},
+		"pkg/filler":            map[string]any{"unit": []string{"pkg/..."}},
+		"scripts/filler.sh":     map[string]any{"unit": []string{"pkg/..."}},
+		"tests/filler":          map[string]any{"unit": []string{"pkg/..."}},
+	}})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "tests", "change-graph.json"), raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	expectPass(t, runChangeGraphCompleteness(root))
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 1 || prefixes[0] != "scripts/" {
+		t.Fatalf("expected the directly covered entry to survive, got %v", prefixes)
+	}
+}
+
+// TestChangeGraphCoverageBaselineDoesNotCoverNewSubtrees pins the same
+// reach against the seeded baseline and change graph in tree: a source
+// file in a directory that does not exist yet is covered by neither, so
+// the change that creates it has to add a glob key in
+// tests/change-graph.json rather than inherit an ancestor's exemption.
+func TestChangeGraphCoverageBaselineDoesNotCoverNewSubtrees(t *testing.T) {
+	root := repoRoot()
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	globs, err := readChangeGraphGlobKeys(filepath.Join(root, "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	for _, p := range []string{
+		"scripts/specshift/run.go",
+		"scripts/specshift/internal/parse.go",
+		"tests/registers/newtool/main.go",
+	} {
+		if coveredByChangeGraphGlob(p, globs) {
+			continue
+		}
+		if prefix, ok := matchingCoveragePrefix(p, prefixes); ok {
+			t.Errorf("baseline entry %q covers %s, which no change has created yet", prefix, p)
+		}
+	}
+}
+
 // TestValidateChangeGraphCompletenessRatchetsDownward pins the rewrite
 // rule: a path that gains a glob key loses its baseline prefix in the
 // same run, so coverage once given cannot be handed back by a later

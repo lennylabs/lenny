@@ -378,7 +378,10 @@ var (
 // identifier pass that renames a file inside a baselined directory has
 // no glob key to re-key for it, and a file-keyed entry would leave the
 // renamed path covered by nothing while the downward-only rewrite has
-// no way to accept the new name. It is rewritten downward only: a path
+// no way to accept the new name. A directory entry covers the files
+// directly inside that directory, so a source tree created later under
+// a baselined directory is uncovered and needs its own glob key. It is
+// rewritten downward only: a path
 // that gains a glob key,
 // or that leaves the tree, drops out of the baseline in the same run,
 // and the check never adds an entry, so an uncovered path that a later
@@ -507,21 +510,19 @@ func coveredByChangeGraphGlob(path string, keys map[string]bool) bool {
 }
 
 // matchingCoveragePrefix returns the baseline prefix that covers the
-// path. A prefix ending in `/` matches every path beneath it; any other
-// prefix matches the path it names and any path that continues past a
-// path separator.
-//
-// When several prefixes match, the longest one wins. The baseline holds
-// a directory prefix for each directory that carried an unmapped path,
-// so a nested directory is covered by its own prefix as well as by its
-// ancestor's. Attributing the path to the ancestor would leave the
-// nested prefix matching nothing, and the downward rewrite would retire
-// it on the first run, irreversibly widening the remaining exemption to
-// the ancestor directory.
-func matchingCoveragePrefix(path string, prefixes []string) (string, bool) {
+// path. The baseline holds a directory prefix for each directory that
+// carried an unmapped path, and each path is attributed to its own
+// directory, so a nested directory keeps its own prefix matching rather
+// than counting against its ancestor's. Attributing the path to an
+// ancestor would leave the nested prefix matching nothing, and the
+// downward rewrite would retire it on the first run, irreversibly
+// widening the remaining exemption to the ancestor directory. When more
+// than one entry matches, the longest one wins, so a file-keyed entry
+// takes the path over the directory entry that also holds it.
+func matchingCoveragePrefix(p string, prefixes []string) (string, bool) {
 	best := ""
 	for _, prefix := range prefixes {
-		if coveragePrefixMatches(path, prefix) && len(prefix) > len(best) {
+		if coveragePrefixMatches(p, prefix) && len(prefix) > len(best) {
 			best = prefix
 		}
 	}
@@ -529,12 +530,21 @@ func matchingCoveragePrefix(path string, prefixes []string) (string, bool) {
 }
 
 // coveragePrefixMatches reports whether one baseline prefix covers the
-// path.
-func coveragePrefixMatches(path, prefix string) bool {
-	if path == prefix || strings.HasPrefix(path, prefix+"/") {
-		return true
+// path. An entry ending in `/` covers the files directly inside the
+// directory it names and nothing deeper. The baseline was seeded with
+// one entry per directory that held an unmapped path, so reading an
+// entry as its whole subtree would extend the seeded exemption to
+// directories that did not exist when it was measured: a source tree
+// created later under a baselined directory would land with no glob key
+// in tests/change-graph.json, and a change under it would select no
+// tiers under `--changed`, which is the outcome this check exists to
+// close. An entry that does not end in `/` names one file and covers
+// that path alone.
+func coveragePrefixMatches(p, prefix string) bool {
+	if strings.HasSuffix(prefix, "/") {
+		return path.Dir(p)+"/" == prefix
 	}
-	return strings.HasSuffix(prefix, "/") && strings.HasPrefix(path, prefix)
+	return p == prefix
 }
 
 // changeGraphCoverageDoc is the baseline's schema. The file is a
@@ -597,7 +607,10 @@ func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
 	b.WriteString("# glob key in tests/change-graph.json covered when the completeness\n")
 	b.WriteString("# check in cmd/lenny-test/cmd_validate.go landed. Entries are\n")
 	b.WriteString("# directory prefixes, so a file renamed inside a listed directory\n")
-	b.WriteString("# stays covered. The check rewrites this file downward: a prefix\n")
+	b.WriteString("# stays covered. An entry covers the files directly inside the\n")
+	b.WriteString("# directory it names and nothing deeper, so a source tree created\n")
+	b.WriteString("# later under a listed directory needs its own glob key in\n")
+	b.WriteString("# tests/change-graph.json. The check rewrites this file downward: a prefix\n")
 	b.WriteString("# whose paths all gain a glob key drops out on the next run, and a\n")
 	b.WriteString("# path covered by neither a glob key nor a prefix here fails the run\n")
 	b.WriteString("# rather than being added here.\n")

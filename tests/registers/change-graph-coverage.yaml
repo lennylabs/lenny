@@ -6,7 +6,10 @@
 # glob key in tests/change-graph.json covered when the completeness
 # check in cmd/lenny-test/cmd_validate.go landed. Entries are
 # directory prefixes, so a file renamed inside a listed directory
-# stays covered. The check rewrites this file downward: a prefix
+# stays covered. An entry covers the files directly inside the
+# directory it names and nothing deeper, so a source tree created
+# later under a listed directory needs its own glob key in
+# tests/change-graph.json. The check rewrites this file downward: a prefix
 # whose paths all gain a glob key drops out on the next run, and a
 # path covered by neither a glob key nor a prefix here fails the run
 # rather than being added here.
