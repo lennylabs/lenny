@@ -497,8 +497,15 @@ func isRegisterVerdict(v string) bool {
 // registerEntryProblems applies the entry schema and the expiry and
 // blocker ratchet rules to every entry, and returns one message per
 // violation.
+// A register read with no clock fails the way a register read with no
+// open-item resolver does: a zero clock would place every expiry in the
+// future and turn the expiry ratchet into a no-op that certifies stale
+// entries forever.
 func registerEntryProblems(doc *registerFile, rules registerRules) []string {
 	var problems []string
+	if rules.now.IsZero() {
+		return []string{"register rules carry no clock; the expiry rule cannot run"}
+	}
 	today := rules.now.UTC().Truncate(24 * time.Hour)
 	seen := map[string]int{}
 	for i, e := range doc.Entries {
@@ -665,14 +672,41 @@ func openItemIDs(root string) map[string]bool {
 	return out
 }
 
-// remediationStepHeading matches a remediation-step heading, which is a
-// markdown heading opening with the step identifier followed by a
-// period. The tracked plans spell a step as a letter prefix and a
-// number (R11), a sub-step as that identifier with a lowercase letter
-// suffix (R11a), and some plans use a dashed prefix (CODE-1). A
-// sub-step is as open as the step it sits under, so the sub-step
-// spelling is in the domain and an entry blocked on one resolves.
-var remediationStepHeading = regexp.MustCompile(`^#{2,6} ([A-Z][A-Z0-9]*-[0-9]+[a-z]?|[A-Z]+[0-9]+[a-z]?)\. `)
+// remediationStepID is the identifier a tracked plan gives a step. The
+// plans spell a step as a letter prefix and a number (R11), a sub-step
+// as that identifier with a lowercase letter suffix (R11a), and some
+// plans use a dashed prefix (CODE-1). A sub-step is as open as the step
+// it sits under, so the sub-step spelling is in the domain and an entry
+// blocked on one resolves.
+const remediationStepID = `[A-Z][A-Z0-9]*-[0-9]+[a-z]?|[A-Z]+[0-9]+[a-z]?`
+
+// remediationStepHeadings holds every spelling a tracked plan uses to
+// declare a step in a markdown heading. All three are in use in the
+// plans this harness reads, and a step declared in any of them is
+// outstanding work, so an entry blocked on it resolves. Prose that
+// merely names a step, and a section heading that carries no step
+// identifier, declare nothing.
+var remediationStepHeadings = []*regexp.Regexp{
+	// The identifier opens the heading text: "### R3. Title".
+	regexp.MustCompile(`^#{2,6} (` + remediationStepID + `)\. `),
+	// The identifier follows a section number and precedes a colon:
+	// "### 3.6 R1a: register, prose, and Go symbols".
+	regexp.MustCompile(`^#{2,6} [0-9]+(?:\.[0-9]+)* (` + remediationStepID + `):`),
+	// The identifier closes the heading in parentheses:
+	// "## 3. Step 1: channel identification and naming (R1)".
+	regexp.MustCompile(`^#{2,6} .*\((` + remediationStepID + `)\)[ \t]*$`),
+}
+
+// remediationStepHeadingID returns the step identifier a heading line
+// declares, and reports whether the line declares one at all.
+func remediationStepHeadingID(line string) (string, bool) {
+	for _, re := range remediationStepHeadings {
+		if m := re.FindStringSubmatch(line); m != nil {
+			return m[1], true
+		}
+	}
+	return "", false
+}
 
 // remediationStepIDs returns the step identifiers the root-level
 // remediation plans declare. The plans are the only documents that
@@ -690,8 +724,8 @@ func remediationStepIDs(root string) map[string]bool {
 			continue
 		}
 		for _, line := range strings.Split(string(body), "\n") {
-			if m := remediationStepHeading.FindStringSubmatch(line); m != nil {
-				out[m[1]] = true
+			if id, ok := remediationStepHeadingID(line); ok {
+				out[id] = true
 			}
 		}
 	}

@@ -438,7 +438,7 @@
       "docs": ["tests/tier11_docs/verdict_enum_test.go"]
     },
     "tests/registers": {
-      "static": ["cmd/lenny-test/cmd_validate.go", "tests/tier0_static/..."],
+      "static": ["tests/tier0_static/..."],
       "unit": ["cmd/lenny-test/..."]
     },
     "cmd/lenny-test-cached": {

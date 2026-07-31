@@ -484,6 +484,27 @@ func TestCheckRegisterNilResolverFailsClosed(t *testing.T) {
 	expectFail(t, checkRegister("register", path, nil, rules), "does not resolve to an open item")
 }
 
+// TestCheckRegisterNilClockFailsClosed pins that a register read with
+// no clock fails rather than accepting every entry. A zero clock places
+// every expiry in the future, so the expiry ratchet would silently stop
+// running and certify stale entries indefinitely.
+func TestCheckRegisterNilClockFailsClosed(t *testing.T) {
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: tracked
+    owner: alice
+    opened_at: 2026-01-01
+    expiry: 2026-07-30
+    blocker: F-1.2.3
+    reason: Stale entry a clockless read would accept.
+`)
+	rules := registerRules{openItem: testRegisterRules().openItem}
+	expectFail(t, checkRegister("register", path, nil, rules), "no clock")
+}
+
 func TestCheckRegisterMissingFileFails(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "missing.yaml")
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "read register")
@@ -759,12 +780,15 @@ func TestRepoRegisterRulesResolveTrackedOpenFindings(t *testing.T) {
 
 // TestRemediationStepIDsReadsTrackedPlanDocuments pins that a step
 // identifier is read from a remediation plan in every spelling the
-// tracked plans use, which is a lettered step, a lettered step with a
-// lowercase sub-step suffix, and a dashed prefix, and that ordinary
-// prose and numbered section headings do not enter the domain.
+// tracked plans use: the identifier opening the heading, the identifier
+// trailing a step heading in parentheses, and the identifier following
+// a section number before a colon. Each spelling covers a lettered
+// step, a lowercase sub-step suffix, or a dashed prefix. Ordinary prose
+// and a section heading carrying no identifier do not enter the domain.
 func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	root := t.TempDir()
-	plan := "## 3. Step 1: naming\n" +
+	plan := "## 3. Step 1: channel identification and naming (R1)\n" +
+		"### 3.6 R1a: register, prose, and Go symbols\n" +
 		"### R3. Specification and test tooling\n" +
 		"### R11a. One proxy-dialect enum\n" +
 		"### XX-1. A dashed step identifier\n" +
@@ -774,7 +798,7 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 		t.Fatalf("write plan: %v", err)
 	}
 	steps := remediationStepIDs(root)
-	for _, want := range []string{"R3", "R11a", "XX-1"} {
+	for _, want := range []string{"R1", "R1a", "R3", "R11a", "XX-1"} {
 		if !steps[want] {
 			t.Errorf("%s should be a declared step: %v", want, steps)
 		}
@@ -782,8 +806,36 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	if steps["R9"] {
 		t.Errorf("prose must not declare a step: %v", steps)
 	}
-	if len(steps) != 3 {
-		t.Errorf("a numbered section heading must not declare a step: %v", steps)
+	if len(steps) != 5 {
+		t.Errorf("a section heading carrying no step identifier must not declare a step: %v", steps)
+	}
+}
+
+// TestEveryStepTheTrackedPlanDeclaresResolvesAsAnOpenItem pins the
+// open-item domain against the tracked plans themselves: every step
+// identifier a plan heading declares, in any of the spellings the plans
+// use, resolves as an open item. A register entry seeded by a gate is
+// blocked on the step that retires it, so a spelling the reader misses
+// would make those entries unwritable under the shared contract.
+func TestEveryStepTheTrackedPlanDeclaresResolvesAsAnOpenItem(t *testing.T) {
+	root := repoRoot()
+	rules := repoRegisterRules(root)
+	steps := remediationStepIDs(root)
+	if len(steps) == 0 {
+		t.Skip("not-yet-applicable: no tracked plan declares a step")
+	}
+	for id := range steps {
+		if !rules.resolvesBlocker(id) {
+			t.Errorf("a blocker naming the declared step %s must resolve", id)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, "gateway-runtime-comms-remediation.md")); err != nil {
+		return
+	}
+	for _, want := range []string{"R1", "R1a", "R2"} {
+		if !steps[want] {
+			t.Errorf("the tracked plan declares %s; it must enter the open-item domain: %v", want, steps)
+		}
 	}
 }
 
