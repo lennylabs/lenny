@@ -114,7 +114,13 @@ type Rewriter interface {
 	// schema, are a separate family and are read by the residual gate
 	// through the register package.
 	LoadRegister(path string) error
-	// Rewrite computes the new contents of one file.
+	// Rewrite computes the new contents of one file. It must not mutate
+	// the content it is given: the harness decides whether the file
+	// changed by comparing the rewriter's result against the pre-run
+	// contents, and rolls a failed apply back from those same contents, so
+	// a rewriter that edited its input in place would drop the file from
+	// the diff and from the rollback. The harness hands each rewriter its
+	// own copy, so an in-place edit corrupts nothing beyond that pass.
 	Rewrite(ctx context.Context, path string, content []byte) ([]byte, error)
 }
 
@@ -130,7 +136,8 @@ type Rewriter interface {
 // anywhere leaves the tree byte-identical.
 type KeyRewriter interface {
 	// RewriteKeys returns the register's new contents with the keys of
-	// every file the run renames moved to their new paths.
+	// every file the run renames moved to their new paths. It carries the
+	// same no-mutation obligation Rewrite does.
 	RewriteKeys(ctx context.Context, path string, content []byte) ([]byte, error)
 }
 
@@ -218,19 +225,26 @@ func (h *Harness) planInto(ctx context.Context, diff *Diff, r Rewriter, target s
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
-	before, err := h.Read(target)
+	read, err := h.Read(target)
 	if err != nil {
 		return fmt.Errorf("plan %s pass: read %s: %w", r.Pass(), target, err)
 	}
+	// The pre-run contents are held in a buffer no rewriter has seen, so
+	// the change test and the rollback compare against contents no pass
+	// could have edited in place. A rewriter that mutated the buffer it
+	// was handed would otherwise make before and after identical, dropping
+	// a file the pass did rewrite from both the dry run and the applied
+	// change, and leaving the rollback with post-rewrite contents.
+	before := append([]byte(nil), read...)
 	after := before
 	if site {
-		after, err = r.Rewrite(ctx, target, after)
+		after, err = r.Rewrite(ctx, target, append([]byte(nil), before...))
 		if err != nil {
 			return fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 		}
 	}
 	if kr, ok := r.(KeyRewriter); ok && scope.KeyWritable(target) {
-		after, err = kr.RewriteKeys(ctx, target, after)
+		after, err = kr.RewriteKeys(ctx, target, append([]byte(nil), after...))
 		if err != nil {
 			return fmt.Errorf("plan %s pass: rekey %s: %w", r.Pass(), target, err)
 		}
@@ -240,7 +254,7 @@ func (h *Harness) planInto(ctx context.Context, diff *Diff, r Rewriter, target s
 	}
 	diff.Files = append(diff.Files, FileDiff{
 		Path:   target,
-		Before: append([]byte(nil), before...),
+		Before: before,
 		After:  append([]byte(nil), after...),
 	})
 	return nil

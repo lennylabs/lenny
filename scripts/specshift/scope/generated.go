@@ -203,7 +203,11 @@ func Generated(target string, read FileReader) (Disjunct, error) {
 	// header scan does not apply to it. Running the header scan over
 	// such a file would report a metadata declaration as a header one.
 	if commentlessFormats[strings.ToLower(filepath.Ext(target))] {
-		if metadataDeclaresGeneration(content) {
+		declared, err := metadataDeclaresGeneration(content)
+		if err != nil {
+			return NotGenerated, fmt.Errorf("generated-artifact rule for %s: %w", target, err)
+		}
+		if declared {
 			return DocumentMetadata, nil
 		}
 		return NotGenerated, nil
@@ -347,18 +351,28 @@ func (s *commentState) markupCommentBody(trimmed string) (string, bool) {
 // top-level metadata declares it generated. charts/lenny/values.schema.json
 // is the case: it is JSON, it carries no header comment, and its
 // generation notice sits in the top-level description value.
-func metadataDeclaresGeneration(content []byte) bool {
+//
+// It fails rather than answering when the document itself does not parse,
+// for the same reason the header disjunct fails on a scan that stopped
+// early: a document the rule never read answers "no declaration" for
+// metadata it never reached, and that answer admits a generated artifact
+// to every pass's write domain as an ordinary carrier. A truncated, a
+// BOM-prefixed, or a comment-carrying JSON file is the case that reaches
+// it. A metadata field that is absent, or present but not a string, is a
+// document the rule did read, so it stays the answer that the document
+// declares nothing.
+func metadataDeclaresGeneration(content []byte) (bool, error) {
 	var doc map[string]json.RawMessage
 	if err := json.Unmarshal(content, &doc); err != nil {
-		return false
+		return false, fmt.Errorf("parse the document metadata: %w", err)
 	}
 	raw, ok := doc[metadataField]
 	if !ok {
-		return false
+		return false, nil
 	}
 	var value string
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return false
+		return false, nil
 	}
-	return metadataDeclaration.MatchString(value)
+	return metadataDeclaration.MatchString(value), nil
 }
