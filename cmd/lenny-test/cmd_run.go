@@ -476,8 +476,11 @@ func exitCodeFor(verdict string) int {
 // classify carries the per-check status: when it is set and the check
 // did not fail, it maps the output to a tier status, which lets a check
 // report that it could not reach a conclusion (verdictstatus.Unverified)
-// instead of being collapsed into a pass. A nil classify means the check
-// only distinguishes pass from fail.
+// instead of being collapsed into a pass. The composer propagates
+// whichever tier status it returns and treats an unrecognized value as
+// unverified, so a classifier cannot leave the tier passing on a status
+// nothing understands. A nil classify means the check only
+// distinguishes pass from fail.
 type staticCheck struct {
 	name     string
 	run      func() (string, error)
@@ -732,7 +735,7 @@ func runStaticTier() (string, string) {
 		{
 			name: "go test ./tests/tier0_static/...",
 			run: func() (string, error) {
-				out, err := exec.Command("go", "test", "-count=1", "./tests/tier0_static/...").CombinedOutput()
+				out, err := exec.Command("go", goTestArgs("./tests/tier0_static/...")...).CombinedOutput()
 				return string(out), err
 			},
 			// A tier-0 test that ran but could not reach a
@@ -772,6 +775,17 @@ func runStaticTier() (string, string) {
 	return composeStaticChecks(checks)
 }
 
+// goTestArgs returns the argv (after the "go" binary itself) that runs
+// the given package pattern as a tier-0 check. The verbose flag is
+// load-bearing rather than cosmetic: in package-list mode cmd/go
+// buffers a test binary's output and drops it for a package that
+// passes, so without -v the unverified marker a passing test writes to
+// stdout never reaches classifyUnverified and a check that proved
+// nothing would be read as a check that passed.
+func goTestArgs(pattern string) []string {
+	return []string{"test", "-count=1", "-v", pattern}
+}
+
 // classifyUnverified maps a check's output to Unverified when the
 // output carries the shared marker, and to Pass otherwise. It is the
 // producer side of the unverified tier status for checks that run a Go
@@ -787,10 +801,11 @@ func classifyUnverified(out string) (string, string) {
 // composeStaticChecks runs the tier-0 check table in order and reduces
 // it to one tier status and one message. A check that errors ends the
 // tier at fail immediately, so a check reporting that it reached no
-// conclusion cannot mask a real failure. A check whose classifier
-// reports Unverified promotes the tier to unverified and the run
-// continues, so a later failure still wins. A check that reports
-// nothing leaves the tier at pass.
+// conclusion cannot mask a real failure. Otherwise the tier takes the
+// strongest status any classifier reported, by the same ranking the
+// verdict applies: fail outranks inconclusive, which outranks
+// unverified, which outranks pass. A check that reports nothing leaves
+// the tier at pass.
 func composeStaticChecks(checks []staticCheck) (string, string) {
 	status := verdictstatus.Pass
 	var notes []string
@@ -803,17 +818,53 @@ func composeStaticChecks(checks []staticCheck) (string, string) {
 			continue
 		}
 		checkStatus, detail := c.classify(out)
-		if checkStatus != verdictstatus.Unverified {
+		checkStatus, detail = normalizeCheckStatus(checkStatus, detail)
+		if checkStatus == verdictstatus.Pass {
 			continue
 		}
-		status = verdictstatus.Unverified
-		note := fmt.Sprintf("%s reached no conclusion", c.name)
+		if tierStatusRank(checkStatus) > tierStatusRank(status) {
+			status = checkStatus
+		}
+		note := fmt.Sprintf("%s reported %s", c.name, checkStatus)
 		if detail != "" {
 			note += ": " + detail
 		}
 		notes = append(notes, note)
 	}
 	return status, strings.Join(notes, "\n")
+}
+
+// normalizeCheckStatus maps a classifier's return value onto the tier
+// statuses the composer propagates, failing closed on anything else.
+// The composer starts at pass, so an unrecognized value would otherwise
+// leave the tier passing while nothing established that the check
+// passed. Such a value proves nothing, which is what unverified
+// reports, and the value that was returned survives in the detail so it
+// stays diagnosable. This mirrors what recordTier does one layer up for
+// an unrecognized tier status.
+func normalizeCheckStatus(status, detail string) (string, string) {
+	switch status {
+	case verdictstatus.Pass, verdictstatus.Fail, verdictstatus.Inconclusive, verdictstatus.Unverified:
+		return status, detail
+	default:
+		return verdictstatus.Unverified, unrecognizedStatusDetail(status, detail)
+	}
+}
+
+// tierStatusRank orders the statuses the composer propagates from the
+// weakest to the strongest claim about the tier, matching verdictRank
+// so a check's status and the verdict it produces cannot disagree about
+// which of two findings wins.
+func tierStatusRank(status string) int {
+	switch status {
+	case verdictstatus.Fail:
+		return 3
+	case verdictstatus.Inconclusive:
+		return 2
+	case verdictstatus.Unverified:
+		return 1
+	}
+	return 0
 }
 
 func runUnitTier() (string, string, *tierResult) {

@@ -382,6 +382,100 @@ func TestComposeStaticChecksSilentChecksPass(t *testing.T) {
 	}
 }
 
+// TestComposeStaticChecksPropagatesEveryClassifierStatus holds the
+// composer to the per-check status contract: whatever tier status a
+// classifier returns is the status the tier reports, rather than only
+// unverified surviving and every other value collapsing to pass.
+func TestComposeStaticChecksPropagatesEveryClassifierStatus(t *testing.T) {
+	cases := []struct {
+		classified string
+		want       string
+	}{
+		{verdictstatus.Pass, verdictstatus.Pass},
+		{verdictstatus.Unverified, verdictstatus.Unverified},
+		{verdictstatus.Inconclusive, verdictstatus.Inconclusive},
+		{verdictstatus.Fail, verdictstatus.Fail},
+	}
+	for _, tc := range cases {
+		t.Run(tc.classified, func(t *testing.T) {
+			status, msg := composeStaticChecks([]staticCheck{{
+				name: "classified check",
+				run:  func() (string, error) { return "", nil },
+				classify: func(string) (string, string) {
+					return tc.classified, "docker socket absent"
+				},
+			}})
+			if status != tc.want {
+				t.Fatalf("classifier returning %q yielded tier status %q; want %q", tc.classified, status, tc.want)
+			}
+			if tc.want == verdictstatus.Pass {
+				return
+			}
+			if !strings.Contains(msg, "classified check") || !strings.Contains(msg, "docker socket absent") {
+				t.Fatalf("tier message dropped the check or its detail: %q", msg)
+			}
+		})
+	}
+}
+
+// TestComposeStaticChecksUnrecognizedClassifierStatusFailsClosed pins
+// the fail-closed path for a classifier that returns a value outside
+// the tier-status set. The composer starts at pass, so treating an
+// unrecognized value as a pass would report a green tier that nothing
+// established.
+func TestComposeStaticChecksUnrecognizedClassifierStatusFailsClosed(t *testing.T) {
+	for _, bogus := range []string{"banana", ""} {
+		t.Run(fmt.Sprintf("status=%q", bogus), func(t *testing.T) {
+			status, msg := composeStaticChecks([]staticCheck{{
+				name:     "classified check",
+				run:      func() (string, error) { return "", nil },
+				classify: func(string) (string, string) { return bogus, "" },
+			}})
+			if status != verdictstatus.Unverified {
+				t.Fatalf("classifier returning %q yielded tier status %q; want %q", bogus, status, verdictstatus.Unverified)
+			}
+			if !strings.Contains(msg, fmt.Sprintf("unrecognized tier status %q", bogus)) {
+				t.Fatalf("tier message dropped the unrecognized value: %q", msg)
+			}
+		})
+	}
+}
+
+// TestComposeStaticChecksStrongestClassifierStatusWins keeps the
+// composer's ordering aligned with the verdict's: a failing classifier
+// outranks an inconclusive one, which outranks a check that reached no
+// conclusion, whatever order the table runs them in.
+func TestComposeStaticChecksStrongestClassifierStatusWins(t *testing.T) {
+	check := func(name, status string) staticCheck {
+		return staticCheck{
+			name:     name,
+			run:      func() (string, error) { return "", nil },
+			classify: func(string) (string, string) { return status, "" },
+		}
+	}
+	unverified := check("tier0 go test", verdictstatus.Unverified)
+	inconclusive := check("compose bring-up", verdictstatus.Inconclusive)
+	failing := check("schema check", verdictstatus.Fail)
+	cases := []struct {
+		name   string
+		checks []staticCheck
+		want   string
+	}{
+		{"fail after unverified", []staticCheck{unverified, failing}, verdictstatus.Fail},
+		{"fail before unverified", []staticCheck{failing, unverified}, verdictstatus.Fail},
+		{"inconclusive after unverified", []staticCheck{unverified, inconclusive}, verdictstatus.Inconclusive},
+		{"inconclusive before unverified", []staticCheck{inconclusive, unverified}, verdictstatus.Inconclusive},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, _ := composeStaticChecks(tc.checks)
+			if status != tc.want {
+				t.Fatalf("got tier status %q; want %q", status, tc.want)
+			}
+		})
+	}
+}
+
 func TestSynthesizeNextActionFallback(t *testing.T) {
 	v := newVerdict(selector{tier: "static"})
 	v.recordTier("static", "fail", 10*time.Millisecond, "go vet failed")
