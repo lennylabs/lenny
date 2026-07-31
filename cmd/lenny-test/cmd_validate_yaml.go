@@ -12,8 +12,6 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
-
-	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
 // The three YAML configuration files under tests/ — groups.yaml,
@@ -308,8 +306,8 @@ func validateFlakeBudgetYAML(path string) checkResult {
 
 // ---- the shared register contract ---------------------------------
 
-// An exception register is a YAML file named
-// tests/registers/exceptions-<gate>.yaml recording the violations one
+// An exception register is a YAML file under tests/registers/
+// declaring kind: exception-register and recording the violations one
 // gate accepts for now, so that gate can fail everything else. The
 // pattern is generalized from the two in-tree pending lists and from
 // validateFlakeBudgetYAML, which already dates and owns each quarantine
@@ -324,11 +322,11 @@ func validateFlakeBudgetYAML(path string) checkResult {
 //     exemption names outstanding work.
 //
 // tests/registers/ also holds files that deliberately do not use this
-// schema, and the exceptions- prefix is what separates them. Only a
-// file the prefix names is held to the shared contract; every other
-// file in the directory is validated by the gate that reads it,
-// against its own schema, and the shared contract asserts nothing
-// about it:
+// schema, and the kind each file declares is what separates them. A
+// file declaring one of the other kinds is validated by the gate that
+// reads it, against its own schema, and the shared contract asserts
+// nothing about it. A file declaring no recognized kind fails, so a
+// register is never left unvalidated by every gate at once:
 //
 //   - a residual register carries a member, a class, an in-class or
 //     excluded disposition, and a reason. An exclusion is permanent,
@@ -350,8 +348,11 @@ type registerEntry struct {
 	// Subject is the violation the entry exempts, in whatever
 	// vocabulary the gate that reads the register measures.
 	Subject string `yaml:"subject"`
-	// Verdict is the outcome the gate would report for Subject if the
-	// entry did not exist.
+	// Verdict is the disposition of the exemption, which is one of
+	// intentional, tracked, or deferred. It classifies the entry rather
+	// than restating the gate's own outcome: an intentional entry is a
+	// deliberate carve-out, a tracked entry is work in progress, and a
+	// deferred entry is work not yet started.
 	Verdict string `yaml:"verdict"`
 	// Owner is the person accountable for closing the entry.
 	Owner string `yaml:"owner"`
@@ -365,15 +366,33 @@ type registerEntry struct {
 	Reason string `yaml:"reason"`
 }
 
-// registerFilePrefix names the files the shared contract owns. A gate
-// that exempts anything writes its register as
-// tests/registers/exceptions-<gate>.yaml, so the contract's population
-// is the set of paths the gates using it name and no other file in the
-// directory is held to the shared entry schema.
-const registerFilePrefix = "exceptions-"
+// The kinds a file under tests/registers/ may declare. Membership of
+// the shared contract is a declaration inside the file rather than a
+// filename convention, so a register carrying its own schema is never
+// held to the shared entry schema and a file declaring nothing the
+// harness recognizes fails instead of going unvalidated.
+const (
+	// registerKindException marks a register the shared contract owns.
+	registerKindException = "exception-register"
+	// registerKindResidual marks a per-class residual register.
+	registerKindResidual = "residual-register"
+	// registerKindBaseline marks a count or population baseline a pass
+	// rewrites downward.
+	registerKindBaseline = "baseline"
+	// registerKindSenseMap marks a per-occurrence map from a site to the
+	// identifier a pass writes there.
+	registerKindSenseMap = "sense-map"
+)
+
+// registerKinds lists the recognized kinds in the order the failure
+// message names them.
+func registerKinds() []string {
+	return []string{registerKindException, registerKindResidual, registerKindBaseline, registerKindSenseMap}
+}
 
 // registerFile is one parsed exception register.
 type registerFile struct {
+	Kind    string          `yaml:"kind"`
 	Version int             `yaml:"version"`
 	Entries []registerEntry `yaml:"entries"`
 }
@@ -418,20 +437,61 @@ func loadRegisterFile(path string) (*registerFile, error) {
 	if doc.Version != 1 {
 		return nil, fmt.Errorf("register %s: expected version 1, got %d", path, doc.Version)
 	}
+	if strings.TrimSpace(doc.Kind) != registerKindException {
+		return nil, fmt.Errorf("register %s: expected kind %q, got %q", path, registerKindException, doc.Kind)
+	}
 	return &doc, nil
 }
 
-// registerVerdicts are the verdicts a register entry may record. An
-// entry exists to hold back a failing outcome, so verdictstatus.
-// VerdictPass and VerdictInconclusive are rejected: the first records
-// no violation at all, and the second is the harness's own
-// infrastructure-failure state rather than a gate result about the
-// tree.
-func registerVerdicts() map[string]bool {
-	return map[string]bool{
-		verdictstatus.VerdictFail:       true,
-		verdictstatus.VerdictUnverified: true,
+// registerFileKind reads the kind one file under tests/registers/
+// declares. A file that cannot be read or parsed is an error rather
+// than a file of no kind, so the directory sweep reports it instead of
+// passing over it.
+func registerFileKind(path string) (string, error) {
+	body, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read register %s: %w", path, err)
 	}
+	var doc struct {
+		Kind string `yaml:"kind"`
+	}
+	if err := yaml.Unmarshal(body, &doc); err != nil {
+		return "", fmt.Errorf("parse register %s: %w", path, err)
+	}
+	return strings.TrimSpace(doc.Kind), nil
+}
+
+// The dispositions a register entry may record. The set classifies why
+// a violation is exempt, which is what tells a reader a carve-out apart
+// from work still queued. It is deliberately not the harness verdict
+// vocabulary: a register entry states the standing of the exemption,
+// while the gate reports its own outcome when the entry stops holding.
+const (
+	// registerVerdictIntentional marks a deliberate, permanent-for-now
+	// carve-out.
+	registerVerdictIntentional = "intentional"
+	// registerVerdictTracked marks a violation whose remediation is
+	// under way.
+	registerVerdictTracked = "tracked"
+	// registerVerdictDeferred marks a violation whose remediation is
+	// accepted but not yet started.
+	registerVerdictDeferred = "deferred"
+)
+
+// registerVerdicts returns the dispositions in the order the failure
+// message names them.
+func registerVerdicts() []string {
+	return []string{registerVerdictIntentional, registerVerdictTracked, registerVerdictDeferred}
+}
+
+// isRegisterVerdict reports whether v is one of the dispositions.
+func isRegisterVerdict(v string) bool {
+	for _, allowed := range registerVerdicts() {
+		if v == allowed {
+			return true
+		}
+	}
+	return false
 }
 
 // registerEntryProblems applies the entry schema and the expiry and
@@ -440,7 +500,6 @@ func registerVerdicts() map[string]bool {
 func registerEntryProblems(doc *registerFile, rules registerRules) []string {
 	var problems []string
 	today := rules.now.UTC().Truncate(24 * time.Hour)
-	allowedVerdicts := registerVerdicts()
 	seen := map[string]int{}
 	for i, e := range doc.Entries {
 		subject := strings.TrimSpace(e.Subject)
@@ -452,9 +511,9 @@ func registerEntryProblems(doc *registerFile, rules registerRules) []string {
 			problems = append(problems, fmt.Sprintf("entry[%d] (%q): subject already declared at entry[%d]", i, subject, prev))
 		}
 		seen[subject] = i
-		if !allowedVerdicts[e.Verdict] {
-			problems = append(problems, fmt.Sprintf("entry[%d] (%q): verdict must be %s or %s; got %q",
-				i, subject, verdictstatus.VerdictFail, verdictstatus.VerdictUnverified, e.Verdict))
+		if !isRegisterVerdict(strings.TrimSpace(e.Verdict)) {
+			problems = append(problems, fmt.Sprintf("entry[%d] (%q): verdict must be one of %s; got %q",
+				i, subject, strings.Join(registerVerdicts(), ", "), e.Verdict))
 		}
 		if strings.TrimSpace(e.Owner) == "" {
 			problems = append(problems, fmt.Sprintf("entry[%d] (%q): missing owner", i, subject))
@@ -531,30 +590,49 @@ func checkRegister(name, path string, violations []string, rules registerRules) 
 // tests/registers/ against the shared contract. Gates supply their own
 // violation sets when they run; this check confirms the registers
 // themselves hold, so an entry that has outlived its expiry or its
-// blocker fails the tier even before the gate that reads it runs.
-// A residual register, a baseline, and a sense map carry schemas of
-// their own, so the sweep selects the exceptions- files the contract
-// owns and leaves every other file to the gate that reads it.
+// blocker fails the tier even before the gate that reads it runs. A
+// residual register, a baseline, and a sense map carry schemas of their
+// own, so the sweep dispatches on the kind each file declares and
+// leaves those files to the gate that reads them. A file declaring no
+// recognized kind fails, so a register no schema claims cannot slip
+// past every gate at once.
 func validateRegistersDir(dir string, rules registerRules) checkResult {
 	const name = "tests/registers"
 	if _, err := os.Stat(dir); err != nil {
 		return newResult(name, false, fmt.Sprintf("could not read directory: %v", err))
 	}
-	files, err := filepath.Glob(filepath.Join(dir, registerFilePrefix+"*.yaml"))
+	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
 	if err != nil {
 		return newResult(name, false, fmt.Sprintf("could not list: %v", err))
 	}
 	sort.Strings(files)
 	var problems []string
+	held := 0
 	for _, f := range files {
-		if r := checkRegister(name, f, nil, rules); !r.ok {
-			problems = append(problems, fmt.Sprintf("%s: %s", filepath.Base(f), r.detail))
+		base := filepath.Base(f)
+		kind, err := registerFileKind(f)
+		if err != nil {
+			problems = append(problems, fmt.Sprintf("%s: %v", base, err))
+			continue
+		}
+		switch kind {
+		case registerKindException:
+			held++
+			if r := checkRegister(name, f, nil, rules); !r.ok {
+				problems = append(problems, fmt.Sprintf("%s: %s", base, r.detail))
+			}
+		case registerKindResidual, registerKindBaseline, registerKindSenseMap:
+			// The gate that reads this file validates it against its own
+			// schema; the shared contract does not range over it.
+		default:
+			problems = append(problems, fmt.Sprintf("%s: declares kind %q; every register declares one of %s",
+				base, kind, strings.Join(registerKinds(), ", ")))
 		}
 	}
 	if len(problems) > 0 {
 		return newResult(name, false, summarizeProblems(problems))
 	}
-	return newResult(name, true, fmt.Sprintf("%d register(s) hold the shared contract", len(files)))
+	return newResult(name, true, fmt.Sprintf("%d register(s) hold the shared contract", held))
 }
 
 // repoRegisterRules builds the register rules the harness runs with:
@@ -589,9 +667,12 @@ func openItemIDs(root string) map[string]bool {
 
 // remediationStepHeading matches a remediation-step heading, which is a
 // markdown heading opening with the step identifier followed by a
-// period, in both the dashed spelling a plan sub-step uses and the
-// undashed spelling a top-level step uses.
-var remediationStepHeading = regexp.MustCompile(`^#{2,6} ([A-Z][A-Z0-9]*-[0-9]+|[A-Z]+[0-9]+)\. `)
+// period. The tracked plans spell a step as a letter prefix and a
+// number (R11), a sub-step as that identifier with a lowercase letter
+// suffix (R11a), and some plans use a dashed prefix (CODE-1). A
+// sub-step is as open as the step it sits under, so the sub-step
+// spelling is in the domain and an entry blocked on one resolves.
+var remediationStepHeading = regexp.MustCompile(`^#{2,6} ([A-Z][A-Z0-9]*-[0-9]+[a-z]?|[A-Z]+[0-9]+[a-z]?)\. `)
 
 // remediationStepIDs returns the step identifiers the root-level
 // remediation plans declare. The plans are the only documents that

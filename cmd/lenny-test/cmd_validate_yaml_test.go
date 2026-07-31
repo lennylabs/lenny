@@ -416,10 +416,11 @@ func testRegisterRules() registerRules {
 // wellFormedRegister is one entry that satisfies every rule under
 // testRegisterRules.
 const wellFormedRegister = `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/04_system-components.md line 437
-    verdict: FAIL
+    verdict: tracked
     owner: alice
     opened_at: 2026-07-01
     expiry: 2026-09-30
@@ -443,10 +444,11 @@ func TestCheckRegisterUnregisteredViolationFails(t *testing.T) {
 
 func TestCheckRegisterPassedExpiryFails(t *testing.T) {
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
-    verdict: FAIL
+    verdict: tracked
     owner: alice
     opened_at: 2026-01-01
     expiry: 2026-07-30
@@ -458,10 +460,11 @@ entries:
 
 func TestCheckRegisterBlockerWithNoOpenItemFails(t *testing.T) {
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
-    verdict: FAIL
+    verdict: tracked
     owner: alice
     opened_at: 2026-07-01
     expiry: 2026-09-30
@@ -487,21 +490,64 @@ func TestCheckRegisterMissingFileFails(t *testing.T) {
 }
 
 func TestCheckRegisterMalformedFileFails(t *testing.T) {
-	path := writeYAML(t, "exceptions-spec-citations.yaml", "version: 1\nentries: [oops\n")
+	path := writeYAML(t, "exceptions-spec-citations.yaml", "kind: exception-register\nversion: 1\nentries: [oops\n")
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "parse register")
 }
 
 func TestCheckRegisterWrongVersionFails(t *testing.T) {
-	path := writeYAML(t, "exceptions-spec-citations.yaml", "version: 2\nentries: []\n")
+	path := writeYAML(t, "exceptions-spec-citations.yaml", "kind: exception-register\nversion: 2\nentries: []\n")
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expected version 1")
+}
+
+// TestCheckRegisterUndeclaredKindFails pins that a file the shared
+// contract is asked to read must declare that it uses the shared entry
+// schema. A file that declares nothing is not an empty exception
+// register; reading it as one would apply the shared rules to a
+// document written for another schema.
+func TestCheckRegisterUndeclaredKindFails(t *testing.T) {
+	path := writeYAML(t, "change-graph-exceptions.yaml", "version: 1\nentries: []\n")
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expected kind", "exception-register")
+}
+
+// TestCheckRegisterVerdictIsTheExemptionDisposition pins the entry
+// schema's verdict domain: an entry records why the violation is
+// exempt, using intentional, tracked, or deferred. A harness verdict
+// such as FAIL is not a disposition and is rejected, so a register
+// cannot be written in a vocabulary that loses the distinction between
+// a deliberate carve-out and work still queued.
+func TestCheckRegisterVerdictIsTheExemptionDisposition(t *testing.T) {
+	entry := func(verdict string) string {
+		return fmt.Sprintf(`
+kind: exception-register
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: %s
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-1.2.3
+    reason: One disposition per case.
+`, verdict)
+	}
+	for _, verdict := range []string{"intentional", "tracked", "deferred"} {
+		path := writeYAML(t, "exceptions-spec-citations.yaml", entry(verdict))
+		expectPass(t, checkRegister("register", path, nil, testRegisterRules()))
+	}
+	for _, verdict := range []string{"FAIL", "UNVERIFIED", "PASS"} {
+		path := writeYAML(t, "exceptions-spec-citations.yaml", entry(verdict))
+		expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
+			"verdict must be one of", "intentional, tracked, deferred")
+	}
 }
 
 func TestCheckRegisterIncompleteEntryFails(t *testing.T) {
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
-    verdict: PASS
+    verdict: unclear
 `)
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
 		"verdict must be", "missing owner", "missing opened_at", "missing expiry")
@@ -509,17 +555,18 @@ entries:
 
 func TestCheckRegisterDuplicateSubjectFails(t *testing.T) {
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
-    verdict: FAIL
+    verdict: tracked
     owner: alice
     opened_at: 2026-07-01
     expiry: 2026-09-30
     blocker: F-1.2.3
     reason: First.
   - subject: spec/10_gateway.md line 12
-    verdict: UNVERIFIED
+    verdict: intentional
     owner: bob
     opened_at: 2026-07-01
     expiry: 2026-09-30
@@ -539,7 +586,7 @@ func TestValidateRegistersDirAcceptsWellFormedRegister(t *testing.T) {
 }
 
 func TestValidateRegistersDirReportsBadRegister(t *testing.T) {
-	path := writeYAML(t, "exceptions-spec-citations.yaml", "version: 1\nentries: [oops\n")
+	path := writeYAML(t, "exceptions-spec-citations.yaml", "kind: exception-register\nversion: 1\nentries: [oops\n")
 	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
 		"exceptions-spec-citations.yaml", "parse register")
 }
@@ -552,31 +599,126 @@ func TestValidateRegistersDirMissingDirectoryFails(t *testing.T) {
 	expectFail(t, validateRegistersDir(dir, testRegisterRules()), "could not read directory")
 }
 
-// TestValidateRegistersDirSkipsResidualRegisters pins the divergence
-// the contract's doc comment states: a residual register carries a
-// member, a class, a disposition, and a reason, and the shared
-// contract's expiry and blocker rules do not range over it. The sweep
-// selects the files the contract owns by their name, so a residual
-// register passes without declaring anything for the shared contract's
-// benefit.
-func TestValidateRegistersDirSkipsResidualRegisters(t *testing.T) {
+// TestValidateRegistersDirHoldsEveryFileDeclaringTheSharedSchema pins
+// that the sweep selects by the kind a file declares rather than by its
+// filename. A register that carries the shared entry schema under any
+// name is held to the ratchet rules, so an expired entry fails the tier
+// instead of going unseen because the file was named outside a
+// convention.
+func TestValidateRegistersDirHoldsEveryFileDeclaringTheSharedSchema(t *testing.T) {
+	path := writeYAML(t, "change-graph-exceptions.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - subject: pkg/adapter
+    verdict: deferred
+    owner: alice
+    opened_at: 2026-01-01
+    expiry: 2026-07-30
+    blocker: F-1.2.3
+    reason: Named outside the filename convention.
+`)
+	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
+		"change-graph-exceptions.yaml", "expiry 2026-07-30 has passed")
+}
+
+// TestValidateRegistersDirFailsUnrecognizedKind pins that a file no
+// schema claims fails the sweep. A register validated by neither the
+// shared contract nor another gate would otherwise sit in the tree
+// unchecked while the sweep reported a clean directory.
+func TestValidateRegistersDirFailsUnrecognizedKind(t *testing.T) {
 	dir := t.TempDir()
-	residual := filepath.Join(dir, "residual-line-citations.yaml")
-	if err := os.WriteFile(residual, []byte(`
+	files := map[string]string{
+		"undeclared.yaml":   "version: 1\nentries: []\n",
+		"mistyped.yaml":     "kind: exceptions\nversion: 1\nentries: []\n",
+		"exceptions-a.yaml": wellFormedRegister,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	expectFail(t, validateRegistersDir(dir, testRegisterRules()),
+		"undeclared.yaml", "mistyped.yaml", "exception-register, residual-register, baseline, sense-map")
+}
+
+// TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema pins that
+// the shared entry schema ranges over the registers that declare it
+// rather than over every file the directory holds. A residual register,
+// a baseline keyed for the rewrite it drives, and a sense map keyed by
+// file and occurrence carry no subject, verdict, owner, expiry, or
+// blocker, and the gate that reads each of them validates it against
+// its own schema.
+func TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"residual-line-citations.yaml": `
+kind: residual-register
 version: 1
 entries:
   - member: spec/10_gateway.md
     class: line-citations
     disposition: excluded
     reason: The record states findings as they were written.
-`), 0o644); err != nil {
-		t.Fatalf("write %s: %v", residual, err)
+`,
+		"line-citations.yaml": `
+kind: baseline
+version: 1
+entries:
+  - file: spec/10_gateway.md
+    citations: 14
+`,
+		"identifier-senses.yaml": `
+kind: sense-map
+version: 1
+occurrences:
+  - file: spec/10_gateway.md
+    line: 12
+    identifier: runtime-lifecycle-channel
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
 	}
 	r := validateRegistersDir(dir, testRegisterRules())
 	expectPass(t, r)
 	if !strings.Contains(r.detail, "0 register") {
-		t.Errorf("residual register should not be counted: %s", r.detail)
+		t.Errorf("a residual register, a baseline, and a sense map hold no shared-contract entry: %s", r.detail)
 	}
+}
+
+func TestCheckRegisterNonDateFieldsFail(t *testing.T) {
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: intentional
+    owner: alice
+    opened_at: yesterday
+    expiry: soon
+    blocker: F-1.2.3
+    reason: Dates written in prose.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
+		"opened_at \"yesterday\" not YYYY-MM-DD", "expiry \"soon\" not YYYY-MM-DD")
+}
+
+func TestCheckRegisterMissingSubjectFails(t *testing.T) {
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - verdict: tracked
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2026-09-30
+    blocker: F-1.2.3
+    reason: No subject.
+`)
+	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "missing subject")
 }
 
 func TestOpenFindingIDsReadsTrackedRecords(t *testing.T) {
@@ -616,22 +758,23 @@ func TestRepoRegisterRulesResolveTrackedOpenFindings(t *testing.T) {
 }
 
 // TestRemediationStepIDsReadsTrackedPlanDocuments pins that a step
-// identifier is read from a remediation plan in both the spellings the
-// tracked plans use, the dashed sub-step spelling and the undashed
-// top-level spelling, and that ordinary prose and numbered section
-// headings do not enter the domain.
+// identifier is read from a remediation plan in every spelling the
+// tracked plans use, which is a lettered step, a lettered step with a
+// lowercase sub-step suffix, and a dashed prefix, and that ordinary
+// prose and numbered section headings do not enter the domain.
 func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	root := t.TempDir()
 	plan := "## 3. Step 1: naming\n" +
 		"### R3. Specification and test tooling\n" +
-		"### TOOL-1. The shared register contract\n" +
+		"### R11a. One proxy-dialect enum\n" +
+		"### XX-1. A dashed step identifier\n" +
 		"### 3.1 What this step fixes\n" +
 		"The step R9 is named in prose and is not a heading.\n"
 	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"), []byte(plan), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 	steps := remediationStepIDs(root)
-	for _, want := range []string{"R3", "TOOL-1"} {
+	for _, want := range []string{"R3", "R11a", "XX-1"} {
 		if !steps[want] {
 			t.Errorf("%s should be a declared step: %v", want, steps)
 		}
@@ -639,8 +782,31 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	if steps["R9"] {
 		t.Errorf("prose must not declare a step: %v", steps)
 	}
-	if len(steps) != 2 {
+	if len(steps) != 3 {
 		t.Errorf("a numbered section heading must not declare a step: %v", steps)
+	}
+}
+
+// TestRemediationSubStepInTrackedPlanResolvesAsAnOpenItem pins the
+// sub-step spelling against the tracked plans themselves: a plan that
+// declares a sub-step declares outstanding work, so a register entry
+// blocked on that sub-step resolves rather than failing the third
+// ratchet rule.
+func TestRemediationSubStepInTrackedPlanResolvesAsAnOpenItem(t *testing.T) {
+	root := repoRoot()
+	var subStep string
+	for id := range remediationStepIDs(root) {
+		last := id[len(id)-1]
+		if last >= 'a' && last <= 'z' {
+			subStep = id
+			break
+		}
+	}
+	if subStep == "" {
+		t.Skip("not-yet-applicable: no tracked plan declares a sub-step")
+	}
+	if !repoRegisterRules(root).resolvesBlocker(subStep) {
+		t.Errorf("a blocker naming the open sub-step %s must resolve", subStep)
 	}
 }
 
@@ -650,21 +816,9 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 // headings would make the blocker rule resolve every identifier the
 // plan's vocabulary reuses and no entry could ever be retired by it.
 func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
-	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"),
-		[]byte("### R3. Specification and test tooling\n"), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
-	}
-	if err := os.Mkdir(filepath.Join(root, "proposals"), 0o755); err != nil {
-		t.Fatalf("mkdir proposals: %v", err)
-	}
-	staged := "### CODE-1. Add the enum and its validator\n" +
-		"### TEST-1. Gate cases\n"
-	if err := os.WriteFile(filepath.Join(root, "proposals", "0001_new_x.md"), []byte(staged), 0o644); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
+	root := stagedProposalRoot(t)
 	steps := remediationStepIDs(root)
-	for _, id := range []string{"CODE-1", "TEST-1"} {
+	for _, id := range []string{"XX-1", "YY-2"} {
 		if steps[id] {
 			t.Errorf("a staged proposal heading must not declare an open step: %s in %v", id, steps)
 		}
@@ -674,121 +828,69 @@ func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
 	}
 }
 
+// stagedProposalRoot builds a tree carrying one remediation plan that
+// declares step R3 and one staged proposal that declares steps XX-1 and
+// YY-2.
+func stagedProposalRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"),
+		[]byte("### R3. Specification and test tooling\n"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "proposals"), 0o755); err != nil {
+		t.Fatalf("mkdir proposals: %v", err)
+	}
+	staged := "### XX-1. Add the enum and its validator\n" +
+		"### YY-2. Gate cases\n"
+	if err := os.WriteFile(filepath.Join(root, "proposals", "0001_new_x.md"), []byte(staged), 0o644); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+	return root
+}
+
 // TestRegisterBlockerNamingOpenRemediationStepResolves pins that a
 // blocker naming the remediation step that retires the entry resolves.
 // A gate lands green by seeding its register with such an entry, so a
 // domain holding the audit findings alone would reject every entry the
 // remediation plan writes.
 func TestRegisterBlockerNamingOpenRemediationStepResolves(t *testing.T) {
-	root := repoRoot()
-	steps := remediationStepIDs(root)
-	if len(steps) == 0 {
-		t.Skip("not-yet-applicable: the tracked tree declares no remediation step")
-	}
-	var step string
-	for id := range steps {
-		if step == "" || id < step {
-			step = id
-		}
-	}
-	if openFindingIDs(root)[step] {
-		t.Skipf("not-yet-applicable: %s is also an open audit finding", step)
-	}
-	rules := repoRegisterRules(root)
-	if !rules.resolvesBlocker(step) {
-		t.Errorf("a blocker naming the open remediation step %s must resolve", step)
-	}
-}
-
-// TestRegisterBlockerNamingStagedProposalStepFails pins the third
-// ratchet rule against the tracked tree: an entry blocked on a step
-// identifier that only a staged proposal declares fails, because that
-// step is not outstanding work the plan carries. Without this the rule
-// resolves every identifier the proposals have ever used and only the
-// expiry rule can ever end an entry.
-func TestRegisterBlockerNamingStagedProposalStepFails(t *testing.T) {
-	root := repoRoot()
-	const staged = "TOOL-1"
-	if remediationStepIDs(root)[staged] || openFindingIDs(root)[staged] {
-		t.Skipf("not-yet-applicable: %s is outstanding work in the tracked tree", staged)
-	}
+	root := stagedProposalRoot(t)
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
-    verdict: FAIL
+    verdict: tracked
     owner: alice
     opened_at: 2026-07-01
     expiry: 2099-01-01
-    blocker: `+staged+`
-    reason: Blocked on a step a staged proposal declares.
+    blocker: R3
+    reason: Blocked on the remediation step that retires the entry.
 `)
-	rules := repoRegisterRules(root)
-	expectFail(t, checkRegister("register", path, nil, rules), staged, "does not resolve to an open item")
+	expectPass(t, checkRegister("register", path, nil, repoRegisterRules(root)))
 }
 
-// TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema pins that
-// the shared entry schema ranges over the registers the contract owns
-// rather than over every file the directory holds. A baseline keyed for
-// the rewrite it drives and a sense map keyed by file and occurrence
-// carry no subject, verdict, owner, expiry, or blocker, and the gate
-// that reads each of them validates it against its own schema without
-// the shared contract asserting anything about the file.
-func TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema(t *testing.T) {
-	dir := t.TempDir()
-	files := map[string]string{
-		"line-citations.yaml": `
-version: 1
-entries:
-  - file: spec/10_gateway.md
-    citations: 14
-`,
-		"identifier-senses.yaml": `
-version: 1
-occurrences:
-  - file: spec/10_gateway.md
-    line: 12
-    identifier: runtime-lifecycle-channel
-`,
-	}
-	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
-	}
-	r := validateRegistersDir(dir, testRegisterRules())
-	expectPass(t, r)
-	if !strings.Contains(r.detail, "0 register") {
-		t.Errorf("a baseline and a sense map hold no shared-contract entry: %s", r.detail)
-	}
-}
-
-func TestCheckRegisterNonDateFieldsFail(t *testing.T) {
+// TestRegisterBlockerNamingStagedProposalStepFails pins the third
+// ratchet rule: an entry blocked on a step identifier that only a
+// staged proposal declares fails, because that step is not outstanding
+// work a plan carries. Without this the rule resolves every identifier
+// the proposals have ever used and only the expiry rule can end an
+// entry.
+func TestRegisterBlockerNamingStagedProposalStepFails(t *testing.T) {
+	root := stagedProposalRoot(t)
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
-    verdict: UNVERIFIED
-    owner: alice
-    opened_at: yesterday
-    expiry: soon
-    blocker: F-1.2.3
-    reason: Dates written in prose.
-`)
-	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
-		"opened_at \"yesterday\" not YYYY-MM-DD", "expiry \"soon\" not YYYY-MM-DD")
-}
-
-func TestCheckRegisterMissingSubjectFails(t *testing.T) {
-	path := writeYAML(t, "exceptions-spec-citations.yaml", `
-version: 1
-entries:
-  - verdict: FAIL
+    verdict: deferred
     owner: alice
     opened_at: 2026-07-01
-    expiry: 2026-09-30
-    blocker: F-1.2.3
-    reason: No subject.
+    expiry: 2099-01-01
+    blocker: XX-1
+    reason: Blocked on a step a staged proposal declares.
 `)
-	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "missing subject")
+	expectFail(t, checkRegister("register", path, nil, repoRegisterRules(root)),
+		"XX-1", "does not resolve to an open item")
 }
