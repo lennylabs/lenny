@@ -1897,6 +1897,24 @@ func TestFindReadsEverySpellingOfTheRetiredCitationForm(t *testing.T) {
 		{"qualifier-item.txt", "§11.7 item 3 line 364", "§11.7", "item 3", []string{"364-364"}},
 		{"qualifier-identifier.txt", "§16.4 NET-063 line 88", "§16.4", "NET-063", []string{"88-88"}},
 		{"qualifier-table.txt", "§17.2 table line 12", "§17.2", "table", []string{"12-12"}},
+		{
+			"qualifier-parenthetical.txt",
+			"§10.3 NET-063 (spec line 327)",
+			"§10.3", "NET-063",
+			[]string{"327-327"},
+		},
+		{
+			"qualifier-words.txt",
+			"§10.3 revocation deny list (spec line 352)",
+			"§10.3", "revocation deny list",
+			[]string{"352-352"},
+		},
+		{
+			"qualifier-parenthetical-preamble.txt",
+			"§24 preamble (line 17)",
+			"§24", "preamble",
+			[]string{"17-17"},
+		},
 		{"gloss-trailing.txt", "§7.3 line 408 step (e)", "§7.3", "", []string{"408-408"}},
 		{"gloss-bare.txt", "§9.2 line 240 messagingScope", "§9.2", "", []string{"240-240"}},
 		{
@@ -1983,6 +2001,51 @@ func TestFindConsumesATrailingGlossWithItsMember(t *testing.T) {
 	}
 }
 
+// TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt pins that a member
+// carrying more than one gloss segment does not terminate the citation. The
+// spellings a bare word followed by a parenthesized phrase, a bare word
+// followed by a quoted fragment, and a run of bare words each precede a
+// continuation member in the tree, and a matcher that gave up on the second
+// segment would drop every member after the gloss: the resolver would not read
+// them, the ratchet would not count them, and the rewritten carrier would read
+// as an anchor followed by orphan integers.
+func TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		gloss   string
+		members []string
+	}{
+		{
+			"gloss-run-parenthesized-plus-member.txt",
+			"step (e) (replay workspace checkpoint)",
+			[]string{"408-408", "409-409"},
+		},
+		{
+			"gloss-run-quoted-plus-member.txt",
+			`step (e) "Replay latest workspace checkpoint"`,
+			[]string{"408-408", "409-409"},
+		},
+		{
+			"gloss-run-words-plus-member.txt",
+			"EventBus retranscribe worker",
+			[]string{"685-689", "683-683", "699-699"},
+		},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if got := members(c); !sameStrings(got, tc.members) {
+			t.Errorf("%s: members are %v, want %v", tc.fixture, got, tc.members)
+		}
+		if c.Members[0].Gloss != tc.gloss {
+			t.Errorf("%s: gloss is %q, want %q", tc.fixture, c.Members[0].Gloss, tc.gloss)
+		}
+		last := c.Members[len(c.Members)-1]
+		if !strings.Contains(c.Text, last.Text) {
+			t.Errorf("%s: citation text %q stops before its last member %q", tc.fixture, c.Text, last.Text)
+		}
+	}
+}
+
 // TestFindJoinsAContinuationInEveryWrapPositionAndCarrierDialect pins the join
 // that lets a citation wrapped across two comment lines be read as one
 // citation. The three wrap positions are a wrap between the reference and the
@@ -2046,7 +2109,9 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 
 // citationResolver builds the resolver over the fixture specification tree,
 // whose sections are §4 (lines 1 through 19), §4.1 (5 through 12), §4.2 (13
-// through 19), §4.2.1 (17 through 19), §7, §7.1, and §7.2.
+// through 19), §4.2.1 (17 through 19), §7, §7.1, §7.2, and, in a file carrying
+// two top-level headings, §25.1 (1 through 8), §25.1.1 (5 through 8), and §25.2
+// (9 through 11).
 func citationResolver(t *testing.T) *citation.Resolver {
 	t.Helper()
 	r, err := citation.NewResolver(context.Background(),
@@ -2109,6 +2174,7 @@ func TestResolveReportsEveryFailureClassDistinctly(t *testing.T) {
 		{"resolve/multi-member-one-outside.txt", []citation.FailureKind{citation.OutsideSection}},
 		{"resolve/straddling.txt", []citation.FailureKind{citation.StraddlingRange}},
 		{"resolve/path-straddling.txt", []citation.FailureKind{citation.StraddlingRange}},
+		{"resolve/path-preamble-into-subsection.txt", nil},
 		{"resolve/unknown-section.txt", []citation.FailureKind{citation.UnknownSection}},
 		{"resolve/path-unknown-file.txt", []citation.FailureKind{citation.UnknownFile}},
 		{"resolve/path-outside-any-section.txt", []citation.FailureKind{citation.OutsideSection}},
@@ -2158,6 +2224,33 @@ func TestResolveResolvesThePathFormAgainstTheContainingSection(t *testing.T) {
 	number := oneCitation(t, "resolve/inside.txt")
 	if f := r.Resolve(number); len(f) != 0 {
 		t.Errorf("the section-number form for the same line did not resolve: %v", f)
+	}
+}
+
+// TestResolvePathRangeStraddlesOnlyWhenNoSectionContainsBothEndpoints pins the
+// straddling rule for the path form. A range that runs from a section's
+// preamble into one of its own subsections lies inside the section that
+// contains it, so it resolves, and the same range written in the section-number
+// spelling resolves too. A range whose endpoints fall in two sibling sections
+// has no containing section, so it is reported as a straddle, which is the
+// citation the pass fails rather than guessing an anchor for. Reporting the
+// first as a straddle would send a citation with nothing to correct into the
+// hand-correction list and hold its file above a zero count.
+func TestResolvePathRangeStraddlesOnlyWhenNoSectionContainsBothEndpoints(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	inner := oneCitation(t, "resolve/path-preamble-into-subsection.txt")
+	if f := r.Resolve(inner); len(f) != 0 {
+		t.Errorf("a range from a section's preamble into its own subsection reported %v", f)
+	}
+	parent, ok := r.Section("25.1")
+	if !ok || !parent.Contains(inner.Members[0].Start) || !parent.Contains(inner.Members[0].End) {
+		t.Fatalf("the fixture range %v does not sit inside §25.1 (%v)", inner.Members, parent)
+	}
+	crossing := oneCitation(t, "resolve/path-straddling.txt")
+	f := r.Resolve(crossing)
+	if len(f) != 1 || f[0].Kind != citation.StraddlingRange {
+		t.Errorf("a range crossing into a sibling section reported %v, want one straddling range", f)
 	}
 }
 

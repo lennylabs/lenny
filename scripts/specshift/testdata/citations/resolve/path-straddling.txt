@@ -1,1 +1,1 @@
-// spec: spec/04_example.md lines 15-19
+// spec: spec/25_example-operability.md lines 7-11

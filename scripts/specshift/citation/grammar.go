@@ -16,7 +16,8 @@ const (
 	headSection   = 1
 	headFile      = 2
 	headQualifier = 3
-	headMember    = 5
+	headParen     = 4
+	headMember    = 6
 )
 
 // headExpr matches the head of a citation: the reference, the optional
@@ -32,9 +33,18 @@ var headExpr = regexp.MustCompile(
 	// or by file path with the spec/ prefix optional.
 	`(?:§[ \t]*(\d+(?:\.\d+)*)|(?:spec/)?(\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md))` +
 		// The optional short qualifier naming a sub-element of the section.
-		`(?:[ \t]+([A-Za-z]+[ \t]+[0-9A-Za-z]+|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
+		// A qualifier of three words is spelled in words alone, because a
+		// numbered third token belongs to a member list rather than to a
+		// sub-element name: `line 315 and line 321` is two members.
+		`(?:[ \t]+([A-Za-z]+[ \t]+[0-9A-Za-z]+|[A-Za-z]+(?:[ \t]+[A-Za-z]+){2}|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
 		// The keyword, or the colon written directly against the reference.
-		`(?::[ \t]*|[ \t]+(lines?)[ \t]+)` +
+		// The keyword may open a parenthesis of the carrier's own, with or
+		// without the word `spec` behind it, so a citation written as
+		// `§10.3 NET-063 (spec line 327)` is read whole. A matcher requiring
+		// the keyword to follow the reference or the qualifier immediately
+		// leaves that spelling unconverted, unread by the resolver, and
+		// uncounted by the ratchet.
+		`(?::[ \t]*|(?:[ \t]+|[ \t]*(\()[ \t]*(?:spec[ \t]+)?)(lines?)[ \t]+)` +
 		// The first member.
 		`([0-9]+(?:[ \t]*[-\x{2013}\x{2014}][ \t]*[0-9]+)?)`,
 )

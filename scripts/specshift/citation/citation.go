@@ -163,8 +163,19 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 	}
 	c.Members = []Member{first}
 	end := consumeMembers(joined, loc[1], &c.Members)
+	end = closeParen(joined, end, group(joined, loc, headParen) != "")
 	c.Text = joined[loc[0]:end]
 	return c, end, true
+}
+
+// closeParen consumes the parenthesis a head that opened one closes with, so
+// the citation text of the parenthetical spelling is balanced and the pass
+// rewrites the whole of it.
+func closeParen(joined string, end int, opened bool) int {
+	if opened && end < len(joined) && joined[end] == ')' {
+		return end + 1
+	}
+	return end
 }
 
 // consumeMembers extends the member list from pos over every gloss and every
@@ -174,6 +185,15 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // as the separator it is rather than as the first word of a bare gloss. A
 // separator that is not followed by a member is left unconsumed, so a citation
 // followed by ordinary prose ends at its last member.
+//
+// A member's gloss is a run of segments rather than a single one, because a
+// spelling such as `line 408 step (e) (replay workspace checkpoint) + line 409`
+// writes a bare word and a parenthesized phrase against the same member. A gloss
+// that ended the citation at its first segment would drop every member after
+// it, which is the head-matching failure the whole-citation rule exists to
+// prevent: the resolver would not read the dropped members, the ratchet would
+// not count them, and the rewritten carrier would read as an anchor followed by
+// orphan integers.
 func consumeMembers(joined string, pos int, members *[]Member) int {
 	end := pos
 	glossed := false
@@ -187,15 +207,44 @@ func consumeMembers(joined string, pos int, members *[]Member) int {
 		if glossed {
 			return end
 		}
-		g := glossExpr.FindString(joined[end:])
-		if g == "" {
+		next, gloss, ok := glossRun(joined, end)
+		if !ok {
 			return end
 		}
 		last := &(*members)[len(*members)-1]
-		last.Gloss = strings.TrimSpace(g)
-		end += len(g)
+		last.Gloss = gloss
+		end = next
 		glossed = true
 	}
+}
+
+// maxGlossSegments bounds the run of gloss segments one member carries. The
+// gloss the form admits is short, so the run is bounded, and a segment past the
+// first is kept only when a further member follows the run. Prose written after
+// a glossed citation therefore stays outside the citation, while a gloss
+// written ahead of a continuation member does not terminate its member.
+const maxGlossSegments = 3
+
+// glossRun consumes one member's gloss and returns the end of it together with
+// the gloss text.
+func glossRun(joined string, pos int) (int, string, bool) {
+	first := glossExpr.FindString(joined[pos:])
+	if first == "" {
+		return pos, "", false
+	}
+	end := pos + len(first)
+	at := end
+	for i := 1; i < maxGlossSegments; i++ {
+		more := glossExpr.FindString(joined[at:])
+		if more == "" {
+			break
+		}
+		at += len(more)
+		if _, _, ok := nextMember(joined, at); ok {
+			end = at
+		}
+	}
+	return end, strings.TrimSpace(joined[pos:end]), true
 }
 
 // nextMember consumes one separator, an optional repeat of the keyword, and one

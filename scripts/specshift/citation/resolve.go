@@ -276,7 +276,7 @@ func (r *Resolver) resolvePath(c Citation) []Failure {
 				Member: m,
 				Detail: fmt.Sprintf("falls in no section of %s", c.File),
 			})
-		case start.Number != end.Number:
+		case !containsBoth(sections, m):
 			out = append(out, Failure{
 				Kind:   StraddlingRange,
 				Member: m,
@@ -285,6 +285,22 @@ func (r *Resolver) resolvePath(c Citation) []Failure {
 		}
 	}
 	return out
+}
+
+// containsBoth reports whether one section of the file contains both endpoints
+// of the member. A range that runs from a section's preamble into one of its
+// own subsections lies inside the containing section, so it resolves rather
+// than straddling: a section's range covers its subsections, and the same range
+// written in the section-number spelling resolves against the parent. Reporting
+// it as a straddle would send a citation with nothing to correct into the
+// hand-correction list and hold its file above a zero count.
+func containsBoth(sections []Section, m Member) bool {
+	for _, s := range sections {
+		if s.Contains(m.Start) && s.Contains(m.End) {
+			return true
+		}
+	}
+	return false
 }
 
 // deepest returns the most specific section of a file containing the line,
