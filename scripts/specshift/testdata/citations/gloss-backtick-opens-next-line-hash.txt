@@ -1,0 +1,2 @@
+# spec: §6.1 line 63
+# `circuitBreakerOverride: disabled` override

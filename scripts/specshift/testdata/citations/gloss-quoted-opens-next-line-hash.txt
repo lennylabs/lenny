@@ -1,0 +1,2 @@
+# spec: §4.2 line 185
+# "auth_failure" audit event emitted by the middleware

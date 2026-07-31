@@ -79,10 +79,14 @@ type Resolver struct {
 }
 
 // headingExpr matches the headings a section's range is computed from, which
-// are the `##` through `######` headings under spec/, together with a
-// level-one heading, which is read for the whole-file case parseSections
-// states.
-var headingExpr = regexp.MustCompile(`^(#{1,6})[ \t]+(.*)$`)
+// are the `##` through `######` headings under spec/. That predicate is shared
+// by the resolver, the per-file ratchet, and every population the migration
+// measures, so a heading level admitted here that the measurements do not admit
+// would resolve citations the seeded baselines count as non-resolving. A
+// level-one title declares no section: a citation naming a number only a
+// level-one heading carries is reported as an unknown section, and a line under
+// such a title falls in no section.
+var headingExpr = regexp.MustCompile(`^(#{2,6})[ \t]+(.*)$`)
 
 // fenceExpr matches the opening or closing line of a fenced code block. A line
 // opening with hashes inside a fence is a comment in an example rather than a
@@ -156,18 +160,11 @@ func isSpecFile(path string) bool {
 // closes deeper headings without declaring a section, which is how an
 // unnumbered sub-heading inside a numbered section is read.
 //
-// A numbered level-one heading declares the whole-file section its number
-// names, unless a `##` through `######` heading in the same file declares the
-// same number. One specification file states its numbered title at level one
-// while every sibling states it at level two, and the two layouts describe the
-// same document: the title names the section the file covers and the headings
-// under it name its subsections. Leaving the level-one form out of the index
-// reports every correct section-level citation into that file as naming a
-// heading the specification does not carry, which is a report where a
-// resolution is owed and makes a stale pointer into that section
-// indistinguishable from a live one. The exclusion when a deeper heading
-// declares the same number keeps a file that states its number at both levels
-// from declaring the section twice.
+// The walk reads the headings headingExpr admits, which begin at level two, so
+// a numbered level-one title declares no section. A file that states its number
+// only at level one therefore carries no section of that number: a citation
+// naming it is reported as an unknown section, and a line under the title falls
+// in no section of the file.
 func parseSections(path, content string) []Section {
 	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	type heading struct {
@@ -195,18 +192,9 @@ func parseSections(path, content string) []Section {
 		}
 		headings = append(headings, h)
 	}
-	nested := map[string]bool{}
-	for _, h := range headings {
-		if h.level > 1 && h.number != "" {
-			nested[h.number] = true
-		}
-	}
 	var out []Section
 	for i, h := range headings {
 		if h.number == "" {
-			continue
-		}
-		if h.level == 1 && nested[h.number] {
 			continue
 		}
 		end := len(lines)

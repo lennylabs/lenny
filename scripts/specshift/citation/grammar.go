@@ -44,20 +44,28 @@ const sp = "[ \t\x1f]"
 // words. In the # dialect that removal also stops the following text being a
 // comment.
 //
-// glossDelimSp is the whitespace class a delimited gloss admits ahead of its
-// opening delimiter, which additionally admits the byte a consumed continuation
-// left behind. A delimited gloss is bounded by the delimiter that closes it, so
-// a wrap between the member and the gloss, or between the gloss's opening and
-// closing delimiters, is the same wrap inside a member list the form already
-// carries. Refusing it there ends the member list at the wrapped member and
-// drops every member written behind the wrap, which is the head-matching
-// failure the whole-citation rule exists to prevent: the resolver does not read
-// the dropped members, the ratchet does not count them, and the rewritten
-// carrier reads as an anchor followed by orphan integers while its file reaches
-// a zero count.
+// glossOpenSp is the whitespace class every gloss admits ahead of its opening
+// delimiter, which is the same class the bare-word alternative admits and
+// excludes the join byte for the same reason. A delimited gloss whose opening
+// delimiter sat behind a consumed continuation would take the whole of the
+// following comment line whenever that line opens with a parenthesis, a quote,
+// or a backtick, even though nothing of the citation was wrapped, so the
+// citation text a register is keyed by would carry a sentence's own code span
+// or parenthetical and the anchor the pass writes in its place would delete the
+// newline, the carrier's comment marker, and that fragment. A gloss therefore
+// opens on the line its member sits on.
+//
+// A delimited gloss is bounded by the delimiter that closes it, so its body
+// still admits the join byte and a gloss opened on its member's line closes on
+// the continuation line the join folded in. Refusing it there would end the
+// member list at the wrapped member and drop every member written behind the
+// wrap, which is the head-matching failure the whole-citation rule exists to
+// prevent: the resolver does not read the dropped members, the ratchet does not
+// count them, and the rewritten carrier reads as an anchor followed by orphan
+// integers while its file reaches a zero count.
 const (
-	glossWordSp  = "[ \t]"
-	glossDelimSp = sp
+	glossWordSp = "[ \t]"
+	glossOpenSp = glossWordSp
 )
 
 // render returns text with every consumed continuation shown as the space it
@@ -195,12 +203,12 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // not count them, and the rewritten carrier reads as an anchor followed by
 // orphan integers.
 //
-// A delimited alternative admits the join byte ahead of its opening delimiter
-// and inside its body, so a gloss that opens on its member's line closes on the
-// continuation line the join folded into it and the separator and member
-// written behind the closing delimiter are consumed as members. The bare-word
-// alternative admits glossWordSp alone, because a word run closes on nothing
-// and would otherwise take the opening words of the following comment line.
+// A delimited alternative admits the join byte inside its body but not ahead of
+// its opening delimiter, so a gloss opens on its member's line, closes on the
+// continuation line the join folded into it, and the separator and member
+// written behind the closing delimiter are consumed as members. Neither
+// alternative reads a delimited fragment that opens the following comment line,
+// which is a sentence's own code span or parenthetical rather than a gloss.
 //
 // A quoted alternative also requires whitespace ahead of its opening quote,
 // because a quote written directly against a member's last digit is the closing
@@ -208,11 +216,11 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 // neither opens a gloss.
 var glossExpr = regexp.MustCompile(
 	"^(?:" +
-		glossDelimSp + `*\(` + glossBody + `*\)` +
-		`|` + glossDelimSp + `+"[^"\n]*"` +
-		`|` + glossDelimSp + `+'[^'\n]*'` +
-		"|" + glossDelimSp + "+`[^`\n]*`" +
-		`|` + glossWordSp + `+` + glossWord + `(?:` + glossWordSp + `+` + glossWord + `)?(?:` + glossDelimSp + `*\(` + glossBody + `*\))?` +
+		glossOpenSp + `*\(` + glossBody + `*\)` +
+		`|` + glossOpenSp + `+"[^"\n]*"` +
+		`|` + glossOpenSp + `+'[^'\n]*'` +
+		"|" + glossOpenSp + "+`[^`\n]*`" +
+		`|` + glossWordSp + `+` + glossWord + `(?:` + glossWordSp + `+` + glossWord + `)?(?:` + glossOpenSp + `*\(` + glossBody + `*\))?` +
 		")",
 )
 
@@ -240,42 +248,23 @@ const (
 // the resolver does not resolve it, the ratchet does not count it, and the file
 // reaches a zero count while a stale pointer survives.
 //
-// The form is carried outside every comment dialect as well, so a marker is not
-// required. A CRD `description:` block scalar, a Helm `{{- /* ... */}}` block
-// comment whose interior lines carry no leading `*`, markdown prose, and a YAML
-// value all wrap a citation with nothing but indentation on the continuation
-// line. Requiring a marker there leaves the wrapped citation unread by the
-// matcher, unresolved by the resolver, and uncounted by the ratchet, which is
-// the same failure the join exists to prevent. The markerless alternative is
-// therefore admitted when what follows the wrap opens the rest of the form,
-// which is the keyword or a member; the token that qualifies it is left
-// unconsumed, so only the newline and the whitespace around it are collapsed.
-// Bounding it that way keeps an ordinary line break from joining two unrelated
-// lines, and the form behind the join still requires the keyword or the colon,
-// so a wrap the alternative admits is only ever read as a citation when a
-// reference stands ahead of it.
+// A marker is required. A wrap the join crosses is a wrap inside one comment,
+// and the marker is what identifies the second line as the continuation of that
+// comment. A join that crossed a bare line break would fold two unrelated lines
+// of a carrier together, so a reference ending one line and a number opening the
+// next would read as one citation the author did not write, and the wrapped
+// population the resolver baseline and the per-file ratchet baseline are seeded
+// from is measured under this rule.
 const (
 	continuationLead    = `[ \t]*\r?\n[ \t]*`
 	continuationMarkers = `/{2,}|#+|--|\*`
-	continuationOpeners = `lines?\b|[0-9]`
 )
 
-// continuationExpr carries the span it consumes in a submatch rather than in
-// the whole match, because the markerless alternative reads the token behind the
-// wrap to qualify it and that token belongs to the citation.
+// continuationExpr matches one continuation: the newline, the carrier's comment
+// marker, and the whitespace on either side of it.
 var continuationExpr = regexp.MustCompile(
-	`(` + continuationLead + `(?:` + continuationMarkers + `)[ \t]*)` +
-		`|(` + continuationLead + `)(?:` + continuationOpeners + `)`,
+	continuationLead + `(?:` + continuationMarkers + `)[ \t]*`,
 )
-
-// continuationSpan returns the source range one continuation match consumes,
-// which is whichever of the expression's two alternatives matched.
-func continuationSpan(m []int) (int, int) {
-	if m[2] >= 0 {
-		return m[2], m[3]
-	}
-	return m[4], m[5]
-}
 
 // join collapses every continuation into a single joinByte and returns the
 // joined text together with the source offset of each of its bytes. The offset
@@ -298,8 +287,8 @@ func join(content string) (string, []int) {
 		}
 	}
 	last := 0
-	for _, m := range continuationExpr.FindAllStringSubmatchIndex(content, -1) {
-		start, end := continuationSpan(m)
+	for _, m := range continuationExpr.FindAllStringIndex(content, -1) {
+		start, end := m[0], m[1]
 		copyRun(last, start)
 		joined = append(joined, joinByte)
 		offsets = append(offsets, start)
