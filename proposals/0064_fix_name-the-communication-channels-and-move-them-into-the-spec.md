@@ -5,16 +5,13 @@
   sub-step that was part of this proposal now lives there, for the sequencing reason §3.5 states. Applying
   this proposal against a tree without `scripts/specshift` and the registers means hand-editing the sites
   this document deliberately does not enumerate, which is how both earlier application attempts failed.
-- **Status:** **Approved (2026-07-30) by jaf sign-off, pending the prerequisite above.** The approval
-  covers the design and the staged specification changes, which the split did not alter; it does not
-  authorize application before 0065 lands. Verified (2026-07-29), converged after 15
-  adversarial review rounds (36 findings fixed) across 3 full-pool sweeps, the certifying sweep running
-  every lens complete with zero confirmed findings. The decisions the earlier sign-off ratified are unchanged and still stand as
-  staged: the tooling ships in this proposal rather than as its own; the wire-contract rename is in scope
-  now, accepting that it breaks the runtime author contract, because deferring it costs more with every
-  later step that lands first; and `spec/29` is a separate file from `spec/28`. The §28 and §29 line
-  budgets the plan states are sizing indicators and are left as written. The convergence record below
-  lists every pass and the findings it fixed.
+- **Status:** **Verified (2026-07-30). Converged after 10 adversarial review rounds (16 findings
+  fixed); awaiting sign-off.** Sign-off does not authorize application before 0065 lands, which the
+  prerequisite above states. The following decisions stand as staged: the wire-contract rename is in
+  scope now, accepting that it breaks the runtime author contract, because deferring it costs more with
+  every later step that lands first; and `spec/29` is a separate file from `spec/28`. The §28 and §29
+  line budgets the plan states are sizing indicators and are left as written. The convergence record
+  below lists every pass and the findings it fixed.
 - **Date:** 2026-07-27.
 - **Scope:** The first three steps of `gateway-runtime-comms-remediation.md`, which are the foundation
   every later remediation step depends on. The plan's tooling step was originally included here and is now
