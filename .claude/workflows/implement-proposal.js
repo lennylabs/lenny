@@ -64,7 +64,8 @@ const SPEC_RULES =
   "- The spec cross-references other spec content by section number only: §X.Y or a relative markdown link to a section anchor. Replace a line-number cross-reference in staged text with the containing section's number.\n" +
   "- Line numbers in the proposal's ANCHOR INSTRUCTIONS are location hints for you and never become spec content. Locate anchors by the quoted text and section headings; line numbers drift.\n" +
   "- A staged edit that introduces a brand-new section or subsection is appended at the end of its level, after the last existing sibling at that level, and numbered as the next ordinal. Never insert a new section or subsection between existing ones: inserting in the middle forces every following section to be renumbered and breaks existing cross-references. When a staged anchor instruction would place a new section or subsection between existing ones, append it at the end of that level instead, renumber it to the next ordinal, and record the deviation. Editing the body of an existing section in place is unaffected by this rule; it applies only to introducing a new numbered section or subsection.\n" +
-  "- Apply staged prose as written otherwise; do not restyle it.";
+  "- Apply staged prose as written otherwise; do not restyle it.\n" +
+  "- These rules govern text you author from a staged block. For a mechanical edit you do not author the text: if the script's output violates one of them, that is a defect in the script or its register, so record it as a deviation and stop, rather than hand-correcting the output, which would put the tree and the register out of step.";
 
 const PLAN = {
   type: "object",
@@ -77,12 +78,26 @@ const PLAN = {
       type: "array",
       items: {
         type: "object",
-        required: ["id", "targetFile", "subsection", "summary"],
+        required: ["id", "targetFile", "subsection", "summary", "method"],
         properties: {
           id: { type: "string" },
           targetFile: { type: "string", description: "Path under spec/, relative to the repo root" },
           subsection: { type: "string", description: "The proposal subsection heading that stages this edit" },
           summary: { type: "string" },
+          method: {
+            type: "string",
+            enum: ["authored", "mechanical"],
+            description:
+              "authored: the proposal stages the literal text to write, and an agent applies it. " +
+              "mechanical: the proposal stages a script run over a register and enumerates no edit " +
+              "sites, so the script applies it and an agent must not reproduce its effect by hand.",
+          },
+          command: {
+            type: "string",
+            description:
+              "For method mechanical only: the exact command the proposal states, including its " +
+              "dry-run form when it has one. Empty for authored edits.",
+          },
         },
       },
     },
@@ -184,7 +199,7 @@ const plan = await agent(
     proposal +
     ' in full and extract its staged changes and the findings that reference it.\n\nYou are a read-only investigator; do not edit any file. Work in ' +
     repo +
-    '.\n\nReturn:\n- approved: true when the Status bullet begins "Approved" (approved for implementation).\n- alreadyApplied: true when the Status bullet begins "Applied to spec" (the spec edits were already landed by a prior run). A "Draft" or "Verified" status is neither.\n- statusLine: the Status bullet verbatim.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
+    '.\n\nReturn:\n- approved: true when the Status bullet begins "Approved" (approved for implementation).\n- alreadyApplied: true when the Status bullet begins "Applied to spec" (the spec edits were already landed by a prior run). A "Draft" or "Verified" status is neither.\n- statusLine: the Status bullet verbatim.\n- specEdits: one entry per staged change whose target file is under spec/, from the "Proposed spec changes" section: id (the subsection number, e.g. "7.1"), targetFile (the spec/ path), subsection (the heading), summary. A subsection targeting multiple spec files becomes one entry per file. Classify each entry's method. Use "mechanical" when the proposal stages the edit as a run of a script, pass, or generator over a register or map rather than as literal text to write, which a proposal signals by enumerating no edit sites, by naming a command, or by stating that completeness is proven by a gate rather than by review; put the exact command in command, including its dry-run form when the proposal states one. Use "authored" when the proposal stages the literal text together with an anchor for it. When one subsection stages both, split it into one mechanical entry and one authored entry. Defaulting to "authored" for an edit the proposal means a script to make is a defect: it sets an agent guessing at sites the proposal deliberately does not list.\n- nonSpecStaged: one entry per staged change whose target is outside spec/ (code, charts, docs, schemas). These are implemented in the code phase or reported, never hand-applied here.\n- findingIds: every OPEN finding in BUILD-GAPS.md whose body references this proposal by path or number (the file is large; grep for the proposal number and filename). Empty array if none.',
   { schema: PLAN, label: "plan", phase: "Plan" },
 );
 
@@ -292,7 +307,9 @@ if (plan.specEdits.length === 0) {
               " (read the whole 'Proposed spec changes' section first for context).\n" +
               "Edits to apply to this file, in order:\n" +
               JSON.stringify(edits, null, 2) +
-              "\n\nFor each edit: read the proposal subsection, locate the anchor in the target file by its quoted text and section heading, and apply the staged text exactly as written (fenced blocks verbatim; replacement instructions replace exactly the text they name). " +
+              "\n\nEdits carry a method and are handled differently.\n" +
+              "AUTHORED edits: read the proposal subsection, locate the anchor in the target file by its quoted text and section heading, and apply the staged text exactly as written (fenced blocks verbatim; replacement instructions replace exactly the text they name).\n" +
+              "MECHANICAL edits: the proposal stages a script run rather than text, and deliberately enumerates no edit sites. Run the command the edit names. Do NOT hand-apply, hand-reproduce, or hand-correct what the script would write: the script resolves each site from a register and fails closed on a site the register does not carry, and hand-editing substitutes a guess for that guarantee, which is the failure this branch exists to prevent. Before applying, run the command's dry-run form when it has one, read its output, and confirm it touches only files this sub-step targets; then apply, and confirm the applied diff for this file matches what the dry run predicted. If the script exits non-zero, or the applied diff does not match the dry run, or the command is absent from the tree, record the edit as unappliable with that reason and STOP; never fall back to editing by hand.\n" +
               SPEC_RULES +
               "\n\nIf an anchor cannot be located with certainty, STOP: record that edit as unappliable with the reason, apply NOTHING FURTHER in this file, and return what you applied up to that point. Never guess a location, and never skip an edit in order to continue with the ones after it. Skipping leaves a file in which a later discrepancy cannot be told apart from an edit that never ran, and that is the state the verification loop cannot converge out of; a clean stop at the first unappliable edit is diagnosable, a partially applied file is not. Return the applied edit ids, the unappliable edits, and every rule-forced deviation.",
             { schema: APPLY_RESULT, label: "apply:" + ss + ":" + f.split("/").pop(), phase: "Apply spec" },
@@ -355,6 +372,7 @@ if (plan.specEdits.length === 0) {
       f +
       "` to see exactly what changed against the clean baseline. Verify all of:\n" +
       "1. Every staged block appears at its anchored location, character-exact (modulo the recorded deviations below).\n" +
+    "   This check applies to AUTHORED edits only. A MECHANICAL edit stages no block and no anchor, because the proposal stages it as a script run over a register and enumerates no edit sites. For one of those, verify instead that the command ran, that the diff contains only sites the edit's register carries, and that the gate the sub-step names as its exit criterion is green. A mechanical edit whose diff is empty is a failure rather than a pass, since the pass either did not run or matched nothing.\n" +
       "2. Text the proposal replaces or removes is gone, and nothing it keeps was altered.\n" +
       "3. The diff for this file contains nothing beyond the staged edits: no stray edits, no duplicate insertions, no truncated surroundings.\n" +
       "4. Every cross-reference the applied text adds resolves: a §X.Y number names an existing section, and a relative markdown link's anchor exists in its target file.\n" +
