@@ -3,17 +3,24 @@
 package verdictstatus_test
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
-// spec: TESTING.md §7 (verdict document: the `verdict` field and the
-// per-tier `status` field value sets).
-//
-// TierStatuses and Verdicts are what a documentation-reconciliation
-// test ranges over, so a value that exists as a constant but is missing
-// from its slice would let a documented enum sentence drop it silently.
+// The verdict document's `verdict` field and per-tier `status` field
+// value sets are owned by TESTING.md §7. These cases carry no spec
+// annotation: the harness attributes an annotated failure to a numbered
+// section under spec/, and this package implements test infrastructure
+// rather than a spec behavior.
+
+// TestTierStatusSetCoversEveryConstant pins TierStatuses to the
+// declared constants. A documentation-reconciliation test ranges over
+// the slice, so a value that exists as a constant but is missing from
+// its slice would let a documented enum sentence drop it silently.
 func TestTierStatusSetCoversEveryConstant(t *testing.T) {
 	want := map[string]bool{
 		verdictstatus.Pass:         false,
@@ -45,7 +52,8 @@ func TestTierStatusSetCoversEveryConstant(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §7 (verdict document: the `verdict` field value set).
+// TestVerdictSetCoversEveryConstant pins Verdicts to the declared
+// verdict constants.
 func TestVerdictSetCoversEveryConstant(t *testing.T) {
 	want := map[string]bool{
 		verdictstatus.VerdictPass:         false,
@@ -75,12 +83,9 @@ func TestVerdictSetCoversEveryConstant(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §7 (verdict document: serialized values of the
-// `verdict` and per-tier `status` fields).
-//
-// The constants are wire values a CI consumer parses out of
-// tests/results/latest.json, so their spelling is part of the contract
-// and cannot change with a rename.
+// TestSerializedValues pins the wire spelling of each constant. A CI
+// consumer parses these out of tests/results/latest.json, so the
+// spelling is part of the contract and cannot change with a rename.
 func TestSerializedValues(t *testing.T) {
 	cases := []struct {
 		name string
@@ -105,12 +110,10 @@ func TestSerializedValues(t *testing.T) {
 	}
 }
 
-// spec: TESTING.md §7 (verdict document: the two value sets are
-// distinct enums).
-//
-// A tier status and a verdict must never collide: the verdict values
-// are upper-case and the tier statuses lower-case, and a consumer that
-// switches on one must not match a value from the other.
+// TestVerdictAndTierStatusSetsAreDisjoint keeps the two enums distinct.
+// The verdict values are upper-case and the tier statuses lower-case,
+// and a consumer that switches on one must not match a value from the
+// other.
 func TestVerdictAndTierStatusSetsAreDisjoint(t *testing.T) {
 	tiers := map[string]bool{}
 	for _, s := range verdictstatus.TierStatuses() {
@@ -120,5 +123,45 @@ func TestVerdictAndTierStatusSetsAreDisjoint(t *testing.T) {
 		if tiers[v] {
 			t.Errorf("%q is both a verdict and a tier status", v)
 		}
+	}
+}
+
+// TestNoSpecAnnotationInPackage keeps this package free of the harness
+// spec annotation. The harness scans the failing test's own package
+// directory for that marker and reduces whatever follows it to a bare
+// section number, so an annotation naming TESTING.md §7 here would be
+// recorded as a result for spec section 7, which is the session
+// lifecycle and defines no verdict schema. TESTING.md owns this schema,
+// and the harness has no annotation form that points at it.
+func TestNoSpecAnnotationInPackage(t *testing.T) {
+	// Built by concatenation so this file does not trip its own check.
+	marker := "spec" + ":"
+
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatalf("read package directory: %v", err)
+	}
+	scanned := 0
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".go" {
+			continue
+		}
+		body, err := os.ReadFile(e.Name())
+		if err != nil {
+			t.Fatalf("read %s: %v", e.Name(), err)
+		}
+		scanned++
+		for i, line := range strings.Split(string(body), "\n") {
+			rest, ok := strings.CutPrefix(strings.TrimSpace(line), "//")
+			if !ok {
+				continue
+			}
+			if strings.HasPrefix(strings.TrimSpace(rest), marker) {
+				t.Errorf("%s:%d carries a harness spec annotation; the verdict schema is owned by TESTING.md and an annotation here is attributed to a spec section instead", e.Name(), i+1)
+			}
+		}
+	}
+	if scanned == 0 {
+		t.Fatal("scanned no Go files; the check would pass vacuously")
 	}
 }

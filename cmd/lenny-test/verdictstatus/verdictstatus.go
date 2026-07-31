@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: MIT
 
 // Package verdictstatus holds the verdict-level and per-tier status
-// values of the lenny-test verdict document (§7). The values live in
-// their own importable package because `cmd/lenny-test` is a main
-// package: a documentation-reconciliation test cannot import a main
-// package, so a test that holds TESTING.md's enum sentences to the
-// values the harness actually emits would otherwise have to restate
-// them and drift.
+// values of the lenny-test verdict document, whose schema is owned by
+// TESTING.md §7. The values live in their own importable package
+// because `cmd/lenny-test` is a main package: a documentation-
+// reconciliation test cannot import a main package, so a test that
+// holds TESTING.md's enum sentences to the values the harness actually
+// emits would otherwise have to restate them and drift.
 //
 // Every tierStat.Status field carries one of the tier statuses, and the
 // verdict field carries one of the verdicts.
+//
+// Nothing in this package carries a spec annotation. The harness
+// reduces such an annotation to a bare section number and would credit
+// the resulting failure to spec/07_session-lifecycle.md, which defines
+// no verdict schema; the verdict document belongs to TESTING.md §7.
 package verdictstatus
 
 // Tier statuses. These are the values serialized into
-// `tiers.<name>.status` in the verdict document (§7).
+// `tiers.<name>.status` in the verdict document (TESTING.md §7).
 const (
 	// Pass reports that the tier ran and every selected test passed.
 	Pass = "pass"
@@ -33,7 +38,7 @@ const (
 )
 
 // Verdicts. These are the values serialized into the top-level
-// `verdict` field of the verdict document (§7).
+// `verdict` field of the verdict document (TESTING.md §7).
 const (
 	// VerdictPass reports that every tier that ran passed.
 	VerdictPass = "PASS"
@@ -47,15 +52,16 @@ const (
 	VerdictUnverified = "UNVERIFIED"
 )
 
-// TierStatuses returns every tier-status value, in the order the
-// TESTING.md §7 enum sentence lists them. A consumer that must cover
-// the whole set ranges over this rather than restating the values.
+// TierStatuses returns every declared tier-status value exactly once. A
+// consumer that must cover the whole set ranges over this rather than
+// restating the values. The order of the returned values is not part of
+// the contract.
 func TierStatuses() []string {
 	return []string{Pass, Fail, Skipped, Inconclusive, NotSelected, Unverified}
 }
 
-// Verdicts returns every verdict value, in the order the TESTING.md §7
-// enum sentence lists them.
+// Verdicts returns every declared verdict value exactly once. The order
+// of the returned values is not part of the contract.
 func Verdicts() []string {
 	return []string{VerdictPass, VerdictFail, VerdictInconclusive, VerdictUnverified}
 }
