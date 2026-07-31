@@ -1,0 +1,3 @@
+// Two citations of the retired form, in one file.
+// spec: §4.1 line 7
+// spec: §4.2 line 15

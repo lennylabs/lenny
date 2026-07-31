@@ -139,16 +139,25 @@ func TestSpecCitationResolutionCertifiesTheTree(t *testing.T) {
 			len(rep.Failures), gate.ResolutionBaselinePath,
 			strings.Join(failureTexts(rep), "\n  "))
 	}
-	// A baseline load that degraded to exempting everything, or a walk
-	// that read a fraction of the tree, both report zero failures. The
-	// counts are asserted so neither reads as a clean tree.
-	if rep.Files == 0 || rep.Citations == 0 || rep.Baselined == 0 {
-		t.Errorf("the resolver inspected %d file(s), read %d citation(s), and matched %d baseline entry(ies); "+
-			"a zero in any of these is a run that certified content it did not read",
-			rep.Files, rep.Citations, rep.Baselined)
+	// A walk that read a fraction of the tree reports zero failures, so
+	// the file count is asserted rather than taken as a clean tree. The
+	// citation count and the baseline count are not asserted to be
+	// non-zero: both reach zero when every citation of the retired form
+	// has been rewritten and the baseline has emptied, which is the end
+	// state the migration drives toward rather than a defect.
+	if rep.Files == 0 {
+		t.Errorf("the resolver inspected no file; a report of no failure over an unread tree certifies nothing")
 	}
-	t.Logf("%d file(s) in the read domain, %d citation(s) read, %d non-resolving, %d carried by the baseline, %d entry(ies) retired",
-		rep.Files, rep.Citations, rep.NonResolving, rep.Baselined, len(rep.Retired))
+	// Every entry the baseline carried is accounted for by the run, either
+	// matched by a citation still in the tree or retired. The identity
+	// holds at zero, so it also holds once the population empties.
+	if rep.Matched+len(rep.Retired) != rep.Carried {
+		t.Errorf("the baseline carried %d entry(ies), of which %d matched a citation and %d were retired; "+
+			"the run accounted for a different number than it loaded",
+			rep.Carried, rep.Matched, len(rep.Retired))
+	}
+	t.Logf("%d file(s) in the read domain, %d citation(s) read, %d non-resolving, %d occurrence(s) covered by %d carried entry(ies), %d matched, %d entry(ies) retired",
+		rep.Files, rep.Citations, rep.NonResolving, rep.Baselined, rep.Carried, rep.Matched, len(rep.Retired))
 }
 
 // spec: §28.1 (N8, the citation rule: a citation that points inside the
@@ -165,6 +174,30 @@ func TestSpecCitationResolutionAcceptsAResolvingCitation(t *testing.T) {
 	}
 	if len(rep.Failures) != 0 {
 		t.Errorf("a citation inside the section it names was reported: %s", strings.Join(failureTexts(rep), "; "))
+	}
+}
+
+// spec: §28.1 (N8, the citation rule: once every citation of the retired
+// form is gone the population is empty, which is the state the migration
+// reaches rather than a failure)
+func TestSpecCitationResolutionAcceptsAnEmptiedPopulation(t *testing.T) {
+	t.Parallel()
+	// The tree holds the specification fixture and a carrier that writes
+	// no citation, so the walk selects files while the read finds none.
+	tr := newResolutionTree(t, "04_example.md")
+	tr.carrier("pkg/carrier/carrier.go", "no-citation.txt")
+	tr.baseline("empty.yaml")
+
+	rep := tr.runOK()
+	if rep.Files == 0 {
+		t.Fatalf("the walk selected no file, so the case does not exercise an emptied population")
+	}
+	if rep.Citations != 0 || rep.Carried != 0 {
+		t.Fatalf("read %d citation(s) against %d baseline entry(ies), want an emptied population",
+			rep.Citations, rep.Carried)
+	}
+	if len(rep.Failures) != 0 {
+		t.Errorf("an emptied population was reported as a failure: %s", strings.Join(failureTexts(rep), "; "))
 	}
 }
 

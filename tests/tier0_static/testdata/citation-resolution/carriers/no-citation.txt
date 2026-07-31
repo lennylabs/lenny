@@ -1,0 +1,3 @@
+// The carrier names a specification section by its heading and writes no
+// citation of the retired form.
+// spec: §4.1 (first subsection)

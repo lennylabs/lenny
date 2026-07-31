@@ -84,9 +84,17 @@ type ResolutionReport struct {
 	Citations int
 	// NonResolving is how many of those did not resolve.
 	NonResolving int
+	// Carried is how many entries the baseline held when the run loaded
+	// it. It is the denominator a caller checks Baselined and Retired
+	// against, and it reaches zero when the last citation is retired.
+	Carried int
 	// Baselined is how many of the non-resolving ones the baseline
-	// carries.
+	// carries. One entry covers every occurrence of its citation text in
+	// its file, so this counts occurrences and can exceed Carried.
 	Baselined int
+	// Matched is how many distinct baseline entries an occurrence used.
+	// Together with Retired it accounts for every entry Carried names.
+	Matched int
 	// Retired is the baseline entries the run removed, because the
 	// citation each was written for is no longer in the tree.
 	Retired []ResolutionEntry
@@ -163,6 +171,7 @@ func (g *Resolution) Run(ctx context.Context) (ResolutionReport, error) {
 	rep.Files = len(domain)
 	rep.Citations = read
 	rep.NonResolving = len(unresolved)
+	rep.Carried = len(carried)
 
 	used := map[ResolutionEntry]bool{}
 	for _, o := range unresolved {
@@ -179,6 +188,7 @@ func (g *Resolution) Run(ctx context.Context) (ResolutionReport, error) {
 	// without it, so a failure elsewhere cannot keep an exemption alive
 	// past the citation it was written for. The rewrite is one-way, so a
 	// reported failure is never absorbed into the file.
+	rep.Matched = len(used)
 	kept, retired := partitionBaseline(carried, used)
 	rep.Retired = retired
 	if len(retired) > 0 {
@@ -319,6 +329,12 @@ func (g *Resolution) loadBaseline() (map[ResolutionEntry]bool, error) {
 // survived a run, and the seeding of the baseline calls it with the
 // non-resolving citations the resolver itself reported, so the file is
 // never hand-assembled from a figure stated elsewhere.
+//
+// The key is one entry per file and citation text, and the writer
+// enforces it whatever the caller supplies. A seeding caller passes the
+// occurrences the resolver reported, and one file writes the same
+// citation text on several lines, so repeats of a key reach the writer
+// and collapse here into the single entry the loader accepts.
 func WriteResolutionBaseline(write func(string, []byte) error, path string, entries []ResolutionEntry) error {
 	if write == nil {
 		return fmt.Errorf("rewrite resolution baseline %s: no writer is configured", path)
@@ -326,7 +342,10 @@ func WriteResolutionBaseline(write func(string, []byte) error, path string, entr
 	sortEntries(entries)
 	doc := resolutionDoc{Kind: resolutionBaselineKind, Version: resolutionBaselineVersion}
 	sets := make([]resolutionSet, 0, len(entries))
-	for _, e := range entries {
+	for i, e := range entries {
+		if i > 0 && entries[i-1] == e {
+			continue
+		}
 		if n := len(sets); n > 0 && sets[n-1].Path == e.Path {
 			sets[n-1].Citations = append(sets[n-1].Citations, e.Text)
 			continue
