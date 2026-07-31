@@ -28,12 +28,14 @@
 // The matcher applies the shared continuation join before either
 // spelling, so an occurrence wrapped across two consecutive comment
 // lines is one site the register resolves rather than two half-sites
-// neither the pass nor the lint reads. The join reads the carrier's own
-// comment dialect, which the scope package states: a markdown or schema
-// carrier has no comment syntax, so a heading, a list item, or an
-// emphasis run opening the line after a paragraph line is left standing
-// rather than read as the continuation of a comment. Two populations are
-// outside the matcher. A
+// neither the pass nor the lint reads. It is the one join the citation
+// matcher applies, over every carrier, so the two read one wrapped
+// population. A match the join folded together is held to one comment
+// afterwards: the line it opens on has to carry a comment marker of its
+// own, so a heading, a list item, or an emphasis run opening the line
+// after a markdown paragraph line stands as the author wrote it rather
+// than fusing onto the paragraph above it. Two populations are outside
+// the matcher. A
 // markdown anchor identifier is an addressable link target rather than
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this

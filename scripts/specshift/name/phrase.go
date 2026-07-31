@@ -26,9 +26,15 @@ import (
 //
 // The separator class admits the byte the continuation join leaves
 // behind, so a phrase wrapped across two consecutive comment lines
-// matches as one site.
+// matches as one site. The join byte is admitted beside the hyphen of
+// the compound spelling as well as alone, because a wrap falling
+// immediately after that hyphen leaves both bytes standing between the
+// reserved word and the head noun. A class reading only the join byte
+// alone matches neither line of such a wrap, so the occurrence is a site
+// no pass writes and no lint reports, and every later occurrence number
+// of the file shifts by one against the register keyed to it.
 var reservedExpr = regexp.MustCompile(
-	`(?i)(?:lifecycle|control)(?:[ \t]+|` + joinClass + `|-)channels?`,
+	`(?i)(?:lifecycle|control)(?:[ \t]+|-?` + joinClass + `-?|-)channels?`,
 )
 
 // joinClass is the byte the continuation join leaves behind, written as
@@ -62,14 +68,14 @@ func (s span) covers(other span) bool { return other.lo >= s.lo && other.hi <= s
 //
 // The continuation join is applied before the matcher, so a phrase
 // wrapped across two comment lines is one site rather than two half
-// sites neither the pass nor the naming lint reads. The join reads the
-// carrier's own dialect: a markdown or schema carrier has no comment
-// marker, so a heading, a list item, or an emphasis run opening the line
-// after a paragraph line is left standing rather than fused onto it. A
-// match inside a markdown anchor identifier is not a site and takes no
-// occurrence number, because it needs no register entry.
+// sites neither the pass nor the naming lint reads. It is the one join
+// the citation matcher applies, over every carrier, so the two matchers
+// enumerate one wrapped population. A match that spans a join is then
+// held to one comment by the paragraph rule below. A match inside a
+// markdown anchor identifier is not a site and takes no occurrence
+// number, because it needs no register entry.
 func findSites(target, content string, pinned map[int]bool) ([]site, error) {
-	joined, offsets := citation.Join(carrierDialect(target), content)
+	joined, offsets := citation.Join(content)
 	excluded := anchorSpans(joined)
 	admits, err := carrierFilter(target, content, pinned)
 	if err != nil {
@@ -82,6 +88,9 @@ func findSites(target, content string, pinned map[int]bool) ([]site, error) {
 			continue
 		}
 		source := span{lo: offsets[match.lo], hi: offsets[match.hi]}
+		if !oneParagraph(joined[match.lo:match.hi], content, source.lo) {
+			continue
+		}
 		// A wrapped site is admitted on the offset it opens at. Its span
 		// runs past the comment marker of the following line, which is a
 		// second comment token, so a span test would read a site the join
@@ -99,16 +108,50 @@ func findSites(target, content string, pinned map[int]bool) ([]site, error) {
 	return out, nil
 }
 
-// carrierDialect returns the comment dialect the continuation join reads
-// one carrier under. The answer comes from the scope package, so the
-// pass that writes the reserved-phrase sites and the naming lint that
-// reads them enumerate the same wrapped population.
-func carrierDialect(target string) citation.Dialect {
-	if scope.LineCommentCarrier(target) {
-		return citation.LineComment
+// oneParagraph reports whether a match stands inside a single run of
+// prose. A match carrying no join byte spans one line and always does. A
+// match the join folded together spans two lines, and it is one site
+// only when the line it opens on is itself written behind a comment
+// marker, which is what makes the marker on the following line the
+// continuation of the same comment.
+//
+// The rule is answered here, over the joined text, rather than by
+// reading some carriers under a join of their own, because the join is
+// one join and the naming lint reads the population this matcher
+// enumerates. It bounds the hazard a markdown document carries: a number
+// sign, an asterisk, or a pair of hyphens opening a line of a markdown
+// paragraph is a heading, a list item, or an emphasis run, each of which
+// may interrupt a paragraph legally. The paragraph line above it carries
+// no marker, so the two lines are two paragraphs and the fold across
+// them is no site. Without the rule the pass would either abort at a
+// position that is no bare noun phrase or splice a substitution over the
+// newline, deleting the heading or the list marker between them and the
+// anchor derived from the heading with it.
+func oneParagraph(match, content string, at int) bool {
+	if !strings.ContainsRune(match, rune(citation.JoinByte)) {
+		return true
 	}
-	return citation.NoComment
+	return commentedLine(content, at)
 }
+
+// commentedLine reports whether the source line holding an offset opens
+// behind one of the comment markers the continuation join consumes.
+func commentedLine(content string, at int) bool {
+	start := strings.LastIndexByte(content[:at], '\n') + 1
+	line := strings.TrimLeft(content[start:], " \t")
+	for _, marker := range commentMarkers {
+		if strings.HasPrefix(line, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+// commentMarkers are the markers the continuation join consumes, which
+// are the line comment of the slash dialects, the number-sign dialects,
+// the double-hyphen dialects, and the leading star of a block comment
+// together with the opener that introduces it.
+var commentMarkers = []string{"//", "/*", "#", "--", "*"}
 
 // render writes the join byte back as a space, so a wrapped site reads
 // as one line of text in a failure message.

@@ -413,35 +413,6 @@ func ReservedPhraseCarrier(target string) bool {
 	return !strings.Contains(target, "/") && filepath.Ext(target) == ".md"
 }
 
-// lineCommentExtensions are the file extensions whose dialect writes a
-// wrapped comment behind a marker on the following line.
-var lineCommentExtensions = map[string]bool{
-	".go":    true,
-	".proto": true,
-	".yaml":  true,
-	".yml":   true,
-	".sh":    true,
-}
-
-// LineCommentCarrier reports whether a tracked path is written in a
-// dialect that carries a line-comment marker, which is what decides
-// whether a wrap across two of its lines is a continuation of one
-// comment.
-//
-// A markdown document and a schema document carry no comment syntax, so
-// a number sign, an asterisk, or a pair of hyphens opening one of their
-// lines is a heading, a list item, or an emphasis run rather than a
-// continuation marker. Reading one as a marker would fuse the paragraph
-// line above it with the line it opens, which enumerates a site across
-// the two and, once substituted, deletes the marker between them.
-//
-// The predicate is held here beside the carrier domain and the position
-// rule, so the pass that writes the reserved-phrase sites of a carrier
-// and the lint that reads them enumerate one population.
-func LineCommentCarrier(target string) bool {
-	return lineCommentExtensions[filepath.Ext(target)]
-}
-
 // markdownAnchorExprs match the two markdown anchor identifiers the
 // naming law's reserved-phrase prohibition places outside its matcher,
 // which are the kramdown attribute that declares an anchor and the

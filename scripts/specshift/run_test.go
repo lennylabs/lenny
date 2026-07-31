@@ -4341,28 +4341,25 @@ func TestNamePassReadsAPhraseWrappedAcrossTwoCommentLinesAsOneSite(t *testing.T)
 	assertSubstituted(t, root, "schemas/lenny-adapter.proto")
 }
 
-// TestNamePassJoinsNoMarkdownLineBehindAStructuralMarker pins the
-// continuation join to the carrier's own dialect. The join exists to
-// read a phrase wrapped across two lines of one comment, and it
-// identifies the second line by the comment marker that opens it. A
-// markdown document has no comment syntax, so a number sign, an
-// asterisk, or a pair of hyphens opening one of its lines is a heading,
-// a list item, or an emphasis run, each of which interrupts a paragraph
-// legally. Reading one as a continuation marker fuses the paragraph line
-// above it onto the line it opens, which enumerates a site across the
-// two: the run then aborts at a position that is no bare noun phrase, or
-// substitutes a span that splices over the newline and deletes the
-// heading or list marker between them, taking the anchor derived from
-// the heading with it. Either outcome also shifts the occurrence
-// numbering the sense register is keyed by for every later site of the
-// file.
+// TestNamePassReadsNoSiteAcrossTwoMarkdownParagraphs pins the bound the
+// matcher puts on a folded match. The one continuation join folds a
+// markdown heading, list item, or emphasis run onto the paragraph line
+// above it, because each of those opens with a marker the join consumes
+// and each may interrupt a paragraph legally. The matcher holds a folded
+// match to one comment afterwards, and the paragraph line above such a
+// marker carries none, so the fold across the two is no site: the run
+// neither aborts at a position that is no bare noun phrase nor splices a
+// substitution over the newline, which would delete the heading or list
+// marker between them and take the anchor derived from the heading with
+// it. Either outcome would also shift the occurrence numbering the sense
+// register is keyed by for every later site of the file.
 //
 // The case runs the whole fixture tree, so the carrier that legitimately
 // wraps across two comment lines is substituted in the same run.
 //
 // spec: §28.1 (N3, the naming law: the matcher applies the comment-marker
 // continuation join before either spelling)
-func TestNamePassJoinsNoMarkdownLineBehindAStructuralMarker(t *testing.T) {
+func TestNamePassReadsNoSiteAcrossTwoMarkdownParagraphs(t *testing.T) {
 	t.Parallel()
 	const target = "docs/reference/wrapped-paragraph.md"
 	root := nameTree(t, "tree")
@@ -4380,12 +4377,66 @@ func TestNamePassJoinsNoMarkdownLineBehindAStructuralMarker(t *testing.T) {
 		t.Errorf("the markdown carrier was rewritten:\n%s", after[target])
 	}
 	content := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	// The exclusion is the matcher's, so the join itself still folds the
+	// heading and the list item of this carrier. A join that skipped a
+	// markdown carrier would enumerate a narrower wrapped population there
+	// than the citation matcher, which reads every carrier under it.
+	if joined, _ := citation.Join(content); strings.Count(joined, "\n") >= strings.Count(content, "\n") {
+		t.Errorf("the join folded no line of the markdown carrier:\n%s", joined)
+	}
 	for _, marker := range []string{"\n## ", "\n* "} {
 		if !strings.Contains(content, marker) {
 			t.Errorf("the run consumed the line opener %q:\n%s", marker, content)
 		}
 	}
 	assertSubstituted(t, root, "schemas/lenny-adapter.proto")
+}
+
+// TestNamePassSubstitutesAPhraseWrappedInsideAMarkdownComment pins the
+// join to one join over every carrier. A markdown document carries
+// comment lines wherever it holds a fenced snippet, and a phrase wrapped
+// across two of them is one site there exactly as it is in the file the
+// snippet was taken from. A matcher that read a markdown carrier under a
+// join of its own would read the two lines as unjoined text, so the
+// occurrence would be a site no pass writes and no lint reports, while
+// the citation matcher over the same file read one wrapped citation
+// across a comparable wrap.
+//
+// spec: §28.1 (N3, the naming law: the matcher applies the comment-marker
+// continuation join before either spelling)
+func TestNamePassSubstitutesAPhraseWrappedInsideAMarkdownComment(t *testing.T) {
+	t.Parallel()
+	const target = "docs/reference/snippets.md"
+	root := nameTree(t, "tree")
+	planned, err := planNamePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the name pass: %v", err)
+	}
+	applied := applyNamePass(t, root, "tree.yaml")
+	if !membership(planned.Paths())[target] || !membership(applied.Paths())[target] {
+		t.Errorf("the name pass names no wrapped site in the markdown carrier %s", target)
+	}
+	assertSubstituted(t, root, target)
+}
+
+// TestNamePassReadsAPhraseWrappedAfterItsHyphenAsOneSite pins the
+// separator the matcher admits between the reserved word and the head
+// noun. A wrap falling immediately after the hyphen of the compound
+// spelling leaves the hyphen and the join byte standing together, and a
+// matcher admitting the join byte alone matches neither line, so the
+// occurrence is written by no pass and read by no lint. The case pins
+// the enumeration as well as the substitution: the wrapped site opens
+// the file and an unwrapped site follows it, and the two resolve to
+// different identifiers, so a run that read the wrap as no site would
+// write the first identifier at the second site.
+//
+// spec: §28.1 (N3, the naming law: the matcher applies the comment-marker
+// continuation join before either spelling)
+func TestNamePassReadsAPhraseWrappedAfterItsHyphenAsOneSite(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	assertSubstituted(t, root, "pkg/carrier/notify.go")
 }
 
 // TestNamePassLeavesAMarkdownAnchorIdentifierUnmodified pins the one
@@ -4417,35 +4468,39 @@ func TestNamePassLeavesAMarkdownAnchorIdentifierUnmodified(t *testing.T) {
 	assertSubstituted(t, root, "spec/13_security-model.md")
 }
 
-// TestLineCommentCarrierIsOneSharedDialectRule pins which carriers admit
-// a continuation marker at all. The rule sits on the shared file-domain
-// surface beside the carrier predicate, the anchor exclusion, and the Go
-// position rule, so the pass that writes the reserved-phrase sites and
-// the lint that reads them enumerate one wrapped population. A carrier
-// whose dialect writes a line comment continues a wrapped phrase behind
-// the marker of the following line; a markdown document and a schema
-// document have no comment syntax, so the same marker bytes there open a
-// heading, a list item, or an emphasis run.
+// TestJoinFoldsEveryCarrierUnderOneRule pins the continuation join the
+// reserved-phrase matcher and the citation matcher share. There is one
+// join and it reads every carrier, so the two matchers enumerate one
+// wrapped population and the naming lint is built against the rule the
+// pass writes under. The marker set is the line comment of the slash
+// dialects, the number-sign dialects, the double-hyphen dialects, and
+// the leading star of a block comment, and a wrap with nothing but
+// indentation on the continuation line is no continuation at all.
 //
 // spec: §28.1 (N3, the naming law: the matcher applies the
 // comment-marker continuation join before either spelling)
-func TestLineCommentCarrierIsOneSharedDialectRule(t *testing.T) {
+func TestJoinFoldsEveryCarrierUnderOneRule(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
-		target string
-		want   bool
+		name    string
+		content string
+		want    bool
 	}{
-		{"pkg/carrier/carrier.go", true},
-		{"schemas/lenny-adapter.proto", true},
-		{"charts/lenny/values.yaml", true},
-		{"spec/13_security-model.md", false},
-		{"docs/reference/glossary.md", false},
-		{"schemas/lenny-adapter.schema.json", false},
+		{"slash", "// one\n// two\n", true},
+		{"hash", "# one\n# two\n", true},
+		{"dash", "-- one\n-- two\n", true},
+		{"block star", "/* one\n * two */\n", true},
+		{"markdown heading", "one\n## two\n", true},
+		{"unmarked", "one\n   two\n", false},
 	} {
-		t.Run(tc.target, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := scope.LineCommentCarrier(tc.target); got != tc.want {
-				t.Errorf("the dialect rule reads %s as line-commented=%t, want %t", tc.target, got, tc.want)
+			joined, offsets := citation.Join(tc.content)
+			if folded := strings.Count(joined, "\n") < strings.Count(tc.content, "\n"); folded != tc.want {
+				t.Errorf("the join over %q returns %q, want folded=%t", tc.content, joined, tc.want)
+			}
+			if len(offsets) != len(joined)+1 {
+				t.Errorf("the join over %q returns %d offsets for %d bytes", tc.content, len(offsets), len(joined))
 			}
 		})
 	}

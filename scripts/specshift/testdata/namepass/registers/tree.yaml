@@ -26,6 +26,28 @@ entries:
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
+  # The first site of this carrier wraps immediately after the hyphen of
+  # the compound spelling, so the join leaves the hyphen and the join
+  # byte together between the two words. It is enumerated ahead of the
+  # site that stands on one line below it, and the two name different
+  # identifiers, so an enumeration that read the wrap as no site would
+  # write this identifier at the site after it.
+  - file: pkg/carrier/notify.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
+  - file: pkg/carrier/notify.go
+    occurrence: 2
+    identifiers:
+      - LNK-GWCONTROL
+  # The site of this markdown carrier sits in a fenced Go snippet and
+  # wraps across two comment lines of it, which the one continuation join
+  # folds together in a markdown document the same way it does in a Go
+  # file.
+  - file: docs/reference/snippets.md
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
   # The site of this carrier opens its own line inside an element of a
   # package-level composite literal, which the parser attaches to
   # nothing. The trailing comment of the same carrier is outside the
