@@ -2049,6 +2049,114 @@ func TestFindConsumesMembersWrittenAfterTheHeadClosingParenthesis(t *testing.T) 
 	}
 }
 
+// balancedParens reports whether every parenthesis a citation's text opens is
+// closed inside that text. A citation the pass converts to a single anchor is
+// replaced whole, so an unbalanced text leaves the matching delimiter and the
+// prose between the two behind in the carrier.
+func balancedParens(text string) bool {
+	depth := 0
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth < 0 {
+				return false
+			}
+		}
+	}
+	return depth == 0
+}
+
+// TestFindClosesTheParenthesisItsHeadOpened pins that a citation whose head
+// opened a parenthesis of the carrier's own runs to the parenthesis that closes
+// it, with the text between the last member and that parenthesis read as the
+// member's gloss. A citation ending inside the parenthetical carries an
+// unpaired opening parenthesis, so converting it to a single anchor deletes
+// that delimiter and the words behind the last member while leaving the
+// matching one in the carrier, which is the residue the whole-citation rule
+// forbids. A parenthesis written inside the parenthetical is closed with it, so
+// the citation ends at the parenthesis its own head opened. Where the
+// parenthetical crosses a continuation join the same
+// conversion also deletes the newline and the following line's comment marker,
+// and in the `#` dialect that removal stops the following text being a comment.
+func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		members []string
+		wrapped bool
+	}{
+		{"paren-prose-after-member.txt", []string{"2768-2780"}, false},
+		{"paren-wrapped-slash.txt", []string{"4317-4317"}, true},
+		{"paren-wrapped-hash.txt", []string{"4317-4317"}, true},
+		{"members-after-close-paren-glossed.txt", []string{"3333-3358", "3404-3406"}, false},
+		{"paren-nested.txt", []string{"408-408"}, false},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if want := wantCitation(t, tc.fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
+		}
+		if !balancedParens(c.Text) {
+			t.Errorf("%s: citation text %q leaves a parenthesis unclosed", tc.fixture, c.Text)
+		}
+		if got := members(c); !sameStrings(got, tc.members) {
+			t.Errorf("%s: members are %v, want %v", tc.fixture, got, tc.members)
+		}
+		if tc.wrapped && !strings.Contains(c.Raw, "\n") {
+			t.Errorf("%s: raw citation %q does not span the wrap", tc.fixture, c.Raw)
+		}
+	}
+}
+
+// TestFindRefusesAParenthesisItCannotClose pins the other half of that rule.
+// The parenthesis a head opened is closed inside the citation or the occurrence
+// is refused, so no returned citation carries an unpaired delimiter. The
+// parenthesis is out of reach when it sits behind a newline the join did not
+// consume, and when it sits behind the head of the next citation, where
+// consuming up to it would swallow the citation written in between: a swallowed
+// citation is never returned, so the resolver does not resolve it and the
+// ratchet does not count it. The scan resumes inside the refused occurrence, so
+// the citation written behind the refused head is still returned.
+func TestFindRefusesAParenthesisItCannotClose(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []string{
+		"paren-unreachable-close.txt",
+		"paren-close-behind-next-citation.txt",
+	} {
+		c := oneCitation(t, fixture)
+		if want := wantCitation(t, fixture); c.Text != want {
+			t.Errorf("%s: citation text is %q, want %q", fixture, c.Text, want)
+		}
+		if !balancedParens(c.Text) {
+			t.Errorf("%s: citation text %q leaves a parenthesis unclosed", fixture, c.Text)
+		}
+	}
+}
+
+// TestFindReturnsNoUnbalancedCitationOverEveryFixture sweeps the whole fixture
+// set for the same invariant, so a spelling added later cannot reintroduce a
+// citation the pass would convert to an anchor while leaving a delimiter and
+// the prose behind it in the carrier.
+func TestFindReturnsNoUnbalancedCitationOverEveryFixture(t *testing.T) {
+	t.Parallel()
+	entries, err := os.ReadDir(fixtureCitations)
+	if err != nil {
+		t.Fatalf("read the citation fixture directory: %v", err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".txt" {
+			continue
+		}
+		for _, c := range citation.Find(citationFixture(t, entry.Name())) {
+			if !balancedParens(c.Text) {
+				t.Errorf("%s: citation text %q leaves a parenthesis unclosed", entry.Name(), c.Text)
+			}
+		}
+	}
+}
+
 // TestFindConsumesEveryMemberRatherThanTheHead pins the failure a matcher that
 // stopped at the first separator produces. The remaining members stay in place,
 // where the resolver does not read them and the ratchet does not count them, so

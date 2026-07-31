@@ -32,7 +32,10 @@
 // matcher that stopped at the first separator would leave the remaining members
 // in place, where the resolver does not read them and the ratchet does not
 // count them, and the rewritten carrier would read as an anchor followed by
-// orphan integers.
+// orphan integers. A citation whose head opened a parenthesis of the carrier's
+// own runs to the parenthesis that closes it for the same reason, and the
+// occurrence is refused when no parenthesis closes it, so a citation the pass
+// converts to a single anchor never leaves a delimiter behind in the carrier.
 //
 // This is migration tooling rather than a platform behavior, so it carries no
 // spec citation of its own.
@@ -112,6 +115,21 @@ func Find(content string) []Citation {
 		}
 		c, end, ok := parseAt(joined, loc)
 		if !ok {
+			if group(joined, loc, headParen) != "" {
+				// The head opened a parenthesis of the carrier's own that
+				// does not close inside the citation. The occurrence is
+				// refused and the scan resumes one byte in, where the
+				// parenthesis branch is no longer reachable at this head,
+				// so nothing this scan returns carries an unpaired
+				// delimiter and any citation written behind the refused
+				// head is still matched. Returning the span instead would
+				// leave the pass converting an unbalanced span to one
+				// anchor, which deletes the `(` and the words behind the
+				// last member while leaving the matching `)` in the
+				// carrier.
+				pos = loc[0] + 1
+				continue
+			}
 			pos = loc[1]
 			continue
 		}
@@ -148,7 +166,9 @@ func (l Located) String() string {
 
 // parseAt builds the citation whose head the match at loc covers, consuming
 // every continuation member that follows it. It returns the end offset of the
-// whole citation in the joined text.
+// whole citation in the joined text, and reports false when the text at the
+// head is not a citation of the form and when a head that opened a parenthesis
+// of the carrier's own has none to close with.
 func parseAt(joined string, loc []int) (Citation, int, bool) {
 	var c Citation
 	c.Section = group(joined, loc, headSection)
@@ -162,14 +182,19 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	end, ok := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	if !ok {
+		return Citation{}, 0, false
+	}
 	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
 
 // consumeCitation extends the citation from the end of its head over every
 // continuation member, closes the parenthesis a head that opened one closes
-// with, and keeps consuming past that parenthesis.
+// with, and keeps consuming past that parenthesis. It reports false when a head
+// that opened a parenthesis has none to close with, so the caller refuses the
+// occurrence rather than returning an unbalanced span.
 //
 // A member list may resume after the head's closing parenthesis, which happens
 // when a qualified citation parenthesizes its first range and then writes a
@@ -179,19 +204,64 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // read them and the ratchet does not count them, and the rewritten carrier
 // would read as an anchor followed by orphan integers while its file reached a
 // zero count with a stale pointer surviving.
-func consumeCitation(joined string, pos int, members *[]Member, opened bool) int {
-	end := consumeMembers(joined, pos, nextHead(joined, pos), members)
-	if !opened || end >= len(joined) || joined[end] != ')' {
-		return end
+func consumeCitation(joined string, pos int, members *[]Member, opened bool) (int, bool) {
+	limit := nextHead(joined, pos)
+	end, glossStart := consumeMembers(joined, pos, limit, members)
+	if !opened {
+		return end, true
 	}
-	closed := end + 1
+	closed, ok := closeHeadParen(joined, glossStart, end, limit, members)
+	if !ok {
+		return 0, false
+	}
 	// The citation continues past the parenthesis only when a member list
 	// resumes behind it. Prose written after the parenthesis is outside the
 	// citation, the same way prose written after any last member is.
 	if _, _, ok := nextMember(joined, closed); !ok {
-		return closed
+		return closed, true
 	}
-	return consumeMembers(joined, closed, nextHead(joined, closed), members)
+	end, _ = consumeMembers(joined, closed, nextHead(joined, closed), members)
+	return end, true
+}
+
+// closeHeadParen extends the citation from its last member to the parenthesis
+// the head opened, and gives the text between the two to that member as its
+// gloss. It returns the offset behind the closing parenthesis.
+//
+// The parenthesis a head opened belongs to the citation, so everything written
+// inside it does too. Closing only on a parenthesis standing immediately behind
+// the last member leaves every other spelling of the parenthesized form ending
+// inside the parenthetical, so the citation text carries an unpaired `(` and
+// the carrier keeps the orphaned `)` with the prose between them. Converting
+// that span to a single anchor is the residue the whole-citation rule forbids,
+// and where the parenthetical crosses a continuation join it also deletes the
+// newline and the following line's comment marker.
+//
+// The search is bounded by the head of the next citation and by a newline the
+// join did not consume. A parenthesis reachable only past either of those
+// belongs to the carrier rather than to this citation, and consuming up to it
+// would swallow the citation written in between, which is never returned and so
+// is neither resolved nor counted.
+func closeHeadParen(joined string, glossStart, pos, limit int, members *[]Member) (int, bool) {
+	depth := 1
+	for i := pos; i < limit; i++ {
+		switch joined[i] {
+		case '(':
+			depth++
+		case ')':
+			depth--
+			if depth > 0 {
+				continue
+			}
+			if gloss := strings.TrimSpace(render(joined[glossStart:i])); gloss != "" {
+				(*members)[len(*members)-1].Gloss = gloss
+			}
+			return i + 1, true
+		case '\n':
+			return 0, false
+		}
+	}
+	return 0, false
 }
 
 // nextHead returns the offset of the next citation head at or after from, or
@@ -230,22 +300,29 @@ func nextHead(joined string, from int) int {
 // prevent: the resolver would not read the dropped members, the ratchet would
 // not count them, and the rewritten carrier would read as an anchor followed by
 // orphan integers.
-func consumeMembers(joined string, pos, limit int, members *[]Member) int {
+// It returns the end of the member list together with the offset the last
+// member's gloss opens at, which is the offset behind that member's own text.
+// A parenthesis the head opened is closed from there, so the whole of the
+// parenthetical behind the last member is that member's gloss rather than
+// prose the citation left behind.
+func consumeMembers(joined string, pos, limit int, members *[]Member) (int, int) {
 	end := pos
+	glossStart := pos
 	glossed := false
 	for {
 		if next, m, ok := nextMember(joined, end); ok {
 			*members = append(*members, m)
 			end = next
+			glossStart = next
 			glossed = false
 			continue
 		}
 		if glossed {
-			return end
+			return end, glossStart
 		}
 		next, gloss, ok := glossRun(joined, end, limit)
 		if !ok {
-			return end
+			return end, glossStart
 		}
 		last := &(*members)[len(*members)-1]
 		last.Gloss = gloss
@@ -390,9 +467,11 @@ func normalizePath(path string) string {
 	return specPrefix + path
 }
 
-// group returns the text of one submatch, empty when it did not participate.
-func group(s string, loc []int, n int) string {
-	if 2*n+1 >= len(loc) || loc[2*n] < 0 {
+// group returns the text of the named submatch of the head expression, empty
+// when the group did not participate in the match.
+func group(s string, loc []int, name string) string {
+	n := headExpr.SubexpIndex(name)
+	if n < 0 || 2*n+1 >= len(loc) || loc[2*n] < 0 {
 		return ""
 	}
 	return s[loc[2*n]:loc[2*n+1]]

@@ -1,0 +1,3 @@
+# the backup age gauge is evaluated by the §25.11
+# BackupOverdue alert (line 4317: a full backup older than 48h). It is
+# sampled once a minute.

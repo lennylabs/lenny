@@ -53,13 +53,15 @@ const glossSp = "[ \t]"
 // stands for, so a citation's text, gloss, and members read as one line.
 func render(s string) string { return strings.ReplaceAll(s, string(joinByte), " ") }
 
-// The submatch indices of headExpr.
+// The submatch names of the head expression. They are read by name so a group
+// added to or removed from the form does not silently renumber the ones behind
+// it.
 const (
-	headSection   = 1
-	headFile      = 2
-	headQualifier = 3
-	headParen     = 4
-	headMember    = 6
+	headSection   = "section"
+	headFile      = "file"
+	headQualifier = "qualifier"
+	headParen     = "paren"
+	headMember    = "member"
 )
 
 // headExpr matches the head of a citation: the reference, the optional
@@ -73,7 +75,7 @@ const (
 var headExpr = regexp.MustCompile(
 	// The reference, by section number with any number of dotted components
 	// or by file path with the spec/ prefix optional.
-	`(?:§` + sp + `*(\d+(?:\.\d+)*)|(?:spec/)?(\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md))` +
+	`(?:§` + sp + `*(?P<` + headSection + `>\d+(?:\.\d+)*)|(?:spec/)?(?P<` + headFile + `>\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md))` +
 		// The keyword branch and the colon branch, ordered with the colon
 		// first because only the colon branch stands directly against the
 		// reference.
@@ -95,19 +97,20 @@ var headExpr = regexp.MustCompile(
 		// A qualifier of three words is spelled in words alone, because a
 		// numbered third token belongs to a member list rather than to a
 		// sub-element name: `line 315 and line 321` is two members.
-		`(?:` + sp + `+([A-Za-z]+` + sp + `+[0-9A-Za-z]+|[A-Za-z]+(?:` + sp + `+[A-Za-z]+){2}|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
+		`(?:` + sp + `+(?P<` + headQualifier + `>[A-Za-z]+` + sp + `+[0-9A-Za-z]+|[A-Za-z]+(?:` + sp + `+[A-Za-z]+){2}|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
 		// The keyword itself. It may open a parenthesis of the carrier's own,
 		// with or without the word `spec` behind it, so a qualified citation
 		// whose keyword and member sit inside a parenthesis is read whole; the
 		// fixture `testdata/citations/qualifier-parenthetical.txt` carries that
-		// spelling. A matcher requiring
-		// the keyword to follow the reference or the qualifier immediately
-		// leaves that spelling unconverted, unread by the resolver, and
-		// uncounted by the ratchet.
-		`(?:` + sp + `+|` + sp + `*(\()` + sp + `*(?:spec` + sp + `+)?)(lines?)` + sp + `+` +
+		// spelling. A matcher requiring the keyword to follow the reference or
+		// the qualifier immediately leaves that spelling unconverted, unread by
+		// the resolver, and uncounted by the ratchet. The scanner closes that
+		// parenthesis with the citation, and refuses the occurrence when it does
+		// not close, so the matched span never carries an unpaired delimiter.
+		`(?:` + sp + `+|` + sp + `*(?P<` + headParen + `>\()` + sp + `*(?:spec` + sp + `+)?)(?:lines?)` + sp + `+` +
 		`)` +
 		// The first member.
-		`(` + memberBody + `)`,
+		`(?P<` + headMember + `>` + memberBody + `)`,
 )
 
 // memberBody is one member: a single line number, or a range of two line

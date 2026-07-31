@@ -1,0 +1,2 @@
+// back to Redis is emitted when the resume position cannot be honoured.
+// spec: §25.5 (lines 2768-2780, transparent switch and recovery).
