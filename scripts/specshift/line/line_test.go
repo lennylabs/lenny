@@ -8,10 +8,6 @@ import (
 	"unicode/utf8"
 )
 
-// These cases cover migration tooling rather than a platform behavior, so
-// they carry no spec-section annotation of their own. What they pin is the
-// splice the line pass writes with.
-
 // TestApplyEditsRefusesTwoRewritesThatCoverTheSameBytes pins the splice as
 // fail-closed. Every span is measured against the file as it stood, so two
 // spans that overlap cannot both be spliced: the second indexes into a
@@ -19,6 +15,10 @@ import (
 // which in a UTF-8 carrier cuts a character in half. The planner holds
 // each widened span inside its neighbours, and this is the check that
 // stops a plan that got it wrong from being written.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names, and the carrier is
+// otherwise left as it stood)
 func TestApplyEditsRefusesTwoRewritesThatCoverTheSameBytes(t *testing.T) {
 	t.Parallel()
 	const text = "the claim is a lease the gateway grants"
@@ -37,6 +37,10 @@ func TestApplyEditsRefusesTwoRewritesThatCoverTheSameBytes(t *testing.T) {
 // TestApplyEditsSplicesEveryDisjointRewrite pins the splice over the plan
 // the pass produces, which is a set of disjoint spans in source order, and
 // holds it to leaving the carrier's remaining bytes whole.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names, and the carrier is
+// otherwise left as it stood)
 func TestApplyEditsSplicesEveryDisjointRewrite(t *testing.T) {
 	t.Parallel()
 	const text = "the claim — a lease — the gateway grants"
