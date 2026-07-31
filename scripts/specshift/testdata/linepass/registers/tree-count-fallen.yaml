@@ -26,7 +26,7 @@ files:
     - path: pkg/chart/values/values.go
       count: 4
     - path: pkg/gateway/externalapi/openapi/openapi.json
-      count: 2
+      count: 6
     - path: pkg/gateway/mcpfabric/mcptools/mcptools.go
       count: 9
     - path: pkg/spellings/and-list.go

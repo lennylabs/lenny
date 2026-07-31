@@ -330,7 +330,17 @@ type strip struct {
 // keeps no tie. The tie of a `desc:` struct tag is decided here against
 // the doc comment of the field the tag annotates. Every other served tie
 // is decided by the caller against the rewritten file.
-func stripSite(sections *citation.Resolver, text string, c citation.Citation, served *servedSpans) (edit, strip, error) {
+//
+// What the strip removes is the citation's reference-and-members run
+// rather than the whole citation. A conversion replaces the whole
+// citation because the anchor it writes says what the citation said. A
+// strip writes nothing in its place, and the served text is the client
+// contract, so the gloss written against the last member has to stay: a
+// gloss is the description's own prose in every served dialect, and
+// removing it with the pointer empties or truncates the description a
+// client reads. The span is held inside bounds so it cannot reach the
+// citation written beside it.
+func stripSite(sections *citation.Resolver, text string, c citation.Citation, served *servedSpans, within span) (edit, strip, error) {
 	number, err := anchorNumber(sections, c)
 	if err != nil {
 		return edit{}, strip{}, err
@@ -341,8 +351,27 @@ func stripSite(sections *citation.Resolver, text string, c citation.Citation, se
 			"stripping the served citation would delete the site's only tie, because the doc comment over its declaration names no §%s", number,
 		)
 	}
-	start, end := stripSpan(text, c.Offset, c.Offset+len(c.Raw))
-	return edit{start: start, end: end}, record, nil
+	start, end := stripSpan(text, c.Offset, c.MembersEnd)
+	return within.clamp(start, end), record, nil
+}
+
+// span is the bound a widened strip is held inside, which runs from the
+// end of the edit planned before it to the start of the citation planned
+// after it.
+type span struct {
+	lo int
+	hi int
+}
+
+// clamp holds a widened strip inside the bound, so two strips of one run
+// never overlap and no strip reaches the citation beside it. The widening
+// crosses blanks and a separator, and two citations separated by nothing
+// but a separator each widen over the blanks between them, which yields
+// two spans computed against the same original text that overlap. Splicing
+// overlapping spans cuts bytes that belong to neither, so the bound is
+// applied where the span is computed and the splice checks the result.
+func (s span) clamp(start, end int) edit {
+	return edit{start: max(start, s.lo), end: min(max(end, s.lo), s.hi)}
 }
 
 // fileTie reports whether the section a stripped citation named is still
@@ -377,7 +406,7 @@ func stripSpan(text string, start, end int) (int, int) {
 	if l, r, ok := cutBrackets(text, left, right); ok {
 		return collapse(text, l, r)
 	}
-	if opensValue(text, left) {
+	if opensClause(text, left) {
 		right = trimRight(text, cutSeparator(text, right))
 	}
 	return collapse(text, left, right)
@@ -457,14 +486,22 @@ func cutSeparator(text string, at int) int {
 // citation between them is gone.
 const closers = ".,;:)]}\"`\n"
 
-// opensValue reports whether the offset stands at the opening of the
-// text the citation sat in, which is the start of a string literal or of
-// a comment body.
-func opensValue(text string, at int) bool {
+// opensClause reports whether the offset stands at the opening of the
+// run the citation sat in, which is the start of a string literal, the
+// start of a comment body, or the byte behind an opening bracket. A
+// citation that opened a bracketed clause introduces the text behind it
+// the same way a citation opening a value does, so the separator it wrote
+// against that text is residue once the citation is gone. Leaving the
+// separator behind renders a summary as `(— stop admitting new
+// sessions)` in a document a client reads.
+func opensClause(text string, at int) bool {
 	if at == 0 {
 		return true
 	}
 	if text[at-1] == '"' || text[at-1] == '`' {
+		return true
+	}
+	if _, ok := brackets[text[at-1]]; ok {
 		return true
 	}
 	return commentOpening.MatchString(text[lineStart(text, at):at])
@@ -503,7 +540,7 @@ func collapse(text string, left, right int) (int, int) {
 			return left - 1, right
 		}
 	}
-	if opensValue(text, left) {
+	if opensClause(text, left) {
 		return left, trimRight(text, right)
 	}
 	return left, right

@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -13,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 
@@ -3307,6 +3309,75 @@ func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T)
 	// The ordinary carrier in the same run is converted rather than
 	// stripped, so the strip is a property of the served artifact.
 	assertConverted(t, root, "pkg/spellings/dotted.go")
+}
+
+// TestLinePassStripsTwoAdjacentServedCitationsWithoutCuttingACharacter
+// pins the strip of two citations written against one separator inside a
+// single served value. Each strip widens over the punctuation that
+// introduced its citation, so two neighbours widen over the blanks
+// between them; every span is measured against the file as it stood, so
+// two spans that overlap cannot both be spliced and the second cuts bytes
+// belonging to neither. In a served document the bytes it cuts sit inside
+// a multi-byte character, which leaves the document a client reads
+// invalid. Nothing downstream reads it: both citations are gone, the
+// accounting balances, and the dry-run diff carries the same bytes the
+// apply writes.
+//
+// spec: §28.1 (N8, the citation rule: a citation in a served client
+// artifact is stripped from the text a client reads)
+func TestLinePassStripsTwoAdjacentServedCitationsWithoutCuttingACharacter(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/gateway/externalapi/openapi/openapi.json"
+	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", target))
+	if n := len(citation.Find(before)); n < 2 {
+		t.Fatalf("the served fixture %s carries %d citations, so it holds no adjacent pair", target, n)
+	}
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	if !utf8.ValidString(after) {
+		t.Errorf("the strip left %s carrying an incomplete character:\n%q", target, after)
+	}
+	var document any
+	if err := json.Unmarshal([]byte(after), &document); err != nil {
+		t.Errorf("the strip left %s unreadable as JSON: %v\n%s", target, err, after)
+	}
+	if !strings.Contains(after, `"description": "renewal is idempotent while the lease stands."`) {
+		t.Errorf("the two adjacent strips did not leave the served description standing:\n%s", after)
+	}
+}
+
+// TestLinePassLeavesTheServedTextAStrippedCitationIntroduced pins what a
+// served strip removes. A conversion replaces the whole citation because
+// the anchor it writes says what the citation said. A strip writes
+// nothing in its place, and the served artifact is the client contract,
+// so what it removes is the reference-and-members run alone: the gloss
+// written against the last member is the description's own prose, and
+// removing it with the pointer empties or truncates the description a
+// client reads. The punctuation that introduced the text, including the
+// dash of a citation opening a bracketed clause, goes with the pointer.
+//
+// spec: §28.1 (N8, the citation rule: a citation in a served client
+// artifact is stripped from the text a client reads)
+func TestLinePassLeavesTheServedTextAStrippedCitationIntroduced(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/gateway/externalapi/openapi/openapi.json"
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"a citation opening a description with a bare-word gloss", `"description": "authored beside the session."`},
+		{"a citation opening a bracketed clause", `"description": "Drain a pool (stop admitting new sessions, report the in-flight count)."`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !strings.Contains(after, tc.value) {
+				t.Errorf("the strip did not leave %s reading as %s:\n%s", target, tc.value, after)
+			}
+		})
+	}
 }
 
 // TestLinePassReadsAServedToolSchemaTieFromItsWholeAuthoringSource pins

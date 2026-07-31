@@ -134,7 +134,10 @@ func (r *Rewriter) Rewrite(ctx context.Context, path string, content []byte) ([]
 	if err != nil {
 		return nil, err
 	}
-	after := applyEdits(text, edits)
+	after, err := applyEdits(text, edits)
+	if err != nil {
+		return nil, pass.Aborted([]*pass.Abort{abortAt(path, found[0], err)})
+	}
 	if err := fileTies(path, after, strips); err != nil {
 		return nil, err
 	}
@@ -157,19 +160,30 @@ func (r *Rewriter) Rewrite(ctx context.Context, path string, content []byte) ([]
 // so one run names the whole hand-correction population rather than its
 // first member. Nothing is written until the plan succeeds, so reporting
 // them all still leaves the tree byte-identical.
+// A strip widens its span over the punctuation that introduced the
+// citation, so the bound each site is planned inside runs from the end of
+// the edit planned before it to the start of the citation planned after
+// it. Two citations separated by nothing but a separator would otherwise
+// widen into one another and yield overlapping spans.
 func plan(sections *citation.Resolver, path, text string, found []citation.Citation, served *servedSpans) ([]edit, []strip, error) {
 	edits := make([]edit, 0, len(found))
 	var strips []strip
 	var aborts []*pass.Abort
-	for _, c := range found {
+	planned := 0
+	for i, c := range found {
+		next := len(text)
+		if i+1 < len(found) {
+			next = found[i+1].Offset
+		}
 		if served.covers(c) {
-			e, s, err := stripSite(sections, text, c, served)
+			e, s, err := stripSite(sections, text, c, served, span{lo: planned, hi: next})
 			if err != nil {
 				aborts = append(aborts, abortAt(path, c, err))
 				continue
 			}
 			edits = append(edits, e)
 			strips = append(strips, s)
+			planned = e.end
 			continue
 		}
 		anchor, err := anchorFor(sections, c)
@@ -178,6 +192,7 @@ func plan(sections *citation.Resolver, path, text string, found []citation.Citat
 			continue
 		}
 		edits = append(edits, edit{start: c.Offset, end: c.Offset + len(c.Raw), text: anchor})
+		planned = c.Offset + len(c.Raw)
 	}
 	if len(aborts) > 0 {
 		return nil, nil, pass.Aborted(aborts)
@@ -291,12 +306,26 @@ type edit struct {
 
 // applyEdits splices every edit into the text. The edits are applied
 // from the end so an earlier edit does not move a later span.
-func applyEdits(text string, edits []edit) string {
+//
+// Every span is measured against the original text, so two spans that
+// overlap cannot both be spliced: the second splice indexes into a string
+// the first already shortened and cuts bytes belonging to neither span,
+// which in a UTF-8 carrier cuts a character in half. The overlap is
+// invisible to every check downstream, because the citations are gone
+// either way and the accounting balances, so it is refused here rather
+// than written.
+func applyEdits(text string, edits []edit) (string, error) {
 	ordered := append([]edit(nil), edits...)
 	sort.Slice(ordered, func(i, j int) bool { return ordered[i].start > ordered[j].start })
 	out := text
+	limit := len(text)
 	for _, e := range ordered {
+		if e.end > limit {
+			return "", fmt.Errorf("two rewrites of this file cover the same bytes, at %d-%d and again from %d, so neither can be written",
+				e.start, e.end, limit)
+		}
 		out = out[:e.start] + e.text + out[e.end:]
+		limit = e.start
 	}
-	return out
+	return out, nil
 }

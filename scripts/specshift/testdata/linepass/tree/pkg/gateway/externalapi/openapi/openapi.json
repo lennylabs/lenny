@@ -1,12 +1,20 @@
 {
   "openapi": "3.1.0",
   "x-lenny-spec-section": "§4.6",
+  "x-lenny-spec-sections": ["§4.6.1", "§4.8", "§4.9"],
   "components": {
     "schemas": {
       "Sandbox": {
         "description": "§4.6 line 5 — The claim is a lease the gateway grants.",
         "properties": {
-          "lease": { "type": "string", "description": "The lease renews while the session runs. §4.6 line 6." }
+          "lease": { "type": "string", "description": "The lease renews while the session runs. §4.6 line 6." },
+          "renewal": { "type": "string", "description": "§4.6 line 5 / §4.6.1 line 10 renewal is idempotent while the lease stands." }
+        }
+      },
+      "Plan": {
+        "description": "§4.8 line 14 authored beside the session.",
+        "properties": {
+          "drain": { "type": "string", "description": "Drain a pool (§4.9 line 18 — stop admitting new sessions, report the in-flight count)." }
         }
       }
     }

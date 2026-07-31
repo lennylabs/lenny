@@ -104,6 +104,17 @@ type Citation struct {
 	// source line the citation starts on.
 	Offset int
 	Line   int
+	// MembersEnd is the byte offset in the source just past the last member's
+	// own text, which is the end of the reference-and-members run. It equals
+	// Offset+len(Raw) when the last member carries no trailing gloss, and it
+	// sits behind the parenthesis a head opened when the citation closed one.
+	//
+	// A caller that replaces the whole citation, which is what a conversion to
+	// a single anchor does, spans Offset to Offset+len(Raw) and does not read
+	// this. A caller that removes the pointer while leaving the carrier's own
+	// text standing spans Offset to MembersEnd, because the trailing gloss is
+	// prose the carrier wrote rather than part of the pointer.
+	MembersEnd int
 
 	// Unbalanced reports that the head opened a parenthesis of the carrier's
 	// own that no parenthesis closes inside the citation's bounds, so Text
@@ -150,6 +161,9 @@ func Find(content string) []Citation {
 		}
 		c.Offset = offsets[loc[0]]
 		c.Raw = content[c.Offset:offsets[end]]
+		// The members-run end is parsed in joined coordinates, so it is
+		// mapped back to the source the same way the span is.
+		c.MembersEnd = offsets[c.MembersEnd]
 		c.Line = lineOf(starts, c.Offset)
 		out = append(out, c)
 		pos = end
@@ -198,8 +212,9 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end, unbalanced := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	end, membersEnd, unbalanced := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
 	c.Unbalanced = unbalanced
+	c.MembersEnd = membersEnd
 	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
@@ -224,25 +239,31 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // read them and the ratchet does not count them, and the rewritten carrier
 // would read as an anchor followed by orphan integers while its file reached a
 // zero count with a stale pointer surviving.
-func consumeCitation(joined string, pos int, members *[]Member, opened bool) (int, bool) {
+//
+// It returns the end of the citation together with the end of its
+// reference-and-members run, which is the offset behind the last member's own
+// text and so excludes the trailing gloss written against it. A parenthesis the
+// head opened is part of the run, because removing the members without it would
+// strand the carrier's closing parenthesis.
+func consumeCitation(joined string, pos int, members *[]Member, opened bool) (end, membersEnd int, unbalanced bool) {
 	limit := nextHead(joined, pos)
 	end, glossStart := consumeMembers(joined, pos, limit, members)
 	if !opened {
-		return end, false
+		return end, glossStart, false
 	}
 	closed, ok := closeHeadParen(joined, glossStart, end, limit, members)
 	if !ok {
-		return end, true
+		return end, glossStart, true
 	}
 	// The citation continues past the parenthesis only when a member list
 	// resumes behind it. Prose written after the parenthesis is outside the
 	// citation, the same way prose written after any last member is.
 	beyond := nextHead(joined, closed)
 	if _, _, ok := nextMember(joined, closed, beyond); !ok {
-		return closed, false
+		return closed, closed, false
 	}
-	end, _ = consumeMembers(joined, closed, beyond, members)
-	return end, false
+	end, glossStart = consumeMembers(joined, closed, beyond, members)
+	return end, glossStart, false
 }
 
 // closeHeadParen extends the citation from its last member to the parenthesis
