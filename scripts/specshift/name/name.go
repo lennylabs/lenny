@@ -32,9 +32,21 @@
 // markdown anchor identifier is an addressable link target rather than
 // prose, so it needs no entry and is left as it stands; rewriting one
 // breaks every inbound link, including the untracked links this
-// repository cannot see. In a Go file the matcher reads comments alone,
-// because the naming law's domain there is the doc comment and a string
-// literal holds operator-facing text the law does not govern.
+// repository cannot see. In a Go file the matcher reads the doc comments
+// alone, because that is the naming law's domain there: a string literal
+// and an implementation comment hold operator-facing and internal text
+// the law does not govern.
+//
+// The carriers the matcher reads are the ones the naming law names,
+// which the scope package states: the specification, the documentation,
+// the schemas, a tracked Go file, and a tracked root-level markdown
+// document. A carrier outside that list, such as a chart values file or
+// a runtime SDK source, holds text the law does not govern, so a phrase
+// there is neither a site nor an abort.
+//
+// The register is held to the tree as well as driving it. An entry no
+// site claims fails the run, because a run that skipped it would exit
+// zero having written nothing for a site a reviewer had resolved.
 //
 // The write domain, which excludes the historical audit records, the
 // staged proposals, the root build and queue records, and every file the
@@ -102,10 +114,11 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 		return nil, fmt.Errorf("the name pass ran with no register loaded")
 	}
 	// The whole register is checked against the declared identifier
-	// space before any file is rewritten, so an entry naming an
-	// identifier the specification does not declare fails the run rather
-	// than the file that happens to carry its site.
-	if err := r.checkDeclared(ctx); err != nil {
+	// space and against the tree before any file is rewritten, so an
+	// entry naming an identifier the specification does not declare, and
+	// an entry no site in the tree claims, both fail the run rather than
+	// the file that happens to carry a site.
+	if err := r.checkRegister(ctx); err != nil {
 		return nil, err
 	}
 	text := string(content)
@@ -157,21 +170,25 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	return edits, nil
 }
 
-// checkDeclared indexes the identifier space the specification declares
-// and holds every entry of the register to it. It runs once per run.
+// checkRegister holds the whole register to the identifier space the
+// specification declares and to the sites the tree carries. It runs once
+// per run.
 //
-// An identifier no specification section declares is refused rather than
-// written, because the substitution reads as canonical to every gate
-// downstream: the naming lint sees no reserved phrase, and the
-// identifier-resolution gate sees one spelling of a name nothing else in
-// the tree carries, so a misspelled entry would land as a pointer to a
-// mechanism that does not exist.
-func (r *Rewriter) checkDeclared(ctx context.Context) error {
+// An identifier no register in the specification declares is refused
+// rather than written, because the substitution reads as canonical to
+// every gate downstream: the naming lint sees no reserved phrase, and
+// the identifier-resolution gate sees one spelling of a name nothing
+// else in the tree carries, so a misspelled entry would land as a
+// pointer to a mechanism that does not exist.
+func (r *Rewriter) checkRegister(ctx context.Context) error {
 	if r.declared != nil {
 		return nil
 	}
 	declared, err := declaredIdentifiers(ctx, r.list, r.read)
 	if err != nil {
+		return err
+	}
+	if err := r.checkClaimed(ctx); err != nil {
 		return err
 	}
 	var undeclared []string
@@ -191,6 +208,93 @@ func (r *Rewriter) checkDeclared(ctx context.Context) error {
 	}
 	r.declared = declared
 	return nil
+}
+
+// checkClaimed reports every register entry no site in the tree claims,
+// which is an entry keyed to a file the tree does not carry, to a file
+// outside the pass's write domain, or to an occurrence number above the
+// count of sites its file carries.
+//
+// The register drives the pass in one direction and is checked in both.
+// An entry the walk never reaches is written nowhere and, without this
+// check, the run exits zero having reported the completed migration it
+// never performed, which is the failure the loader already refuses at
+// file granularity for a register that carries no entry. An off-by-one
+// enumeration and a misspelled path are the two ways an entry lands in
+// that position.
+func (r *Rewriter) checkClaimed(ctx context.Context) error {
+	tracked, err := trackedPaths(ctx, r.list)
+	if err != nil {
+		return err
+	}
+	var unclaimed []string
+	for _, target := range sortedKeys(r.senses) {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("check the reserved-phrase sense register against the tree: %w", err)
+		}
+		reason, err := r.unclaimedReason(target, tracked)
+		if err != nil {
+			return err
+		}
+		if reason == "" {
+			continue
+		}
+		for _, occurrence := range sortedOccurrences(r.senses[target]) {
+			unclaimed = append(unclaimed, fmt.Sprintf("%s occurrence %d (%s)", target, occurrence, reason))
+		}
+	}
+	if len(unclaimed) > 0 {
+		return fmt.Errorf("%s carries %d entr(ies) no site in the tree claims, so the run would report a substitution it never performed: %s",
+			r.registerPath, len(unclaimed), strings.Join(unclaimed, "; "))
+	}
+	return nil
+}
+
+// unclaimedReason reports why no site of one file claims its entries, or
+// the empty string when every entry of that file has a site.
+func (r *Rewriter) unclaimedReason(target string, tracked map[string]bool) (string, error) {
+	if !tracked[target] {
+		return "the tree carries no such file", nil
+	}
+	writable, err := scope.Writable(scope.Name, target, r.read)
+	if err != nil {
+		return "", fmt.Errorf("check %s against the reserved-phrase sense register: %w", target, err)
+	}
+	if !writable {
+		return "the file is outside the pass's write domain", nil
+	}
+	content, err := r.read(target)
+	if err != nil {
+		return "", fmt.Errorf("read %s for the reserved-phrase sense register check: %w", target, err)
+	}
+	sites, err := findSites(target, string(content))
+	if err != nil {
+		return "", err
+	}
+	entries := r.senses[target]
+	for _, occurrence := range sortedOccurrences(entries) {
+		if occurrence > len(sites) {
+			return fmt.Sprintf("the file carries %d reserved-phrase site(s)", len(sites)), nil
+		}
+	}
+	return "", nil
+}
+
+// trackedPaths returns the tracked tree as a set, so the register check
+// asks about a path without walking the list per entry.
+func trackedPaths(ctx context.Context, list scope.Lister) (map[string]bool, error) {
+	if list == nil {
+		return nil, fmt.Errorf("check the reserved-phrase sense register against the tree: a lister is required")
+	}
+	paths, err := list(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("check the reserved-phrase sense register against the tree: %w", err)
+	}
+	tracked := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		tracked[p] = true
+	}
+	return tracked, nil
 }
 
 // standing reports every reserved-phrase site the rewritten text still

@@ -9,3 +9,11 @@ package carrier
 // carries sits in a string literal rather than in a comment, so the pass leaves
 // it as it stands.
 const validateUsage = "Validate a runtime manifest, including its lifecycle channel declaration."
+
+// Ack reports delivery.
+func Ack() bool {
+	// The implementation comment here names the lifecycle channel, which sits
+	// outside the doc-comment position the law governs in a Go carrier, so the
+	// pass reads no site at it.
+	return true
+}

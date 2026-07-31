@@ -13,12 +13,13 @@ carries the declarations alone.
 | `LNK-GWCONTROL` | pod to gateway | gRPC |
 | `LNK-POD-GRPC` | gateway to pod | gRPC |
 | `CH-PODLIFECYCLE` | pod to gateway | gRPC stream |
+| `CH-ADAPTEREVENTS` | pod to gateway | gRPC stream |
 | `CH-LLMPROXY` | pod to gateway | HTTPS |
 | `REG-SESSIONSTORE` | gateway to store | Postgres |
 
 ## 28.5 Contract cards
 
-### 28.5.2 CH-ADAPTEREVENTS
+### 28.5.2 Pod-to-gateway
 
-The card heading names the identifier, which is the second position the
-specification declares one in.
+A card is headed by the participant edge it groups rather than by an identifier,
+so the registers above are the one position an identifier is declared in.

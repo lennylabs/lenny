@@ -4,13 +4,15 @@ package name
 
 import (
 	"fmt"
-	"go/scanner"
+	"go/ast"
+	"go/parser"
 	"go/token"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // reservedExpr matches one bare reserved noun phrase, in the
@@ -160,54 +162,78 @@ func covered(spans []span, match span) bool {
 // carrierFilter returns the predicate deciding which source offsets of
 // one carrier the matcher reads a site at.
 //
-// Every carrier but Go is read whole, which is what makes the pass's
-// domain the domain the naming lint reads: the specification, the
-// documentation, the schemas, and the tracked root-level contract
-// documents each carry the phrase in prose, and a carrier the pass
-// narrowed would leave sites the lint reports with no pass able to write
-// them. In a Go file the law's domain is the comment, so a site in a
-// string literal is outside it: `lenny runtime validate` prints such a
-// literal as operator-facing help text, which this migration leaves
-// unchanged.
+// A carrier outside the prohibition's domain admits no offset at all, so
+// the phrase it holds is neither a site the pass rewrites nor a site the
+// fail-closed rule aborts on. That domain is the one the scope package
+// states, and it is what makes the pass's population the population the
+// naming lint reads: chart values, chart templates, scaffold templates,
+// and the runtime SDK sources all carry the phrase in text the law does
+// not govern, and a pass reading them would abort at every one while the
+// lint reported none.
+//
+// A carrier inside the domain is read whole except for Go, where the
+// law's domain is the doc comment: a site in a function-body comment, in
+// a trailing inline comment, or in a string literal is outside it.
+// `lenny runtime validate` prints such a literal as operator-facing help
+// text, which this migration leaves unchanged.
 func carrierFilter(target, content string) (func(int) bool, error) {
+	if !scope.ReservedPhraseCarrier(target) {
+		return func(int) bool { return false }, nil
+	}
 	if filepath.Ext(target) != ".go" {
 		return func(int) bool { return true }, nil
 	}
-	comments, err := goCommentSpans(target, content)
+	comments, err := goDocCommentSpans(target, content)
 	if err != nil {
 		return nil, err
 	}
 	return func(at int) bool { return within(comments, at) }, nil
 }
 
-// goCommentSpans returns the byte span of every comment in a Go file.
+// goDocCommentSpans returns the byte span of every comment of a Go file
+// that documents the package or a declaration, which is the position the
+// naming law governs in a Go carrier and the position the naming lint
+// reads.
 //
-// A file the scanner cannot read fails the run rather than being read
-// whole or skipped. Reading it whole would rewrite a string literal the
-// law does not govern, and skipping it would leave every site it carries
-// with no pass able to write them, which is the writerless site the
-// shared domain exists to prevent.
-func goCommentSpans(target, content string) ([]span, error) {
+// A file the parser cannot read fails the run rather than being read
+// whole or skipped. Reading it whole would rewrite a string literal and
+// an implementation comment the law does not govern, and skipping it
+// would leave every doc comment it carries with no pass able to write
+// them, which is the writerless site the shared domain exists to
+// prevent.
+func goDocCommentSpans(target, content string) ([]span, error) {
 	fset := token.NewFileSet()
-	file := fset.AddFile(target, fset.Base(), len(content))
-	var s scanner.Scanner
-	var errs scanner.ErrorList
-	s.Init(file, []byte(content), func(pos token.Position, msg string) {
-		errs.Add(pos, msg)
-	}, scanner.ScanComments)
+	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("read the doc comments of %s: %w", target, err)
+	}
 	var out []span
-	for {
-		pos, tok, lit := s.Scan()
-		if tok == token.EOF {
-			break
+	add := func(group *ast.CommentGroup) {
+		if group == nil {
+			return
 		}
-		if tok == token.COMMENT {
-			at := file.Offset(pos)
-			out = append(out, span{lo: at, hi: at + len(lit)})
+		for _, c := range group.List {
+			lo := fset.Position(c.Pos()).Offset
+			out = append(out, span{lo: lo, hi: lo + len(c.Text)})
 		}
 	}
-	if errs.Len() > 0 {
-		return nil, fmt.Errorf("read the comments of %s: %w", target, errs.Err())
-	}
+	add(file.Doc)
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch decl := n.(type) {
+		case *ast.FuncDecl:
+			add(decl.Doc)
+		case *ast.GenDecl:
+			add(decl.Doc)
+		case *ast.TypeSpec:
+			add(decl.Doc)
+		case *ast.ValueSpec:
+			add(decl.Doc)
+		case *ast.ImportSpec:
+			add(decl.Doc)
+		case *ast.Field:
+			add(decl.Doc)
+		}
+		return true
+	})
 	return out, nil
 }

@@ -4197,23 +4197,23 @@ func TestNamePassWritesAGoCommentAndASchemaDescription(t *testing.T) {
 	}
 	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", "pkg/carrier/carrier.go"))
 	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash("pkg/carrier/carrier.go")))
-	literal := literalLine(t, before)
+	literal := fixtureLine(t, before, "validateUsage = ")
 	if !strings.Contains(after, literal) {
 		t.Errorf("the pass rewrote the string literal %q:\n%s", literal, after)
 	}
 }
 
-// literalLine returns the line of the Go carrier that holds the phrase
-// in a string literal, so a case states the expectation without holding
-// a copy of the phrase in this source.
-func literalLine(t *testing.T, content string) string {
+// fixtureLine returns the line of a fixture that carries the marker, so
+// a case states an expectation about a reserved phrase without holding a
+// copy of the phrase in this source.
+func fixtureLine(t *testing.T, content, marker string) string {
 	t.Helper()
 	for _, line := range strings.Split(content, "\n") {
-		if strings.Contains(line, "validateUsage = ") {
+		if strings.Contains(line, marker) {
 			return line
 		}
 	}
-	t.Fatal("the Go carrier fixture holds no string literal line")
+	t.Fatalf("no fixture line carries %q", marker)
 	return ""
 }
 
@@ -4471,5 +4471,151 @@ func TestNamePassFailsASubstitutionThatComposesASiteAgain(t *testing.T) {
 	}
 	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
 		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestNamePassReadsNoSiteInACarrierOutsideTheNamingLawDomain pins the
+// carrier domain of this pass, which is narrower than the tracked tree
+// the write exclusions leave. A chart values file carries the phrase in
+// operator-facing configuration text the law does not govern, so it is
+// neither a site the pass substitutes at nor a site the fail-closed rule
+// aborts on, while an ordinary carrier in the same run is substituted. A
+// pass ranging over the whole write domain would abort on it and on
+// every chart template, scaffold template, and runtime SDK source
+// beside it, none of which the register is ever seeded for.
+//
+// spec: §28.1 (N3, the naming law: the prohibition covers the
+// specification, the documentation, the schemas, the doc comments of
+// tracked Go files, and the tracked root-level markdown documents)
+func TestNamePassReadsNoSiteInACarrierOutsideTheNamingLawDomain(t *testing.T) {
+	t.Parallel()
+	const outside = "charts/lenny/values.yaml"
+	root := nameTree(t, "tree")
+	before := treeSnapshot(t, root)
+	if before[outside] == "" {
+		t.Fatalf("the fixture tree carries no %s", outside)
+	}
+	planned, err := planNamePass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the name pass: %v", err)
+	}
+	applied := applyNamePass(t, root, "tree.yaml")
+	if membership(planned.Paths())[outside] || membership(applied.Paths())[outside] {
+		t.Errorf("the name pass names the out-of-domain carrier %s", outside)
+	}
+	if got := treeSnapshot(t, root); got[outside] != before[outside] {
+		t.Errorf("the out-of-domain carrier was rewritten:\n%s", got[outside])
+	}
+	assertSubstituted(t, root, "spec/13_security-model.md")
+}
+
+// TestNamePassReadsNoSiteInAGoCommentOutsideADocComment pins the in-file
+// position the law governs in a Go carrier. The naming lint reads the
+// doc comment of a tracked Go file, so an implementation comment inside
+// a function body is outside the population on both sides: the pass
+// neither demands a register entry for it nor rewrites it, and the
+// doc comment of the same file is substituted in the same run.
+//
+// spec: §28.1 (N3, the naming law: the Go domain is the doc comment of a
+// tracked Go file)
+func TestNamePassReadsNoSiteInAGoCommentOutsideADocComment(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/carrier/carrier.go"
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	assertSubstituted(t, root, target)
+	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", target))
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	implementation := fixtureLine(t, before, "implementation comment here")
+	if !strings.Contains(after, implementation) {
+		t.Errorf("the pass rewrote the implementation comment %q:\n%s", implementation, after)
+	}
+}
+
+// TestNamePassFailsAnEntryNamingAnIdentifierNoRegisterDeclares pins
+// where the identifier space is read from. A section outside the
+// communication-channels registers cites an identifier in a table
+// routinely, and a citation is not a declaration, so an entry whose
+// spelling appears only at such a site fails rather than being written.
+// Reading a citation as a declaration would pass exactly the misspelled
+// entry this check exists to refuse.
+//
+// spec: §28.1 (N3, the naming law: an identifier the specification
+// declares is what replaces a site)
+func TestNamePassFailsAnEntryNamingAnIdentifierNoRegisterDeclares(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "fail/cited")
+	before := treeSnapshot(t, root)
+	_, err := planNamePass(t, root, "fail-cited.yaml")
+	if err == nil {
+		t.Fatal("the name pass accepted an entry naming an identifier no register declares")
+	}
+	if !strings.Contains(err.Error(), "CH-ELSEWHERE") {
+		t.Errorf("the failure does not name the identifier: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestNamePassFailsWhenTheTreeCarriesNoChannelRegisters pins that an
+// absent declaration source fails the run rather than reporting an empty
+// identifier space. An empty space fails every entry of the register,
+// which reads as a register of misspellings rather than as a tree the
+// pass cannot run against yet.
+//
+// spec: §28.1 (N3, the naming law: the identifier space is declared in
+// the communication-channels registers)
+func TestNamePassFailsWhenTheTreeCarriesNoChannelRegisters(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	copyTreeInto(t, filepath.Join(fixtureNamePass, "fail/undeclared"), root)
+	_, err := planNamePass(t, root, "fail-undeclared.yaml")
+	if err == nil {
+		t.Fatal("the name pass ran over a tree that declares no identifier")
+	}
+	if !strings.Contains(err.Error(), "spec/28") {
+		t.Errorf("the failure does not name the missing declaration source: %v", err)
+	}
+}
+
+// TestNamePassFailsAnEntryNoSiteInTheTreeClaims pins the register-tree
+// consistency in the direction the walk does not cover. An entry keyed
+// to a file the tree does not carry, to a file the write exclusions
+// remove, or to an occurrence number above the count of sites its file
+// carries is reached by no site, so a run that skipped it would exit
+// zero having written nothing for a site a reviewer had resolved. That
+// is the completed migration the loader already refuses to report for a
+// register with no entry at all, at the granularity an off-by-one
+// enumeration produces.
+//
+// spec: §28.1 (N3, the naming law: the removal is driven by the register
+// of senses, and every entry names a site)
+func TestNamePassFailsAnEntryNoSiteInTheTreeClaims(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		entry    string
+		register string
+		names    string
+	}{
+		{"a file outside the write domain", "fail-unclaimed-excluded.yaml", "proposals/0001_example.md occurrence 1"},
+		{"an occurrence above the site count", "fail-unclaimed-occurrence.yaml", "spec/13_security-model.md occurrence 2"},
+		{"a file the tree does not carry", "fail-unclaimed-missing.yaml", "spec/99_absent.md occurrence 1"},
+	} {
+		t.Run(tc.entry, func(t *testing.T) {
+			t.Parallel()
+			root := nameTree(t, "tree")
+			before := treeSnapshot(t, root)
+			_, err := planNamePass(t, root, tc.register)
+			if err == nil {
+				t.Fatalf("the name pass ran with %s in the register", tc.entry)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name the unclaimed entry %q: %v", tc.names, err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
 	}
 }

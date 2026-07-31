@@ -373,6 +373,40 @@ func Writable(p Pass, target string, read FileReader) (bool, error) {
 	return disjunct == NotGenerated, nil
 }
 
+// reservedPhrasePrefixes are the directories the naming law's
+// reserved-phrase prohibition covers whole.
+var reservedPhrasePrefixes = []string{"spec/", "docs/", "schemas/"}
+
+// ReservedPhraseCarrier reports whether a tracked path is a carrier of
+// the reserved-phrase prohibition, which is the specification, the
+// documentation, the schemas, a tracked Go file, and a tracked
+// root-level markdown document.
+//
+// The domain is narrower than the write domain, which is the whole
+// tracked tree less the read, planning, and generated exclusions. A
+// carrier outside this list holds text the prohibition does not govern,
+// among them chart values, chart templates, the runtime scaffold
+// templates, and the runtime SDK sources, and reading a site in one
+// would abort a fail-closed pass at a site the register is never seeded
+// for.
+//
+// The predicate is held here rather than in the pass, so the pass that
+// writes the sites and the lint that reads them share one statement of
+// the domain. It answers for a whole file; the in-file position the
+// prohibition covers in a Go file is the doc comment, which the pass
+// applies on top of this answer.
+func ReservedPhraseCarrier(target string) bool {
+	for _, prefix := range reservedPhrasePrefixes {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	if filepath.Ext(target) == ".go" {
+		return true
+	}
+	return !strings.Contains(target, "/") && filepath.Ext(target) == ".md"
+}
+
 // hasSegment reports whether a slash-separated path carries the named
 // directory segment. Matching a segment rather than a substring keeps a
 // file named `testdata.go` inside the domain.

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+#
+# Chart values are outside the carrier domain the naming law states, so the
+# reserved phrase below is neither a site the pass writes nor a site the
+# fail-closed rule aborts on.
+adapter:
+  # Port of the gRPC lifecycle channel the pod serves.
+  grpcPort: 50051

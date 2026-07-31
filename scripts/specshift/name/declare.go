@@ -11,37 +11,40 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
-// specPrefix is the directory the identifier space is declared under.
-const specPrefix = "spec/"
+// channelSectionPrefix is the specification file the identifier space is
+// declared in. The registers of links, channels, and register entries
+// are that file's tables, and nothing outside it declares an identifier:
+// a section elsewhere in the specification cites one in a table or a
+// heading, and reading a citation as a declaration would pass an entry
+// whose spelling no register carries.
+const channelSectionPrefix = "spec/28"
 
 // identifierExpr matches a canonical identifier, which the naming law
 // writes uppercase and hyphenated under one of the class prefixes: a
 // link, a channel, or a register.
 var identifierExpr = regexp.MustCompile(`^(?:LNK|CH|REG)-[A-Z0-9]+(?:-[A-Z0-9]+)*$`)
 
-// headingExpr matches a markdown heading, whose words carry the
-// identifier a per-channel contract card is named for.
-var headingExpr = regexp.MustCompile(`^#{1,6}[ \t]+(.*)$`)
-
 // rowExpr matches a table row, whose cells carry the identifier a
 // register row is keyed by.
 var rowExpr = regexp.MustCompile(`^[ \t]*\|`)
 
 // declaredIdentifiers indexes the identifier space the specification
-// declares, which is every identifier written as a word of a heading or
-// as a whole cell of a table under spec/.
+// declares, which is every identifier written as a whole cell of a
+// register table in the communication-channels section.
 //
 // The index is read out of the specification rather than restated here,
 // because the specification is where the identifier space is normative
-// and a second list would drift from it. The two positions are where the
-// space is declared: a contract card is a heading named for its
-// identifier, and a register row is keyed by one.
+// and a second list would drift from it. The registers are the
+// declaration position: a contract card elsewhere in that section is
+// headed by the participant edge it groups rather than by an identifier,
+// and a table anywhere else in the specification cites an identifier
+// rather than declaring one.
 //
-// It fails on a tree with no specification file and on a specification
-// that declares no identifier, rather than reporting an empty space. An
-// empty space fails every entry of the register, which reads as a
-// register of misspellings rather than as a tree the pass cannot run
-// against yet.
+// It fails on a tree with no communication-channels section and on a
+// section that declares no identifier, rather than reporting an empty
+// space. An empty space fails every entry of the register, which reads
+// as a register of misspellings rather than as a tree the pass cannot
+// run against yet.
 func declaredIdentifiers(ctx context.Context, list scope.Lister, read scope.FileReader) (map[string]bool, error) {
 	if list == nil || read == nil {
 		return nil, fmt.Errorf("index the declared identifiers: a lister and a reader are required")
@@ -53,7 +56,7 @@ func declaredIdentifiers(ctx context.Context, list scope.Lister, read scope.File
 	declared := map[string]bool{}
 	files := 0
 	for _, path := range paths {
-		if !strings.HasPrefix(path, specPrefix) || !strings.HasSuffix(path, ".md") {
+		if !strings.HasPrefix(path, channelSectionPrefix) || !strings.HasSuffix(path, ".md") {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -69,10 +72,10 @@ func declaredIdentifiers(ctx context.Context, list scope.Lister, read scope.File
 		}
 	}
 	if files == 0 {
-		return nil, fmt.Errorf("index the declared identifiers: no file under %s in the tree", specPrefix)
+		return nil, fmt.Errorf("index the declared identifiers: the tree carries no %s* specification file", channelSectionPrefix)
 	}
 	if len(declared) == 0 {
-		return nil, fmt.Errorf("index the declared identifiers: %d file(s) under %s declare none", files, specPrefix)
+		return nil, fmt.Errorf("index the declared identifiers: %d file(s) under %s* declare none", files, channelSectionPrefix)
 	}
 	return declared, nil
 }
@@ -82,10 +85,6 @@ func declaredIdentifiers(ctx context.Context, list scope.Lister, read scope.File
 func declarationsIn(content string) []string {
 	var out []string
 	for _, line := range strings.Split(content, "\n") {
-		if m := headingExpr.FindStringSubmatch(line); m != nil {
-			out = append(out, identifiersAmong(strings.Fields(m[1]))...)
-			continue
-		}
 		if rowExpr.MatchString(line) {
 			out = append(out, identifiersAmong(strings.Split(line, "|"))...)
 		}
