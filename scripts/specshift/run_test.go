@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/register"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -1811,4 +1812,422 @@ func sameSnapshot(a, b map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// fixtureCitations holds the fixtures that carry the retired citation form.
+// They are held as files rather than as Go string literals because a fixture
+// carrying the form is input to a gate rather than a pointer into the
+// specification, and testdata/ is outside the read domain of the resolver, the
+// ratchet, and the residual scan, so no gate reports its own input.
+const fixtureCitations = "testdata/citations"
+
+// citationFixture reads one such fixture.
+func citationFixture(t *testing.T, name string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(fixtureCitations, name))
+	if err != nil {
+		t.Fatalf("read citation fixture %s: %v", name, err)
+	}
+	return string(data)
+}
+
+// oneCitation reads a fixture and returns the single citation it carries.
+func oneCitation(t *testing.T, name string) citation.Citation {
+	t.Helper()
+	found := citation.Find(citationFixture(t, name))
+	if len(found) != 1 {
+		t.Fatalf("Find over %s returned %d citations, want 1: %v", name, len(found), found)
+	}
+	return found[0]
+}
+
+// members renders a citation's members as start-end pairs, so a case states
+// the members it expects without restating the grammar.
+func members(c citation.Citation) []string {
+	out := make([]string, 0, len(c.Members))
+	for _, m := range c.Members {
+		out = append(out, fmt.Sprintf("%d-%d", m.Start, m.End))
+	}
+	return out
+}
+
+// sameStrings reports whether two string slices are equal in content and
+// order.
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestFindReadsEverySpellingOfTheRetiredCitationForm pins the grammar against
+// one fixture per spelling: the section-level and dotted references, the path
+// reference with the prefix present and absent, the keyword and the colon
+// standing in for it, the three range separators, the four member separators,
+// the continuation member that repeats the keyword, the qualifier in each of
+// its written forms, and the trailing gloss.
+func TestFindReadsEverySpellingOfTheRetiredCitationForm(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture   string
+		text      string
+		ref       string
+		qualifier string
+		members   []string
+	}{
+		{"section-level.txt", "§10 line 437", "§10", "", []string{"437-437"}},
+		{"hyphen-range.txt", "§4.4 lines 263-291", "§4.4", "", []string{"263-291"}},
+		{"endash-range.txt", "§4.4 lines 263–291", "§4.4", "", []string{"263-291"}},
+		{"emdash-range.txt", "§4.4 lines 263—291", "§4.4", "", []string{"263-291"}},
+		{"comma-members.txt", "§4.8 lines 1057-1058, 1077", "§4.8", "", []string{"1057-1058", "1077-1077"}},
+		{"repeated-keyword.txt", "§10.6 line 601, line 629", "§10.6", "", []string{"601-601", "629-629"}},
+		{"slash-members.txt", "§10.7 line 694 / line 743", "§10.7", "", []string{"694-694", "743-743"}},
+		{"and-members.txt", "§12.5 line 315 and line 321", "§12.5", "", []string{"315-315", "321-321"}},
+		{
+			"plus-members.txt",
+			`§10 line 437 ("annotation") + line 443 ("check")`,
+			"§10", "",
+			[]string{"437-437", "443-443"},
+		},
+		{"qualifier-item.txt", "§11.7 item 3 line 364", "§11.7", "item 3", []string{"364-364"}},
+		{"qualifier-identifier.txt", "§16.4 NET-063 line 88", "§16.4", "NET-063", []string{"88-88"}},
+		{"qualifier-table.txt", "§17.2 table line 12", "§17.2", "table", []string{"12-12"}},
+		{"gloss-trailing.txt", "§7.3 line 408 step (e)", "§7.3", "", []string{"408-408"}},
+		{"gloss-bare.txt", "§9.2 line 240 messagingScope", "§9.2", "", []string{"240-240"}},
+		{
+			"path-form.txt",
+			"spec/04_system-components.md line 1145",
+			"spec/04_system-components.md", "",
+			[]string{"1145-1145"},
+		},
+		{
+			"path-form-bare-prefix.txt",
+			"15_external-api-surface.md line 1315",
+			"spec/15_external-api-surface.md", "",
+			[]string{"1315-1315"},
+		},
+		{"colon-section.txt", "§17.6:404", "§17.6", "", []string{"404-404"}},
+		{
+			"colon-path.txt",
+			"spec/15_external-api-surface.md:1315",
+			"spec/15_external-api-surface.md", "",
+			[]string{"1315-1315"},
+		},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if c.Text != tc.text {
+			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, tc.text)
+		}
+		if c.Ref() != tc.ref {
+			t.Errorf("%s: reference is %q, want %q", tc.fixture, c.Ref(), tc.ref)
+		}
+		if c.Qualifier != tc.qualifier {
+			t.Errorf("%s: qualifier is %q, want %q", tc.fixture, c.Qualifier, tc.qualifier)
+		}
+		if got := members(c); !sameStrings(got, tc.members) {
+			t.Errorf("%s: members are %v, want %v", tc.fixture, got, tc.members)
+		}
+	}
+}
+
+// TestFindConsumesEveryMemberRatherThanTheHead pins the failure a matcher that
+// stopped at the first separator produces. The remaining members stay in place,
+// where the resolver does not read them and the ratchet does not count them, so
+// the file reaches a zero count while a stale pointer survives.
+func TestFindConsumesEveryMemberRatherThanTheHead(t *testing.T) {
+	t.Parallel()
+	for _, fixture := range []string{
+		"comma-members.txt",
+		"repeated-keyword.txt",
+		"slash-members.txt",
+		"and-members.txt",
+		"plus-members.txt",
+	} {
+		c := oneCitation(t, fixture)
+		if len(c.Members) != 2 {
+			t.Errorf("%s: citation carries %d members, want 2: %v", fixture, len(c.Members), members(c))
+			continue
+		}
+		last := c.Members[len(c.Members)-1]
+		if !strings.Contains(c.Text, last.Text) {
+			t.Errorf("%s: citation text %q stops before its last member %q", fixture, c.Text, last.Text)
+		}
+	}
+}
+
+// TestFindConsumesATrailingGlossWithItsMember pins that the gloss does not
+// terminate the match, and that a bare gloss is bounded at a word or two so a
+// citation followed by ordinary prose ends near its member.
+func TestFindConsumesATrailingGlossWithItsMember(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		gloss   string
+	}{
+		{"gloss-trailing.txt", "step (e)"},
+		{"gloss-bare.txt", "messagingScope"},
+		{"gloss-then-prose.txt", "for the"},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if len(c.Members) != 1 {
+			t.Fatalf("%s: citation carries %d members, want 1", tc.fixture, len(c.Members))
+		}
+		if c.Members[0].Gloss != tc.gloss {
+			t.Errorf("%s: gloss is %q, want %q", tc.fixture, c.Members[0].Gloss, tc.gloss)
+		}
+	}
+}
+
+// TestFindJoinsAContinuationInEveryWrapPositionAndCarrierDialect pins the join
+// that lets a citation wrapped across two comment lines be read as one
+// citation. The three wrap positions are a wrap between the reference and the
+// keyword, a wrap between the keyword and its first member, and a wrap inside a
+// member list, and the marker the join consumes is one of the four dialects.
+// Without the join a line-oriented scan sees a reference with no line-number
+// token and a line-number token with no reference, so the resolver does not
+// resolve the citation and the ratchet does not count it.
+func TestFindJoinsAContinuationInEveryWrapPositionAndCarrierDialect(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		text    string
+		members []string
+		line    int
+	}{
+		{"wrap-reference-keyword-slash.txt", "§4.8 line 1060", []string{"1060-1060"}, 1},
+		{"wrap-keyword-member-slash.txt", "§15.4 lines 1672-1721", []string{"1672-1721"}, 1},
+		{"wrap-member-list-slash.txt", "§8.8 lines 806-823, 897-917", []string{"806-823", "897-917"}, 1},
+		{"wrap-reference-keyword-hash.txt", "§17.9.1 line 1350", []string{"1350-1350"}, 1},
+		{"wrap-member-list-dash.txt", "§12.5 line 315, 321-325", []string{"315-315", "321-325"}, 1},
+		{"wrap-keyword-member-block.txt", "§10.1 line 51", []string{"51-51"}, 2},
+	} {
+		c := oneCitation(t, tc.fixture)
+		if c.Text != tc.text {
+			t.Errorf("%s: joined citation text is %q, want %q", tc.fixture, c.Text, tc.text)
+		}
+		if got := members(c); !sameStrings(got, tc.members) {
+			t.Errorf("%s: members are %v, want %v", tc.fixture, got, tc.members)
+		}
+		if c.Line != tc.line {
+			t.Errorf("%s: citation starts on line %d, want %d", tc.fixture, c.Line, tc.line)
+		}
+		if !strings.Contains(c.Raw, "\n") {
+			t.Errorf("%s: raw citation %q does not span the wrap", tc.fixture, c.Raw)
+		}
+	}
+}
+
+// TestFindReportsTheCarrierLineOfEachCitation pins the line a gate names when
+// it reports a citation, which is the source line the citation starts on rather
+// than a line of the joined text.
+func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
+	t.Parallel()
+	content := citationFixture(t, "section-level.txt") + citationFixture(t, "colon-section.txt")
+	found := citation.Find(content)
+	if len(found) != 2 {
+		t.Fatalf("Find over two stacked fixtures returned %d citations, want 2", len(found))
+	}
+	if found[0].Line != 1 || found[1].Line != 2 {
+		t.Errorf("citations start on lines %d and %d, want 1 and 2", found[0].Line, found[1].Line)
+	}
+	located := citation.FindIn("pkg/carrier/carrier.go", content)
+	if len(located) != 2 || located[0].Path != "pkg/carrier/carrier.go" {
+		t.Fatalf("FindIn returned %v, want both citations under the carrier path", located)
+	}
+	if !strings.Contains(located[1].String(), "pkg/carrier/carrier.go line 2") {
+		t.Errorf("located citation renders as %q, want it to name its carrier and line", located[1])
+	}
+}
+
+// citationResolver builds the resolver over the fixture specification tree,
+// whose sections are §4 (lines 1 through 19), §4.1 (5 through 12), §4.2 (13
+// through 19), §4.2.1 (17 through 19), §7, §7.1, and §7.2.
+func citationResolver(t *testing.T) *citation.Resolver {
+	t.Helper()
+	r, err := citation.NewResolver(context.Background(),
+		scope.DirLister(fixtureCitations), scope.DirReader(fixtureCitations))
+	if err != nil {
+		t.Fatalf("NewResolver over the fixture specification tree: %v", err)
+	}
+	return r
+}
+
+// TestSectionRangeCoversASectionAndItsSubsections pins the range computation
+// over the ## through ###### headings: a section ends at the line before the
+// next heading at its own level or above, so a parent covers its children and a
+// section-level citation resolves against the whole of the section it names.
+func TestSectionRangeCoversASectionAndItsSubsections(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	for _, tc := range []struct {
+		number     string
+		start, end int
+	}{
+		{"4", 1, 19},
+		{"4.1", 5, 12},
+		{"4.2", 13, 19},
+		{"4.2.1", 17, 19},
+		{"7.1", 3, 6},
+		{"7.2", 7, 9},
+	} {
+		s, ok := r.Section(tc.number)
+		if !ok {
+			t.Errorf("§%s is absent from the resolver index", tc.number)
+			continue
+		}
+		if s.Start != tc.start || s.End != tc.end {
+			t.Errorf("§%s spans lines %d-%d, want %d-%d", tc.number, s.Start, s.End, tc.start, tc.end)
+		}
+	}
+	if len(r.Sections()) == 0 {
+		t.Error("the resolver indexed no section")
+	}
+}
+
+// TestResolveReportsEveryFailureClassDistinctly pins the resolver's answer per
+// citation class. A member outside its section, a range whose endpoints
+// disagree about which section they name, a section number no heading declares,
+// and a path that does not resolve under spec/ are reported as their own kinds,
+// because their remedies differ: collapsing them would report a mistyped file
+// name as a stale line number.
+func TestResolveReportsEveryFailureClassDistinctly(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	for _, tc := range []struct {
+		fixture string
+		want    []citation.FailureKind
+	}{
+		{"resolve/inside.txt", nil},
+		{"resolve/section-level.txt", nil},
+		{"resolve/path-inside.txt", nil},
+		{"resolve/outside.txt", []citation.FailureKind{citation.OutsideSection}},
+		{"resolve/multi-member-one-outside.txt", []citation.FailureKind{citation.OutsideSection}},
+		{"resolve/straddling.txt", []citation.FailureKind{citation.StraddlingRange}},
+		{"resolve/path-straddling.txt", []citation.FailureKind{citation.StraddlingRange}},
+		{"resolve/unknown-section.txt", []citation.FailureKind{citation.UnknownSection}},
+		{"resolve/path-unknown-file.txt", []citation.FailureKind{citation.UnknownFile}},
+		{"resolve/path-outside-any-section.txt", []citation.FailureKind{citation.OutsideSection}},
+	} {
+		c := oneCitation(t, tc.fixture)
+		got := r.Resolve(c)
+		kinds := make([]string, 0, len(got))
+		for _, f := range got {
+			kinds = append(kinds, string(f.Kind))
+		}
+		want := make([]string, 0, len(tc.want))
+		for _, k := range tc.want {
+			want = append(want, string(k))
+		}
+		if !sameStrings(kinds, want) {
+			t.Errorf("%s: Resolve reported %v, want %v (%v)", tc.fixture, kinds, want, got)
+		}
+		if r.Resolves(c) != (len(tc.want) == 0) {
+			t.Errorf("%s: Resolves reported %v", tc.fixture, r.Resolves(c))
+		}
+	}
+	member := r.Resolve(oneCitation(t, "resolve/outside.txt"))
+	if len(member) != 1 || !strings.Contains(member[0].String(), `member "15"`) {
+		t.Errorf("a member failure renders as %v, want it to name the member that did not resolve", member)
+	}
+	file := r.Resolve(oneCitation(t, "resolve/path-unknown-file.txt"))
+	if len(file) != 1 || !strings.Contains(file[0].String(), "spec/99_missing.md") {
+		t.Errorf("a file failure renders as %v, want it to name the path that did not resolve", file)
+	}
+}
+
+// TestResolveResolvesThePathFormAgainstTheContainingSection pins that a
+// path-form citation resolves against the section of the named file that
+// contains the cited line rather than against a section it names, so the same
+// line resolves under the path form and under the number of the section that
+// contains it.
+func TestResolveResolvesThePathFormAgainstTheContainingSection(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	path := oneCitation(t, "resolve/path-inside.txt")
+	if path.File != "spec/04_example.md" || path.Section != "" {
+		t.Fatalf("the path form parsed as %+v, want a file reference", path)
+	}
+	if f := r.Resolve(path); len(f) != 0 {
+		t.Errorf("the path form did not resolve: %v", f)
+	}
+	number := oneCitation(t, "resolve/inside.txt")
+	if f := r.Resolve(number); len(f) != 0 {
+		t.Errorf("the section-number form for the same line did not resolve: %v", f)
+	}
+}
+
+// TestNewResolverFailsRatherThanIndexingNothing pins that the resolver refuses
+// a tree with no specification file and a file that declares no numbered
+// section. An empty index reads to every gate as a tree in which no citation
+// resolves, which is the report a genuinely broken tree produces.
+func TestNewResolverFailsRatherThanIndexingNothing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		paths []string
+		files map[string]string
+	}{
+		{
+			name:  "a tree with no specification file",
+			paths: []string{"pkg/carrier/carrier.go"},
+			files: map[string]string{"pkg/carrier/carrier.go": "package carrier\n"},
+		},
+		{
+			name:  "a specification file that declares no numbered section",
+			paths: []string{"spec/04_example.md"},
+			files: map[string]string{"spec/04_example.md": "## Overview\n\nProse.\n"},
+		},
+	} {
+		list := func(context.Context) ([]string, error) { return tc.paths, nil }
+		read := func(target string) ([]byte, error) {
+			body, ok := tc.files[target]
+			if !ok {
+				return nil, fmt.Errorf("no such file %s", target)
+			}
+			return []byte(body), nil
+		}
+		if _, err := citation.NewResolver(context.Background(), list, read); err == nil {
+			t.Errorf("NewResolver over %s returned no error", tc.name)
+		}
+	}
+}
+
+// TestNewResolverRejectsASectionDeclaredTwice pins that a section number
+// declared in two files fails the build rather than resolving against whichever
+// file was walked last, which would make a citation's answer depend on the walk
+// order.
+func TestNewResolverRejectsASectionDeclaredTwice(t *testing.T) {
+	t.Parallel()
+	files := map[string]string{
+		"spec/04_example.md": "## 4. Example\n\nProse.\n",
+		"spec/05_other.md":   "## 4. Example Again\n\nProse.\n",
+	}
+	list := func(context.Context) ([]string, error) {
+		return []string{"spec/04_example.md", "spec/05_other.md"}, nil
+	}
+	read := func(target string) ([]byte, error) { return []byte(files[target]), nil }
+	_, err := citation.NewResolver(context.Background(), list, read)
+	if err == nil {
+		t.Fatal("NewResolver over a duplicated section number returned no error")
+	}
+	if !strings.Contains(err.Error(), "declared in both") {
+		t.Errorf("error is %q, want it to name the two files", err)
+	}
+}
+
+// TestNewResolverFailsWithoutAListerOrReader pins that the resolver refuses to
+// build with a missing dependency rather than indexing an empty tree.
+func TestNewResolverFailsWithoutAListerOrReader(t *testing.T) {
+	t.Parallel()
+	if _, err := citation.NewResolver(context.Background(), nil, scope.DirReader(fixtureCitations)); err == nil {
+		t.Error("NewResolver without a lister returned no error")
+	}
+	if _, err := citation.NewResolver(context.Background(), scope.DirLister(fixtureCitations), nil); err == nil {
+		t.Error("NewResolver without a reader returned no error")
+	}
 }
