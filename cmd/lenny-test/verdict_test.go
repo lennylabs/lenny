@@ -226,14 +226,45 @@ func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 // branch. A status no branch of the switch recognizes established
 // nothing about the tier, and leaving the run at PASS with exit code 0
 // would report the unrecognized outcome as success.
+// The recorded tier status is normalized to "unverified" so the
+// document stays inside the tier-status enum every consumer switches
+// on, and the value that was passed in survives in the reason.
 func TestRecordTierUnknownStatusDoesNotKeepPass(t *testing.T) {
 	v := newVerdict(selector{tier: "static"})
-	v.recordTier("static", "banana", time.Millisecond, "")
+	v.recordTier("static", "banana", time.Millisecond, "protoc not on PATH")
 	if v.Verdict == verdictstatus.VerdictPass {
 		t.Fatalf("unrecognized tier status left the verdict at PASS")
 	}
 	if got := exitCodeFor(v.Verdict); got == 0 {
 		t.Fatalf("verdict %q after an unrecognized tier status exits 0", v.Verdict)
+	}
+	stat := v.Tiers["static"]
+	if stat.Status != verdictstatus.Unverified {
+		t.Fatalf("recorded tier status %q; want it normalized to %q", stat.Status, verdictstatus.Unverified)
+	}
+	if !strings.Contains(stat.Reason, `"banana"`) {
+		t.Fatalf("recorded reason %q does not name the unrecognized status", stat.Reason)
+	}
+	if !strings.Contains(stat.Reason, "protoc not on PATH") {
+		t.Fatalf("recorded reason %q dropped the detail passed in", stat.Reason)
+	}
+}
+
+// TestRecordedTierStatusStaysInTheEnum holds every status recordTier
+// writes to the declared tier-status set. A status outside it reaches
+// no branch of the emitters, which switch on that set.
+func TestRecordedTierStatusStaysInTheEnum(t *testing.T) {
+	declared := map[string]bool{}
+	for _, s := range verdictstatus.TierStatuses() {
+		declared[s] = true
+	}
+	inputs := append(verdictstatus.TierStatuses(), "banana", "")
+	for _, in := range inputs {
+		v := newVerdict(selector{tier: "static"})
+		v.recordTier("static", in, time.Millisecond, "")
+		if got := v.Tiers["static"].Status; !declared[got] {
+			t.Errorf("recordTier(%q) recorded status %q, which is outside the declared tier-status set", in, got)
+		}
 	}
 }
 

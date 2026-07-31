@@ -221,12 +221,6 @@ func (v *verdict) recordTier(name, status string, dur time.Duration, detail stri
 	if status == verdictstatus.Fail && classifyInfraFailure(detail) {
 		status = verdictstatus.Inconclusive
 	}
-	v.Tiers[name] = tierStat{
-		Status:     status,
-		DurationMS: dur.Milliseconds(),
-		Reason:     reasonFromStatus(status, detail),
-		Detail:     detail,
-	}
 	switch status {
 	case verdictstatus.Pass, verdictstatus.Skipped, verdictstatus.NotSelected:
 		// None of these raises the overall verdict: the tier either
@@ -242,9 +236,31 @@ func (v *verdict) recordTier(name, status string, dur time.Duration, detail stri
 		// switch does not recognize would otherwise end the run at
 		// PASS with exit code 0 while nothing established that the
 		// tier passed. An unrecognized status proves nothing, which is
-		// what UNVERIFIED reports.
+		// what UNVERIFIED reports. The tier record is normalized to
+		// "unverified" so the document stays inside the tier-status
+		// enum every consumer switches on, and the value that was
+		// passed in survives in the detail so it stays diagnosable.
+		detail = unrecognizedStatusDetail(status, detail)
+		status = verdictstatus.Unverified
 		v.promoteVerdict(verdictstatus.VerdictUnverified)
 	}
+	v.Tiers[name] = tierStat{
+		Status:     status,
+		DurationMS: dur.Milliseconds(),
+		Reason:     reasonFromStatus(status, detail),
+		Detail:     detail,
+	}
+}
+
+// unrecognizedStatusDetail renders the detail recorded for a tier whose
+// status fell through recordTier's switch, naming the value that was
+// passed in and preserving any detail that came with it.
+func unrecognizedStatusDetail(status, detail string) string {
+	out := fmt.Sprintf("unrecognized tier status %q", status)
+	if detail != "" {
+		out += ": " + detail
+	}
+	return out
 }
 
 // promoteVerdict raises the overall verdict to candidate when

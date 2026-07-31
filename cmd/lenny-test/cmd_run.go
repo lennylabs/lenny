@@ -1334,10 +1334,14 @@ func printSummary(s selector, v *verdict, status string, exit int) int {
 	for name, t := range v.Tiers {
 		marker := "✓"
 		switch t.Status {
-		case "fail":
+		case verdictstatus.Fail:
 			marker = "✗"
-		case "skipped":
+		case verdictstatus.Skipped:
 			marker = "↷"
+		case verdictstatus.Inconclusive, verdictstatus.Unverified:
+			// Neither status establishes that the tier passed, so the
+			// check mark would misreport it.
+			marker = "?"
 		}
 		fmt.Printf("  %s %-13s %s", marker, name, t.Status)
 		if t.Reason != "" {
@@ -1358,14 +1362,19 @@ func printTAP(v *verdict, _ string) {
 	for i, name := range tiers {
 		t := v.Tiers[name]
 		switch t.Status {
-		case "pass":
+		case verdictstatus.Pass:
 			fmt.Printf("ok %d - %s\n", i+1, name)
-		case "fail":
+		case verdictstatus.Fail:
 			fmt.Printf("not ok %d - %s\n", i+1, name)
 			if t.Reason != "" {
 				fmt.Printf("  ---\n  message: %s\n  ...\n", escapeTAPReason(t.Reason))
 			}
-		case "skipped":
+		case verdictstatus.Unverified:
+			// A tier that reached no conclusion proved nothing, so it
+			// reports as a failing point rather than falling through to
+			// the passing default below.
+			fmt.Printf("not ok %d - %s # unverified %s\n", i+1, name, escapeTAPReason(t.Reason))
+		case verdictstatus.Skipped:
 			fmt.Printf("ok %d - %s # SKIP %s\n", i+1, name, t.Reason)
 		default:
 			fmt.Printf("ok %d - %s # %s\n", i+1, name, t.Status)
@@ -1384,11 +1393,14 @@ func printJUnit(v *verdict) {
 	skipped := 0
 	for _, n := range tiers {
 		switch v.Tiers[n].Status {
-		case "fail":
+		case verdictstatus.Fail:
 			failures++
-		case "inconclusive":
+		case verdictstatus.Inconclusive, verdictstatus.Unverified:
+			// Neither established that the tier passed, so both count
+			// against the suite. A JUnit consumer reads a testcase with
+			// no child element as a pass.
 			errors++
-		case "skipped", "not-selected":
+		case verdictstatus.Skipped, verdictstatus.NotSelected:
 			skipped++
 		}
 	}
@@ -1400,13 +1412,15 @@ func printJUnit(v *verdict) {
 		dur := float64(t.DurationMS) / 1000.0
 		fmt.Printf(`  <testcase classname="lenny-test" name="%s" time="%.3f">`+"\n", name, dur)
 		switch t.Status {
-		case "fail":
+		case verdictstatus.Fail:
 			fmt.Printf(`    <failure message="%s"/>`+"\n", escapeXML(t.Reason))
-		case "inconclusive":
+		case verdictstatus.Inconclusive:
 			fmt.Printf(`    <error message="%s"/>`+"\n", escapeXML(t.Reason))
-		case "skipped":
+		case verdictstatus.Unverified:
+			fmt.Printf(`    <error message="unverified: %s"/>`+"\n", escapeXML(t.Reason))
+		case verdictstatus.Skipped:
 			fmt.Printf(`    <skipped message="%s"/>`+"\n", escapeXML(t.Reason))
-		case "not-selected":
+		case verdictstatus.NotSelected:
 			fmt.Printf(`    <skipped message="not-selected: %s"/>`+"\n", escapeXML(t.Reason))
 		}
 		fmt.Println(`  </testcase>`)
@@ -1420,25 +1434,29 @@ func printJUnit(v *verdict) {
 func printGitHubAnnotations(v *verdict) {
 	fail := 0
 	inconclusive := 0
+	unverified := 0
 	skipped := 0
 	for _, name := range orderedTierNames(v) {
 		t := v.Tiers[name]
 		switch t.Status {
-		case "fail":
+		case verdictstatus.Fail:
 			fail++
 			fmt.Printf("::error title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
-		case "inconclusive":
+		case verdictstatus.Inconclusive:
 			inconclusive++
 			fmt.Printf("::warning title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
-		case "skipped":
+		case verdictstatus.Unverified:
+			unverified++
+			fmt.Printf("::error title=lenny-test tier %s::unverified: %s\n", name, oneLine(t.Reason))
+		case verdictstatus.Skipped:
 			skipped++
 			fmt.Printf("::notice title=lenny-test tier %s::%s\n", name, oneLine(t.Reason))
 		}
 	}
 	// Final summary line. Without it, a clean run prints nothing,
 	// which is indistinguishable from "the harness didn't run."
-	summary := fmt.Sprintf("verdict=%s fail=%d inconclusive=%d skipped=%d run_id=%s",
-		v.Verdict, fail, inconclusive, skipped, v.RunID)
+	summary := fmt.Sprintf("verdict=%s fail=%d inconclusive=%d unverified=%d skipped=%d run_id=%s",
+		v.Verdict, fail, inconclusive, unverified, skipped, v.RunID)
 	if v.Verdict == verdictstatus.VerdictPass {
 		fmt.Printf("::notice title=lenny-test summary::%s\n", summary)
 	} else {
