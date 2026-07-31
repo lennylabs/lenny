@@ -395,6 +395,24 @@ func DirReader(dir string) FileReader {
 	}
 }
 
+// DirWriter returns a writer rooted at dir that preserves each file's
+// existing mode. The passes and the gates write through it, so a file
+// rewritten by a pass and a baseline rewritten by a gate keep the mode
+// they were committed with.
+func DirWriter(dir string) func(target string, content []byte) error {
+	return func(target string, content []byte) error {
+		full := filepath.Join(dir, filepath.FromSlash(target))
+		mode := os.FileMode(0o644)
+		if info, err := os.Stat(full); err == nil {
+			mode = info.Mode().Perm()
+		}
+		if err := os.WriteFile(full, content, mode); err != nil {
+			return fmt.Errorf("write %s: %w", target, err)
+		}
+		return nil
+	}
+}
+
 // Lister reports the tracked paths of a tree, repo-relative and
 // slash-separated.
 type Lister func(ctx context.Context) ([]string, error)

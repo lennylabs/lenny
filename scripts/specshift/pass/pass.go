@@ -23,8 +23,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -157,7 +155,7 @@ func NewHarness(root string) *Harness {
 	return &Harness{
 		List:  scope.GitLister(root),
 		Read:  scope.DirReader(root),
-		Write: dirWriter(root),
+		Write: scope.DirWriter(root),
 	}
 }
 
@@ -165,22 +163,6 @@ func NewHarness(root string) *Harness {
 // caller can drive a pass over a tree other than a git checkout.
 func NewHarnessOver(list scope.Lister, read scope.FileReader, write func(string, []byte) error) *Harness {
 	return &Harness{List: list, Read: read, Write: write}
-}
-
-// dirWriter returns a writer rooted at dir that preserves each file's
-// existing mode.
-func dirWriter(dir string) func(string, []byte) error {
-	return func(target string, content []byte) error {
-		full := filepath.Join(dir, filepath.FromSlash(target))
-		mode := os.FileMode(0o644)
-		if info, err := os.Stat(full); err == nil {
-			mode = info.Mode().Perm()
-		}
-		if err := os.WriteFile(full, content, mode); err != nil {
-			return fmt.Errorf("write %s: %w", target, err)
-		}
-		return nil
-	}
 }
 
 // Plan computes the pass's whole diff without touching the tree. It is

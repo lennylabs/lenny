@@ -432,7 +432,6 @@ prefixes:
   - tests/testinfra/tokenservice/
   - tests/testinfra/wait/
   - tests/testinfra/watchlag/
-  - tests/tier0_static/errorprop/
   - tests/tier1_unit/concurrency/
   - tests/tier1_unit/flagdefaults/
   - tests/tier1_unit/rbac/

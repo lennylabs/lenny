@@ -1,0 +1,2 @@
+// The carrier resolves until the heading it names moves down.
+// spec: §4.2 line 15

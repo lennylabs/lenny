@@ -443,7 +443,10 @@
     },
     "tests/registers": {
       "static": ["tests/tier0_static/..."],
-      "unit": ["cmd/lenny-test/..."]
+      "unit": ["cmd/lenny-test/...", "scripts/specshift/..."]
+    },
+    "tests/tier0_static": {
+      "static": ["tests/tier0_static/..."]
     },
     "cmd/lenny-test-cached": {
       "static": ["tests/tier0_static/..."],

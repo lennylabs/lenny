@@ -1,0 +1,6 @@
+kind: line-citation-resolution-baseline
+version: 1
+files:
+  - path: pkg/carrier/carrier.go
+   citations:
+	- §4.1 line 15
