@@ -168,9 +168,12 @@ func covered(spans []span, match span) bool {
 // so the doc comments of the Go runtime SDK are read here.
 //
 // A carrier inside the domain is read whole except for Go, where the
-// pass holds two positions. The first is the doc comment, so a site in a
-// function-body comment or in a trailing inline comment is outside the
-// pass. The second is the string literal the pinned-literal register
+// pass holds two positions. The first is the prose comment the scope
+// package's position rule states, so a site in a function-body comment
+// or in a trailing inline comment is outside the pass while a site in a
+// header block, in the documentation of a declaration, or between the
+// elements of a package-level literal is inside it. The second is the
+// string literal the pinned-literal register
 // names, which is how the specification prose, heading slugs, and
 // intra-spec links a tier-11 reconciliation test pins are rewritten by
 // the same run that rewrites the specification they pin. Every other
@@ -192,15 +195,22 @@ func carrierFilter(target, content string, pinned map[int]bool) (func(int) bool,
 }
 
 // goAdmittedSpans returns the byte spans of a Go carrier the matcher
-// reads a site in, which are the comments documenting the package or a
-// declaration together with the string literals the pinned-literal
-// register resolves for this carrier.
+// reads a site in, which are the prose comments the scope package's
+// position rule governs together with the string literals the
+// pinned-literal register resolves for this carrier.
 func goAdmittedSpans(target, content string, pinned map[int]bool) ([]span, error) {
 	fset, file, err := parseGo(target, content)
 	if err != nil {
 		return nil, err
 	}
-	out := docCommentSpans(fset, file)
+	prose, err := scope.GoProseCommentSpans(target, content)
+	if err != nil {
+		return nil, err
+	}
+	var out []span
+	for _, p := range prose {
+		out = append(out, span{lo: p[0], hi: p[1]})
+	}
 	for i, literal := range stringLiteralSpans(fset, file) {
 		if pinned[i+1] {
 			out = append(out, literal)
@@ -220,14 +230,17 @@ func goStringLiteralCount(target, content string) (int, error) {
 	return len(stringLiteralSpans(fset, file)), nil
 }
 
-// parseGo parses a Go carrier with its comments.
+// parseGo parses a Go carrier, which is what the string literals the
+// pinned-literal register numbers are enumerated from. The prose
+// comments the same carrier holds come from the scope package, which
+// states the position rule the naming lint reads against.
 //
 // A file the parser cannot read fails the run rather than being read
 // whole or skipped. Reading it whole would rewrite an implementation
 // comment and an operator-facing literal the law does not govern, and
-// skipping it would leave every doc comment and every pinned literal it
-// carries with no pass able to write them, which is the writerless site
-// the shared domain exists to prevent.
+// skipping it would leave every pinned literal it carries with no pass
+// able to write it, which is the writerless site the shared domain
+// exists to prevent.
 func parseGo(target, content string) (*token.FileSet, *ast.File, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
@@ -252,56 +265,5 @@ func stringLiteralSpans(fset *token.FileSet, file *ast.File) []span {
 		return true
 	})
 	sort.Slice(out, func(i, j int) bool { return out[i].lo < out[j].lo })
-	return out
-}
-
-// docCommentSpans returns the byte span of every comment of a Go file
-// that documents the package or a declaration, which is the position the
-// naming law governs in a Go carrier and the position the naming lint
-// reads.
-//
-// The leading comments of the file, meaning every group positioned
-// before the package clause, are read alongside the groups the parser
-// attaches to a declaration. A header prose block separated from the
-// package clause by a blank line is attached to nothing, and a build
-// constraint forces exactly that blank line, so a rule resting on
-// attachment alone would leave the header of every build-tagged file
-// with no writer while the naming lint read it. It would also offset
-// this pass's occurrence numbering from the enumeration the register is
-// keyed by in any file carrying both a header site and an attached one,
-// which writes a resolved identifier at the wrong site.
-func docCommentSpans(fset *token.FileSet, file *ast.File) []span {
-	var out []span
-	add := func(group *ast.CommentGroup) {
-		if group == nil {
-			return
-		}
-		for _, c := range group.List {
-			lo := fset.Position(c.Pos()).Offset
-			out = append(out, span{lo: lo, hi: lo + len(c.Text)})
-		}
-	}
-	for _, group := range file.Comments {
-		if group.End() <= file.Package {
-			add(group)
-		}
-	}
-	ast.Inspect(file, func(n ast.Node) bool {
-		switch decl := n.(type) {
-		case *ast.FuncDecl:
-			add(decl.Doc)
-		case *ast.GenDecl:
-			add(decl.Doc)
-		case *ast.TypeSpec:
-			add(decl.Doc)
-		case *ast.ValueSpec:
-			add(decl.Doc)
-		case *ast.ImportSpec:
-			add(decl.Doc)
-		case *ast.Field:
-			add(decl.Doc)
-		}
-		return true
-	})
 	return out
 }

@@ -26,6 +26,14 @@ entries:
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
+  # The site of this carrier opens its own line inside an element of a
+  # package-level composite literal, which the parser attaches to
+  # nothing. The trailing comment of the same carrier is outside the
+  # position the law governs, so it takes no entry.
+  - file: pkg/catalog/catalog.go
+    occurrence: 1
+    identifiers:
+      - CH-PODLIFECYCLE
   # A tracked Go file under sdks/ is a carrier like any other tracked Go
   # file, and this site wraps across two comment lines.
   - file: sdks/runtime/go/runtime/lifecycle_test.go

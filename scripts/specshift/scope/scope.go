@@ -23,6 +23,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -451,6 +454,148 @@ func MarkdownAnchorIdentifiers(text string) [][2]int {
 		}
 	}
 	return out
+}
+
+// GoProseCommentSpans returns the byte span of every comment of a Go
+// carrier that the naming law's reserved-phrase prohibition governs,
+// each as a half-open [lo, hi) pair over the content, in source order.
+//
+// A comment is governed when it opens its own line and stands outside
+// every function body, together with the groups the parser attaches to a
+// declaration. An own-line comment is prose addressed to a reader of the
+// package: the header block of the file, the documentation of a
+// declaration, and the prose written between the elements of a
+// package-level composite literal alike. A trailing inline comment and
+// an implementation comment inside a function body are outside the
+// prohibition, so a phrase in one is neither substituted nor demanded of
+// the register.
+//
+// Attachment alone does not decide the answer. A header prose block
+// separated from the package clause by a blank line is attached to
+// nothing, and a build constraint forces exactly that blank line. The
+// comments written between the elements of a package-level composite
+// literal are attached to nothing either, because the parser attaches a
+// Doc group to a declaration and to a field rather than to a literal
+// element. A rule resting on attachment would leave those positions with
+// no pass able to write them while the naming lint read them, which is
+// the writerless site the shared domain exists to prevent. It would also
+// offset the pass's occurrence numbering from the enumeration the sense
+// register is keyed by in any file carrying both an unattached site and
+// an attached one, which writes a resolved identifier at the wrong site.
+//
+// The position rule is held here rather than in the pass, so the name
+// pass that writes the reserved-phrase sites of a Go carrier and the
+// naming lint that reads them share one statement of it, as they share
+// ReservedPhraseCarrier and MarkdownAnchorIdentifiers.
+//
+// A file the parser cannot read fails rather than being read whole or
+// skipped. Reading it whole would rewrite an implementation comment and
+// an operator-facing literal the law does not govern, and skipping it
+// would leave every governed comment it carries with no writer.
+func GoProseCommentSpans(target, content string) ([][2]int, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return nil, fmt.Errorf("read the doc comments of %s: %w", target, err)
+	}
+	attached := attachedDocComments(file)
+	bodies := functionBodySpans(fset, file)
+	var out [][2]int
+	for _, group := range file.Comments {
+		for _, c := range group.List {
+			lo := fset.Position(c.Pos()).Offset
+			if !attached[c] && (!opensItsOwnLine(content, lo) || withinAny(bodies, lo)) {
+				continue
+			}
+			out = append(out, [2]int{lo, lo + len(c.Text)})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i][0] < out[j][0] })
+	return out, nil
+}
+
+// attachedDocComments returns the set of comments the parser attaches to
+// the package clause or to a declaration as its documentation.
+func attachedDocComments(file *ast.File) map[*ast.Comment]bool {
+	out := map[*ast.Comment]bool{}
+	add := func(group *ast.CommentGroup) {
+		if group == nil {
+			return
+		}
+		for _, c := range group.List {
+			out[c] = true
+		}
+	}
+	add(file.Doc)
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch decl := n.(type) {
+		case *ast.FuncDecl:
+			add(decl.Doc)
+		case *ast.GenDecl:
+			add(decl.Doc)
+		case *ast.TypeSpec:
+			add(decl.Doc)
+		case *ast.ValueSpec:
+			add(decl.Doc)
+		case *ast.ImportSpec:
+			add(decl.Doc)
+		case *ast.Field:
+			add(decl.Doc)
+		}
+		return true
+	})
+	return out
+}
+
+// functionBodySpans returns the byte span of every function body of a Go
+// file, which is where an implementation comment stands. A function
+// literal assigned inside a package-level declaration carries a body
+// like any other, so its comments are implementation comments too.
+func functionBodySpans(fset *token.FileSet, file *ast.File) [][2]int {
+	var out [][2]int
+	add := func(body *ast.BlockStmt) {
+		if body == nil {
+			return
+		}
+		out = append(out, [2]int{fset.Position(body.Lbrace).Offset, fset.Position(body.Rbrace).Offset})
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch fn := n.(type) {
+		case *ast.FuncDecl:
+			add(fn.Body)
+		case *ast.FuncLit:
+			add(fn.Body)
+		}
+		return true
+	})
+	return out
+}
+
+// opensItsOwnLine reports whether only whitespace stands between the
+// start of the line and the offset, which is what separates a prose
+// comment from a comment trailing the code it annotates.
+func opensItsOwnLine(content string, at int) bool {
+	for i := at - 1; i >= 0; i-- {
+		switch content[i] {
+		case '\n':
+			return true
+		case ' ', '\t', '\r':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// withinAny reports whether any of the half-open spans contains the
+// offset.
+func withinAny(spans [][2]int, at int) bool {
+	for _, s := range spans {
+		if at >= s[0] && at < s[1] {
+			return true
+		}
+	}
+	return false
 }
 
 // hasSegment reports whether a slash-separated path carries the named
