@@ -1,0 +1,2 @@
+# spec: §4.8 (line 1060: the immutability interceptor rejects a
+# mutation of a sealed field), §4.9 line 20

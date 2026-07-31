@@ -84,21 +84,19 @@ type Resolver struct {
 	byFile   map[string][]Section
 }
 
-// headingExpr matches the headings a section's range is computed from. The
-// ranges below it are computed from the `##` through `######` headings, and a
-// level-one heading is read as well so a file that states its numbered title at
-// that level declares the section it names. A level-one heading carrying no
-// leading number is an ordinary document title: numberExpr alone excludes it,
-// the same way it excludes an unnumbered sub-heading, and it closes the
-// headings above it without declaring a section.
+// headingExpr matches the headings a section's range is computed from, which
+// are the `##` through `######` headings under spec/.
 //
-// Reading level two and below alone leaves a file whose numbered title sits at
-// level one declaring no section under that number, so every section-level
-// citation into it is reported as naming a heading the specification does not
-// declare. That report is false, it gives no line-containment verdict for a
-// section that exists, and it puts the file's first lines inside no section for
-// the path form.
-var headingExpr = regexp.MustCompile(`^(#{1,6})[ \t]+(.*)$`)
+// A level-one heading is outside the rule, so a file that states its numbered
+// title at that level declares no section under that number and its opening
+// lines sit in no section for the path form. Every population figure the
+// migration is measured against is stated over this rule, so the baseline the
+// resolution register is seeded with and the count the retirement drives to
+// zero are computed against the same predicate. Widening the expression to
+// level one would index sections no measurement counted, so a citation the
+// baseline was never seeded for would resolve here and fail once the baseline
+// is enforced elsewhere.
+var headingExpr = regexp.MustCompile(`^(#{2,6})[ \t]+(.*)$`)
 
 // fenceExpr matches the opening or closing line of a fenced code block. A line
 // opening with hashes inside a fence is a comment in an example rather than a

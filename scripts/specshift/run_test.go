@@ -2119,21 +2119,32 @@ func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 
 // TestFindReportsACitationWhoseHeadParenthesisDoesNotClose pins the other half
 // of that rule. The parenthesis a head opened is out of reach when it sits
-// behind a newline the join did not consume, and when it sits behind the head
-// of the next citation, where consuming up to it would swallow the citation
-// written in between. The occurrence is returned in both cases, ending at its
-// last member and marked unconvertible, so the resolver reports it and the
-// ratchet counts it. Dropping it instead hides it from both gates at once,
+// behind a newline the join did not consume, when it sits behind the head of
+// the next citation, where consuming up to it would swallow the citation
+// written in between, and when it sits behind a continuation the join did
+// consume, where reading across the wrap would take an unbounded run of comment
+// lines as one member's gloss. The occurrence is returned in every case, ending
+// at its last member and marked unconvertible, so the resolver reports it and
+// the ratchet counts it. Dropping it instead hides it from both gates at once,
 // which lets its file reach a zero count while the stale pointer stands, and
 // the two dispositions a citation the tooling cannot convert has are a report
 // and a hand correction. The citation written behind the unconvertible one is
 // returned too.
+//
+// The last two cases carry the wrapped parenthetical in the // and the #
+// dialect. Consuming it whole would put the following line's comment marker and
+// prose inside the citation text a register is keyed by, absorb any further
+// line reference written in the parenthetical without making it a member the
+// resolver checks, and hand the pass a span whose single anchor deletes both
+// comment lines.
 func TestFindReportsACitationWhoseHeadParenthesisDoesNotClose(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
 	for _, fixture := range []string{
 		"paren-unreachable-close.txt",
 		"paren-close-behind-next-citation.txt",
+		"paren-across-wrap-slash.txt",
+		"paren-across-wrap-hash.txt",
 	} {
 		found := citation.Find(citationFixture(t, fixture))
 		texts := make([]string, 0, len(found))
@@ -2150,6 +2161,10 @@ func TestFindReportsACitationWhoseHeadParenthesisDoesNotClose(t *testing.T) {
 		}
 		if found[1].Unconvertible {
 			t.Errorf("%s: the citation behind it (%q) is marked unconvertible", fixture, found[1].Text)
+		}
+		if strings.Contains(found[0].Raw, "\n") {
+			t.Errorf("%s: the unconvertible citation's raw span %q runs past the line its last member sits on",
+				fixture, found[0].Raw)
 		}
 		failures := r.Resolve(found[0])
 		if len(failures) == 0 || failures[0].Kind != citation.UnclosedParenthesis {
@@ -2538,8 +2553,8 @@ func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 // sub-subsection, a second file with two subsections, a third file with two
 // top-level headings so a section-level range ends before the next heading of
 // its own level, a fourth file that states its numbered title at level one and
-// carries a fenced code block with a numbered heading-like line in it, so the
-// title declares its section while the fenced line declares none, and a fifth
+// carries a fenced code block with a numbered heading-like line in it, so
+// neither the title nor the fenced line declares a section, and a fifth
 // file laid out the way every specification file is, which is a whole-file
 // heading whose range runs to the end of the file with two sibling subsections
 // under it. The ranges the cases below state are the tree's, and the fixture
@@ -2586,27 +2601,26 @@ func TestSectionRangeCoversASectionAndItsSubsections(t *testing.T) {
 	}
 }
 
-// TestSectionIndexReadsANumberedLevelOneHeading pins the section a file
-// declares when it states its number in a level-one title. That heading
-// declares the section it names, so a section-level citation into the file
-// resolves against the whole of it and a path-form citation into its opening
-// lines resolves against the section containing them. Reading level two and
-// below alone reports every such citation as naming a heading the
-// specification does not declare, which is untrue of a section that exists,
-// gives no line-containment verdict for it, and leaves the file's first lines
-// inside no section for the path form.
+// TestSectionIndexReadsTheLevelTwoThroughLevelSixHeadingsOnly pins the heading
+// range a section's span is computed from. Only the ## through ###### headings
+// declare a section, so a file that states its number in a level-one title
+// declares no section under that number: a citation naming it is reported as
+// naming a heading the index does not carry, and a path-form citation into the
+// file's opening lines falls in no section. Both reports are the resolver's
+// answer rather than a resolution, so the migration's measured population, the
+// baseline the resolution register is seeded with, and the count the retirement
+// drives to zero are all computed against one predicate.
 //
-// A level-one heading carrying no number is an ordinary document title and
-// declares nothing, the ranges below the title are computed as usual, and the
-// walk skips fenced code, because a heading-like line inside an example is a
-// comment and indexing it declares sections the specification does not have,
-// including one that collides with a genuine section number.
-func TestSectionIndexReadsANumberedLevelOneHeading(t *testing.T) {
+// The headings below such a title are indexed as usual, a level-one heading
+// carrying no number declares nothing either, and the walk skips fenced code,
+// because a heading-like line inside an example is a comment and indexing it
+// declares sections the specification does not have, including one that
+// collides with a genuine section number.
+func TestSectionIndexReadsTheLevelTwoThroughLevelSixHeadingsOnly(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
-	top, ok := r.Section("30")
-	if !ok || top.File != "spec/30_level-one-title.md" || top.Start != 1 || top.End != 11 {
-		t.Errorf("§30 is %v (present=%v), want lines 1-11 of the level-one-titled file", top, ok)
+	if s, ok := r.Section("30"); ok {
+		t.Errorf("the level-one numbered title declared %v, want no section under §30", s)
 	}
 	child, ok := r.Section("30.1")
 	if !ok || child.File != "spec/30_level-one-title.md" || child.Start != 9 || child.End != 11 {
@@ -2615,14 +2629,14 @@ func TestSectionIndexReadsANumberedLevelOneHeading(t *testing.T) {
 	if s, ok := r.Section("1"); ok {
 		t.Errorf("a numbered heading inside a fenced code block declared %v", s)
 	}
-	if f := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt")); len(f) != 0 {
-		t.Errorf("a citation naming the level-one section reported %v, want it to resolve", f)
+	if f := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt")); len(f) != 1 || f[0].Kind != citation.UnknownSection {
+		t.Errorf("a citation naming the level-one title reported %v, want one unknown-section failure", f)
 	}
 	if f := r.Resolve(oneCitation(t, "resolve/level-one-subsection.txt")); len(f) != 0 {
 		t.Errorf("a citation naming the file's own subsection reported %v, want it to resolve", f)
 	}
-	if f := r.Resolve(oneCitation(t, "resolve/path-level-one-preamble.txt")); len(f) != 0 {
-		t.Errorf("a path-form citation into the file's opening lines reported %v, want it to resolve", f)
+	if f := r.Resolve(oneCitation(t, "resolve/path-level-one-preamble.txt")); len(f) != 1 || f[0].Kind != citation.OutsideSection {
+		t.Errorf("a path-form citation into the title's opening lines reported %v, want one outside-section failure", f)
 	}
 	unnumbered := map[string]string{"spec/31_untitled.md": "# Untitled\n\nProse.\n\n## 31.1 Only Section\n\nBody.\n"}
 	list := func(context.Context) ([]string, error) { return []string{"spec/31_untitled.md"}, nil }

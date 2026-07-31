@@ -35,10 +35,10 @@
 // orphan integers. Nothing a citation consumes runs past the head of the next
 // citation, so a member list never absorbs the citation written behind it. A
 // citation whose head opened a parenthesis of the carrier's own runs to the
-// parenthesis that closes it for the same reason. When no parenthesis closes it
-// the occurrence is still returned, ending at its last member and marked
-// unconvertible, so the resolver reports it and the ratchet counts it while the
-// line pass declines to rewrite an unbalanced span.
+// parenthesis that closes it on the same line for the same reason. When no
+// parenthesis closes it there the occurrence is still returned, ending at its
+// last member and marked unconvertible, so the resolver reports it and the
+// ratchet counts it while the line pass declines to rewrite an unbalanced span.
 //
 // This is migration tooling rather than a platform behavior, so it carries no
 // spec citation of its own.
@@ -236,11 +236,25 @@ func consumeCitation(joined string, pos int, members *[]Member, opened bool) (in
 // and where the parenthetical crosses a continuation join it also deletes the
 // newline and the following line's comment marker.
 //
-// The search is bounded by the head of the next citation and by a newline the
-// join did not consume. A parenthesis reachable only past either of those
-// belongs to the carrier rather than to this citation, and consuming up to it
-// would swallow the citation written in between, which is never returned and so
-// is neither resolved nor counted.
+// The search is bounded by the head of the next citation, by a newline the join
+// did not consume, and by a continuation the join did consume. A parenthesis
+// reachable only past the next head belongs to a later citation, and consuming
+// up to it would swallow the citation written in between, which is never
+// returned and so is neither resolved nor counted.
+//
+// A parenthesis reachable only past a consumed continuation is the bound
+// glossSp states for every other gloss alternative, applied to the one the head
+// opens. The form names three wrap positions, all of them ahead of the first
+// member, so a parenthetical that opens on a member's line and closes on a
+// later one is prose the carrier wrapped rather than a span of the citation.
+// Reading across the join takes an unbounded run of comment lines as one
+// member's gloss: the citation text a register is keyed by carries the
+// following lines' comment markers and prose, any further line reference
+// written inside the parenthetical is absorbed without becoming a member the
+// resolver checks, and the anchor the pass writes in place of the whole
+// citation deletes those lines outright. The occurrence takes the unconvertible
+// disposition instead, so it is reported and counted while the pass leaves it
+// for hand correction.
 func closeHeadParen(joined string, glossStart, pos, limit int, members *[]Member) (int, bool) {
 	depth := 1
 	for i := pos; i < limit; i++ {
@@ -256,7 +270,7 @@ func closeHeadParen(joined string, glossStart, pos, limit int, members *[]Member
 				(*members)[len(*members)-1].Gloss = gloss
 			}
 			return i + 1, true
-		case '\n':
+		case '\n', joinByte:
 			return 0, false
 		}
 	}
