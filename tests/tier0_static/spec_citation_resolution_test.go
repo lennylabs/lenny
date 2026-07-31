@@ -333,6 +333,35 @@ func TestSpecCitationResolutionRetiresAnEntryWhoseCitationIsGone(t *testing.T) {
 	}
 }
 
+// spec: §28.1 (N8, the citation rule: an exemption does not outlive the
+// citation it was written for, including on a run that reports another
+// citation as a failure)
+func TestSpecCitationResolutionRetiresAnEntryBesideAReportedFailure(t *testing.T) {
+	t.Parallel()
+	tr := newResolutionTree(t, "04_example.md")
+	// The carrier's citation does not resolve and the baseline does not
+	// carry it, so the run reports a failure. The entry the baseline does
+	// carry names a file the tree does not hold, so its citation is gone.
+	tr.carrier("pkg/carrier/other.go", "nonresolving.txt")
+	tr.baseline("carrier-nonresolving.yaml")
+
+	rep := tr.runOK()
+	if len(rep.Failures) != 1 {
+		t.Fatalf("reported %d failure(s), want the unbaselined citation: %s",
+			len(rep.Failures), strings.Join(failureTexts(rep), "; "))
+	}
+	if len(rep.Retired) != 1 {
+		t.Fatalf("retired %d entry(ies) on a run that reported a failure, want the entry whose citation is gone",
+			len(rep.Retired))
+	}
+	if rep.Retired[0].Path != "pkg/carrier/carrier.go" {
+		t.Errorf("retired %q, want the entry written for pkg/carrier/carrier.go", rep.Retired[0])
+	}
+	if body := tr.baselineText(); strings.Contains(body, "pkg/carrier/carrier.go") {
+		t.Errorf("the baseline still carries the entry whose citation is gone:\n%s", body)
+	}
+}
+
 // spec: §28.1 (N8, the citation rule: the resolver's own baseline is
 // outside the domain it reads, so the copies of the citations it holds
 // are not tree content)

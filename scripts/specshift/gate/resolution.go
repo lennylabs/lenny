@@ -174,14 +174,11 @@ func (g *Resolution) Run(ctx context.Context) (ResolutionReport, error) {
 		used[entry] = true
 		rep.Baselined++
 	}
-	// A failing run leaves the baseline alone. The downward rewrite is
-	// one-way, and a run that reports a citation the tree has to correct
-	// is re-run after that correction, so retiring an entry beside a
-	// failure would drop an exemption on the strength of a tree state the
-	// operator is about to change.
-	if len(rep.Failures) > 0 {
-		return rep, nil
-	}
+	// The rewrite runs whatever the report says. An entry whose citation
+	// is no longer in the tree is retired by the run that read the tree
+	// without it, so a failure elsewhere cannot keep an exemption alive
+	// past the citation it was written for. The rewrite is one-way, so a
+	// reported failure is never absorbed into the file.
 	kept, retired := partitionBaseline(carried, used)
 	rep.Retired = retired
 	if len(retired) > 0 {

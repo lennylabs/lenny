@@ -60,16 +60,16 @@ func underAny(rel string, prefixes []string) bool {
 }
 
 // spdxHeaderExempt reports whether a tracked non-Go file is exempt from the
-// SPDX header requirement. A testdata directory holds fixture input whose
-// exact bytes the loading test asserts on, so a header line would alter the
-// fixture rather than document it; the remaining prefixes cover generated and
-// vendored trees. GitHub action workflows have their own license tooling.
+// SPDX header requirement. The prefixes cover generated output, vendored
+// trees, and the fixture tree under tests/testdata/ whose bytes predate the
+// check. A fixture elsewhere carries the header like any other tracked file:
+// the header is a comment in every format the check covers, so seeding it
+// keeps the fixture loadable. GitHub action workflows have their own license
+// tooling.
 func spdxHeaderExempt(rel string) bool {
-	if strings.HasPrefix(rel, "testdata/") || strings.Contains(rel, "/testdata/") {
-		return true
-	}
 	for _, prefix := range []string{
 		"tests/results/",
+		"tests/testdata/",
 		"sdks/vendor/",
 		"compose/otel-config.yaml",          // upstream-style config; SPDX would clutter
 		"tests/tier7b_load_kind/baselines/", // generated baselines
@@ -130,21 +130,25 @@ func TestEveryNonGoFileHasSPDXHeader(t *testing.T) {
 }
 
 // spec: 13.0 (license headers on non-Go files: shell, YAML, Python, TypeScript)
-// diagnosis: The SPDX header exemption no longer covers fixture files under a
+// diagnosis: The SPDX header exemption covers a tracked file that must carry
 //
-//	testdata directory, or it covers a non-fixture tracked file
-//	that must carry the header. A fixture's bytes are asserted on
-//	by the test that loads it, so the header requirement applies
-//	to source files only.
-func TestSPDXHeaderExemptionCoversTestdataFixtures(t *testing.T) {
+//	the header, or it has stopped covering one of the generated,
+//	vendored, or legacy-fixture trees it is written for. A gate
+//	lands green by seeding the header into the files it reaches,
+//	so a fixture directory outside tests/testdata/ is inside the
+//	check rather than exempt from it.
+func TestSPDXHeaderExemptionIsLimitedToGeneratedAndVendoredTrees(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		rel  string
 		want bool
 	}{
-		{"tests/tier0_static/testdata/citation-resolution/baselines/empty.yaml", true},
+		{"tests/tier0_static/testdata/citation-resolution/baselines/empty.yaml", false},
+		{"scripts/specshift/testdata/registers/valid.yaml", false},
 		{"tests/testdata/example.yaml", true},
 		{"tests/results/run.yaml", true},
+		{"sdks/vendor/pkg/config.yaml", true},
+		{"tests/tier7b_load_kind/baselines/latency.yaml", true},
 		{"tests/tier0_static/license_check.yaml", false},
 		{"scripts/specshift/config.yaml", false},
 	}
