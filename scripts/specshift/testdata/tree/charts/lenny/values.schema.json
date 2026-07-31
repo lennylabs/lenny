@@ -1,0 +1,7 @@
+{
+  "$id": "https://schemas.lenny.dev/helm/values/v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Canonical JSON Schema for the chart values, generated from pkg/chart/values.",
+  "properties": {}
+}

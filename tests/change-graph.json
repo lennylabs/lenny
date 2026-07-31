@@ -374,6 +374,10 @@
     "scripts/lint-queries.sh": {
       "static": ["scripts/lint-queries.sh"]
     },
+    "scripts/specshift": {
+      "static": ["tests/tier0_static/..."],
+      "unit": ["scripts/specshift/..."]
+    },
     "tests/testinfra/containers": {
       "component": ["tests/testinfra/containers/postgres_test.go"]
     },
