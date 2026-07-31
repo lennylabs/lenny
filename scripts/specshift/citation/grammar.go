@@ -64,14 +64,36 @@ var memberExpr = regexp.MustCompile(`^[0-9]+(?:[ \t]*[-\x{2013}\x{2014}][ \t]*[0
 // written as a parenthesized phrase, a quoted fragment, or a bare word or two
 // with an optional parenthesized tail. The gloss is consumed with its member
 // rather than terminating the match.
+//
+// Every alternative is bounded to one line and to a short run of bytes. A gloss
+// alternative that admitted a newline and had no length bound would run from an
+// unpaired quote to the next quote anywhere in the file, and because the scan
+// resumes at the end of the consumed span every citation inside that run would
+// go unreturned: the resolver would not resolve it, the ratchet would not count
+// it, and the pass would rewrite the whole span, code included, to one anchor.
+// That is the failure the whole-citation rule exists to prevent.
+//
+// A quoted alternative also requires whitespace ahead of its opening quote,
+// because a quote written directly against a member's last digit is the closing
+// quote of the carrier's own string literal or an English apostrophe, and
+// neither opens a gloss.
 var glossExpr = regexp.MustCompile(
 	"^(?:" +
-		`[ \t]*\([^()]*\)` +
-		`|[ \t]*"[^"]*"` +
-		`|[ \t]*'[^']*'` +
-		"|[ \t]*`[^`]*`" +
-		`|[ \t]+[A-Za-z][A-Za-z0-9_./-]*(?:[ \t]+[A-Za-z][A-Za-z0-9_./-]*)?(?:[ \t]*\([^()]*\))?` +
+		`[ \t]*\(` + glossBody + `{0,` + maxGlossBody + `}\)` +
+		`|[ \t]+"[^"\n]{0,` + maxGlossBody + `}"` +
+		`|[ \t]+'[^'\n]{0,` + maxGlossBody + `}'` +
+		"|[ \t]+`[^`\n]{0," + maxGlossBody + "}`" +
+		`|[ \t]+` + glossWord + `(?:[ \t]+` + glossWord + `)?(?:[ \t]*\(` + glossBody + `{0,` + maxGlossBody + `}\))?` +
 		")",
+)
+
+// glossBody is the byte class a parenthesized gloss admits, and glossWord is
+// one bare word of a gloss. maxGlossBody bounds every one of them, so a gloss
+// stays the short phrase the form admits.
+const (
+	glossBody    = `[^()\n]`
+	glossWord    = `[A-Za-z][A-Za-z0-9_./-]*`
+	maxGlossBody = "80"
 )
 
 // continuationExpr matches the join between two comment lines: the newline

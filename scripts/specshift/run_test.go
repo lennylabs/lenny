@@ -2001,6 +2001,82 @@ func TestFindConsumesATrailingGlossWithItsMember(t *testing.T) {
 	}
 }
 
+// TestFindBoundsTheGlossSoItDoesNotSwallowTheNextCitation pins the bound on
+// the trailing gloss. A quote written directly against a member's last digit is
+// the closing quote of the carrier's own string literal or an English
+// apostrophe, and an unbounded quoted gloss opened on either of them runs to
+// the next quote anywhere in the file. Because the scan resumes at the end of
+// the consumed span, every citation inside the run goes unreturned: the
+// resolver does not resolve it, the ratchet does not count it, and the pass
+// rewrites the whole span, code included, to one anchor. The file then reaches
+// a zero count while a stale pointer survives, which is what the whole-citation
+// rule exists to prevent.
+func TestFindBoundsTheGlossSoItDoesNotSwallowTheNextCitation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		texts   []string
+	}{
+		{"gloss-unpaired-quote.txt", []string{"§8.6 line 675", "§15.1 line 1080"}},
+		{"gloss-apostrophe.txt", []string{"§10.5 line 417", "§4.2 line 157 rule also"}},
+		{
+			"adjacent-path-citations.txt",
+			[]string{
+				"spec/15_external-api-surface.md:1315",
+				"spec/04_system-components.md line 1145",
+			},
+		},
+	} {
+		found := citation.Find(citationFixture(t, tc.fixture))
+		got := make([]string, 0, len(found))
+		for _, c := range found {
+			got = append(got, c.Text)
+			if strings.Contains(c.Text, "\n") {
+				t.Errorf("%s: citation text %q spans a line the join did not consume", tc.fixture, c.Text)
+			}
+		}
+		if !sameStrings(got, tc.texts) {
+			t.Errorf("%s: Find returned %q, want %q", tc.fixture, got, tc.texts)
+		}
+	}
+}
+
+// TestFindLeavesASeparatorWithNoMemberOutsideTheCitation pins that a member
+// separator spelled as a word and followed by prose or by another citation
+// rather than by a member stays out of the citation, whether it stands directly
+// against the member or behind a gloss. Absorbing it puts a dangling
+// conjunction in the text the register is keyed by and that the pass replaces,
+// so the rewritten sentence loses its conjunction.
+func TestFindLeavesASeparatorWithNoMemberOutsideTheCitation(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		fixture string
+		texts   []string
+		glosses []string
+	}{
+		{"separator-then-prose.txt", []string{"§4.7 line 900"}, []string{""}},
+		{
+			"gloss-then-separator.txt",
+			[]string{"§12.6 lines 589-607 interfaces", "§13.1 lines 6-8 baseline"},
+			[]string{"interfaces", "baseline"},
+		},
+	} {
+		found := citation.Find(citationFixture(t, tc.fixture))
+		texts := make([]string, 0, len(found))
+		glosses := make([]string, 0, len(found))
+		for _, c := range found {
+			texts = append(texts, c.Text)
+			glosses = append(glosses, c.Members[0].Gloss)
+		}
+		if !sameStrings(texts, tc.texts) {
+			t.Errorf("%s: Find returned %q, want %q", tc.fixture, texts, tc.texts)
+		}
+		if !sameStrings(glosses, tc.glosses) {
+			t.Errorf("%s: glosses are %q, want %q", tc.fixture, glosses, tc.glosses)
+		}
+	}
+}
+
 // TestFindConsumesAGlossRunWithoutDroppingTheMembersAfterIt pins that a member
 // carrying more than one gloss segment does not terminate the citation. The
 // spellings a bare word followed by a parenthesized phrase, a bare word

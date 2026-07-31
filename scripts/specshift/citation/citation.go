@@ -162,7 +162,7 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end := consumeMembers(joined, loc[1], &c.Members)
+	end := consumeMembers(joined, loc[1], nextHead(joined, loc[1]), &c.Members)
 	end = closeParen(joined, end, group(joined, loc, headParen) != "")
 	c.Text = joined[loc[0]:end]
 	return c, end, true
@@ -178,13 +178,33 @@ func closeParen(joined string, end int, opened bool) int {
 	return end
 }
 
+// nextHead returns the offset of the next citation head at or after from, or
+// the length of the text when there is none. It bounds the gloss, so no gloss
+// can swallow the citation that follows it. A swallowed citation is never
+// returned, so the resolver does not resolve it, the ratchet does not count it,
+// and the pass rewrites it away with the span that swallowed it.
+func nextHead(joined string, from int) int {
+	if from >= len(joined) {
+		return len(joined)
+	}
+	loc := headExpr.FindStringIndex(joined[from:])
+	if loc == nil {
+		return len(joined)
+	}
+	return from + loc[0]
+}
+
 // consumeMembers extends the member list from pos over every gloss and every
-// continuation member that follows, and returns the end of the last one.
+// continuation member that follows, and returns the end of the last one. No
+// member and no gloss runs past limit, which is the head of the next citation.
 //
 // A separator is tried before a gloss at each step, so the word `and` is read
 // as the separator it is rather than as the first word of a bare gloss. A
 // separator that is not followed by a member is left unconsumed, so a citation
-// followed by ordinary prose ends at its last member.
+// followed by ordinary prose ends at its last member. A gloss that begins with
+// that same separator word is refused for the same reason: absorbing it would
+// put a dangling conjunction in the text a register is keyed by and that the
+// pass replaces, which deletes the sentence's conjunction.
 //
 // A member's gloss is a run of segments rather than a single one, because a
 // spelling such as `line 408 step (e) (replay workspace checkpoint) + line 409`
@@ -194,7 +214,7 @@ func closeParen(joined string, end int, opened bool) int {
 // prevent: the resolver would not read the dropped members, the ratchet would
 // not count them, and the rewritten carrier would read as an anchor followed by
 // orphan integers.
-func consumeMembers(joined string, pos int, members *[]Member) int {
+func consumeMembers(joined string, pos, limit int, members *[]Member) int {
 	end := pos
 	glossed := false
 	for {
@@ -207,7 +227,7 @@ func consumeMembers(joined string, pos int, members *[]Member) int {
 		if glossed {
 			return end
 		}
-		next, gloss, ok := glossRun(joined, end)
+		next, gloss, ok := glossRun(joined, end, limit)
 		if !ok {
 			return end
 		}
@@ -226,16 +246,17 @@ func consumeMembers(joined string, pos int, members *[]Member) int {
 const maxGlossSegments = 3
 
 // glossRun consumes one member's gloss and returns the end of it together with
-// the gloss text.
-func glossRun(joined string, pos int) (int, string, bool) {
-	first := glossExpr.FindString(joined[pos:])
+// the gloss text. No segment runs past limit.
+func glossRun(joined string, pos, limit int) (int, string, bool) {
+	text := joined[:limit]
+	first := glossSegment(text, pos)
 	if first == "" {
 		return pos, "", false
 	}
 	end := pos + len(first)
 	at := end
 	for i := 1; i < maxGlossSegments; i++ {
-		more := glossExpr.FindString(joined[at:])
+		more := glossSegment(text, at)
 		if more == "" {
 			break
 		}
@@ -245,6 +266,43 @@ func glossRun(joined string, pos int) (int, string, bool) {
 		}
 	}
 	return end, strings.TrimSpace(joined[pos:end]), true
+}
+
+// glossSegment returns one gloss segment at pos, empty when there is none. A
+// segment opening with the separator word is refused, so a separator with no
+// member behind it stays outside the citation.
+func glossSegment(text string, pos int) string {
+	if pos > len(text) {
+		return ""
+	}
+	segment := trimTrailingSeparatorWord(glossExpr.FindString(text[pos:]))
+	if opensWithSeparatorWord(segment) {
+		return ""
+	}
+	return segment
+}
+
+// trimTrailingSeparatorWord drops a separator word standing at the end of a
+// bare gloss, which is the separator of the citation that follows rather than a
+// word of this one. A quoted or parenthesized gloss closes on its own delimiter
+// and is left alone.
+func trimTrailingSeparatorWord(segment string) string {
+	trimmed := strings.TrimRight(segment, " \t")
+	rest, ok := strings.CutSuffix(trimmed, separatorWord)
+	if !ok || (rest != "" && isWordByte(rest[len(rest)-1])) {
+		return segment
+	}
+	return strings.TrimRight(rest, " \t")
+}
+
+// separatorWord is the one member separator spelled as a word.
+const separatorWord = "and"
+
+// opensWithSeparatorWord reports whether a gloss segment begins with the
+// separator word standing on its own.
+func opensWithSeparatorWord(segment string) bool {
+	rest, ok := strings.CutPrefix(strings.TrimLeft(segment, " \t"), separatorWord)
+	return ok && (rest == "" || !isWordByte(rest[0]))
 }
 
 // nextMember consumes one separator, an optional repeat of the keyword, and one
@@ -340,12 +398,17 @@ func boundedLeft(s string, start int) bool {
 	if start == 0 {
 		return true
 	}
-	b := s[start-1]
+	return !isWordByte(s[start-1])
+}
+
+// isWordByte reports whether a byte is a word byte, which is what a boundary in
+// this grammar is defined against.
+func isWordByte(b byte) bool {
 	switch {
 	case b >= '0' && b <= '9', b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b == '_':
-		return false
+		return true
 	}
-	return true
+	return false
 }
 
 // lineStarts returns the byte offset of the start of every line in content.

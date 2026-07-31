@@ -1,0 +1,2 @@
+// §10.5 line 417's gate requirement is unconditional.
+// The §4.2 line 157 rule also applies. It's fine.
