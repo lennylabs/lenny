@@ -228,15 +228,53 @@ func (v *verdict) recordTier(name, status string, dur time.Duration, detail stri
 		Detail:     detail,
 	}
 	switch status {
+	case verdictstatus.Pass, verdictstatus.Skipped, verdictstatus.NotSelected:
+		// None of these raises the overall verdict: the tier either
+		// passed or never ran.
 	case verdictstatus.Fail:
-		v.Verdict = verdictstatus.VerdictFail
+		v.promoteVerdict(verdictstatus.VerdictFail)
 	case verdictstatus.Inconclusive:
-		// FAIL outranks INCONCLUSIVE; a real failure earlier in the
-		// run stays surfaced.
-		if v.Verdict != verdictstatus.VerdictFail {
-			v.Verdict = verdictstatus.VerdictInconclusive
-		}
+		v.promoteVerdict(verdictstatus.VerdictInconclusive)
+	case verdictstatus.Unverified:
+		v.promoteVerdict(verdictstatus.VerdictUnverified)
+	default:
+		// Fail closed. The verdict starts at PASS, so a status this
+		// switch does not recognize would otherwise end the run at
+		// PASS with exit code 0 while nothing established that the
+		// tier passed. An unrecognized status proves nothing, which is
+		// what UNVERIFIED reports.
+		v.promoteVerdict(verdictstatus.VerdictUnverified)
 	}
+}
+
+// promoteVerdict raises the overall verdict to candidate when
+// candidate outranks the verdict already recorded, and leaves it alone
+// otherwise. Promotion is monotonic so the overall verdict does not
+// depend on the order the tiers are recorded in.
+func (v *verdict) promoteVerdict(candidate string) {
+	if verdictRank(candidate) > verdictRank(v.Verdict) {
+		v.Verdict = candidate
+	}
+}
+
+// verdictRank orders the verdict values from weakest to strongest
+// claim about the run. FAIL outranks every other value, so a real test
+// failure earlier or later in the run stays surfaced. UNVERIFIED
+// outranks INCONCLUSIVE and PASS, because a check that could not reach
+// a conclusion leaves the run unproven, while an infrastructure-class
+// failure is already described by INCONCLUSIVE's retry path. An
+// unrecognized value ranks with PASS so it cannot displace a verdict a
+// tier established.
+func verdictRank(verdict string) int {
+	switch verdict {
+	case verdictstatus.VerdictFail:
+		return 3
+	case verdictstatus.VerdictUnverified:
+		return 2
+	case verdictstatus.VerdictInconclusive:
+		return 1
+	}
+	return 0
 }
 
 func reasonFromStatus(status, detail string) string {
@@ -251,6 +289,11 @@ func reasonFromStatus(status, detail string) string {
 			return detail
 		}
 		return "infrastructure failure"
+	case verdictstatus.Unverified:
+		if detail != "" {
+			return detail
+		}
+		return "a check could not reach a conclusion"
 	}
 	return ""
 }

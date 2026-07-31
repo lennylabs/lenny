@@ -453,15 +453,19 @@ func execute(s selector, r resolvedSelector) int {
 	return printSummary(s, v, v.Verdict, exitCodeFor(v.Verdict))
 }
 
-// exitCodeFor maps the §7 verdict value to the process exit code
-// CI gates on: 0 for PASS, 1 for FAIL, 2 for INCONCLUSIVE so an
-// infra-class failure is distinguishable from a real test failure.
+// exitCodeFor maps the verdict value to the process exit code CI gates
+// on: 0 for PASS, 1 for FAIL, 2 for INCONCLUSIVE so an infra-class
+// failure is distinguishable from a real test failure, and 3 for
+// UNVERIFIED so a check that could not reach a conclusion is
+// distinguishable from both. Every non-PASS value is non-zero.
 func exitCodeFor(verdict string) int {
 	switch verdict {
 	case verdictstatus.VerdictPass:
 		return 0
 	case verdictstatus.VerdictInconclusive:
 		return 2
+	case verdictstatus.VerdictUnverified:
+		return 3
 	default:
 		return 1
 	}
@@ -1008,7 +1012,7 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	if len(subsets) == 0 {
 		// Every requested subset resolved to a runtime set that is not
 		// yet built — the §26 reference catalog is a Phase 17a item.
-		return "skip", "no conformance runtimes built for the requested subsets " +
+		return verdictstatus.Skipped, "no conformance runtimes built for the requested subsets " +
 			"(the §26 reference-catalog runtimes are a Phase 17a deliverable)", nil
 	}
 

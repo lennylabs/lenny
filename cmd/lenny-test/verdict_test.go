@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
 func TestTriggerMode(t *testing.T) {
@@ -151,6 +154,7 @@ func TestExitCodeFor(t *testing.T) {
 		"PASS":         0,
 		"FAIL":         1,
 		"INCONCLUSIVE": 2,
+		"UNVERIFIED":   3,
 		"":             1,
 		"weird":        1,
 	}
@@ -170,6 +174,66 @@ func TestRecordTierSkippedKeepsPass(t *testing.T) {
 	stat := v.Tiers["integration"]
 	if stat.Reason != "no docker on PATH" {
 		t.Fatalf("skipped detail not carried to Reason: %q", stat.Reason)
+	}
+}
+
+// TestRecordTierUnverifiedRaisesVerdict pins the aggregation of a tier
+// that could not reach a conclusion. The overall verdict starts at
+// PASS, so a status that leaves it untouched reports a green run for
+// work that was never verified.
+func TestRecordTierUnverifiedRaisesVerdict(t *testing.T) {
+	v := newVerdict(selector{tier: "static"})
+	v.recordTier("static", verdictstatus.Unverified, 5*time.Millisecond, "protoc not on PATH")
+	if v.Verdict != verdictstatus.VerdictUnverified {
+		t.Fatalf("unverified tier left the verdict at %q; want %q", v.Verdict, verdictstatus.VerdictUnverified)
+	}
+	if got := exitCodeFor(v.Verdict); got == 0 {
+		t.Fatalf("unverified run exited 0")
+	}
+	if stat := v.Tiers["static"]; stat.Reason != "protoc not on PATH" {
+		t.Fatalf("unverified detail not carried to Reason: %q", stat.Reason)
+	}
+}
+
+// TestRecordTierUnverifiedPrecedence pins the precedence of UNVERIFIED
+// against FAIL and PASS in both record orders. The overall verdict must
+// not depend on which tier ran first.
+func TestRecordTierUnverifiedPrecedence(t *testing.T) {
+	cases := []struct {
+		name     string
+		statuses []string
+		want     string
+	}{
+		{"fail then unverified", []string{verdictstatus.Fail, verdictstatus.Unverified}, verdictstatus.VerdictFail},
+		{"unverified then fail", []string{verdictstatus.Unverified, verdictstatus.Fail}, verdictstatus.VerdictFail},
+		{"pass then unverified", []string{verdictstatus.Pass, verdictstatus.Unverified}, verdictstatus.VerdictUnverified},
+		{"unverified then pass", []string{verdictstatus.Unverified, verdictstatus.Pass}, verdictstatus.VerdictUnverified},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			v := newVerdict(selector{maxTier: "unit"})
+			for i, status := range tc.statuses {
+				v.recordTier(fmt.Sprintf("tier-%d", i), status, time.Millisecond, "")
+			}
+			if v.Verdict != tc.want {
+				t.Fatalf("recording %v gave verdict %q; want %q", tc.statuses, v.Verdict, tc.want)
+			}
+		})
+	}
+}
+
+// TestRecordTierUnknownStatusDoesNotKeepPass pins the fail-closed
+// branch. A status no branch of the switch recognizes established
+// nothing about the tier, and leaving the run at PASS with exit code 0
+// would report the unrecognized outcome as success.
+func TestRecordTierUnknownStatusDoesNotKeepPass(t *testing.T) {
+	v := newVerdict(selector{tier: "static"})
+	v.recordTier("static", "banana", time.Millisecond, "")
+	if v.Verdict == verdictstatus.VerdictPass {
+		t.Fatalf("unrecognized tier status left the verdict at PASS")
+	}
+	if got := exitCodeFor(v.Verdict); got == 0 {
+		t.Fatalf("verdict %q after an unrecognized tier status exits 0", v.Verdict)
 	}
 }
 
