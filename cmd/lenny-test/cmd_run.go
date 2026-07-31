@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
 // runRun handles the default `lenny-test run` subcommand.
@@ -407,13 +409,13 @@ func execute(s selector, r resolvedSelector) int {
 	}
 
 	steps := tierSteps()
-	overallStatus := verdictPASS
+	overallStatus := verdictstatus.VerdictPass
 
 	for _, t := range r.tiers {
 		start := time.Now()
 		step, ok := steps[t.name]
 		if !ok {
-			v.recordTier(t.name, statusSkipped, time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
+			v.recordTier(t.name, verdictstatus.Skipped, time.Since(start), "phase-0-not-implemented: this tier ships in a later phase")
 			continue
 		}
 		if step.infraSetup != nil {
@@ -425,7 +427,7 @@ func execute(s selector, r resolvedSelector) int {
 		} else {
 			v.recordTier(t.name, st, time.Since(start), msg)
 		}
-		if st == statusPass || s.continueErr {
+		if st == verdictstatus.Pass || s.continueErr {
 			continue
 		}
 		// Failure path: synthesize the next-action message, write the
@@ -456,9 +458,9 @@ func execute(s selector, r resolvedSelector) int {
 // infra-class failure is distinguishable from a real test failure.
 func exitCodeFor(verdict string) int {
 	switch verdict {
-	case verdictPASS:
+	case verdictstatus.VerdictPass:
 		return 0
-	case verdictINCONCLUSIVE:
+	case verdictstatus.VerdictInconclusive:
 		return 2
 	default:
 		return 1
@@ -1433,7 +1435,7 @@ func printGitHubAnnotations(v *verdict) {
 	// which is indistinguishable from "the harness didn't run."
 	summary := fmt.Sprintf("verdict=%s fail=%d inconclusive=%d skipped=%d run_id=%s",
 		v.Verdict, fail, inconclusive, skipped, v.RunID)
-	if v.Verdict == verdictPASS {
+	if v.Verdict == verdictstatus.VerdictPass {
 		fmt.Printf("::notice title=lenny-test summary::%s\n", summary)
 	} else {
 		fmt.Printf("::error title=lenny-test summary::%s\n", summary)
