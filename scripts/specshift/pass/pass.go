@@ -10,9 +10,12 @@
 //
 // The harness fails closed. A pass that reaches a site its register does
 // not carry returns an Abort naming the file and the line, the run stops
-// before its first write, and the tree is left byte-identical. Guessing
-// a substitution at such a site is what silently corrupts an
-// individually two-valued population.
+// before its first write, and the tree is left byte-identical. A write
+// that fails part way through the diff is rolled back from the diff's
+// own Before contents, so a failed run leaves the tree byte-identical
+// whether it failed in planning or in writing. Guessing a substitution
+// at an unresolved site is what silently corrupts an individually
+// two-valued population.
 package pass
 
 import (
@@ -23,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
@@ -242,9 +246,18 @@ func (h *Harness) planInto(ctx context.Context, diff *Diff, r Rewriter, target s
 	return nil
 }
 
+// ErrTreeNotRestored reports that a failed apply could not put back
+// every file it had already written, so the tree is neither the pre-run
+// tree nor the applied one and needs an operator before the run is
+// retried.
+var ErrTreeNotRestored = errors.New("the tree is not byte-identical to the pre-run tree")
+
 // Apply computes the pass's whole diff and then writes it. Every file is
 // planned before any file is written, so an abort anywhere in the domain
-// leaves the tree byte-identical.
+// leaves the tree byte-identical. A write that fails part way through the
+// diff is restored from the diff's own Before contents, so the same
+// guarantee holds for a failure the plan could not foresee and a
+// partially rewritten tree is never left behind.
 func (h *Harness) Apply(ctx context.Context, r Rewriter) (Diff, error) {
 	diff, err := h.Plan(ctx, r)
 	if err != nil {
@@ -253,10 +266,29 @@ func (h *Harness) Apply(ctx context.Context, r Rewriter) (Diff, error) {
 	if h.Write == nil {
 		return Diff{}, fmt.Errorf("apply %s pass: harness is missing a writer", r.Pass())
 	}
-	for _, f := range diff.Files {
+	for i, f := range diff.Files {
 		if err := h.Write(f.Path, f.After); err != nil {
-			return Diff{}, fmt.Errorf("apply %s pass: %w", r.Pass(), err)
+			cause := fmt.Errorf("apply %s pass: %w", r.Pass(), err)
+			return Diff{}, h.restore(diff.Files[:i], cause)
 		}
 	}
 	return diff, nil
+}
+
+// restore puts back the pre-run contents of the files a failed apply had
+// already written, and returns the cause. A restore that itself fails
+// returns a distinct error carrying ErrTreeNotRestored, because an
+// operator handling a half-written tree needs a different message from
+// one handling a run that changed nothing.
+func (h *Harness) restore(written []FileDiff, cause error) error {
+	var failed []string
+	for _, f := range written {
+		if err := h.Write(f.Path, f.Before); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", f.Path, err))
+		}
+	}
+	if len(failed) == 0 {
+		return cause
+	}
+	return fmt.Errorf("%w: %w; restoring %s failed", ErrTreeNotRestored, cause, strings.Join(failed, "; "))
 }

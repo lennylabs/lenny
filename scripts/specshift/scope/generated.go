@@ -208,7 +208,11 @@ func Generated(target string, read FileReader) (Disjunct, error) {
 		}
 		return NotGenerated, nil
 	}
-	if headerDeclaresGeneration(strings.ToLower(filepath.Ext(target)), content) {
+	declared, err := headerDeclaresGeneration(strings.ToLower(filepath.Ext(target)), content)
+	if err != nil {
+		return NotGenerated, fmt.Errorf("generated-artifact rule for %s: %w", target, err)
+	}
+	if declared {
 		return HeaderMarker, nil
 	}
 	return NotGenerated, nil
@@ -268,7 +272,13 @@ func mirrors(sourceDir, name string, read FileReader) (bool, error) {
 
 // headerDeclaresGeneration reports whether the file's header carries a
 // generation declaration on a comment line in the carrier's dialect.
-func headerDeclaresGeneration(ext string, content []byte) bool {
+//
+// It fails rather than answering when the header cannot be scanned to its
+// end, because a scan that stopped early answers "no declaration" for a
+// header it never finished reading, and that answer admits a generated
+// artifact to every pass's write domain as an ordinary carrier. A header
+// line longer than the scanner's token limit is the case that reaches it.
+func headerDeclaresGeneration(ext string, content []byte) (bool, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(content))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	state := commentState{markup: markupFormats[ext]}
@@ -278,10 +288,13 @@ func headerDeclaresGeneration(ext string, content []byte) bool {
 			continue
 		}
 		if generationDeclaration.MatchString(body) {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	if err := scanner.Err(); err != nil {
+		return false, fmt.Errorf("scan the header: %w", err)
+	}
+	return false, nil
 }
 
 // commentState tracks an open HTML comment across the header lines of a

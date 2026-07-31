@@ -35,6 +35,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -178,8 +179,14 @@ func runWith(ctx context.Context, passes map[scope.Pass]pass.Rewriter, args []st
 }
 
 // reportAbort turns a fail-closed abort into an operator-facing message
-// naming the file and the line, and passes any other error through.
+// naming the file and the line, and passes any other error through. A run
+// that failed while writing and could not put back what it had written is
+// reported as a tree that needs an operator, because the unchanged-tree
+// message would be false for it.
 func reportAbort(err error) error {
+	if errors.Is(err, pass.ErrTreeNotRestored) {
+		return fmt.Errorf("the tree is not clean and needs an operator: %w", err)
+	}
 	if a, ok := pass.AsAbort(err); ok {
 		return fmt.Errorf("aborted with the tree unchanged at %s", a.Error())
 	}

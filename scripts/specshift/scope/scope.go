@@ -344,10 +344,23 @@ func ClassReadDomain(ctx context.Context, list Lister, p Pass) ([]string, error)
 // rekeys through the key channel rather than through its site rewrite,
 // sorted. A register the pass already site-rewrites is absent, because
 // its key rewrite runs alongside that rewrite in one diff entry.
+//
+// It carries the same zero-inspection guard the read and write domains
+// do. A channel that selected nothing reports a completed rekey over
+// registers it never opened, and a rename whose keys never move makes the
+// citation ratchet fire on a file that changed no citation while every
+// baselined non-resolving citation under the old path re-surfaces as a
+// resolver failure, with the run that caused it having exited clean.
 func KeyWriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) ([]string, error) {
+	if !p.Valid() {
+		return nil, fmt.Errorf("key-write domain: unknown pass %q", p)
+	}
 	all, err := list(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list tracked tree: %w", err)
+	}
+	if len(all) == 0 {
+		return nil, fmt.Errorf("list tracked tree: no tracked path found")
 	}
 	domain := make([]string, 0, len(pathKeyedRegisters))
 	for _, target := range all {
@@ -361,6 +374,10 @@ func KeyWriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) (
 		if !site {
 			domain = append(domain, target)
 		}
+	}
+	if len(domain) == 0 {
+		return nil, fmt.Errorf("%s pass key-write domain over %d tracked path(s): none of %s is outside the site-rewrite domain",
+			p, len(all), strings.Join(pathKeyedRegisters, ", "))
 	}
 	sort.Strings(domain)
 	return domain, nil
