@@ -92,12 +92,53 @@ const readExcludedPrefix = "proposals/"
 // never fall.
 const testdataSegment = "testdata"
 
-// planningRecords are the tracked root-level records the name and
-// identifier passes may read but must not write.
+// planningRecords are the tracked root-level records the reserved-phrase
+// and identifier classes exclude. A reserved phrase in a build or queue
+// record is part of what was written at the time and rewriting it would
+// edit the record, while a line citation in the same file is a pointer
+// that has to keep resolving.
 var planningRecords = []string{
 	"BUILD-PLAN.md",
 	"BUILD-PROGRESS.md",
 	"PROPOSAL-QUEUE.md",
+}
+
+// PlanningRecords returns those records, so a residual gate for the
+// reserved-phrase or identifier class reads the same list the name and
+// identifier passes write against instead of restating it.
+func PlanningRecords() []string { return append([]string(nil), planningRecords...) }
+
+// pathKeyedRegisters are the test-infrastructure registers keyed by file
+// path, which a run that renames a file invalidates.
+//
+// The first two are outside every pass's site-rewrite domain, because a
+// citation gate cannot read its own baseline as tree content. They
+// remain subject to the key rewrite: the identifier pass rewrites the
+// key of any file it renames in the same run, or the ratchet fires on a
+// rename that changed no citation and every baselined non-resolving
+// citation under the old path reappears as a resolver failure. The other
+// two are ordinary domain members and take the key rewrite alongside
+// their site rewrite.
+var pathKeyedRegisters = []string{
+	"tests/registers/line-citations.yaml",
+	"tests/registers/line-citation-resolution.yaml",
+	"tests/change-graph.json",
+	"tests/spec-map.json",
+}
+
+// PathKeyedRegisters returns the registers a rename must rekey.
+func PathKeyedRegisters() []string { return append([]string(nil), pathKeyedRegisters...) }
+
+// KeyWritable reports whether the path is one of them. Membership is
+// independent of the site-rewrite domain: a register outside that domain
+// still takes the key rewrite.
+func KeyWritable(target string) bool {
+	for _, r := range pathKeyedRegisters {
+		if target == r {
+			return true
+		}
+	}
+	return false
 }
 
 // Readable reports whether a tracked path is inside the read domain the
@@ -117,25 +158,50 @@ func Readable(p string) bool {
 	return true
 }
 
-// Writable reports whether the pass may write the tracked path. The
-// write domain is the read domain, less the root-level planning records
-// for the name and identifier passes, less every file the per-file
-// generated-artifact rule selects. It fails rather than answering when
-// the generated-artifact rule cannot read the file, because a pass that
-// wrote a file it could not classify would write a derived artifact.
-func Writable(p Pass, target string, read FileReader) (bool, error) {
+// ReadableForClass reports whether a tracked path is inside the read
+// domain of one class, which is the shared read domain less the
+// root-level planning records for the reserved-phrase and identifier
+// classes. The generated-artifact rule is not applied here: a generated
+// artifact is inside a gate's read domain and carries a per-file count,
+// and its route to zero is the regeneration of its source.
+//
+// The residual scan for a class ranges over this domain, so the scan,
+// the exclusion, and the pass's own denylist cannot drift apart.
+func ReadableForClass(p Pass, target string) (bool, error) {
 	if !p.Valid() {
-		return false, fmt.Errorf("write domain: unknown pass %q", p)
+		return false, fmt.Errorf("class read domain: unknown pass %q", p)
 	}
 	if !Readable(target) {
 		return false, nil
 	}
-	if p == Name || p == Identifier {
-		for _, rec := range planningRecords {
-			if target == rec {
-				return false, nil
-			}
+	if p != Name && p != Identifier {
+		return true, nil
+	}
+	for _, rec := range planningRecords {
+		if target == rec {
+			return false, nil
 		}
+	}
+	return true, nil
+}
+
+// Writable reports whether the pass may write the tracked path. The
+// site-rewrite domain is the class read domain less every file the
+// per-file generated-artifact rule selects. It fails rather than
+// answering when the generated-artifact rule cannot read the file,
+// because a pass that wrote a file it could not classify would write a
+// derived artifact.
+//
+// This answer governs site rewriting alone. The key rewrite over the
+// path-keyed registers runs through KeyWritable, so a register excluded
+// from reading is still rekeyed by the run that renames a file.
+func Writable(p Pass, target string, read FileReader) (bool, error) {
+	inClass, err := ReadableForClass(p, target)
+	if err != nil {
+		return false, err
+	}
+	if !inClass {
+		return false, nil
 	}
 	disjunct, err := Generated(target, read)
 	if err != nil {
@@ -244,6 +310,57 @@ func ReadDomain(ctx context.Context, list Lister) ([]string, error) {
 	}
 	if len(domain) == 0 {
 		return nil, fmt.Errorf("read domain over %d tracked path(s): the exclusion list selected zero files", len(all))
+	}
+	sort.Strings(domain)
+	return domain, nil
+}
+
+// ClassReadDomain returns the tracked paths inside one class's read
+// domain, sorted. It is the domain the residual scan for that class
+// ranges over.
+func ClassReadDomain(ctx context.Context, list Lister, p Pass) ([]string, error) {
+	readable, err := ReadDomain(ctx, list)
+	if err != nil {
+		return nil, err
+	}
+	domain := make([]string, 0, len(readable))
+	for _, target := range readable {
+		ok, err := ReadableForClass(p, target)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			domain = append(domain, target)
+		}
+	}
+	if len(domain) == 0 {
+		return nil, fmt.Errorf("%s class read domain over %d readable path(s): the exclusion list selected zero files",
+			p, len(readable))
+	}
+	return domain, nil
+}
+
+// KeyWriteDomain returns the tracked path-keyed registers the pass
+// rekeys through the key channel rather than through its site rewrite,
+// sorted. A register the pass already site-rewrites is absent, because
+// its key rewrite runs alongside that rewrite in one diff entry.
+func KeyWriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) ([]string, error) {
+	all, err := list(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list tracked tree: %w", err)
+	}
+	domain := make([]string, 0, len(pathKeyedRegisters))
+	for _, target := range all {
+		if !KeyWritable(target) {
+			continue
+		}
+		site, err := Writable(p, target, read)
+		if err != nil {
+			return nil, err
+		}
+		if !site {
+			domain = append(domain, target)
+		}
 	}
 	sort.Strings(domain)
 	return domain, nil

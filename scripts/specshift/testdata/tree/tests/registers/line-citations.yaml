@@ -4,3 +4,5 @@
 # sits outside their own read domain.
 kind: line-citations
 version: 1
+files:
+  pkg/carrier/carrier.go: 2

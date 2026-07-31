@@ -114,6 +114,22 @@ type Rewriter interface {
 	Rewrite(ctx context.Context, path string, content []byte) ([]byte, error)
 }
 
+// KeyRewriter is the second write channel, which a pass that renames a
+// file implements. It rewrites the per-file keys of the path-keyed
+// test-infrastructure registers a rename invalidates.
+//
+// The channel exists because two of those registers are outside every
+// pass's site-rewrite domain, since a citation gate cannot read its own
+// baseline as tree content, while a rename still has to move their keys
+// in the same run. The harness plans and applies both channels together,
+// so the dry-run diff still equals the applied change and an abort
+// anywhere leaves the tree byte-identical.
+type KeyRewriter interface {
+	// RewriteKeys returns the register's new contents with the keys of
+	// every file the run renames moved to their new paths.
+	RewriteKeys(ctx context.Context, path string, content []byte) ([]byte, error)
+}
+
 // Harness walks a pass's write domain and turns it into a diff. Its
 // dependencies are injected so a test drives it over a fixture tree.
 type Harness struct {
@@ -168,28 +184,62 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	}
 	var diff Diff
 	for _, target := range domain {
-		if err := ctx.Err(); err != nil {
+		if err := h.planInto(ctx, &diff, r, target, true); err != nil {
+			return Diff{}, err
+		}
+	}
+	// The registers outside the site-rewrite domain take the key rewrite
+	// alone, in the same diff, so a run that renames a file leaves them
+	// byte-identical apart from the moved key.
+	if _, ok := r.(KeyRewriter); ok {
+		keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
+		if err != nil {
 			return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 		}
-		before, err := h.Read(target)
-		if err != nil {
-			return Diff{}, fmt.Errorf("plan %s pass: read %s: %w", r.Pass(), target, err)
+		for _, target := range keyed {
+			if err := h.planInto(ctx, &diff, r, target, false); err != nil {
+				return Diff{}, err
+			}
 		}
-		after, err := r.Rewrite(ctx, target, before)
-		if err != nil {
-			return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
-		}
-		if bytes.Equal(before, after) {
-			continue
-		}
-		diff.Files = append(diff.Files, FileDiff{
-			Path:   target,
-			Before: append([]byte(nil), before...),
-			After:  append([]byte(nil), after...),
-		})
 	}
 	sort.Slice(diff.Files, func(i, j int) bool { return diff.Files[i].Path < diff.Files[j].Path })
 	return diff, nil
+}
+
+// planInto computes one file's change and appends it to the diff when
+// the file changes. site selects whether the pass's site rewrite runs;
+// the key rewrite runs on every path-keyed register the pass carries one
+// for, whichever channel reached the file.
+func (h *Harness) planInto(ctx context.Context, diff *Diff, r Rewriter, target string, site bool) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+	}
+	before, err := h.Read(target)
+	if err != nil {
+		return fmt.Errorf("plan %s pass: read %s: %w", r.Pass(), target, err)
+	}
+	after := before
+	if site {
+		after, err = r.Rewrite(ctx, target, after)
+		if err != nil {
+			return fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+		}
+	}
+	if kr, ok := r.(KeyRewriter); ok && scope.KeyWritable(target) {
+		after, err = kr.RewriteKeys(ctx, target, after)
+		if err != nil {
+			return fmt.Errorf("plan %s pass: rekey %s: %w", r.Pass(), target, err)
+		}
+	}
+	if bytes.Equal(before, after) {
+		return nil
+	}
+	diff.Files = append(diff.Files, FileDiff{
+		Path:   target,
+		Before: append([]byte(nil), before...),
+		After:  append([]byte(nil), after...),
+	})
+	return nil
 }
 
 // Apply computes the pass's whole diff and then writes it. Every file is

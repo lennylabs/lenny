@@ -182,6 +182,58 @@ func TestWriteDomainExcludesThePlanningRecordsForTheNameAndIdentifierPasses(t *t
 	}
 }
 
+// TestClassReadDomainIsExportedForTheReservedPhraseAndIdentifierClasses
+// pins that the domain a residual scan ranges over comes from the shared
+// implementation. The scan for the reserved-phrase and identifier
+// classes excludes the root-level planning records and applies no
+// generated-artifact subtraction, because a generated artifact carries a
+// per-file count and reaches zero through the regeneration of its
+// source. A gate that restated the record list in its own source is the
+// drift the single shared implementation exists to prevent.
+func TestClassReadDomainIsExportedForTheReservedPhraseAndIdentifierClasses(t *testing.T) {
+	t.Parallel()
+	list, _ := treeDomain(t)
+	records := scope.PlanningRecords()
+	if len(records) != 3 {
+		t.Fatalf("PlanningRecords() = %v", records)
+	}
+	for _, p := range []scope.Pass{scope.Name, scope.Identifier} {
+		domain, err := scope.ClassReadDomain(context.Background(), list, p)
+		if err != nil {
+			t.Fatalf("ClassReadDomain(%s): %v", p, err)
+		}
+		in := membership(domain)
+		for _, rec := range records {
+			if in[rec] {
+				t.Errorf("%s class read domain admits %s", p, rec)
+			}
+		}
+		// The generated artifacts stay in the class read domain: the
+		// residual scan ranges wider than the pass writes.
+		if !in["charts/lenny/crds/lenny.dev_runtimes.yaml"] {
+			t.Errorf("%s class read domain omits a generated artifact", p)
+		}
+		if !in["pkg/carrier/carrier.go"] {
+			t.Errorf("%s class read domain omits the ordinary carrier", p)
+		}
+	}
+	for _, p := range []scope.Pass{scope.Anchor, scope.Line} {
+		domain, err := scope.ClassReadDomain(context.Background(), list, p)
+		if err != nil {
+			t.Fatalf("ClassReadDomain(%s): %v", p, err)
+		}
+		in := membership(domain)
+		for _, rec := range records {
+			if !in[rec] {
+				t.Errorf("%s class read domain omits %s", p, rec)
+			}
+		}
+	}
+	if _, err := scope.ClassReadDomain(context.Background(), list, scope.Pass("reduction")); err == nil {
+		t.Error("ClassReadDomain with an unknown class returned no error")
+	}
+}
+
 // TestWriteDomainExcludesEveryGeneratedArtifact pins that no pass writes
 // a derived file, whichever disjunct of the generated-artifact rule
 // selected it.
@@ -357,6 +409,48 @@ func TestGeneratedRuleSelectsTheChartSchemaThroughTheMetadataDisjunct(t *testing
 	plainRead := func(string) ([]byte, error) { return plain, nil }
 	if got, err := scope.Generated(relocated, plainRead); err != nil || got != scope.NotGenerated {
 		t.Fatalf("Generated over the schema without its notice = %q, %v; want %q", got, err, scope.NotGenerated)
+	}
+}
+
+// TestMetadataDisjunctReadsADeclarationRatherThanProseAboutGeneration
+// pins that the second disjunct is anchored the way the first is. An
+// authored JSON whose description mentions generation mid-sentence, and
+// whose title carries a generation phrase, is an ordinary carrier: the
+// rule reads a declaration about the document in the document's
+// description, and nothing else. A file the rule wrongly selects leaves
+// every pass's write domain with no route back, while the citation gates
+// keep counting it, so its per-file count can never reach zero.
+func TestMetadataDisjunctReadsADeclarationRatherThanProseAboutGeneration(t *testing.T) {
+	t.Parallel()
+	const authored = "schemas/authored-plan.json"
+	list, read := treeDomain(t)
+	if got, err := scope.Generated(authored, read); err != nil || got != scope.NotGenerated {
+		t.Fatalf("Generated(%s) = %q, %v; want %q", authored, got, err, scope.NotGenerated)
+	}
+	for _, p := range scope.Passes() {
+		domain, err := scope.WriteDomain(context.Background(), list, p, read)
+		if err != nil {
+			t.Fatalf("WriteDomain(%s): %v", p, err)
+		}
+		if !membership(domain)[authored] {
+			t.Errorf("%s pass write domain omits the authored schema %s", p, authored)
+		}
+	}
+	// The same document with a declaration opening its description is
+	// selected, which is the form charts/lenny/values.schema.json carries.
+	content, err := read(authored)
+	if err != nil {
+		t.Fatalf("read %s: %v", authored, err)
+	}
+	declared := bytes.Replace(content,
+		[]byte(`"description": "Schema for the workspace plans`),
+		[]byte(`"description": "Generated from the session plan. Schema for the workspace plans`), 1)
+	if bytes.Equal(declared, content) {
+		t.Fatal("the authored schema fixture no longer carries the description the case rewrites")
+	}
+	declaredRead := func(string) ([]byte, error) { return declared, nil }
+	if got, err := scope.Generated(authored, declaredRead); err != nil || got != scope.DocumentMetadata {
+		t.Fatalf("Generated over the declaring schema = %q, %v; want %q", got, err, scope.DocumentMetadata)
 	}
 }
 
@@ -736,6 +830,81 @@ func TestPlanAndApplyProduceTheSameDiff(t *testing.T) {
 	}
 }
 
+// TestARenameRekeysTheRegistersOutsideTheSiteRewriteDomain pins the
+// second write channel. The two citation registers are outside every
+// pass's site-rewrite domain, because a gate cannot read its own
+// baseline as tree content, and a run that renames a file still moves
+// that file's key inside them. Without the channel the ratchet fires on
+// a rename that changed no citation, and every baselined non-resolving
+// citation under the old path reappears as a resolver failure.
+func TestARenameRekeysTheRegistersOutsideTheSiteRewriteDomain(t *testing.T) {
+	t.Parallel()
+	const (
+		from       = "pkg/carrier/carrier.go"
+		to         = "pkg/carrier/renamed.go"
+		resolution = "tests/registers/line-citation-resolution.yaml"
+		counts     = "tests/registers/line-citations.yaml"
+	)
+	root := copyFixtureTree(t)
+	list, read := scope.DirLister(root), scope.DirReader(root)
+	h := pass.NewHarnessOver(list, read, dirWriterFor(root))
+	r := &renamingRewriter{
+		suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+		from:           from,
+		to:             to,
+	}
+
+	// The registers are outside the site-rewrite domain and inside the
+	// key-write one.
+	site, err := scope.WriteDomain(context.Background(), list, scope.Identifier, read)
+	if err != nil {
+		t.Fatalf("WriteDomain(identifier): %v", err)
+	}
+	inSite := membership(site)
+	keyed, err := scope.KeyWriteDomain(context.Background(), list, scope.Identifier, read)
+	if err != nil {
+		t.Fatalf("KeyWriteDomain(identifier): %v", err)
+	}
+	inKey := membership(keyed)
+	for _, reg := range []string{resolution, counts} {
+		if inSite[reg] {
+			t.Errorf("the identifier pass site-rewrite domain admits %s", reg)
+		}
+		if !inKey[reg] {
+			t.Errorf("the key-write domain omits %s", reg)
+		}
+	}
+
+	before := treeSnapshot(t, root)
+	planned, err := h.Plan(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	applied, err := h.Apply(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if !planned.Equal(applied) {
+		t.Fatalf("the applied diff differs from the plan: %v vs %v", planned.Paths(), applied.Paths())
+	}
+	after := treeSnapshot(t, root)
+	for _, reg := range []string{resolution, counts} {
+		want := strings.ReplaceAll(before[reg], from, to)
+		if want == before[reg] {
+			t.Fatalf("the %s fixture carries no key for the renamed file", reg)
+		}
+		if after[reg] != want {
+			t.Errorf("%s after the run is not its content with the key moved:\n%s", reg, after[reg])
+		}
+		if !membership(planned.Paths())[reg] {
+			t.Errorf("the planned diff omits %s", reg)
+		}
+	}
+	if !strings.HasSuffix(after[from], "// rewritten\n") {
+		t.Errorf("the site rewrite did not reach the ordinary carrier %s", from)
+	}
+}
+
 // TestApplyAbortsBeforeTheFirstWriteAndLeavesTheTreeByteIdentical pins
 // the fail-closed abort. A pass that reaches a site its register does not
 // carry reports the file and the line, and every other file it would
@@ -958,6 +1127,19 @@ func (s *suffixRewriter) Rewrite(_ context.Context, path string, content []byte)
 			&pass.Abort{Path: path, Line: s.abortLine, Reason: "no register entry for this site"})
 	}
 	return append(append([]byte(nil), content...), []byte(s.suffix)...), nil
+}
+
+// renamingRewriter stands in for a pass that renames a file. It carries
+// the site rewrite of a suffixRewriter and, through the second channel,
+// moves the renamed file's key in every path-keyed register.
+type renamingRewriter struct {
+	suffixRewriter
+	from string
+	to   string
+}
+
+func (r *renamingRewriter) RewriteKeys(_ context.Context, _ string, content []byte) ([]byte, error) {
+	return bytes.ReplaceAll(content, []byte(r.from), []byte(r.to)), nil
 }
 
 // refuseAllReads returns a reader that fails the test if it is called. It
