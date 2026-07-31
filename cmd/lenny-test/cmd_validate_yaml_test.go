@@ -416,7 +416,6 @@ func testRegisterRules() registerRules {
 // wellFormedRegister is one entry that satisfies every rule under
 // testRegisterRules.
 const wellFormedRegister = `
-kind: exception-register
 version: 1
 entries:
   - subject: spec/04_system-components.md line 437
@@ -429,13 +428,13 @@ entries:
 `
 
 func TestCheckRegisterWellFormed(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", wellFormedRegister)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", wellFormedRegister)
 	r := checkRegister("register", path, []string{"spec/04_system-components.md line 437"}, testRegisterRules())
 	expectPass(t, r)
 }
 
 func TestCheckRegisterUnregisteredViolationFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", wellFormedRegister)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", wellFormedRegister)
 	r := checkRegister("register", path,
 		[]string{"spec/04_system-components.md line 437", "spec/10_gateway.md line 12"},
 		testRegisterRules())
@@ -443,8 +442,7 @@ func TestCheckRegisterUnregisteredViolationFails(t *testing.T) {
 }
 
 func TestCheckRegisterPassedExpiryFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", `
-kind: exception-register
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
@@ -459,8 +457,7 @@ entries:
 }
 
 func TestCheckRegisterBlockerWithNoOpenItemFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", `
-kind: exception-register
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
@@ -479,7 +476,7 @@ entries:
 // with no open-item resolver rejects every blocker rather than
 // accepting each one.
 func TestCheckRegisterNilResolverFailsClosed(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", wellFormedRegister)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", wellFormedRegister)
 	rules := registerRules{now: testRegisterRules().now}
 	expectFail(t, checkRegister("register", path, nil, rules), "does not resolve to an open item")
 }
@@ -490,18 +487,17 @@ func TestCheckRegisterMissingFileFails(t *testing.T) {
 }
 
 func TestCheckRegisterMalformedFileFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", "kind: exception-register\nversion: 1\nentries: [oops\n")
+	path := writeYAML(t, "exceptions-spec-citations.yaml", "version: 1\nentries: [oops\n")
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "parse register")
 }
 
 func TestCheckRegisterWrongVersionFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", "kind: exception-register\nversion: 2\nentries: []\n")
+	path := writeYAML(t, "exceptions-spec-citations.yaml", "version: 2\nentries: []\n")
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expected version 1")
 }
 
 func TestCheckRegisterIncompleteEntryFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", `
-kind: exception-register
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
@@ -512,8 +508,7 @@ entries:
 }
 
 func TestCheckRegisterDuplicateSubjectFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", `
-kind: exception-register
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
@@ -535,7 +530,7 @@ entries:
 }
 
 func TestValidateRegistersDirAcceptsWellFormedRegister(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", wellFormedRegister)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", wellFormedRegister)
 	r := validateRegistersDir(filepath.Dir(path), testRegisterRules())
 	expectPass(t, r)
 	if !strings.Contains(r.detail, "1 register") {
@@ -544,9 +539,9 @@ func TestValidateRegistersDirAcceptsWellFormedRegister(t *testing.T) {
 }
 
 func TestValidateRegistersDirReportsBadRegister(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", "kind: exception-register\nversion: 1\nentries: [oops\n")
+	path := writeYAML(t, "exceptions-spec-citations.yaml", "version: 1\nentries: [oops\n")
 	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
-		"spec-citation-exemptions.yaml", "parse register")
+		"exceptions-spec-citations.yaml", "parse register")
 }
 
 // TestValidateRegistersDirMissingDirectoryFails pins that a register
@@ -560,12 +555,14 @@ func TestValidateRegistersDirMissingDirectoryFails(t *testing.T) {
 // TestValidateRegistersDirSkipsResidualRegisters pins the divergence
 // the contract's doc comment states: a residual register carries a
 // member, a class, a disposition, and a reason, and the shared
-// contract's expiry and blocker rules do not range over it.
+// contract's expiry and blocker rules do not range over it. The sweep
+// selects the files the contract owns by their name, so a residual
+// register passes without declaring anything for the shared contract's
+// benefit.
 func TestValidateRegistersDirSkipsResidualRegisters(t *testing.T) {
 	dir := t.TempDir()
 	residual := filepath.Join(dir, "residual-line-citations.yaml")
 	if err := os.WriteFile(residual, []byte(`
-kind: residual-register
 version: 1
 entries:
   - member: spec/10_gateway.md
@@ -619,7 +616,7 @@ func TestRepoRegisterRulesResolveTrackedOpenFindings(t *testing.T) {
 }
 
 // TestRemediationStepIDsReadsTrackedPlanDocuments pins that a step
-// identifier is read from a plan document in both the spellings the
+// identifier is read from a remediation plan in both the spellings the
 // tracked plans use, the dashed sub-step spelling and the undashed
 // top-level spelling, and that ordinary prose and numbered section
 // headings do not enter the domain.
@@ -627,20 +624,14 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	root := t.TempDir()
 	plan := "## 3. Step 1: naming\n" +
 		"### R3. Specification and test tooling\n" +
+		"### TOOL-1. The shared register contract\n" +
 		"### 3.1 What this step fixes\n" +
 		"The step R9 is named in prose and is not a heading.\n"
 	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"), []byte(plan), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
-	if err := os.Mkdir(filepath.Join(root, "proposals"), 0o755); err != nil {
-		t.Fatalf("mkdir proposals: %v", err)
-	}
-	staged := "### CODE-1. Add the enum and its validator\n"
-	if err := os.WriteFile(filepath.Join(root, "proposals", "0001_new_x.md"), []byte(staged), 0o644); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
 	steps := remediationStepIDs(root)
-	for _, want := range []string{"R3", "CODE-1"} {
+	for _, want := range []string{"R3", "TOOL-1"} {
 		if !steps[want] {
 			t.Errorf("%s should be a declared step: %v", want, steps)
 		}
@@ -650,6 +641,36 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	}
 	if len(steps) != 2 {
 		t.Errorf("a numbered section heading must not declare a step: %v", steps)
+	}
+}
+
+// TestRemediationStepIDsExcludeStagedProposalHeadings pins that a step
+// heading in a staged proposal is outside the open-item domain. A
+// proposal keeps declaring its steps after they land, so admitting its
+// headings would make the blocker rule resolve every identifier the
+// plan's vocabulary reuses and no entry could ever be retired by it.
+func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"),
+		[]byte("### R3. Specification and test tooling\n"), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "proposals"), 0o755); err != nil {
+		t.Fatalf("mkdir proposals: %v", err)
+	}
+	staged := "### CODE-1. Add the enum and its validator\n" +
+		"### TEST-1. Gate cases\n"
+	if err := os.WriteFile(filepath.Join(root, "proposals", "0001_new_x.md"), []byte(staged), 0o644); err != nil {
+		t.Fatalf("write proposal: %v", err)
+	}
+	steps := remediationStepIDs(root)
+	for _, id := range []string{"CODE-1", "TEST-1"} {
+		if steps[id] {
+			t.Errorf("a staged proposal heading must not declare an open step: %s in %v", id, steps)
+		}
+	}
+	if !steps["R3"] {
+		t.Errorf("the remediation plan still declares its steps: %v", steps)
 	}
 }
 
@@ -679,24 +700,50 @@ func TestRegisterBlockerNamingOpenRemediationStepResolves(t *testing.T) {
 	}
 }
 
+// TestRegisterBlockerNamingStagedProposalStepFails pins the third
+// ratchet rule against the tracked tree: an entry blocked on a step
+// identifier that only a staged proposal declares fails, because that
+// step is not outstanding work the plan carries. Without this the rule
+// resolves every identifier the proposals have ever used and only the
+// expiry rule can ever end an entry.
+func TestRegisterBlockerNamingStagedProposalStepFails(t *testing.T) {
+	root := repoRoot()
+	const staged = "TOOL-1"
+	if remediationStepIDs(root)[staged] || openFindingIDs(root)[staged] {
+		t.Skipf("not-yet-applicable: %s is outstanding work in the tracked tree", staged)
+	}
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+version: 1
+entries:
+  - subject: spec/10_gateway.md line 12
+    verdict: FAIL
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2099-01-01
+    blocker: `+staged+`
+    reason: Blocked on a step a staged proposal declares.
+`)
+	rules := repoRegisterRules(root)
+	expectFail(t, checkRegister("register", path, nil, rules), staged, "does not resolve to an open item")
+}
+
 // TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema pins that
-// the shared entry schema ranges over the registers that declare it
+// the shared entry schema ranges over the registers the contract owns
 // rather than over every file the directory holds. A baseline keyed for
 // the rewrite it drives and a sense map keyed by file and occurrence
 // carry no subject, verdict, owner, expiry, or blocker, and the gate
-// that reads each of them validates it instead.
+// that reads each of them validates it against its own schema without
+// the shared contract asserting anything about the file.
 func TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
 		"line-citations.yaml": `
-kind: baseline
 version: 1
 entries:
   - file: spec/10_gateway.md
     citations: 14
 `,
 		"identifier-senses.yaml": `
-kind: sense-map
 version: 1
 occurrences:
   - file: spec/10_gateway.md
@@ -716,33 +763,8 @@ occurrences:
 	}
 }
 
-// TestValidateRegistersDirUndeclaredKindFails pins that a file
-// declaring no kind fails rather than being validated by no gate at
-// all.
-func TestValidateRegistersDirUndeclaredKindFails(t *testing.T) {
-	path := writeYAML(t, "mystery.yaml", "version: 1\nentries: []\n")
-	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
-		"mystery.yaml", "missing kind", registerKindException)
-}
-
-// TestValidateRegistersDirUnknownKindFails pins that a kind no gate
-// owns fails rather than being skipped as another gate's file.
-func TestValidateRegistersDirUnknownKindFails(t *testing.T) {
-	path := writeYAML(t, "mystery.yaml", "kind: notes\nversion: 1\n")
-	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
-		"mystery.yaml", `kind "notes" is not a register kind`)
-}
-
-// TestCheckRegisterWrongKindFails pins that a gate pointed at a file of
-// another kind fails rather than reading it as an empty exemption set.
-func TestCheckRegisterWrongKindFails(t *testing.T) {
-	path := writeYAML(t, "residual-line-citations.yaml", "kind: residual-register\nversion: 1\nentries: []\n")
-	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expected kind \"exception-register\"")
-}
-
 func TestCheckRegisterNonDateFieldsFail(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", `
-kind: exception-register
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 version: 1
 entries:
   - subject: spec/10_gateway.md line 12
@@ -758,8 +780,7 @@ entries:
 }
 
 func TestCheckRegisterMissingSubjectFails(t *testing.T) {
-	path := writeYAML(t, "spec-citation-exemptions.yaml", `
-kind: exception-register
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 version: 1
 entries:
   - verdict: FAIL

@@ -308,14 +308,14 @@ func validateFlakeBudgetYAML(path string) checkResult {
 
 // ---- the shared register contract ---------------------------------
 
-// An exception register is a YAML file under tests/registers/
-// recording the violations one gate accepts for now, so that gate can
-// fail everything else. The pattern is generalized from the two in-tree
-// pending lists and from validateFlakeBudgetYAML, which already dates
-// and owns each quarantine entry. Every exception register shares one
-// entry schema, carrying a subject, a verdict, an owner, an opened_at
-// date, an expiry, a blocker, and a reason, and one set of ratchet
-// rules:
+// An exception register is a YAML file named
+// tests/registers/exceptions-<gate>.yaml recording the violations one
+// gate accepts for now, so that gate can fail everything else. The
+// pattern is generalized from the two in-tree pending lists and from
+// validateFlakeBudgetYAML, which already dates and owns each quarantine
+// entry. Every exception register shares one entry schema, carrying a
+// subject, a verdict, an owner, an opened_at date, an expiry, a
+// blocker, and a reason, and one set of ratchet rules:
 //
 //   - a violation with no entry fails, so an exemption is written down
 //     before a gate lets it through;
@@ -324,9 +324,11 @@ func validateFlakeBudgetYAML(path string) checkResult {
 //     exemption names outstanding work.
 //
 // tests/registers/ also holds files that deliberately do not use this
-// schema, and each of them declares its own kind so the shared contract
-// ranges over the files that use it rather than over every file the
-// directory happens to hold:
+// schema, and the exceptions- prefix is what separates them. Only a
+// file the prefix names is held to the shared contract; every other
+// file in the directory is validated by the gate that reads it,
+// against its own schema, and the shared contract asserts nothing
+// about it:
 //
 //   - a residual register carries a member, a class, an in-class or
 //     excluded disposition, and a reason. An exclusion is permanent,
@@ -344,9 +346,6 @@ func validateFlakeBudgetYAML(path string) checkResult {
 //   - a sense map is keyed by file and occurrence and records which
 //     identifier a rewrite writes at each site, so it records a
 //     decision rather than an exemption.
-//
-// Each of those kinds is validated by the gate that reads it, against
-// its own schema.
 type registerEntry struct {
 	// Subject is the violation the entry exempts, in whatever
 	// vocabulary the gate that reads the register measures.
@@ -366,33 +365,15 @@ type registerEntry struct {
 	Reason string `yaml:"reason"`
 }
 
-// The kinds a file under tests/registers/ may declare. Membership of
-// the shared contract is a declaration in the file rather than a
-// filename convention, so a register that carries its own schema is
-// never held to the shared entry schema and a file that declares
-// nothing fails rather than going unvalidated.
-const (
-	// registerKindException marks a register the shared contract owns.
-	registerKindException = "exception-register"
-	// registerKindResidual marks a per-class residual register.
-	registerKindResidual = "residual-register"
-	// registerKindBaseline marks a count or population baseline a pass
-	// rewrites downward.
-	registerKindBaseline = "baseline"
-	// registerKindSenseMap marks a per-occurrence map from a site to
-	// the identifier a pass writes there.
-	registerKindSenseMap = "sense-map"
-)
-
-// registerKinds lists the declared kinds in the order the failure
-// message names them.
-func registerKinds() []string {
-	return []string{registerKindException, registerKindResidual, registerKindBaseline, registerKindSenseMap}
-}
+// registerFilePrefix names the files the shared contract owns. A gate
+// that exempts anything writes its register as
+// tests/registers/exceptions-<gate>.yaml, so the contract's population
+// is the set of paths the gates using it name and no other file in the
+// directory is held to the shared entry schema.
+const registerFilePrefix = "exceptions-"
 
 // registerFile is one parsed exception register.
 type registerFile struct {
-	Kind    string          `yaml:"kind"`
 	Version int             `yaml:"version"`
 	Entries []registerEntry `yaml:"entries"`
 }
@@ -437,28 +418,7 @@ func loadRegisterFile(path string) (*registerFile, error) {
 	if doc.Version != 1 {
 		return nil, fmt.Errorf("register %s: expected version 1, got %d", path, doc.Version)
 	}
-	if doc.Kind != registerKindException {
-		return nil, fmt.Errorf("register %s: expected kind %q, got %q", path, registerKindException, doc.Kind)
-	}
 	return &doc, nil
-}
-
-// registerFileKind reads the kind one file under tests/registers/
-// declares. A file that cannot be read or parsed is an error rather
-// than a file of no kind, so the directory sweep reports it instead of
-// passing over it.
-func registerFileKind(path string) (string, error) {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read register %s: %w", path, err)
-	}
-	var doc struct {
-		Kind string `yaml:"kind"`
-	}
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return "", fmt.Errorf("parse register %s: %w", path, err)
-	}
-	return strings.TrimSpace(doc.Kind), nil
 }
 
 // registerVerdicts are the verdicts a register entry may record. An
@@ -571,50 +531,30 @@ func checkRegister(name, path string, violations []string, rules registerRules) 
 // tests/registers/ against the shared contract. Gates supply their own
 // violation sets when they run; this check confirms the registers
 // themselves hold, so an entry that has outlived its expiry or its
-// blocker fails the tier even before the gate that reads it runs. A
-// file declaring another kind carries its own schema and is validated
-// by the gate that reads it, and a file declaring no recognized kind
-// fails rather than going unvalidated by every gate.
+// blocker fails the tier even before the gate that reads it runs.
+// A residual register, a baseline, and a sense map carry schemas of
+// their own, so the sweep selects the exceptions- files the contract
+// owns and leaves every other file to the gate that reads it.
 func validateRegistersDir(dir string, rules registerRules) checkResult {
 	const name = "tests/registers"
 	if _, err := os.Stat(dir); err != nil {
 		return newResult(name, false, fmt.Sprintf("could not read directory: %v", err))
 	}
-	files, err := filepath.Glob(filepath.Join(dir, "*.yaml"))
+	files, err := filepath.Glob(filepath.Join(dir, registerFilePrefix+"*.yaml"))
 	if err != nil {
 		return newResult(name, false, fmt.Sprintf("could not list: %v", err))
 	}
 	sort.Strings(files)
 	var problems []string
-	validated := 0
 	for _, f := range files {
-		base := filepath.Base(f)
-		kind, err := registerFileKind(f)
-		if err != nil {
-			problems = append(problems, fmt.Sprintf("%s: %v", base, err))
-			continue
-		}
-		switch kind {
-		case registerKindException:
-			validated++
-			if r := checkRegister(name, f, nil, rules); !r.ok {
-				problems = append(problems, fmt.Sprintf("%s: %s", base, r.detail))
-			}
-		case registerKindResidual, registerKindBaseline, registerKindSenseMap:
-			// The gate that reads this file validates it against its
-			// own schema; the shared contract does not range over it.
-		case "":
-			problems = append(problems, fmt.Sprintf("%s: missing kind; declare one of %s",
-				base, strings.Join(registerKinds(), ", ")))
-		default:
-			problems = append(problems, fmt.Sprintf("%s: kind %q is not a register kind; declare one of %s",
-				base, kind, strings.Join(registerKinds(), ", ")))
+		if r := checkRegister(name, f, nil, rules); !r.ok {
+			problems = append(problems, fmt.Sprintf("%s: %s", filepath.Base(f), r.detail))
 		}
 	}
 	if len(problems) > 0 {
 		return newResult(name, false, summarizeProblems(problems))
 	}
-	return newResult(name, true, fmt.Sprintf("%d register(s) hold the shared contract", validated))
+	return newResult(name, true, fmt.Sprintf("%d register(s) hold the shared contract", len(files)))
 }
 
 // repoRegisterRules builds the register rules the harness runs with:
@@ -653,14 +593,17 @@ func openItemIDs(root string) map[string]bool {
 // undashed spelling a top-level step uses.
 var remediationStepHeading = regexp.MustCompile(`^#{2,6} ([A-Z][A-Z0-9]*-[0-9]+|[A-Z]+[0-9]+)\. `)
 
-// remediationStepIDs returns the step identifiers the tracked plan
-// documents declare, which are the root-level remediation plans and the
-// proposals that stage their steps.
+// remediationStepIDs returns the step identifiers the root-level
+// remediation plans declare. The plans are the only documents that
+// carry outstanding work: a step leaves the domain when its plan stops
+// declaring it, which is what the plan's own closure step performs. A
+// proposal under proposals/ is a permanent staged record that keeps
+// declaring its steps after they land, so its headings are outside the
+// domain and a blocker naming one does not resolve.
 func remediationStepIDs(root string) map[string]bool {
 	out := map[string]bool{}
 	docs, _ := filepath.Glob(filepath.Join(root, "*-remediation.md"))
-	staged, _ := filepath.Glob(filepath.Join(root, "proposals", "*.md"))
-	for _, doc := range append(docs, staged...) {
+	for _, doc := range docs {
 		body, err := os.ReadFile(doc)
 		if err != nil {
 			continue
