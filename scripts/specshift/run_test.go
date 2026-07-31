@@ -2480,6 +2480,11 @@ func TestFindEndsABareGlossAtASentenceTerminatingPeriod(t *testing.T) {
 // citation. The three wrap positions are a wrap between the reference and the
 // keyword, a wrap between the keyword and its first member, and a wrap inside a
 // member list, and the marker the join consumes is one of the four dialects.
+// The form is carried outside every comment dialect as well, so the last two
+// cases wrap in a carrier whose continuation line has no marker at all, which
+// is a CRD description block scalar and a Helm block comment whose interior
+// lines carry no leading star.
+//
 // Without the join a line-oriented scan sees a reference with no line-number
 // token and a line-number token with no reference, so the resolver does not
 // resolve the citation and the ratchet does not count it.
@@ -2496,6 +2501,8 @@ func TestFindJoinsAContinuationInEveryWrapPositionAndCarrierDialect(t *testing.T
 		{"wrap-reference-keyword-hash.txt", []string{"1350-1350"}, 1},
 		{"wrap-member-list-dash.txt", []string{"315-315", "321-325"}, 1},
 		{"wrap-keyword-member-block.txt", []string{"51-51"}, 2},
+		{"wrap-reference-keyword-block-scalar.txt", []string{"466-466"}, 2},
+		{"wrap-keyword-member-unmarked-block.txt", []string{"492-536"}, 2},
 	} {
 		c := oneCitation(t, tc.fixture)
 		if want := wantCitation(t, tc.fixture); c.Text != want {
@@ -2635,8 +2642,9 @@ func TestFindConsumesAGlossThatClosesOnTheContinuationLine(t *testing.T) {
 // sub-subsection, a second file with two subsections, a third file with two
 // top-level headings so a section-level range ends before the next heading of
 // its own level, a fourth file that states its numbered title at level one and
-// carries a fenced code block with a numbered heading-like line in it, so
-// neither the title nor the fenced line declares a section, and a fifth
+// carries a fenced code block with a numbered heading-like line in it, so the
+// title declares the whole-file section and the fenced line declares none, and a
+// fifth
 // file laid out the way every specification file is, which is a whole-file
 // heading whose range runs to the end of the file with two sibling subsections
 // under it. The ranges the cases below state are the tree's, and the fixture
@@ -2683,26 +2691,29 @@ func TestSectionRangeCoversASectionAndItsSubsections(t *testing.T) {
 	}
 }
 
-// TestSectionIndexReadsTheLevelTwoThroughLevelSixHeadingsOnly pins the heading
-// range a section's span is computed from. Only the ## through ###### headings
-// declare a section, so a file that states its number in a level-one title
-// declares no section under that number: a citation naming it is reported as
-// naming a heading the index does not carry, and a path-form citation into the
-// file's opening lines falls in no section. Both reports are the resolver's
-// answer rather than a resolution, so the migration's measured population, the
-// baseline the resolution register is seeded with, and the count the retirement
-// drives to zero are all computed against one predicate.
+// TestSectionIndexReadsANumberedLevelOneTitleAsTheWholeFileSection pins the
+// heading range a section's span is computed from. A file that states its
+// numbered title at level one declares the whole-file section that number
+// names, so a section-level citation into it resolves against the whole of that
+// section and a path-form citation into the title's opening lines resolves
+// against it too. One specification file is written that way while every
+// sibling states the same title at level two, and reporting its correct
+// citations as naming a heading the index does not carry would inflate the
+// resolution baseline and make a stale pointer into that section
+// indistinguishable from a live one.
 //
 // The headings below such a title are indexed as usual, a level-one heading
-// carrying no number declares nothing either, and the walk skips fenced code,
-// because a heading-like line inside an example is a comment and indexing it
-// declares sections the specification does not have, including one that
-// collides with a genuine section number.
-func TestSectionIndexReadsTheLevelTwoThroughLevelSixHeadingsOnly(t *testing.T) {
+// carrying no number declares nothing, a level-one number a deeper heading also
+// declares is left to that deeper heading rather than declared twice, and the
+// walk skips fenced code, because a heading-like line inside an example is a
+// comment and indexing it declares sections the specification does not have,
+// including one that collides with a genuine section number.
+func TestSectionIndexReadsANumberedLevelOneTitleAsTheWholeFileSection(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
-	if s, ok := r.Section("30"); ok {
-		t.Errorf("the level-one numbered title declared %v, want no section under §30", s)
+	title, ok := r.Section("30")
+	if !ok || title.File != "spec/30_level-one-title.md" || title.Start != 1 || title.End != 11 {
+		t.Errorf("§30 is %v (present=%v), want lines 1-11 of the level-one-titled file", title, ok)
 	}
 	child, ok := r.Section("30.1")
 	if !ok || child.File != "spec/30_level-one-title.md" || child.Start != 9 || child.End != 11 {
@@ -2711,17 +2722,22 @@ func TestSectionIndexReadsTheLevelTwoThroughLevelSixHeadingsOnly(t *testing.T) {
 	if s, ok := r.Section("1"); ok {
 		t.Errorf("a numbered heading inside a fenced code block declared %v", s)
 	}
-	if f := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt")); len(f) != 1 || f[0].Kind != citation.UnknownSection {
-		t.Errorf("a citation naming the level-one title reported %v, want one unknown-section failure", f)
+	if f := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt")); len(f) != 0 {
+		t.Errorf("a citation naming the level-one title reported %v, want it to resolve", f)
 	}
 	if f := r.Resolve(oneCitation(t, "resolve/level-one-subsection.txt")); len(f) != 0 {
 		t.Errorf("a citation naming the file's own subsection reported %v, want it to resolve", f)
 	}
-	if f := r.Resolve(oneCitation(t, "resolve/path-level-one-preamble.txt")); len(f) != 1 || f[0].Kind != citation.OutsideSection {
-		t.Errorf("a path-form citation into the title's opening lines reported %v, want one outside-section failure", f)
+	if f := r.Resolve(oneCitation(t, "resolve/path-level-one-preamble.txt")); len(f) != 0 {
+		t.Errorf("a path-form citation into the title's opening lines reported %v, want it to resolve", f)
 	}
-	unnumbered := map[string]string{"spec/31_untitled.md": "# Untitled\n\nProse.\n\n## 31.1 Only Section\n\nBody.\n"}
-	list := func(context.Context) ([]string, error) { return []string{"spec/31_untitled.md"}, nil }
+	unnumbered := map[string]string{
+		"spec/31_untitled.md": "# Untitled\n\nProse.\n\n## 31.1 Only Section\n\nBody.\n",
+		"spec/32_repeated.md": "# 32. Repeated\n\nProse.\n\n## 32. Repeated\n\nBody.\n",
+	}
+	list := func(context.Context) ([]string, error) {
+		return []string{"spec/31_untitled.md", "spec/32_repeated.md"}, nil
+	}
 	read := func(target string) ([]byte, error) { return []byte(unnumbered[target]), nil }
 	plain, err := citation.NewResolver(context.Background(), list, read)
 	if err != nil {
@@ -2732,6 +2748,9 @@ func TestSectionIndexReadsTheLevelTwoThroughLevelSixHeadingsOnly(t *testing.T) {
 	}
 	if s, ok := plain.Section("31.1"); !ok || s.Start != 5 {
 		t.Errorf("§31.1 is %v (present=%v), want it to start at line 5", s, ok)
+	}
+	if s, ok := plain.Section("32"); !ok || s.Start != 5 {
+		t.Errorf("§32 is %v (present=%v), want the deeper heading at line 5 to declare it once", s, ok)
 	}
 }
 

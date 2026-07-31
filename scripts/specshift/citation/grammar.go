@@ -230,16 +230,52 @@ const (
 	glossWord = `[A-Za-z][A-Za-z0-9_/-]*(?:\.[A-Za-z0-9_/-]+)*`
 )
 
-// continuationExpr matches the join between two comment lines: the newline
-// together with the carrier's comment marker and the whitespace on either side
-// of it. The marker is the one place a carrier's dialect enters the grammar.
+// The join between two lines of one carrier: the newline together with the
+// carrier's comment marker and the whitespace on either side of it. The marker
+// is the one place a carrier's dialect enters the grammar.
 //
 // Without the join a line-oriented scan sees a reference with no line-number
 // token on the first line and a line-number token with no reference on the
 // second, so neither the form nor the residual predicate reads the citation,
 // the resolver does not resolve it, the ratchet does not count it, and the file
 // reaches a zero count while a stale pointer survives.
-var continuationExpr = regexp.MustCompile(`[ \t]*\r?\n[ \t]*(?:/{2,}|#+|--|\*)[ \t]*`)
+//
+// The form is carried outside every comment dialect as well, so a marker is not
+// required. A CRD `description:` block scalar, a Helm `{{- /* ... */}}` block
+// comment whose interior lines carry no leading `*`, markdown prose, and a YAML
+// value all wrap a citation with nothing but indentation on the continuation
+// line. Requiring a marker there leaves the wrapped citation unread by the
+// matcher, unresolved by the resolver, and uncounted by the ratchet, which is
+// the same failure the join exists to prevent. The markerless alternative is
+// therefore admitted when what follows the wrap opens the rest of the form,
+// which is the keyword or a member; the token that qualifies it is left
+// unconsumed, so only the newline and the whitespace around it are collapsed.
+// Bounding it that way keeps an ordinary line break from joining two unrelated
+// lines, and the form behind the join still requires the keyword or the colon,
+// so a wrap the alternative admits is only ever read as a citation when a
+// reference stands ahead of it.
+const (
+	continuationLead    = `[ \t]*\r?\n[ \t]*`
+	continuationMarkers = `/{2,}|#+|--|\*`
+	continuationOpeners = `lines?\b|[0-9]`
+)
+
+// continuationExpr carries the span it consumes in a submatch rather than in
+// the whole match, because the markerless alternative reads the token behind the
+// wrap to qualify it and that token belongs to the citation.
+var continuationExpr = regexp.MustCompile(
+	`(` + continuationLead + `(?:` + continuationMarkers + `)[ \t]*)` +
+		`|(` + continuationLead + `)(?:` + continuationOpeners + `)`,
+)
+
+// continuationSpan returns the source range one continuation match consumes,
+// which is whichever of the expression's two alternatives matched.
+func continuationSpan(m []int) (int, int) {
+	if m[2] >= 0 {
+		return m[2], m[3]
+	}
+	return m[4], m[5]
+}
 
 // join collapses every continuation into a single joinByte and returns the
 // joined text together with the source offset of each of its bytes. The offset
@@ -262,11 +298,12 @@ func join(content string) (string, []int) {
 		}
 	}
 	last := 0
-	for _, m := range continuationExpr.FindAllStringIndex(content, -1) {
-		copyRun(last, m[0])
+	for _, m := range continuationExpr.FindAllStringSubmatchIndex(content, -1) {
+		start, end := continuationSpan(m)
+		copyRun(last, start)
 		joined = append(joined, joinByte)
-		offsets = append(offsets, m[0])
-		last = m[1]
+		offsets = append(offsets, start)
+		last = end
 	}
 	copyRun(last, len(content))
 	offsets = append(offsets, len(content))
