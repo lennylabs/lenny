@@ -658,13 +658,15 @@ func openItemIDs(root string) map[string]bool {
 	return out
 }
 
-// remediationStepID is the identifier a tracked plan gives a step. The
-// plans spell a step as a letter prefix and a number (R11), a sub-step
-// as that identifier with a lowercase letter suffix (R11a), and some
-// plans use a dashed prefix (CODE-1). A sub-step is as open as the step
-// it sits under, so the sub-step spelling is in the domain and an entry
-// blocked on one resolves.
-const remediationStepID = `[A-Z][A-Z0-9]*-[0-9]+[a-z]?|[A-Z]+[0-9]+[a-z]?`
+// remediationStepID is the identifier a tracked plan gives a step. A
+// plan spells a step as an uppercase letter prefix followed by a number
+// (R11), and a sub-step as that identifier with a lowercase letter
+// suffix (R11a). A sub-step is as open as the step it sits under, so
+// the sub-step spelling is in the domain and an entry blocked on one
+// resolves. Any other spelling declares nothing, so a heading that
+// separates a prefix from its number with a hyphen is outside the
+// domain and an entry blocked on it fails the blocker rule.
+const remediationStepID = `[A-Z]+[0-9]+[a-z]?`
 
 // remediationStepHeadings holds every spelling a tracked plan uses to
 // declare a step in a markdown heading. All three are in use in the

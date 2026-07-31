@@ -821,22 +821,21 @@ func TestRepoRegisterRulesResolveTrackedOpenFindings(t *testing.T) {
 // tracked plans use: the identifier opening the heading, the identifier
 // trailing a step heading in parentheses, and the identifier following
 // a section number before a colon. Each spelling covers a lettered
-// step, a lowercase sub-step suffix, or a dashed prefix. Ordinary prose
-// and a section heading carrying no identifier do not enter the domain.
+// step and a lowercase sub-step suffix. Ordinary prose and a section
+// heading carrying no identifier do not enter the domain.
 func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	root := t.TempDir()
 	plan := "## 3. Step 1: channel identification and naming (R1)\n" +
 		"### 3.6 R1a: register, prose, and Go symbols\n" +
 		"### R3. Specification and test tooling\n" +
 		"### R11a. One proxy-dialect enum\n" +
-		"### XX-1. A dashed step identifier\n" +
 		"### 3.1 What this step fixes\n" +
 		"The step R9 is named in prose and is not a heading.\n"
 	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"), []byte(plan), 0o644); err != nil {
 		t.Fatalf("write plan: %v", err)
 	}
 	steps := remediationStepIDs(root)
-	for _, want := range []string{"R1", "R1a", "R3", "R11a", "XX-1"} {
+	for _, want := range []string{"R1", "R1a", "R3", "R11a"} {
 		if !steps[want] {
 			t.Errorf("%s should be a declared step: %v", want, steps)
 		}
@@ -844,8 +843,34 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 	if steps["R9"] {
 		t.Errorf("prose must not declare a step: %v", steps)
 	}
-	if len(steps) != 5 {
+	if len(steps) != 4 {
 		t.Errorf("a section heading carrying no step identifier must not declare a step: %v", steps)
+	}
+}
+
+// TestRemediationStepIDsRejectHyphenatedHeadingIdentifiers pins that a
+// heading identifier written as an uppercase prefix, a hyphen, and a
+// number declares no step. No tracked plan spells a step that way, and
+// admitting the spelling widens the open-item domain to labels that
+// name sections of other documents, so a register entry blocked on one
+// would resolve and never be retired by the plan that owns the work.
+func TestRemediationStepIDsRejectHyphenatedHeadingIdentifiers(t *testing.T) {
+	root := t.TempDir()
+	plan := "### R3. Specification and test tooling\n" +
+		"### XX-1. A hyphenated identifier\n" +
+		"### 3.6 YY-2: a hyphenated identifier before a colon\n" +
+		"## 3. Step 1: a hyphenated identifier in parentheses (ZZ-3)\n"
+	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"), []byte(plan), 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	steps := remediationStepIDs(root)
+	for _, id := range []string{"XX-1", "YY-2", "ZZ-3", "1", "2", "3"} {
+		if steps[id] {
+			t.Errorf("a hyphenated heading identifier must not declare a step: %s in %v", id, steps)
+		}
+	}
+	if !steps["R3"] {
+		t.Errorf("the plan's own step spelling still declares a step: %v", steps)
 	}
 }
 
@@ -908,7 +933,7 @@ func TestRemediationSubStepInTrackedPlanResolvesAsAnOpenItem(t *testing.T) {
 func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
 	root := stagedProposalRoot(t)
 	steps := remediationStepIDs(root)
-	for _, id := range []string{"XX-1", "YY-2"} {
+	for _, id := range []string{"R7", "R8"} {
 		if steps[id] {
 			t.Errorf("a staged proposal heading must not declare an open step: %s in %v", id, steps)
 		}
@@ -919,8 +944,8 @@ func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
 }
 
 // stagedProposalRoot builds a tree carrying one remediation plan that
-// declares step R3 and one staged proposal that declares steps XX-1 and
-// YY-2.
+// declares step R3 and one staged proposal whose headings spell steps
+// R7 and R8 in the same way a plan spells its own.
 func stagedProposalRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -931,8 +956,8 @@ func stagedProposalRoot(t *testing.T) string {
 	if err := os.Mkdir(filepath.Join(root, "proposals"), 0o755); err != nil {
 		t.Fatalf("mkdir proposals: %v", err)
 	}
-	staged := "### XX-1. Add the enum and its validator\n" +
-		"### YY-2. Gate cases\n"
+	staged := "### R7. Add the enum and its validator\n" +
+		"### R8. Gate cases\n"
 	if err := os.WriteFile(filepath.Join(root, "proposals", "0001_new_x.md"), []byte(staged), 0o644); err != nil {
 		t.Fatalf("write proposal: %v", err)
 	}
@@ -978,9 +1003,9 @@ entries:
     owner: alice
     opened_at: 2026-07-01
     expiry: 2099-01-01
-    blocker: XX-1
+    blocker: R7
     reason: Blocked on a step a staged proposal declares.
 `)
 	expectFail(t, checkRegister("register", path, nil, repoRegisterRules(root)),
-		"XX-1", "does not resolve to an open item")
+		"R7", "does not resolve to an open item")
 }
