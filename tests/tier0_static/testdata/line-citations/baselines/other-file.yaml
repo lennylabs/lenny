@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+#
+# A fixture per-file citation-count baseline.
+kind: line-citation-count-baseline
+version: 1
+files:
+    - path: pkg/carrier/other.go
+      count: 1
