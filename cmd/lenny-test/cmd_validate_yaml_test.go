@@ -199,7 +199,7 @@ exceptions:
     reason: post-v1
     justification: Web playground is post-v1.
 `)
-	expectPass(t, validateSpecMapExceptionsYAML(path))
+	expectPass(t, validateSpecMapExceptionsYAML(path, testRegisterRules()))
 }
 
 func TestValidateSpecMapExceptionsUnknownReason(t *testing.T) {
@@ -210,7 +210,7 @@ exceptions:
     reason: handwave
     justification: just because
 `)
-	expectFail(t, validateSpecMapExceptionsYAML(path), "handwave")
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "handwave")
 }
 
 func TestValidateSpecMapExceptionsMissingJustification(t *testing.T) {
@@ -220,7 +220,7 @@ exceptions:
   - section: "1"
     reason: non-normative
 `)
-	expectFail(t, validateSpecMapExceptionsYAML(path), "1", "justification")
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "1", "justification")
 }
 
 func TestValidateSpecMapExceptionsDuplicateSection(t *testing.T) {
@@ -234,7 +234,109 @@ exceptions:
     reason: non-normative
     justification: Second entry.
 `)
-	expectFail(t, validateSpecMapExceptionsYAML(path), "1", "already declared")
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "1", "already declared")
+}
+
+// The pending-implementation class exempts a spec heading that exists
+// with no implementation key yet, so an entry under it stays measurable:
+// it names the open item whose closure retires it and the date it was
+// written. An entry that passed with either field empty or unparseable
+// would exempt its heading permanently, which is the outcome these cases
+// rule out. The blocker and opened_at fields carry the names and the
+// rules the shared register contract gives them, so the two rules also
+// range over an entry under an older reason class that carries either
+// field.
+
+func TestValidateSpecMapExceptionsPendingImplementationTracked(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "4.6.1"
+    reason: pending-implementation
+    justification: The warm pool controller is queued behind the binding split.
+    blocker: F-1.2.3
+    opened_at: 2026-07-01
+`)
+	expectPass(t, validateSpecMapExceptionsYAML(path, testRegisterRules()))
+}
+
+func TestValidateSpecMapExceptionsPendingImplementationMissingBlocker(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "4.6.1"
+    reason: pending-implementation
+    justification: The warm pool controller is queued.
+    opened_at: 2026-07-01
+`)
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "requires blocker")
+}
+
+func TestValidateSpecMapExceptionsPendingImplementationMissingOpenedAt(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "4.6.1"
+    reason: pending-implementation
+    justification: The warm pool controller is queued.
+    blocker: F-1.2.3
+`)
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "requires opened_at")
+}
+
+func TestValidateSpecMapExceptionsPendingImplementationBlockerNotOpen(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "4.6.1"
+    reason: pending-implementation
+    justification: The warm pool controller is queued.
+    blocker: F-9.9.9
+    opened_at: 2026-07-01
+`)
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "F-9.9.9", "does not resolve to an open item")
+}
+
+func TestValidateSpecMapExceptionsOpenedAtNotADate(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "4.6.1"
+    reason: pending-implementation
+    justification: The warm pool controller is queued.
+    blocker: F-1.2.3
+    opened_at: soon
+`)
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "opened_at", "YYYY-MM-DD")
+}
+
+// An entry under an existing reason class carries neither field, and
+// carrying one holds it to the same rules: an unresolvable blocker and
+// an unparseable date are as unmeasurable under non-normative as under
+// pending-implementation.
+func TestValidateSpecMapExceptionsTrackingFieldsCheckedUnderEveryReason(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "1"
+    reason: non-normative
+    justification: Executive summary.
+    blocker: F-9.9.9
+    opened_at: whenever
+`)
+	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()),
+		"F-9.9.9", "does not resolve to an open item", "opened_at")
+}
+
+func TestValidateSpecMapExceptionsExistingReasonNeedsNoTrackingFields(t *testing.T) {
+	path := writeYAML(t, "spec-map-exceptions.yaml", `
+version: 1
+exceptions:
+  - section: "1"
+    reason: non-normative
+    justification: Executive summary.
+`)
+	expectPass(t, validateSpecMapExceptionsYAML(path, testRegisterRules()))
 }
 
 // ---- flake-budget.yaml --------------------------------------------

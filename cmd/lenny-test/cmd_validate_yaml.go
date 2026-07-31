@@ -162,7 +162,24 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 		fmt.Sprintf("%d subset(s); every entry has a tier and at least one content slot", len(doc.Subsets)))
 }
 
-func validateSpecMapExceptionsYAML(path string) checkResult {
+// exceptionReasonPendingImplementation exempts a spec heading that
+// exists with no implementation key yet. The exemption is temporary by
+// construction, so an entry under it names the open item whose closure
+// retires it and the date it was written, in the same vocabulary the
+// shared register contract uses for the same two facts.
+const exceptionReasonPendingImplementation = "pending-implementation"
+
+// validateSpecMapExceptionsYAML holds tests/spec-map-exceptions.yaml to
+// its entry schema and to the tracking rules that keep a temporary
+// exemption temporary. The pending-implementation class is the route by
+// which a spec heading with no implementation key lands green, so an
+// entry that passed with an empty blocker or an unparseable date would
+// exempt that heading permanently. The blocker and opened_at fields are
+// named and validated as the shared register contract names and
+// validates them, so one vocabulary covers both registers, and the two
+// rules apply to any entry carrying either field regardless of its
+// reason class.
+func validateSpecMapExceptionsYAML(path string, rules registerRules) checkResult {
 	body, err := os.ReadFile(path)
 	if err != nil {
 		return newResult("spec-map-exceptions.yaml", false, fmt.Sprintf("could not read: %v", err))
@@ -173,6 +190,12 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 			Section       string `yaml:"section"`
 			Reason        string `yaml:"reason"`
 			Justification string `yaml:"justification"`
+			// Blocker names the open item whose closure retires the
+			// entry, and OpenedAt is the date the entry was written,
+			// in YYYY-MM-DD. Both are required under
+			// pending-implementation and validated wherever they appear.
+			Blocker  string `yaml:"blocker"`
+			OpenedAt string `yaml:"opened_at"`
 		} `yaml:"exceptions"`
 	}
 	if err := yaml.Unmarshal(body, &doc); err != nil {
@@ -185,13 +208,14 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		return newResult("spec-map-exceptions.yaml", true, "no exceptions defined")
 	}
 	allowedReasons := map[string]bool{
-		"non-normative":     true,
-		"indirect-coverage": true,
-		"meta":              true,
-		"deferred":          true,
-		"empty":             true,
-		"post-v1":           true,
-		"anti-feature":      true,
+		"non-normative":                      true,
+		"indirect-coverage":                  true,
+		"meta":                               true,
+		"deferred":                           true,
+		"empty":                              true,
+		"post-v1":                            true,
+		"anti-feature":                       true,
+		exceptionReasonPendingImplementation: true,
 	}
 	var problems []string
 	seen := map[string]int{}
@@ -212,12 +236,48 @@ func validateSpecMapExceptionsYAML(path string) checkResult {
 		if strings.TrimSpace(e.Justification) == "" {
 			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): missing justification", i, e.Section))
 		}
+		problems = append(problems, exceptionTrackingProblems(i, e.Section, e.Reason, e.OpenedAt, e.Blocker, rules)...)
 	}
 	if len(problems) > 0 {
 		return newResult("spec-map-exceptions.yaml", false, summarizeProblems(problems))
 	}
 	return newResult("spec-map-exceptions.yaml", true,
 		fmt.Sprintf("%d exception(s); every entry has a reason and a justification", len(doc.Exceptions)))
+}
+
+// exceptionTrackingProblems applies the blocker and opened_at rules to
+// one exception entry. An entry under pending-implementation carries
+// both fields, because the class exempts a heading only until the
+// implementation lands and an entry with neither field would exempt it
+// forever. An entry under any other class carries neither field, and
+// carrying one holds it to the same rules: a blocker that names no open
+// item, or a date that does not parse, is as unmeasurable under one
+// class as under another. The rules fail closed, so an entry whose
+// blocker cannot be resolved is a violation rather than an exemption.
+func exceptionTrackingProblems(i int, section, reason, openedAt, blocker string, rules registerRules) []string {
+	openedAt = strings.TrimSpace(openedAt)
+	blocker = strings.TrimSpace(blocker)
+	pending := strings.TrimSpace(reason) == exceptionReasonPendingImplementation
+	var problems []string
+	switch {
+	case openedAt != "":
+		if _, err := time.Parse("2006-01-02", openedAt); err != nil {
+			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): opened_at %q not YYYY-MM-DD", i, section, openedAt))
+		}
+	case pending:
+		problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): reason %s requires opened_at",
+			i, section, exceptionReasonPendingImplementation))
+	}
+	switch {
+	case blocker != "":
+		if !rules.resolvesBlocker(blocker) {
+			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): blocker %q does not resolve to an open item", i, section, blocker))
+		}
+	case pending:
+		problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): reason %s requires blocker",
+			i, section, exceptionReasonPendingImplementation))
+	}
+	return problems
 }
 
 // readExceptionSections returns the set of spec sections listed in

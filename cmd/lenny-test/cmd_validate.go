@@ -37,6 +37,10 @@ func runValidateMaps(args []string) int {
 	specMapPath := filepath.Join(root, "tests", "spec-map.json")
 	changeGraphPath := filepath.Join(root, "tests", "change-graph.json")
 	groupsPath, subsetsPath, exceptionsPath, flakeBudgetPath, parityMatrixPath := yamlPaths(root)
+	// One set of register rules serves both the spec-map exceptions and
+	// the register sweep, so a blocker resolves against the same
+	// open-item domain wherever it is written.
+	regRules := repoRegisterRules(root)
 
 	results := []checkResult{
 		validateJSONFile(specMapPath, "tests/spec-map.json"),
@@ -54,10 +58,10 @@ func runValidateMaps(args []string) int {
 			filepath.Join(root, "tests", "spec-map-pending.txt"), root),
 		validateGroupsYAML(groupsPath),
 		validateGroupsSubsetsYAML(subsetsPath),
-		validateSpecMapExceptionsYAML(exceptionsPath),
+		validateSpecMapExceptionsYAML(exceptionsPath, regRules),
 		validateFlakeBudgetYAML(flakeBudgetPath),
 		validateParityMatrixYAML(parityMatrixPath),
-		validateRegistersDir(filepath.Join(root, registersDir), repoRegisterRules(root)),
+		validateRegistersDir(filepath.Join(root, registersDir), regRules),
 	}
 
 	failed := 0
