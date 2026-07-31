@@ -32,10 +32,13 @@
 // matcher that stopped at the first separator would leave the remaining members
 // in place, where the resolver does not read them and the ratchet does not
 // count them, and the rewritten carrier would read as an anchor followed by
-// orphan integers. A citation whose head opened a parenthesis of the carrier's
-// own runs to the parenthesis that closes it for the same reason, and the
-// occurrence is refused when no parenthesis closes it, so a citation the pass
-// converts to a single anchor never leaves a delimiter behind in the carrier.
+// orphan integers. Nothing a citation consumes runs past the head of the next
+// citation, so a member list never absorbs the citation written behind it. A
+// citation whose head opened a parenthesis of the carrier's own runs to the
+// parenthesis that closes it for the same reason. When no parenthesis closes it
+// the occurrence is still returned, ending at its last member and marked
+// unconvertible, so the resolver reports it and the ratchet counts it while the
+// line pass declines to rewrite an unbalanced span.
 //
 // This is migration tooling rather than a platform behavior, so it carries no
 // spec citation of its own.
@@ -70,6 +73,16 @@ type Citation struct {
 	File      string
 	Qualifier string
 	Members   []Member
+
+	// Unconvertible marks an occurrence the line pass must not rewrite. It is
+	// set when the head opened a parenthesis of the carrier's own that no
+	// parenthesis closes inside the citation, so the matched span is
+	// unbalanced and converting it to a single anchor would delete the opening
+	// delimiter while leaving the matching one in the carrier. The occurrence
+	// is still returned, because dropping it would hide it from the resolver
+	// and from the ratchet at once, and a file could then reach a zero count
+	// with the stale pointer standing.
+	Unconvertible bool
 
 	// Text is the citation with any continuation join applied, so a citation
 	// wrapped across two comment lines reads as one line of text. It is what a
@@ -115,21 +128,6 @@ func Find(content string) []Citation {
 		}
 		c, end, ok := parseAt(joined, loc)
 		if !ok {
-			if group(joined, loc, headParen) != "" {
-				// The head opened a parenthesis of the carrier's own that
-				// does not close inside the citation. The occurrence is
-				// refused and the scan resumes one byte in, where the
-				// parenthesis branch is no longer reachable at this head,
-				// so nothing this scan returns carries an unpaired
-				// delimiter and any citation written behind the refused
-				// head is still matched. Returning the span instead would
-				// leave the pass converting an unbalanced span to one
-				// anchor, which deletes the `(` and the words behind the
-				// last member while leaving the matching `)` in the
-				// carrier.
-				pos = loc[0] + 1
-				continue
-			}
 			pos = loc[1]
 			continue
 		}
@@ -167,8 +165,9 @@ func (l Located) String() string {
 // parseAt builds the citation whose head the match at loc covers, consuming
 // every continuation member that follows it. It returns the end offset of the
 // whole citation in the joined text, and reports false when the text at the
-// head is not a citation of the form and when a head that opened a parenthesis
-// of the carrier's own has none to close with.
+// head is not a citation of the form. A head that opened a parenthesis of the
+// carrier's own with none to close with yields a citation ending at its last
+// member and marked unconvertible.
 func parseAt(joined string, loc []int) (Citation, int, bool) {
 	var c Citation
 	c.Section = group(joined, loc, headSection)
@@ -182,10 +181,8 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end, ok := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
-	if !ok {
-		return Citation{}, 0, false
-	}
+	end, convertible := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	c.Unconvertible = !convertible
 	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
@@ -193,8 +190,9 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 // consumeCitation extends the citation from the end of its head over every
 // continuation member, closes the parenthesis a head that opened one closes
 // with, and keeps consuming past that parenthesis. It reports false when a head
-// that opened a parenthesis has none to close with, so the caller refuses the
-// occurrence rather than returning an unbalanced span.
+// that opened a parenthesis has none to close with, and ends the citation at
+// its last member in that case, so the caller marks the occurrence
+// unconvertible rather than handing the pass an unbalanced span to rewrite.
 //
 // A member list may resume after the head's closing parenthesis, which happens
 // when a qualified citation parenthesizes its first range and then writes a
@@ -212,15 +210,16 @@ func consumeCitation(joined string, pos int, members *[]Member, opened bool) (in
 	}
 	closed, ok := closeHeadParen(joined, glossStart, end, limit, members)
 	if !ok {
-		return 0, false
+		return end, false
 	}
 	// The citation continues past the parenthesis only when a member list
 	// resumes behind it. Prose written after the parenthesis is outside the
 	// citation, the same way prose written after any last member is.
-	if _, _, ok := nextMember(joined, closed); !ok {
+	beyond := nextHead(joined, closed)
+	if _, _, ok := nextMember(joined, closed, beyond); !ok {
 		return closed, true
 	}
-	end, _ = consumeMembers(joined, closed, nextHead(joined, closed), members)
+	end, _ = consumeMembers(joined, closed, beyond, members)
 	return end, true
 }
 
@@ -310,7 +309,7 @@ func consumeMembers(joined string, pos, limit int, members *[]Member) (int, int)
 	glossStart := pos
 	glossed := false
 	for {
-		if next, m, ok := nextMember(joined, end); ok {
+		if next, m, ok := nextMember(joined, end, limit); ok {
 			*members = append(*members, m)
 			end = next
 			glossStart = next
@@ -354,7 +353,7 @@ func glossRun(joined string, pos, limit int) (int, string, bool) {
 			break
 		}
 		at += len(more)
-		if _, _, ok := nextMember(joined, at); ok {
+		if _, _, ok := nextMember(joined, at, limit); ok {
 			end = at
 		}
 	}
@@ -401,14 +400,28 @@ func opensWithSeparatorWord(segment string) bool {
 // nextMember consumes one separator, an optional repeat of the keyword, and one
 // member. It reports false without consuming anything when the text at pos is
 // not a continuation member.
-func nextMember(joined string, pos int) (int, Member, bool) {
+//
+// No member starts at or past limit, which is the head of the next citation.
+// The bare-prefix path spelling opens on two digits, which a member expression
+// matches as happily as a line number, so a citation written behind a member
+// separator would otherwise be read as this citation's next member: the second
+// citation is then never returned, so the resolver does not resolve it, the
+// ratchet does not count it, and the pass rewrites its opening digits away with
+// the span that swallowed them, leaving the rest of its path in the carrier.
+func nextMember(joined string, pos, limit int) (int, Member, bool) {
+	if pos >= limit {
+		return pos, Member{}, false
+	}
 	sep := separatorExpr.FindString(joined[pos:])
 	if sep == "" {
 		return pos, Member{}, false
 	}
 	at := pos + len(sep)
 	at += len(keywordExpr.FindString(joined[at:]))
-	text := memberExpr.FindString(joined[at:])
+	if at >= limit {
+		return pos, Member{}, false
+	}
+	text := memberExpr.FindString(joined[at:limit])
 	if text == "" {
 		return pos, Member{}, false
 	}

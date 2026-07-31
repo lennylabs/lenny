@@ -2098,6 +2098,9 @@ func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 		if want := wantCitation(t, tc.fixture); c.Text != want {
 			t.Errorf("%s: citation text is %q, want %q", tc.fixture, c.Text, want)
 		}
+		if c.Unconvertible {
+			t.Errorf("%s: citation %q is marked unconvertible, want it converted whole", tc.fixture, c.Text)
+		}
 		if !balancedParens(c.Text) {
 			t.Errorf("%s: citation text %q leaves a parenthesis unclosed", tc.fixture, c.Text)
 		}
@@ -2110,27 +2113,43 @@ func TestFindClosesTheParenthesisItsHeadOpened(t *testing.T) {
 	}
 }
 
-// TestFindRefusesAParenthesisItCannotClose pins the other half of that rule.
-// The parenthesis a head opened is closed inside the citation or the occurrence
-// is refused, so no returned citation carries an unpaired delimiter. The
-// parenthesis is out of reach when it sits behind a newline the join did not
-// consume, and when it sits behind the head of the next citation, where
-// consuming up to it would swallow the citation written in between: a swallowed
-// citation is never returned, so the resolver does not resolve it and the
-// ratchet does not count it. The scan resumes inside the refused occurrence, so
-// the citation written behind the refused head is still returned.
-func TestFindRefusesAParenthesisItCannotClose(t *testing.T) {
+// TestFindReportsACitationWhoseHeadParenthesisDoesNotClose pins the other half
+// of that rule. The parenthesis a head opened is out of reach when it sits
+// behind a newline the join did not consume, and when it sits behind the head
+// of the next citation, where consuming up to it would swallow the citation
+// written in between. The occurrence is returned in both cases, ending at its
+// last member and marked unconvertible, so the resolver reports it and the
+// ratchet counts it. Dropping it instead hides it from both gates at once,
+// which lets its file reach a zero count while the stale pointer stands, and
+// the two dispositions a citation the tooling cannot convert has are a report
+// and a hand correction. The citation written behind the unconvertible one is
+// returned too.
+func TestFindReportsACitationWhoseHeadParenthesisDoesNotClose(t *testing.T) {
 	t.Parallel()
+	r := citationResolver(t)
 	for _, fixture := range []string{
 		"paren-unreachable-close.txt",
 		"paren-close-behind-next-citation.txt",
 	} {
-		c := oneCitation(t, fixture)
-		if want := wantCitation(t, fixture); c.Text != want {
-			t.Errorf("%s: citation text is %q, want %q", fixture, c.Text, want)
+		found := citation.Find(citationFixture(t, fixture))
+		texts := make([]string, 0, len(found))
+		for _, c := range found {
+			texts = append(texts, c.Text)
 		}
-		if !balancedParens(c.Text) {
-			t.Errorf("%s: citation text %q leaves a parenthesis unclosed", fixture, c.Text)
+		want := wantCitations(t, fixture)
+		if !sameStrings(texts, want) {
+			t.Errorf("%s: Find returned %q, want %q", fixture, texts, want)
+			continue
+		}
+		if !found[0].Unconvertible {
+			t.Errorf("%s: citation %q is not marked unconvertible", fixture, found[0].Text)
+		}
+		if found[1].Unconvertible {
+			t.Errorf("%s: the citation behind it (%q) is marked unconvertible", fixture, found[1].Text)
+		}
+		failures := r.Resolve(found[0])
+		if len(failures) == 0 || failures[0].Kind != citation.UnclosedParenthesis {
+			t.Errorf("%s: Resolve reported %v, want an unclosed-parenthesis failure first", fixture, failures)
 		}
 	}
 }
@@ -2138,7 +2157,10 @@ func TestFindRefusesAParenthesisItCannotClose(t *testing.T) {
 // TestFindReturnsNoUnbalancedCitationOverEveryFixture sweeps the whole fixture
 // set for the same invariant, so a spelling added later cannot reintroduce a
 // citation the pass would convert to an anchor while leaving a delimiter and
-// the prose behind it in the carrier.
+// the prose behind it in the carrier. A citation marked unconvertible is the
+// one the pass declines to rewrite, so its span is allowed to be unbalanced and
+// is required to be: an occurrence carrying the mark with a balanced text would
+// be a citation withheld from the pass for no reason.
 func TestFindReturnsNoUnbalancedCitationOverEveryFixture(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(fixtureCitations)
@@ -2150,10 +2172,37 @@ func TestFindReturnsNoUnbalancedCitationOverEveryFixture(t *testing.T) {
 			continue
 		}
 		for _, c := range citation.Find(citationFixture(t, entry.Name())) {
-			if !balancedParens(c.Text) {
-				t.Errorf("%s: citation text %q leaves a parenthesis unclosed", entry.Name(), c.Text)
+			if balancedParens(c.Text) == c.Unconvertible {
+				t.Errorf("%s: citation text %q is balanced=%v with the unconvertible mark %v",
+					entry.Name(), c.Text, balancedParens(c.Text), c.Unconvertible)
 			}
 		}
+	}
+}
+
+// TestFindEndsAMemberListAtTheHeadOfTheNextCitation pins the bound on member
+// consumption. The path spelling that omits the spec/ prefix opens on two
+// digits, which a member expression matches as readily as a line number, so a
+// citation written behind a member separator would otherwise be read as the
+// preceding citation's next member. The second citation is then never
+// returned, so the resolver does not resolve it and the ratchet does not count
+// it, and the pass rewrites its opening digits away with the span that
+// swallowed them, leaving the rest of its path in the carrier. The phantom
+// member the first citation gains resolves nowhere and holds its file above a
+// zero count.
+func TestFindEndsAMemberListAtTheHeadOfTheNextCitation(t *testing.T) {
+	t.Parallel()
+	const fixture = "bare-prefix-behind-separator.txt"
+	found := citation.Find(citationFixture(t, fixture))
+	texts := make([]string, 0, len(found))
+	for _, c := range found {
+		texts = append(texts, c.Text)
+		if len(c.Members) != 1 {
+			t.Errorf("%s: citation %q carries %d members, want 1: %v", fixture, c.Text, len(c.Members), members(c))
+		}
+	}
+	if want := wantCitations(t, fixture); !sameStrings(texts, want) {
+		t.Errorf("%s: Find returned %q, want %q", fixture, texts, want)
 	}
 }
 
