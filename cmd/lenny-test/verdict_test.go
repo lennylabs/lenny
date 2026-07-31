@@ -308,6 +308,80 @@ func TestRecordedTierStatusStaysInTheEnum(t *testing.T) {
 	}
 }
 
+// staticCheckStub builds a table entry whose run returns the given
+// output and error and whose classifier reads the shared unverified
+// marker, matching the tier-0 Go-test entry.
+func staticCheckStub(name, out string, err error) staticCheck {
+	return staticCheck{
+		name:     name,
+		run:      func() (string, error) { return out, err },
+		classify: classifyUnverified,
+	}
+}
+
+// TestComposeStaticChecksUnverifiedMarkerRaisesTierStatus pins the
+// producer side of the unverified tier status. A tier-0 check that ran,
+// exited zero, and wrote the marker reported that it proved nothing;
+// collapsing it to pass is the fail-open outcome the status exists to
+// prevent.
+func TestComposeStaticChecksUnverifiedMarkerRaisesTierStatus(t *testing.T) {
+	out := "ok  \tgithub.com/lennylabs/lenny/tests/tier0_static\t0.01s\n    " +
+		verdictstatus.UnverifiedMarker + " protoc not on PATH\n"
+	status, msg := composeStaticChecks([]staticCheck{
+		staticCheckStub("go test ./tests/tier0_static/...", out, nil),
+	})
+	if status != verdictstatus.Unverified {
+		t.Fatalf("check reporting no conclusion yielded status %q; want %q", status, verdictstatus.Unverified)
+	}
+	if !strings.Contains(msg, "protoc not on PATH") {
+		t.Fatalf("tier message dropped the reason: %q", msg)
+	}
+}
+
+// TestComposeStaticChecksFailOutranksUnverified holds a real failure
+// above a check that reached no conclusion, in either order, so the new
+// status cannot mask a failing tier.
+func TestComposeStaticChecksFailOutranksUnverified(t *testing.T) {
+	unverified := staticCheckStub("tier0 go test", verdictstatus.UnverifiedMarker+" generator absent", nil)
+	failing := staticCheckStub("go vet ./...", "vet: bad code", fmt.Errorf("exit status 1"))
+	cases := []struct {
+		name   string
+		checks []staticCheck
+	}{
+		{"unverified first", []staticCheck{unverified, failing}},
+		{"failing first", []staticCheck{failing, unverified}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, msg := composeStaticChecks(tc.checks)
+			if status != verdictstatus.Fail {
+				t.Fatalf("got status %q; want %q", status, verdictstatus.Fail)
+			}
+			if !strings.Contains(msg, "go vet ./... failed") {
+				t.Fatalf("failure message lost the failing check: %q", msg)
+			}
+		})
+	}
+}
+
+// TestComposeStaticChecksSilentChecksPass keeps the pre-existing
+// outcome for a table whose checks report nothing: the tier passes and
+// carries no message.
+func TestComposeStaticChecksSilentChecksPass(t *testing.T) {
+	status, msg := composeStaticChecks([]staticCheck{
+		staticCheckStub("tier0 go test", "ok  \tgithub.com/lennylabs/lenny/tests/tier0_static\t0.01s\n", nil),
+		{name: "no classifier", run: func() (string, error) {
+			return verdictstatus.UnverifiedMarker + " ignored without a classifier", nil
+		}},
+	})
+	if status != verdictstatus.Pass {
+		t.Fatalf("silent checks yielded status %q; want %q", status, verdictstatus.Pass)
+	}
+	if msg != "" {
+		t.Fatalf("passing tier carried a message: %q", msg)
+	}
+}
+
 func TestSynthesizeNextActionFallback(t *testing.T) {
 	v := newVerdict(selector{tier: "static"})
 	v.recordTier("static", "fail", 10*time.Millisecond, "go vet failed")

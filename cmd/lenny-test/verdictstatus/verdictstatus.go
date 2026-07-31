@@ -17,6 +17,8 @@
 // no verdict schema; the verdict document belongs to TESTING.md §7.
 package verdictstatus
 
+import "strings"
+
 // Tier statuses. These are the values serialized into
 // `tiers.<name>.status` in the verdict document (TESTING.md §7).
 const (
@@ -51,6 +53,35 @@ const (
 	// conclusion, so the run proved neither success nor failure.
 	VerdictUnverified = "UNVERIFIED"
 )
+
+// UnverifiedMarker is the line prefix a tier-0 Go test writes to stdout
+// to report that it could not reach a conclusion. The harness has no
+// channel other than the test binary's output for a passing test to say
+// that it proved nothing, so the test writes this marker followed by the
+// reason and exits zero, and the tier-0 composer promotes the tier to
+// Unverified. Producer and parser share the constant so the two cannot
+// drift apart.
+const UnverifiedMarker = "LENNY-TEST-UNVERIFIED:"
+
+// ScanUnverified reports whether out carries the unverified marker, and
+// returns the reason text that follows it on every marked line. The
+// marker is matched anywhere in a line rather than at its start,
+// because `go test` prefixes a test's own output with indentation and a
+// file:line stamp. An empty reason list with ok true means the marker
+// was written with no reason text.
+func ScanUnverified(out string) (reasons []string, ok bool) {
+	for _, line := range strings.Split(out, "\n") {
+		_, after, found := strings.Cut(line, UnverifiedMarker)
+		if !found {
+			continue
+		}
+		ok = true
+		if reason := strings.TrimSpace(after); reason != "" {
+			reasons = append(reasons, reason)
+		}
+	}
+	return reasons, ok
+}
 
 // TierStatuses returns every declared tier-status value exactly once. A
 // consumer that must cover the whole set ranges over this rather than

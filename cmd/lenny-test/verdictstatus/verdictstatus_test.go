@@ -165,3 +165,44 @@ func TestNoSpecAnnotationInPackage(t *testing.T) {
 		t.Fatal("scanned no Go files; the check would pass vacuously")
 	}
 }
+
+// TestScanUnverifiedReadsIndentedMarker pins the marker parse against
+// the output a Go test binary actually produces, which indents a test's
+// own writes. A parser that only matched at the start of a line would
+// read every such report as silence and report the tier as passing.
+func TestScanUnverifiedReadsIndentedMarker(t *testing.T) {
+	out := "=== RUN   TestProtoNoDrift\n    proto_test.go:31: " +
+		verdictstatus.UnverifiedMarker + " protoc-gen-go not on PATH\n--- PASS: TestProtoNoDrift\nPASS\n"
+	reasons, ok := verdictstatus.ScanUnverified(out)
+	if !ok {
+		t.Fatal("indented marker line was not recognized")
+	}
+	if len(reasons) != 1 || reasons[0] != "protoc-gen-go not on PATH" {
+		t.Fatalf("reasons = %q; want one entry naming the missing binary", reasons)
+	}
+}
+
+// TestScanUnverifiedSilentOutput holds the negative case: output with
+// no marker reports no conclusion of its own, so the tier stays at the
+// status its checks otherwise produced.
+func TestScanUnverifiedSilentOutput(t *testing.T) {
+	reasons, ok := verdictstatus.ScanUnverified("ok  \tpkg/example\t0.02s\n")
+	if ok || len(reasons) != 0 {
+		t.Fatalf("unmarked output reported ok=%v reasons=%q", ok, reasons)
+	}
+}
+
+// TestScanUnverifiedCollectsEveryReason keeps every marked line, so a
+// run in which several tests reached no conclusion reports all of them
+// rather than the first.
+func TestScanUnverifiedCollectsEveryReason(t *testing.T) {
+	out := verdictstatus.UnverifiedMarker + " first reason\nnoise\n\t" +
+		verdictstatus.UnverifiedMarker + "\t second reason \n"
+	reasons, ok := verdictstatus.ScanUnverified(out)
+	if !ok {
+		t.Fatal("marker lines were not recognized")
+	}
+	if len(reasons) != 2 || reasons[0] != "first reason" || reasons[1] != "second reason" {
+		t.Fatalf("reasons = %q; want both reasons trimmed", reasons)
+	}
+}
