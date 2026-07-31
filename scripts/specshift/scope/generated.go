@@ -360,11 +360,18 @@ func (s *commentState) markupCommentBody(trimmed string) (string, bool) {
 // BOM-prefixed, or a comment-carrying JSON file is the case that reaches
 // it. A metadata field that is absent, or present but not a string, is a
 // document the rule did read, so it stays the answer that the document
-// declares nothing.
+// declares nothing. A document that parses but whose top level is not an
+// object, an authored JSON array for instance, carries no top-level
+// metadata to declare anything and is the same "declares nothing" answer;
+// only a document the rule could not parse fails.
 func metadataDeclaresGeneration(content []byte) (bool, error) {
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(content, &doc); err != nil {
+	var parsed json.RawMessage
+	if err := json.Unmarshal(content, &parsed); err != nil {
 		return false, fmt.Errorf("parse the document metadata: %w", err)
+	}
+	var doc map[string]json.RawMessage
+	if err := json.Unmarshal(parsed, &doc); err != nil {
+		return false, nil
 	}
 	raw, ok := doc[metadataField]
 	if !ok {

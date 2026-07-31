@@ -455,6 +455,40 @@ func TestMetadataDisjunctReadsADeclarationRatherThanProseAboutGeneration(t *test
 	}
 }
 
+// TestMetadataDisjunctTreatsADocumentWithNoTopLevelObjectAsAuthored pins
+// the boundary between the disjunct's fail-closed case and its
+// declares-nothing case. A document the rule could not parse fails; a
+// document that parses and carries no top-level object, an authored JSON
+// array for instance, has no top-level metadata to declare anything and
+// is an ordinary carrier. Failing on it would abort every pass and every
+// domain computation over the whole tree because one authored file is an
+// array.
+func TestMetadataDisjunctTreatsADocumentWithNoTopLevelObjectAsAuthored(t *testing.T) {
+	t.Parallel()
+	const authored = "schemas/authored-list.json"
+	list, read := treeDomain(t)
+	if got, err := scope.Generated(authored, read); err != nil || got != scope.NotGenerated {
+		t.Fatalf("Generated(%s) = %q, %v; want %q and no error", authored, got, err, scope.NotGenerated)
+	}
+	for _, p := range scope.Passes() {
+		domain, err := scope.WriteDomain(context.Background(), list, p, read)
+		if err != nil {
+			t.Fatalf("WriteDomain(%s) over a tree carrying an authored JSON array: %v", p, err)
+		}
+		if !membership(domain)[authored] {
+			t.Errorf("%s pass write domain omits the authored array %s", p, authored)
+		}
+	}
+	// Every other top-level JSON value the rule can parse is the same
+	// answer, and a document that does not parse still fails.
+	for _, content := range []string{`"a string"`, `42`, `null`} {
+		scalar := func(string) ([]byte, error) { return []byte(content), nil }
+		if got, err := scope.Generated(authored, scalar); err != nil || got != scope.NotGenerated {
+			t.Errorf("Generated over the top-level JSON value %s = %q, %v; want %q and no error", content, got, err, scope.NotGenerated)
+		}
+	}
+}
+
 // TestGeneratedRuleSelectsAMarkedHeader pins the first disjunct.
 func TestGeneratedRuleSelectsAMarkedHeader(t *testing.T) {
 	t.Parallel()
@@ -1156,6 +1190,43 @@ func TestApplyRestoresTheFilesItWroteWhenALaterWriteFails(t *testing.T) {
 	}
 }
 
+// TestApplyRestoresTheFileWhoseOwnWriteFailedPartWayThrough pins the
+// case a writer that truncates before it fails produces. The production
+// writer opens with O_TRUNC, so a write that fails after truncation, on a
+// full disk or a lost mount, leaves its own target torn. The rollback
+// used to restore only the files written before the failing one, so the
+// single file the run damaged was the one file it skipped and the tree
+// was neither the pre-run tree nor the applied one.
+func TestApplyRestoresTheFileWhoseOwnWriteFailedPartWayThrough(t *testing.T) {
+	t.Parallel()
+	root := copyFixtureTree(t)
+	r := &suffixRewriter{p: scope.Line, suffix: "// rewritten\n"}
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), nil)
+	planned, err := h.Plan(context.Background(), r)
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(planned.Files) < 2 {
+		t.Fatalf("the fixture tree plans %d file(s), which cannot exercise a mid-write failure", len(planned.Files))
+	}
+	failOn := planned.Paths()[len(planned.Files)-1]
+	h.Write = tearingWriter(root, failOn)
+
+	before := treeSnapshot(t, root)
+	if _, err := h.Apply(context.Background(), r); err == nil {
+		t.Fatal("Apply over a tearing writer returned no error")
+	} else if errors.Is(err, pass.ErrTreeNotRestored) {
+		t.Fatalf("Apply reported an unrestored tree after a restore that could succeed: %v", err)
+	}
+	got := treeSnapshot(t, root)
+	if got[failOn] != before[failOn] {
+		t.Errorf("the torn target %s was left at %q; want its pre-run contents", failOn, got[failOn])
+	}
+	if !sameSnapshot(before, got) {
+		t.Error("the failed apply left the tree partially rewritten")
+	}
+}
+
 // TestApplyReportsAnUnrestoredTreeWhenTheRollbackAlsoFails pins the
 // distinct outcome an operator needs when the tree is neither the pre-run
 // tree nor the applied one.
@@ -1487,21 +1558,43 @@ func dirWriterFor(dir string) func(string, []byte) error {
 	}
 }
 
-// failingWriter returns a writer rooted at dir that refuses to write
-// failOn, and refuses the second write of any path in restoreFail, which
-// is the restore of a file a failed apply had already written. The
-// harness writes sequentially, so the record needs no lock.
+// failingWriter returns a writer rooted at dir that refuses the applying
+// write of failOn while letting its restore through, and refuses the
+// second write of any path in restoreFail, which is the restore of a file
+// a failed apply had already written. The harness writes sequentially, so
+// the record needs no lock.
 func failingWriter(dir, failOn string, restoreFail map[string]bool) func(string, []byte) error {
 	base := dirWriterFor(dir)
 	written := map[string]bool{}
+	refused := false
 	return func(target string, content []byte) error {
-		if target == failOn {
+		if target == failOn && !refused {
+			refused = true
 			return fmt.Errorf("write %s: refused by the test writer", target)
 		}
 		if written[target] && restoreFail[target] {
 			return fmt.Errorf("restore %s: refused by the test writer", target)
 		}
 		written[target] = true
+		return base(target, content)
+	}
+}
+
+// tearingWriter returns a writer rooted at dir that truncates failOn and
+// then reports a failure, which is what os.WriteFile leaves behind when
+// the write fails after the O_TRUNC open. Every other path is written
+// normally, including the restore of the torn target.
+func tearingWriter(dir, failOn string) func(string, []byte) error {
+	base := dirWriterFor(dir)
+	torn := false
+	return func(target string, content []byte) error {
+		if target == failOn && !torn {
+			torn = true
+			if err := base(target, nil); err != nil {
+				return fmt.Errorf("truncate %s: %w", target, err)
+			}
+			return fmt.Errorf("write %s: the device is full", target)
+		}
 		return base(target, content)
 	}
 }

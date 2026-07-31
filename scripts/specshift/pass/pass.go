@@ -283,7 +283,11 @@ func (h *Harness) Apply(ctx context.Context, r Rewriter) (Diff, error) {
 	for i, f := range diff.Files {
 		if err := h.Write(f.Path, f.After); err != nil {
 			cause := fmt.Errorf("apply %s pass: %w", r.Pass(), err)
-			return Diff{}, h.restore(diff.Files[:i], cause)
+			// The failing entry is restored along with the entries
+			// already written: a writer that truncates before it fails
+			// leaves that target torn, and skipping it would leave the
+			// one file the run damaged unrepaired.
+			return Diff{}, h.restore(diff.Files[:i+1], cause)
 		}
 	}
 	return diff, nil

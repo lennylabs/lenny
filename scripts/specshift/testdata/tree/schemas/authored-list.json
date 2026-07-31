@@ -1,0 +1,10 @@
+[
+  {
+    "name": "workspace",
+    "description": "Authored by hand, listing the workspaces a session may open."
+  },
+  {
+    "name": "sandbox",
+    "description": "Authored by hand, listing the sandboxes a session may claim."
+  }
+]
