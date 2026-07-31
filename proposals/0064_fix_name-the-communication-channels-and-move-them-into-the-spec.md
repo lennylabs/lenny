@@ -93,9 +93,9 @@ channel. They run between different participants, in different directions, and o
 The collision has already produced incorrect normative text: the shipped
 `schemas/lenny-adapter-jsonl.schema.json` describes intra-pod frames as riding the gRPC stream, and both
 halves of that description are wrong. The glossary entry that owns the term
-(`docs/reference/glossary.md:206-209`) carries the same conflation, and it is the page a reader consults
-to resolve the ambiguity. This proposal's own analysis had to correct the same conflation twice before it
-held.
+(`docs/reference/glossary.md` lines 206 through 209) carries the same conflation, and it is the page a
+reader consults to resolve the ambiguity. This proposal's own analysis had to correct the same conflation
+twice before it held.
 
 **3. The contract is scattered, and one authoritative line collapses it.** Answering how the gateway talks
 to the pod requires reading across `spec/04`, `spec/07`, `spec/10`, `spec/13`, and `spec/15`. The
@@ -150,13 +150,11 @@ stale.
   prohibiting the retired stem. The plan's R1b scope table also carries the current stem, so no plan row
   is corrected here. SPEC-2 states the carrier spellings for `CH-ADAPTEREVENTS` under N3 and N4 so that
   every carrier of the identifier is spelled from the rules rather than inferred. The rename was made
-  because
-  "event stream"
-  is already bound in this specification to the operational event stream (`spec/README.md:154`,
-  `spec/25_agent-operability.md` §25.5), to the per-session event stream (`spec/07_session-lifecycle.md`
-  line 286), and to `pkg/ops/events/service.go`. Under N4 the identifier becomes a Go file stem and a
-  metric label value, so adopting it would seed a second collision of the class this proposal exists to
-  retire. `CH-ADAPTEREVENTS` names the author of the messages and is unbound in the tree. Every other row
+  because "event stream" is already bound in this specification to the operational event stream
+  (`spec/README.md` line 154, `spec/25_agent-operability.md` §25.5), to the per-session event stream
+  (`spec/07_session-lifecycle.md` line 286), and to `pkg/ops/events/service.go`. Under N4 the identifier
+  becomes a Go file stem and a metric label value, so adopting it would seed a second collision of the
+  class this proposal exists to retire. `CH-ADAPTEREVENTS` names the author of the messages and is unbound in the tree. Every other row
   of the plan's naming table is adopted unchanged.
 
 - **New specification sections append; nothing is renumbered.** `spec/` ends at `27_web-playground.md`, so
@@ -199,8 +197,10 @@ unbuilt adapter-to-gateway direction a visible block rather than two rows lost i
 The artifact register is also what supersedes the `schemas/README.md` artifact table, which stands for the
 same set and names a strict subset of it. The `spec/24` compliance-suite sentence is corrected in place
 rather than superseded, because it states the artifact subset the external-adapter compliance suite asserts
-against rather than the register's whole artifact set, and its omission today prevents the shipped
-compliance suite from validating the runtime-ops channel. The degradation matrix is the one subsection with no antecedent in the tree, so it is authored here
+against rather than the register's whole artifact set, and today that subset omits the runtime-ops events
+schema. The corrected sentence states the artifact set the suite is required to assert against. The
+shipped harness compiles two schema files, so the distance between the corrected sentence and the code is
+recorded as an `ABSENT` claim-register row under §4.4 rather than closed here. The degradation matrix is the one subsection with no antecedent in the tree, so it is authored here
 rather than relocated. §4.8 fixes every heading in both files, with the anchor each title produces, because
 three separate obligations in this proposal need those anchors before the sections that carry them exist.
 
@@ -285,7 +285,7 @@ from the source the passes rewrite rather than edited, and its gate is the exist
 | Test-harness contract prose in `TESTING.md` that enumerates a value the tooling changes, which is every §7 field-semantics sentence closing an enum the producer widens plus the §21.3 infrastructure-failure sentence | the `UNVERIFIED` verdict state and the `unverified` tier status proposal 0065 adds | **not staged here.** Proposal 0065 hand-authors these sentences in the same change as the constant that falsifies them, so this proposal neither restates nor re-edits them; its own `TESTING.md` edits are the reserved-phrase and retired-identifier sites its passes rewrite | proposal 0065, whose review closes them |
 | Reserved noun phrases and retired channel identifiers in the tracked root-level contract documents `README.md` and `TESTING.md` | `tests/registers/reserved-phrase-senses.yaml` and `tests/registers/identifier-senses.yaml`, on the same per-occurrence terms as the `spec/` and `docs/` sites | the `specshift` name and identifier passes, whose walk covers tracked root-level markdown under the exclusion list N3 states | the naming lint and the identifier-resolution gate, whose scope is the same walk, so the gate that reads the whole tree has a pass that can write every file it reads |
 | Correcting a description the collision made wrong | `tests/registers/reserved-phrase-senses.yaml` | hand-authored | review, because no gate reads meaning; the naming lint and the identifier gate both pass a semantically wrong sentence that carries a canonical spelling |
-| A sentence that a reduction falsifies, where no pass repairs its meaning, because the sentence carries no line citation and no moved anchor, and any reserved phrase it carries is rewritten to the current spelling while the false statement stands | the reductions SPEC-3 lands | hand-authored in the same change as the reduction, and enumerated there; the members are the `spec/15` §15.3, §15.4.5, and `MessageEnvelope` sentences, the two §15.7 platform-MCP-tool sentences, the six §15.4.4 pseudocode comments that cite the retired §15.4.1 in the spelled-out `Section 15.4.1` form the anchor pass does not read, the `spec/21_planned-post-v1.md` line 31 link label that names the retired §15.4.1 in the same spelled-out form while its target anchor survives, the three shipped schema descriptions, the `docs/api/internal.md` binary-protocol pointer, the two `schemas/README.md` artifact-table rows, and the ten pointers that name §4.7 as the owner of relocated intra-pod material, nine of them `spec/` and `docs/` sentences, one of those nine being the §15.7 graceful-shutdown bullet, and the tenth the pair of `schemas/lenny-adapter.proto` comments on the intra-pod handshake, all of which SPEC-3 lists | review, plus the tier-11 successor-pointer check where the rewritten sentence names a successor heading |
+| A sentence that a reduction falsifies, where no pass repairs its meaning, because the sentence carries no line citation and no moved anchor, and any reserved phrase it carries is rewritten to the current spelling while the false statement stands | the reductions SPEC-3 lands | hand-authored in the same change as the reduction, and enumerated there; the members are the `spec/15` §15.3, §15.4.5, and `MessageEnvelope` sentences, the two §15.7 platform-MCP-tool sentences, the six §15.4.4 pseudocode comments that cite the retired §15.4.1 in the spelled-out `Section 15.4.1` form the anchor pass does not read, the `spec/21_planned-post-v1.md` line 31 link label that names the retired §15.4.1 in the same spelled-out form while its target anchor survives, the three shipped schema descriptions, the `docs/api/internal.md` binary-protocol pointer, the two `schemas/README.md` artifact-table rows, and the fifteen pointers that name §4.7 as the owner of relocated intra-pod material, thirteen of them `spec/` and `docs/` sentences, one of those thirteen being the §15.7 graceful-shutdown bullet and four of them the `spec/11` and `spec/12` crash-recovery pointers at `spec/11_policy-and-controls.md` lines 53, 153, and 171 and `spec/12_storage-architecture.md` line 161, the fourteenth the pair of `schemas/lenny-adapter.proto` comments on the intra-pod handshake, and the fifteenth the `STATUS_INTERRUPT_TIMEOUT` comment at `schemas/lenny-adapter.proto` line 1063, all of which SPEC-3 lists | review, plus the tier-11 successor-pointer check where the rewritten sentence names a successor heading |
 | An inbound reference into a retired anchor whose cited material is carved out of the reduction and stays where it is, so the anchor map's single successor for that anchor would send the reference to the wrong heading. The class is every reference into a retired anchor whose cited material stays where it is, in any carrier the anchor pass writes, which is the markdown link form and the bare `§X.Y`-form section citation in a comment or in prose alike. The **target-and-label rule** governs every markdown-link member: a hand correction rewrites the link's label as well as its target whenever the label names the retiring subsection, in either the `§15.4.1` or the spelled-out `Section 15.4.1` spelling, because a link whose target is redirected while its label still names §15.4.1 names a section that exists in no `spec/` file. The rewritten label names the section the hand-written target resolves into, and rewriting it leaves no retired citation at that site for SPEC-4's tree-wide citation pass to read | the carve-outs SPEC-3 states with the links it enumerates there, plus `tests/registers/anchor-senses.yaml`, keyed by file and occurrence, which records the destination anchor of every occurrence of a retired anchor the map alone cannot decide, and which SPEC-4 retires with the map | hand-authored in the same change as the split for the markdown-link members, before any anchor pass runs, which today are the seven `spec/07_session-lifecycle.md` links into `1541-adapterbinary-protocol` that cite `MessageEnvelope` material, the seven same-page links into the same anchor inside `spec/15_external-api-surface.md` that cite material the carve-outs keep there, six of them citing the `MessageEnvelope` heading and the seventh, at line 2733, citing the surviving §15.4.2 heading, and the absolute GitHub URL at `docs/reference/adapter-contract.md` line 371 that cites the same anchor for the Translation Fidelity Matrix; the `specshift` anchor pass for the bare section-citation members, driven per occurrence by the sense register and failing an occurrence with no entry rather than substituting the map's single successor | review, plus the fragment-link gate, which confirms the hand-written target resolves for the intra-repo link members; the absolute-URL member is covered by review alone, because the gate does not read an absolute URL; and TEST-1's anchor-pass cases, which pin the fail-closed path for a bare citation with no register entry and pin that a citation of carved-out material resolves to the surviving heading |
 | A same-page markdown fragment link carried inside a block a reduction relocates to another file, whose target heading stays behind, so the link breaks although neither it nor its target changed | the blocks SPEC-3 relocates, and the links it enumerates there | hand-authored in the same change that moves the block, rewritten to the file-qualified form against the file the block left; the anchor pass cannot reach them because the map is keyed by retired anchor and these targets survive | the fragment-link gate, which is red on a same-page fragment that no longer resolves against its new page |
 | A pre-existing intra-repo markdown fragment link whose target heading does not exist | the seven links SPEC-4 enumerates | hand-authored in the same change as the fragment-link gate | the fragment-link gate, which is green on introduction once they are corrected |
@@ -327,10 +327,13 @@ this proposal.
    `spec/29`, the reductions with
    their successor pointers, the numbered subsection headings inserted into `spec/04`, `spec/10`, and
    `spec/13`, and the mechanical retirement of the redirected anchors and the line
-   citations. The heading insertion runs first inside this step and the citation pass second, because an
+   citations. Each file's heading insertion runs ahead of the pass that converts that file's line
+   citations, because an
    inserted heading shifts every line below it and the pass has to read the shifted line numbers; putting
    both in one exclusive change is what keeps the shift from invalidating a population no pass is running
-   over. The freeze of `gateway-runtime-comms.md` lands here as well, since it is the point at which §28 and
+   over. For `spec/04` that pass is the one inside the reduction sub-step, which converts every citation
+   into the file, so the §4.4 and §4.7 headings land there; the `spec/10` and `spec/13` headings land with
+   the tree-wide citation pass. The freeze of `gateway-runtime-comms.md` lands here as well, since it is the point at which §28 and
    §29 supersede it. The heading walker, the tier-11 successor-pointer check, the claim register's
    schema-only validator, the §28.8 matrix completeness check, and the artifact-register supersession
    check land with the new sections, the reductions, and the seeded register, the
@@ -1535,7 +1538,27 @@ mechanism, because a spelling substitution preserves a wrong sentence:
   later sub-steps and has to be true when it does.
 - The `CheckpointBarrierAck` comment in `schemas/lenny-adapter.proto` lines 166-172, which names the
   stream by the colliding word.
-- `docs/reference/glossary.md`, whose "Lifecycle Channel" entry (`docs/reference/glossary.md:206-209`)
+- The RPC doc comment in `schemas/lenny-adapter.proto` lines 223 through 226, which credits the
+  gateway-to-adapter gRPC stream with `checkpoint_ready`, `interrupt_acknowledged`,
+  `credentials_acknowledged`, and `deadline_approaching`, and sends the reader to §15.4 for the taxonomy.
+  Those frames are `CH-RUNTIMEOPS` frames on the intra-pod socket. The stream the comment documents
+  carries the event set `pkg/adapter/controlchannel.go` lines 17 through 44 declare, which is
+  `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`,
+  `FINAL_USAGE_REPORT`, and `CheckpointBarrierAck`. The comment is rewritten over that event set, in the
+  same vocabulary the `CH-ADAPTEREVENTS` glossary entry below takes, and its pointer is rewritten to the
+  adapter-to-gateway events table at `spec/04_system-components.md` lines 679 through 689, which is the
+  specification statement of that taxonomy. Where §15.4 names `checkpoint_ready` and
+  `interrupt_acknowledged` today, at `spec/15_external-api-surface.md` lines 2158, 2159, 2451, and 2452, it
+  states them as intra-pod runtime obligations, and it states no adapter-to-gateway event anywhere.
+- The request and response message comment in `schemas/lenny-adapter.proto` lines 1594 through 1598, which
+  states that the envelope taxonomy "is defined in lenny-adapter-jsonl.schema.json under the lifecycle
+  section in the spec". The envelopes the two messages carry are the same adapter-to-gateway events, which
+  that artifact schematizes nowhere: its `$defs` are the stdin/stdout frames listed above, and the
+  runtime-operations frames it is wrongly credited with move to `schemas/runtime-ops-events.schema.json` in
+  the first two corrections in this list. The comment is rewritten to name the same
+  `spec/04_system-components.md` events table as the taxonomy's owner, so both comments on this stream and
+  the glossary entry state one source.
+- `docs/reference/glossary.md`, whose "Lifecycle Channel" entry (lines 206 through 209)
   defines the gRPC gateway-to-pod stream and then credits it with checkpoint requests and credential
   rotation, which are `CH-RUNTIMEOPS` frames on the intra-pod socket, and with session start/stop and
   workspace notifications, which are separate `Adapter` service RPCs. Split it into one entry for
@@ -1549,14 +1572,33 @@ mechanism, because a spelling substitution preserves a wrong sentence:
   identifier pass produces a glossary asserting that `CH-ADAPTEREVENTS` carries checkpoint requests, and
   both gates pass it.
 
+The events table the two rewritten proto comments point at sits at `spec/04_system-components.md` lines 679
+through 689, above the line 691 opening of the block SPEC-3's §4.7 reduction moves, so it stays in §4.7 and
+neither comment joins the class SPEC-3 re-points at a §28.5 card. Both corrections therefore land here in
+full, which is also where they belong, because it is this sub-step's identifier pass that renames the RPC
+and the two message types inside them and would otherwise leave a precise false statement that
+`CH-ADAPTEREVENTS` carries the intra-pod runtime-operations frames, in the published gRPC contract and in
+its generated mirrors at `pkg/proto/adapter/v1/lenny-adapter_grpc.pb.go` lines 242 and 687 and
+`pkg/proto/adapter/v1/lenny-adapter.pb.go` line 6327. That is the failure mode §3.2 names. No pass reaches
+either comment: the name pass's measured proto population does not include them, neither carries a line
+citation, and §15.4 and §4.7 both keep their anchors. The `make generate-proto` run this sub-step already
+takes carries both corrections into `pkg/proto/`. Pointing the two comments at
+`schemas/runtime-ops-events.schema.json` was rejected, because that artifact schematizes the intra-pod
+frames rather than the adapter-to-gateway events these two messages carry.
+
 Add, in the same change and therefore inside the same `make generate-proto` run, the request-message
 fields that later remediation steps read. Every operational gateway-to-pod request message gains
 `coordination_generation`, which is the fence a stale coordinator's request is rejected on.
 `InterruptRequest`, `SignalDeadlineRequest`, `ReportUsageRequest`, and `CheckpointBarrierRequest` each gain
 a slot identifier, because a pod serving concurrent sessions receives these per slot rather than per pod.
 `ResumeRequest` gains `slot_id` for the same reason. The fields land unread: no handler branches on them at
-this sub-step, and each gets a claim-register row with status `UNWIRED` naming the later step that reads
-it, so a field that exists and is ignored is tracked rather than mistaken for a delivered capability.
+this sub-step, and each carries a claim-register row with status `UNWIRED` naming the later step that reads
+it, so a field that exists and is ignored is tracked rather than mistaken for a delivered capability. Those
+rows are seeded by SPEC-3 together with the rest of the register rather than written here, because
+`tests/claim-map.json` does not exist before SPEC-3 creates it and §3.5 gives the register's validator
+exactly one landing sub-step. SPEC-3's seeding instruction names the field rows explicitly, because the
+fields do not exist in the tree before this sub-step adds them and so no status table in the reference
+document carries a row for any of them.
 
 Two of the named messages already carry one of the two fields, so the addition is per missing field rather
 than per message: `CheckpointBarrierRequest` already declares `coordination_generation` at field 2
@@ -1677,22 +1719,29 @@ which for the tier-4 assertions is the `CH-RUNTIMEOPS` card.
 ### SPEC-3. The new sections, the reductions, and the successor pointers
 
 **Target:** `spec/28_communication-channels.md` §28.5 through §28.8 (new),
-`spec/29_communication-scenarios.md` (new), `spec/15_external-api-surface.md` §15.3, §15.4, §15.4.2,
+`spec/29_communication-scenarios.md` (new), `spec/15_external-api-surface.md` §15.3, §15.4 (including the
+carved-out wire-artifact pointer at line 1460 and its bullet list, restated over the corrected artifact
+set), §15.4.2,
 §15.4.3, §15.4.4 (for the six pseudocode citations of the retired §15.4.1 alone), §15.4.5, §15.4.6, and
 §15.7, `spec/07_session-lifecycle.md` lines 116, 296, 323, 343, 349, and 433 (for the seven links into the
 retired `1541-adapterbinary-protocol` anchor whose targets and labels are hand-corrected to the surviving
-§15.4 `MessageEnvelope` heading), `spec/21_planned-post-v1.md` line 31 (for the `Section 15.4.1` link label
+§15.4 `MessageEnvelope` heading) and line 330 (for the pointer from the coordinator-routing paragraph to
+the §29 off-holder matrix), `spec/21_planned-post-v1.md` line 31 (for the `Section 15.4.1` link label
 the §15.4.1 reduction falsifies), `schemas/README.md` (for the artifact
 enumeration §28.7 supersedes), `spec/24_lenny-ctl-command-reference.md` line 114 and
-`docs/reference/adapter-contract.md` lines 654 and 658 (for the consumer-scoped enumeration that gains the
-runtime-ops events schema), `spec/04_system-components.md` §4.7,
+`docs/reference/adapter-contract.md` lines 654, 658, and 659 (for the consumer-scoped enumeration that
+gains the runtime-ops events schema, and for the JSONL row whose Purpose cell claims the runtime-operations
+frames), `docs/runtime-author-guide/publishing.md` line 367 (for the third statement of the same
+consumer-scoped enumeration), `spec/04_system-components.md` §4.4 and §4.7 (§4.4 for the numbered subsection
+headings inserted below, §4.7 for the reduction, its successor pointers, and the same headings),
 `spec/05_runtime-registry-and-pool-model.md`, `spec/09_mcp-integration.md`,
-`spec/11_policy-and-controls.md`, and `docs/runbooks/credential-rotation-failure.md` (for the §4.7 pointers
-the §4.7 reduction falsifies),
+`spec/11_policy-and-controls.md`, `spec/12_storage-architecture.md`, and
+`docs/runbooks/credential-rotation-failure.md` (for the §4.7 pointers the §4.7 reduction falsifies),
 `schemas/runtime-ops-events.schema.json`, `schemas/messagepart.schema.json`, and
 `schemas/lenny-adapter-jsonl.schema.json` (post-SPEC-2 names, for the
-hand-corrected `description` pointers), `schemas/lenny-adapter.proto` (for the line pass and for the two
-hand-corrected §4.7 handshake comments at lines 214 through 216 and line 1577),
+hand-corrected `description` pointers), `schemas/lenny-adapter.proto` (for the line pass, for the two
+hand-corrected §4.7 handshake comments at lines 214 through 216 and line 1577, and for the
+`STATUS_INTERRUPT_TIMEOUT` comment at line 1063),
 `docs/api/internal.md` (for the hand-split binary-protocol
 pointer at line 544),
 `spec/README.md`, `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`,
@@ -1721,8 +1770,23 @@ identifier in the §28.3 channel register. Write §29 as end-to-end traces namin
 including the off-holder matrix §29 owes. That matrix is keyed by session-scoped client route, and where
 one route has more than one off-holder outcome it carries one row per route and session state. Each row
 states what happens when the replica serving the route is not the replica holding that session's pod
-control stream, which is the case the co-located binding makes reachable and which no section states
-today. The row domain is the session REST surface registered at
+control stream, which is the case the co-located binding makes reachable. One route and state is already
+covered normatively: `spec/07_session-lifecycle.md` line 330, in §7.2, requires a `delivery: immediate`
+message landing on a non-coordinator replica to be forwarded to the session's coordinator, and requires
+the forwarding replica to fall back to inbox buffering with a `queued` receipt when the coordinator is
+unreachable so the message is not silently dropped. The coordinator is the holder, because the
+coordinating replica is the one holding the session-coordination lease (`spec/04_system-components.md`
+line 489) and the pod-session binding is re-established on the new coordinating replica after a handoff
+(`pkg/gateway/podlifecycle/podsession/registry.go` lines 12 and 13). §7.2 line 330 states that rule for both
+of its message sources, which are the external client route `POST /v1/sessions/{id}/messages` and the
+inter-session `lenny/send_message` tool on the MCP tool surface, so the §29 rows for both of those routes
+with `delivery: immediate` restate §7.2's requirement rather
+than specifying a refusal, and cite §7.2 as the section that owns it, and `spec/07` line 330 gains a
+pointer to the §29 matrix in the same change. Keeping the rule in §7.2 and pointing at it, rather than
+relocating it, is what keeps one normative statement of the recovery path: the rule is session-lifecycle
+state-machine content that §7.2's surrounding paths depend on, and the matrix's job is to state the
+off-holder outcome per route. Every row other than those two `delivery: immediate` resume rows states a
+case no section states today. The row domain is the session REST surface registered at
 `pkg/gateway/sessionserver/sessionserver.go` together with the three other production entry points that
 reach the same executor send, which are `POST /v1/chat/completions`, `POST /v1/responses`, and the MCP
 tool surface, matching the plan's statement that the matrix states the required off-holder behavior per
@@ -1736,8 +1800,9 @@ redelivered; the `delivery: immediate` send in state `suspended` flips the sessi
 `pkg/gateway/podlifecycle/podsession/registry.go` lines 14 through 17). A per-RPC statement of what an
 off-holder replica does with an operational request is carried as a column of the matrix or as §28.5.1
 card content rather than as the matrix's key. The client-to-gateway session REST surface is not a channel
-in the §28 register, so no §28 card owns it and this matrix is the specification's normative statement of
-its required off-holder behavior.
+in the §28 register, so no §28 card owns it and this matrix is where the specification states its required
+off-holder behavior, except for the `delivery: immediate` resume, which §7.2 owns and the matrix restates
+with a pointer.
 
 Reduce `spec/15` §15.4 to the wire-artifact pointer it already claims to be, and reduce the `spec/04` §4.7
 channel prose, in both cases leaving a successor pointer naming the identifiers that moved and the heading
@@ -1760,9 +1825,18 @@ the register carries what that table carried.
 `spec/24_lenny-ctl-command-reference.md` line 114 describes the
 external-adapter compliance suite as schema-driven and names three artifacts, omitting the runtime-ops
 events schema, and that sentence is the one that gates a third-party adapter from `pending_validation` to
-`active`, so as written the shipped suite is structurally unable to validate `CH-RUNTIMEOPS`. Add
+`active`, so as written it states an artifact set under which `CH-RUNTIMEOPS` frames are asserted against
+nothing. Add
 `schemas/runtime-ops-events.schema.json` to that enumeration by hand, and leave the enumeration in place
-rather than replacing it with a reference to §28.7. The replacement was rejected on the same reasoning that
+rather than replacing it with a reference to §28.7. The addition states the artifact set the suite is
+required to assert against and changes no code, which is consistent with §7: `cmd/lenny-compliance/schemavalidate.go`
+lines 29 through 34 declare two schema files, `loadSchemas` at lines 46 through 70 compiles those two
+alone, and `checkLifecycleHandshake` at `cmd/lenny-compliance/full.go` lines 225 through 258 checks the
+handshake reply field by field with no schema involved. Per §4.4 the distance between the corrected
+sentence and the shipped harness is recorded as a claim-register row with status `ABSENT` and
+`deferral_id` R8, which is the plan step that carries the frame-level requirements of
+`schemas/runtime-ops-events.schema.json` into `cmd/lenny-compliance`
+(`gateway-runtime-comms-remediation.md` lines 991 through 1002). The replacement was rejected on the same reasoning that
 withdraws the `spec/18` line 92 edit one paragraph below. §28.7 is derived mechanically from the schemas
 directory, which also holds `schemas/lenny-interceptor.proto`, `schemas/lenny-tokenservice.proto`,
 `schemas/workspaceplan-v1.json`, `schemas/ocsf-mapping.yaml`, and `schemas/audit-events/v1.json`, none of
@@ -1776,7 +1850,57 @@ selecting the runtime-adapter-contract subset. `docs/reference/adapter-contract.
 same artifact set for runtime authors, so its "Canonical artifacts" table gains a
 `runtime-ops-events.schema.json` row in the same change and its lead sentence at line 654 is restated over
 the artifacts the table names, which keeps the normative gating sentence and the published reference page
-in agreement after application.
+in agreement after application. The table's `lenny-adapter-jsonl.schema.json` row at line 659 is
+hand-corrected in the same change, because its Purpose cell ends its frame list with "lifecycle frames"
+and so makes the same wrong-mechanism claim SPEC-2 corrects in the artifact's own `description` and at
+`spec/15_external-api-surface.md` line 1463. That row's Purpose cell is rewritten to name only the
+stdin/stdout frames the artifact's top-level `oneOf` admits, which are `message`, `heartbeat`,
+`heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`, `response`, `status`, and `set_tracing_context`,
+with the runtime-operations frames attributed to the new `runtime-ops-events.schema.json` row. Without
+this correction the page carries two adjacent rows crediting two artifacts with the same frames, and no
+pass or gate in this proposal reads the cell: it carries no reserved phrase in either banned spelling, no
+retired identifier, no line citation, and no fragment.
+
+`docs/runtime-author-guide/publishing.md` line 367 is the third published statement of the same artifact
+set and takes the same hand correction in the same change. It reads that the compliance suite "validates
+every JSON Lines frame your runtime emits against the canonical schemas published at
+schemas.lenny.dev/adapter/v1/ -- `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and
+`messagepart.schema.json` for structured content parts", which quantifies over every frame the runtime
+emits while naming two artifacts. A Full-level runtime also emits JSON Lines frames on the
+runtime-operations socket, and SPEC-2 is the change that removes those frames from the JSONL schema's
+stated scope and attributes them to `schemas/runtime-ops-events.schema.json` in the artifact's own
+`description` and at `spec/15_external-api-surface.md` line 1463, so after SPEC-2 this sentence routes the
+runtime-operations frames to an artifact that does not schematize them. That is the same defect the
+`spec/24` line 114 correction addresses, on the page a runtime author reads immediately before publishing,
+and the sentence links to the `docs/reference/adapter-contract.md` "Canonical artifacts" table for the
+schema list, which this sub-step corrects. The sentence is therefore restated over the artifact set the
+suite is required to assert against, naming `schemas/runtime-ops-events.schema.json` for the Full-level
+runtime-operations frames alongside `lenny-adapter-jsonl.schema.json` for stdin/stdout frames and
+`messagepart.schema.json` for content parts, so the published statements of that artifact set agree after
+application. No
+pass or gate reaches the sentence: it carries no reserved bare noun phrase in either spelling, no retired
+identifier (neither named schema is renamed), and no line citation, its only fragment link targets the
+surviving `#canonical-artifacts` anchor, and the supersession check exempts it on the second ground.
+
+`spec/15_external-api-surface.md` line 1460 is the specification's own statement of the same artifact set
+and takes the same hand correction in the same change. It reads "The runtime adapter contract is published
+as three machine-readable artifacts committed to the repository and released alongside each Lenny release",
+and the bullets at lines 1462 through 1464 name `schemas/lenny-adapter.proto`,
+`schemas/lenny-adapter-jsonl.schema.json`, and `schemas/messagepart.schema.json`. §15.4 is the runtime
+author's contract and the section §15.3 points at for the published wire contract, and it is the section
+`docs/reference/adapter-contract.md` and `docs/runtime-author-guide/publishing.md` mirror, so leaving the
+count and the bullet list as they stand would put the specification in disagreement with the three
+statements corrected above and with its own line 1463, which SPEC-2 rewrites to attribute the
+runtime-operations frames to `schemas/runtime-ops-events.schema.json`. Line 1460 is therefore restated over
+the artifact set without a count, and a fourth bullet naming
+`schemas/runtime-ops-events.schema.json` and the Full-level runtime-operations frames it schematizes is
+added after line 1464. The correction lands here rather than in SPEC-2 because it is the same edit as the
+three published statements above and because the artifact it adds carries its SPEC-2 name by the time this
+sub-step runs. No pass reaches line 1460: it carries no reserved bare noun phrase in either spelling, no
+retired identifier, no line citation, and no fragment link, and the §15.4 reduction carves the whole
+wire-artifact pointer out unchanged. This is the specification half of the misdescribed-wire-artifact
+record §8 closes; `gateway-runtime-comms.md` lines 2468 through 2472 record that half and lines 2474
+through 2478 record the shipped-artifact half.
 
 `schemas/README.md` carries the enumeration the register supersedes. Its opening sentence introduces the directory's
 wire-contract artifacts and its table omits two of the artifacts the directory carries, which are
@@ -1806,9 +1930,12 @@ deliverable cannot depend on an artifact of a later phase. `spec/18`'s occurrenc
 class. `spec/15`'s own
 pointer is carved out of the §15.4 reduction rather than superseded, for the reason stated below, and it is
 named as exempt in the supersession check's predicate: it enumerates the artifacts §15.4's prose documents
-rather than standing for the register's artifact set, and SPEC-2's hand correction to line 1463 sends the
-runtime-operations frames to `schemas/runtime-ops-events.schema.json`, so the surviving pointer states where
-the frames it does not schematize are schematized.
+rather than standing for the register's artifact set. The exemption is stated over the corrected
+enumeration rather than over the one in the tree today. SPEC-2's hand correction to line 1463 sends the
+runtime-operations frames to `schemas/runtime-ops-events.schema.json`, and this sub-step's correction to
+line 1460 and the bullet list adds that artifact to the set the pointer names, so the surviving pointer
+names every artifact §15.4's prose documents, including the one that schematizes the Full-level
+runtime-operations frames §15.4.3 and §15.4.6 state as runtime obligations.
 
 Two gates land in this sub-step under §3.5, because this is the sub-step that supplies each one's route to
 green. The §28.8 matrix completeness check is a tier-0 gate, and it lands here because §28.8 is written
@@ -1822,12 +1949,14 @@ this sub-step replaces. An enumeration is exempt on any of three grounds: it nam
 enumerating page's own prose documents, on the ground the paragraph above states for the §15.4
 wire-artifact pointer; it names the artifact subset a named consumer asserts against rather than the
 register's artifact set; or it names what a build phase delivers. Exempt on the first ground is the §15.4
-pointer. Exempt on the second ground are the compliance-suite sentence at
+pointer as this sub-step corrects it, which is the sentence at `spec/15_external-api-surface.md` line 1460
+restated without a count over a bullet list that names `schemas/runtime-ops-events.schema.json` alongside
+the three artifacts it names today. Exempt on the second ground are the compliance-suite sentence at
 `spec/24_lenny-ctl-command-reference.md` line 114 and the "Canonical artifacts" table at
-`docs/reference/adapter-contract.md` line 658, both of which name the artifacts the external-adapter
-compliance suite generates its assertions from and both of which this sub-step corrects by hand to include
-the runtime-ops events schema, and the schema list at `docs/runtime-author-guide/publishing.md` line 367,
-which names the two artifacts the conformance suite validates that page's frames against. Exempt on the third ground are the `spec/18`
+`docs/reference/adapter-contract.md` line 658 and the schema list at
+`docs/runtime-author-guide/publishing.md` line 367, all three of which name the artifacts the
+external-adapter compliance suite generates its assertions from and all three of which this sub-step
+corrects by hand to include the runtime-ops events schema. Exempt on the third ground are the `spec/18`
 phase-deliverable lists and the Phase 1 wire-contract artifact list at `TESTING.md` line 1449. At this
 sub-step's exit no unexempt enumeration in the check's domain names a subset of the register.
 TEST-1 states each gate's predicate and adds its cases.
@@ -1845,7 +1974,7 @@ is covered by the reduction at sentence granularity. Line 1466 carries four sent
 removes the last one alone, which begins "**This section (15.4 and its subsections) remains the normative
 prose description**" and ends "any discrepancy between the artifacts and this prose is a bug that must be
 reconciled before release". The three sentences that open the line state the compatibility contract for
-the same three artifacts §15.4 is reduced to: the release-tag versioning rule, the buf-style
+the same artifacts §15.4 is reduced to: the release-tag versioning rule, the buf-style
 breaking-change rule for the `.proto` file together with the `additionalProperties` discipline for the
 JSON Schemas, and the `examples/runtimes/echo/` reference implementation built from the same `.proto`
 file. They are carved out and stay where they are, on the same rule the wire-artifact pointer at lines
@@ -1882,7 +2011,10 @@ alongside each Lenny release", and lines 1462 through 1464 name `schemas/lenny-a
 leave the restated §15.3 sentence pointing at a §15.4 that names no artifact, and would remove line 1463,
 which SPEC-4 counts among the same-page links its anchor pass rewrites. Line 1463 states the scope of
 `schemas/lenny-adapter-jsonl.schema.json` wrongly today, and SPEC-2 corrects it by hand in the same change
-that corrects the artifact's own `description`, so what this carve-out preserves is a true sentence. The reduction also covers
+that corrects the artifact's own `description`. Line 1460 and the bullet list state the artifact set
+incompletely today, and this sub-step corrects both in the change that corrects the three other published
+statements of that set, as the paragraph above states, so the carve-out preserves a block whose every
+sentence is true and whose bullet list names four artifacts. The reduction also covers
 the `#### 15.4.1 Adapter↔Binary Protocol` subsection at line 1470.
 
 `#### 15.4.2 RPC Lifecycle State Machine` at `spec/15_external-api-surface.md` line 2068 is carved out of
@@ -2033,9 +2165,10 @@ retired §15.4 anchor whether its destination is the §28 card, `#translation-fi
 `#messageenvelope--unified-message-format`, and the pass fails an occurrence with no entry rather than
 substituting the map's successor. SPEC-4 retires the register with
 `tests/spec-anchor-moves.json`, on the same run-completeness criterion. The §4.7 reduction carries no
-comparable population, because the material it moves has no bare subsection citation form: §4.7 has no
-numbered subsections, so a citation of the intra-pod block reads `§4.7` and resolves to a section that
-survives.
+comparable population, because the material it moves has no bare subsection citation form: §4.7 carries no
+numbered subsections on the unmodified tree, so every existing citation of the intra-pod block reads `§4.7`
+and resolves to a section that survives. The subsections this sub-step inserts are created after those
+citations are read, so they add no anchor sense to disambiguate.
 
 A same-page fragment link carried inside a block the reduction relocates is a further hand-authored class
 this sub-step lands. A `[...](#anchor)` link resolves against the page it sits on, so moving the text to
@@ -2123,14 +2256,15 @@ spelling against the sibling keys at `spec/04_system-components.md` lines 788 th
 to a §4.7 that still carries the field set. The manifest material staying is what keeps those two
 statements true; the sentences the reduction does falsify are enumerated below.
 
-**The falsified-sentence class is a population of twenty-two, and every member is hand-corrected in the same
+**The falsified-sentence class is a population of twenty-seven, and every member is hand-corrected in the same
 change as the reduction that falsifies it.** The §15.3 sentence at `spec/15_external-api-surface.md` line
-1456 is the first member and is staged above. The other twenty-one are falsified by the §4.7 reduction or by the
-§15.4.1 reduction, and seven of them sit outside `spec/`: four in shipped wire artifacts, one in the
+1456 is the first member and is staged above. The other twenty-six are falsified by the §4.7 reduction or by the
+§15.4.1 reduction, and eight of them sit outside `spec/`: five in shipped wire artifacts, one in the
 reference page written for runtime adapter authors, one in the schemas directory's own README, and one in an
-operator runbook. Ten of the members name §4.7 as the owner of
-material the §4.7 reduction relocates, nine of them `spec/` and `docs/` sentences and one a pair of comments in
-the shipped `schemas/lenny-adapter.proto`, and they are listed last, because §4.7 keeps its heading and its
+operator runbook. Fifteen of the members name §4.7 as the owner of
+material the §4.7 reduction relocates, thirteen of them `spec/` and `docs/` sentences, one a pair of comments in
+the shipped `schemas/lenny-adapter.proto`, and one a further comment in that same artifact, and they are
+listed last, because §4.7 keeps its heading and its
 anchor, so each of them survives every pass this proposal runs while stating an ownership §4.7 gave up:
 
 - `spec/15_external-api-surface.md` line 2558, in §15.7 Runtime Author SDKs, which enumerates the
@@ -2311,6 +2445,24 @@ anchor, so each of them survives every pass this proposal runs while stating an 
   than reserved bare noun phrases, so the identifier pass has no entry for them. Line 1578's "dials the
   lifecycle channel" is rewritten by SPEC-1's name pass, which is the class's structure exactly, in that the
   phrase becomes the canonical identifier while the section pointer stays wrong.
+- `schemas/lenny-adapter.proto` line 1063, the `InterruptResponse.Status` enum comment, which reads
+  `STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§4.7)` and so attributes a
+  spec-named failure status to §4.7. The only §4.7 statement of that status is the `interrupt_request` row
+  of the message-schema table at `spec/04_system-components.md` line 723, which states the `deadlineMs`
+  timeout behavior and the `INTERRUPT_TIMEOUT` status the `Interrupt` RPC returns to the gateway, and that
+  row is inside the 715 through 731 table the reduction moves. §4.7 keeps no other statement of it: the
+  surviving `Interrupt` RPC row at `spec/04_system-components.md` line 654 reads "Interrupt current agent
+  work" alone, and line 723 is that file's only occurrence of the status name. The parenthetical is
+  therefore rewritten by hand to name the §28.5 card that owns the intra-pod runtime-operations channel, in
+  the same SPEC-3 change as the reduction, and `pkg/proto/adapter/v1/lenny-adapter.pb.go` line 457 mirrors
+  the comment verbatim, so the `make generate-proto` run SPEC-3 already takes carries the correction into
+  `pkg/proto/`. No pass reaches it, on the same reasoning as the two handshake comments above: it carries
+  no line number, so the line pass, the resolver, and the ratchet skip it; §4.7 keeps its
+  `#47-runtime-adapter` anchor, so the anchor pass skips it; and it carries neither a reserved bare noun
+  phrase nor a retired identifier. The adjacent `STATUS_BUSY = 3` comment at
+  `schemas/lenny-adapter.proto` line 1064 is not a member and takes no edit, because the `BUSY` drop it
+  cites is stated at `spec/04_system-components.md` line 677, which sits above the reduction boundary and
+  stays in §4.7.
 - `spec/09_mcp-integration.md` line 8, the "Adapter ↔ Runtime (intra-pod)" row of the §9 channel table,
   which cites §4.7 for the platform and per-connector tool servers. Part A at
   `spec/04_system-components.md` line 695 with its enumeration at line 697 is that material and it moves to §28, so the row's pointer is
@@ -2325,6 +2477,22 @@ anchor, so each of them survives every pass this proposal runs while stating an 
   by hand to the §28.5 card that owns the intra-pod runtime-operations channel. This member carries the
   accepted underreporting risk for direct mode, so the reader it sends to §4.7 is a reader checking what the
   platform trusts a runtime to self-report.
+- `spec/11_policy-and-controls.md` lines 53, 153, and 171, and `spec/12_storage-architecture.md` line 161,
+  four members that cite §4.7 for the pod-side cumulative usage total the gateway reconstructs quota and
+  billing counters from after a replica crash. Line 53 is the "Crash Recovery for Quota Counters" rule and
+  states that "each pod's runtime adapter retains a cumulative usage total that is re-reported on
+  reconnection to a new gateway replica", from which the gateway takes the maximum of the Postgres
+  checkpoint and the pod-reported cumulative. Line 153 reconstructs the dropped in-memory billing
+  write-ahead buffer from the same pod-reported usage, line 171 is the `GATEWAY_CRASH_RECONSTRUCTION`
+  billing-correction reason, and `spec/12_storage-architecture.md` line 161 is the Postgres-failover
+  write-durability row that names the same reconstruction for billing events in the write-ahead buffer. The
+  retention of that per-session cumulative is stated in §4.7 only by the `llm_request_completed` row of the
+  message-schema table at `spec/04_system-components.md` line 731, which moves to §28 with the table; the
+  surviving `ReportUsage` RPC row at `spec/04_system-components.md` line 663 states that the gateway pulls
+  token counts and persists them, with no retention and no re-report across a gateway restart. All four
+  pointers are therefore rewritten by hand to the §28.5 card that owns the intra-pod runtime-operations
+  channel, in the same change as the reduction, so the crash-recovery reconstruction rule keeps naming the
+  section that states the mechanism it depends on.
 - `spec/15_external-api-surface.md` line 2115, in §15.4.3, which sends a Standard-level runtime author to
   "the tools listed in Part A of this section" for the platform MCP server's tool set. The only enumeration
   of that tool set is Part A at `spec/04_system-components.md` line 697, which moves to §28, and after the
@@ -2351,7 +2519,7 @@ anchor, so each of them survives every pass this proposal runs while stating an 
   annotation in `pkg/alerting/rules`, so the edit is confined to the runbook and tier 11's
   alert-to-runbook resolution is unaffected.
 
-Each of the ten §4.7-pointer members is corrected in the same change as the §4.7 reduction. None of them
+Each of the fifteen §4.7-pointer members is corrected in the same change as the §4.7 reduction. None of them
 is reachable by a pass, on one structure: §4.7 keeps its heading and its `#47-runtime-adapter` anchor, so
 `tests/spec-anchor-moves.json` carries no entry and the anchor pass leaves the citation alone; none carries
 a line citation, so the line pass does not read it; and SPEC-1's name pass rewrites any reserved phrase on
@@ -2386,6 +2554,30 @@ carry, together with tier 11. The criterion is stated against the baseline rathe
 because the resolver is red on introduction against roughly 1,500 pre-existing stale citations, per §4.6,
 so "the resolver is green" is unreachable here and would not distinguish a citation this reduction broke
 from one that was already stale.
+
+**The `spec/04` numbered subsection headings land inside this atomic sub-step, between the reduction and
+the line pass.** Insert §4.4.1 through §4.4.5 into `### 4.4 Event / Checkpoint Store`
+(`spec/04_system-components.md` line 220) and §4.7.1 through §4.7.11 into `### 4.7 Runtime Adapter`
+(`spec/04_system-components.md` line 637), each with the `spec/README.md` row and the
+`tests/spec-map.json` key the heading walker requires, written in this same change. The titles are
+authored from the paragraph subjects that remain in each section after the reduction, so the insertion
+adds headings without rewriting the prose under them, and there is no `pending-implementation` case,
+because the prose each heading names is already written. The reason is the ordering reason SPEC-4 states
+for the same insertion into `spec/10` and `spec/13`, and for `spec/04` it binds one sub-step earlier: this
+sub-step's line pass converts every citation into `spec/04`, in every section of the file, to an anchor
+citation, so at SPEC-4's turn no `§4.4 line N` or `§4.7 line N` citation is left in the tree for a later
+heading insertion to serve, and no pass in this proposal re-points a whole-section anchor to a subsection
+anchor. Measured over `git ls-files` under the read exclusion §4.6 states, the population is 513
+occurrences of the `§4.4 line(s) N` form and 106 of the `§4.7 line(s) N` form, and inserting the headings
+in SPEC-4 would retire all of them onto `#44-event--checkpoint-store` and `#47-runtime-adapter`, which is
+the precision loss the insertion exists to prevent. Ordering inside this sub-step is therefore fixed: run
+the reduction, insert the headings over the prose that survives it, then run the line pass over the
+shifted tree, so the pass reads the final line numbers and converts each §4.4 and §4.7 citation to the
+subsection anchor that contains its line. The headings are inserted after the reduction rather than before
+it because §4.7 loses the Part A, Part B, and message-schema-table prose at
+`spec/04_system-components.md` lines 695 through 731 to §28, so titles authored before the reduction would
+name material that leaves the section. Both orderings put the insertion ahead of the line pass, which is
+the property the citations depend on.
 
 The line pass rewrites `schemas/*.proto`, whose comments the committed stubs under `pkg/proto/` mirror and
 which no pass writes, so this sub-step runs `make generate-proto` after the line pass and takes the tier-0
@@ -2485,14 +2677,19 @@ the reduction. Take the link text and the anchor for every one of those rows fro
 level-4 row today, so they are
 an explicit addition rather than a consequence of the depth convention: they are the citable handles every
 later remediation step uses, and the heading walker's predicate names them for that reason. Neither §4.7
-nor §15.4 has a subsection row in the index, and §4.7 has no numbered subsections at all, so there are no
-subsection rows to revise for either.
+nor §15.4 has a subsection row in the index on the unmodified tree, and §4.7 has no numbered subsections
+there, so there are no
+subsection rows to revise for either. The §4.4.1 through §4.4.5 and §4.7.1 through §4.7.11 rows this
+sub-step writes for the headings it inserts are additions on the same rule.
 
 Write, in the same change as those rows, the other half of the heading walker's predicate for every
 heading this sub-step creates: a `tests/spec-map.json` key, or an entry in `tests/spec-map-exceptions.yaml`
 under the `pending-implementation` reason class proposal 0065 adds, carrying the `blocker` and `opened_at` fields
 that class requires. The headings are §28.5, §28.6, §28.7, §28.8, the §28.5.1 through §28.5.7 card
-headings, `## 29`, and each `### N.M` subsection of `spec/29`, all of them named in §4.8. The §28.1 through
+headings, `## 29`, each `### N.M` subsection of `spec/29`, and the §4.4.1 through §4.4.5 and §4.7.1
+through §4.7.11 headings this sub-step inserts into `spec/04`. The `spec/28` and `spec/29` headings are
+named in §4.8; the §4.4 and §4.7 titles are authored inside this sub-step from the paragraph subjects that
+survive the reduction, so their keys are written against the titles the insertion produces. The §28.1 through
 §28.4 headings are not among them, because SPEC-1 created them together with their sections and wrote their
 key or their exceptions entry there, so this sub-step neither writes nor retires coverage for them.
 Without this the walker is red at the exit of the
@@ -2505,11 +2702,26 @@ deliverable of proposal 0065.
 
 Seed the claim register from the reference document's status tables, and land its schema-only tier-0
 validator over `tests/claim-map.json` in the same change. Two rows are written explicitly rather than read
-off those tables, because the tables carry no row for either. The first is the metric half of N4: status
+off those tables, because the tables carry no row for either, a third is written for the corrected
+compliance-suite enumeration, and a fourth group is written for the request-message fields SPEC-2 adds.
+The first is the metric half of N4: status
 `ABSENT`, `deferral_id` R12, naming the two metric names at `pkg/adapter/metrics.go` lines 71 and 79 that
 keep the retired spelling until R12 adds the adapter metrics endpoint and the catalog entries. The second
 is the agent podspec's missing mTLS certificate material, per §4.4 and SPEC-1: status `ABSENT`,
-`deferral_id` R14, which is the plan's agent-pod mTLS client identity step. Both carry a `deferral_id`
+`deferral_id` R14, which is the plan's agent-pod mTLS client identity step. The third is the
+runtime-ops events schema that the corrected `spec/24` line 114 sentence, the corrected
+`docs/reference/adapter-contract.md` table, and the corrected
+`docs/runtime-author-guide/publishing.md` sentence name as an artifact the external-adapter compliance
+suite asserts against: status `ABSENT`, `deferral_id` R8, naming `cmd/lenny-compliance/schemavalidate.go` as the
+surface that compiles two schema files and reads no third. The fourth group is one row per field SPEC-2
+adds to a gateway-to-pod request message, which is `coordination_generation` on every operational
+gateway-to-pod request message that lacks it, the slot identifier on `InterruptRequest`,
+`SignalDeadlineRequest`, `ReportUsageRequest`, and `CheckpointBarrierRequest`, and `ResumeRequest.slot_id`.
+Each row is written explicitly for the same reason the three above are, which is that the field does not
+exist in the tree before SPEC-2 adds it and no status table in the reference document can carry a row for
+it. Each carries status `UNWIRED` and a `deferral_id` naming the step the plan assigns as the field's
+reader, which is R16 for the generation fence and R22 for the slot identifiers
+(`gateway-runtime-comms-remediation.md` lines 438, 1950, and 1958). Every seeded row carries a `deferral_id`
 naming a step the plan states, which is what the validator's rule for a row that is not `WIRED` requires. This sub-step is the one that supplies the
 validator's route to green, because the register does not exist before it and the validator fails a
 missing register file, and every rule the validator checks reads a seeded row or a `spec/28` heading this
@@ -2543,9 +2755,10 @@ hand-corrected; the six authored path-form citations naming the nonexistent
 `tests/tier11_docs/eviction_coordinator_route_consistency_test.go`; and
 `tests/tier0_static/degradation_lock_line_citation_test.go`, whose predicate requires the retired citation
 form to be present and which is hand-rewritten here; the seven markdown fragment links enumerated below
-whose target heading does not exist today; `spec/04_system-components.md` §4.4 and §4.7,
-`spec/10_gateway-internals.md` §10.1, and `spec/13_security-model.md` §13.2, for the numbered subsection
-headings inserted below; and `gateway-runtime-comms.md`, for the point-in-time header that freezes it. The fragment-link gate lands in this sub-step, because this is
+whose target heading does not exist today; `spec/10_gateway-internals.md` §10.1 and
+`spec/13_security-model.md` §13.2, for the numbered subsection headings inserted below, with the
+`spec/04_system-components.md` §4.4 and §4.7 headings inserted in SPEC-3 for the ordering reason that
+sub-step states; and `gateway-runtime-comms.md`, for the point-in-time header that freezes it. The fragment-link gate lands in this sub-step, because this is
 the sub-step whose anchor pass rewrites the links into the retired `15.4.1` anchor.
 
 **Rationale:** The citation and link rewrite is a large diff with no judgement in it, and its risk is
@@ -2767,29 +2980,34 @@ fails on a name that is not yet registered in exactly the way it fails on a dele
 landing point would leave tier 0 red. It is green on introduction here, because every gate it names is
 registered at the point it lands, and TEST-1 names its cases.
 
-**The numbered headings the retirement depends on.** Insert numbered subsection headings into the three
-sections that today carry the densest line citations and the fewest anchors: `spec/04_system-components.md`
-gains §4.4.1 through §4.4.5 and §4.7.1 through §4.7.11, `spec/10_gateway-internals.md` gains §10.1.1
+**The numbered headings the retirement depends on.** Insert numbered subsection headings into the two
+sections whose line citations this sub-step's pass is the first to convert:
+`spec/10_gateway-internals.md` gains §10.1.1
 through §10.1.8, and `spec/13_security-model.md` gains §13.2.1 through §13.2.7. The titles are authored from
 the existing paragraph subjects in each section, so the insertion adds headings without rewriting the prose
-under them.
+under them. The matching insertion into `spec/04_system-components.md` §4.4 and §4.7 lands in SPEC-3
+instead, because SPEC-3's atomic line pass has already converted every `spec/04` citation by the time this
+sub-step runs, so a heading inserted here would have no line citation left to serve.
 
 This is what makes the retirement a rewrite rather than a downgrade. Retiring a line citation into a
 300-line section leaves an anchor citation naming the whole section, which is markedly less precise than the
 line it replaced, and a reader following it has to search the section for the sentence the citation meant.
-Adding the subsections first gives each of those citations an anchor at roughly paragraph granularity, so
+Adding the subsections ahead of the pass that converts those citations gives each of them an anchor at
+roughly paragraph granularity, so
 the retired precision is preserved rather than lost. Without the headings the retirement still passes every
 gate, which is why the insertion has to be stated as a deliverable rather than left to follow from the
 ratchet.
 
-The insertion belongs in this sub-step, and last within it, for the reason that makes it expensive: an
+The insertion into these two files belongs in this sub-step for the reason that makes it expensive: an
 inserted heading shifts every line below it, so it invalidates line citations into those files. `spec/10`
 §10.1 begins at line 3, so a heading inserted there shifts essentially every citation into the file. Doing
-the insertion here, inside the one exclusive change that is already rewriting every line citation in the
+the insertion here, inside the one exclusive change that is already rewriting every remaining line citation
+in the
 tree, means the shift is absorbed by the same pass rather than invalidating a population no pass is running
 over. Ordering inside the sub-step is therefore fixed: insert the headings first, then run the citation
 pass over the shifted tree, so the pass reads the final line numbers. Running the pass first and inserting
-afterwards would leave every rewritten citation into these three files stale on landing.
+afterwards would leave every rewritten citation into these two files stale on landing. The same ordering
+rule places the `spec/04` insertion inside SPEC-3, which is where the pass over that file runs.
 
 The new headings enter the heading walker's domain as they are created, so each one lands with a
 `spec/README.md` row whose anchor resolves and a `tests/spec-map.json` key, written in this same change.
@@ -2894,8 +3112,8 @@ a stated reason class, which for a heading whose implementation is pending is `p
 with its `blocker` and `opened_at` fields, and a `spec/README.md` table-of-contents entry whose anchor resolves, so an
 appended or reduced section cannot silently miss the hand-maintained index. The predicate is stated at
 those depths because the index carries two levels today, with `spec/README.md` line 147 as its only
-level-4 row, and the walker lands green through the rows and keys SPEC-1 seeds together with the §28 and
-§29 rows and keys SPEC-3 writes, rather than through a
+level-4 row, and the walker lands green through the rows and keys SPEC-1 seeds together with the §4.4,
+§4.7, §28, and §29 rows and keys SPEC-3 writes, rather than through a
 register, because roughly a hundred exemptions would each need an owner and an expiry this proposal is in
 no position to set. The fragment-link gate is a Go test under
 `tests/tier0_static/` asserting that every intra-repo markdown fragment link in `spec/` and `docs/`
@@ -3051,7 +3269,7 @@ rather than a gate failure.
 Each gate lands green by enumerating today's violations into a named register, never by widening the gate
 and never by suppression. Several gates land green by a different route because the shared exception
 register's entry schema does not fit them. The heading walker lands green through the rows and keys SPEC-1
-seeds together with the §28 and §29 rows and keys SPEC-3 writes, for the reason stated above. The line-citation ratchet lands green through its per-file count
+seeds together with the §4.4, §4.7, §28, and §29 rows and keys SPEC-3 writes, for the reason stated above. The line-citation ratchet lands green through its per-file count
 baseline. The citation resolver lands green through the
 `tests/registers/line-citation-resolution.yaml` baseline proposal 0065 seeds, because a citation that is stale
 today is retired by SPEC-4 rather than owned and dated by a person. The change-graph completeness check
@@ -3087,12 +3305,15 @@ sub-step's exit, so the check is green at the sub-step that lands it. Its non-ha
 in `schemas/README.md`, a further page in the domain adding
 an enumeration that stands for the set and falls under none of the three exemptions, and an artifact
 present in the register and absent from the schemas directory. Its accept cases include the corrected
-`spec/24_lenny-ctl-command-reference.md` line 114 sentence and the corrected "Canonical artifacts" table at
-`docs/reference/adapter-contract.md` line 658, both of which name a consumer-scoped subset and so pass
-under the second exemption. **The unread-field claim rows** are covered by the claim register's
+`spec/24_lenny-ctl-command-reference.md` line 114 sentence, the corrected "Canonical artifacts" table at
+`docs/reference/adapter-contract.md` line 658, and the corrected schema list at
+`docs/runtime-author-guide/publishing.md` line 367, each of which names a consumer-scoped subset and so
+passes under the second exemption, and the corrected §15.4 wire-artifact pointer at
+`spec/15_external-api-surface.md` line 1460 with its four-artifact bullet list, which passes under the
+first exemption because it names the artifacts §15.4's own prose documents. **The unread-field claim rows** are covered by the claim register's
 existing schema-only validator, whose cases TEST-1 already states, extended with one case per field added
-by SPEC-2: a request-message field with no `UNWIRED` claim row fails, and an `UNWIRED` row naming no later
-step fails. The claim rows are the only new coverage those fields need, because the one running test whose
+by SPEC-2, whose rows SPEC-3 seeds with the rest of the register: a request-message field with no
+`UNWIRED` claim row fails, and an `UNWIRED` row naming no later step fails. The claim rows are the only new coverage those fields need, because the one running test whose
 descriptor assertion the additions falsify is `TestReportUsageRequestWireContract`, whose `want` slice
 SPEC-2 widens in the same change as the proto edit rather than through a new test. SPEC-2's `buf breaking` disposition adds no register entry and no case, because the check's
 verdict is computed from buf's exit status and the current branch name alone and this proposal stages no
@@ -5602,6 +5823,240 @@ applicability or plan coverage.
   match: the wrong-mechanism-sites count returns from four to three and `spec/10_gateway-internals.md` is
   no longer listed as touched for a hand-corrected participant sentence.
 
+### Pass 48 (2026-07-30, automated)
+
+- **The `spec/04` numbered subsection headings were staged one sub-step after the pass that would have
+  used them, so the §4.4 and §4.7 line citations would have retired onto whole-section anchors.** SPEC-3's
+  atomic sub-step converts every citation into `spec/04`, in every section of the file, to an anchor
+  citation, and SPEC-4 inserted the §4.4.1 through §4.4.5 and §4.7.1 through §4.7.11 headings afterwards.
+  By SPEC-4's turn no `§4.4 line N` or `§4.7 line N` citation remained for the new anchors to receive, and
+  no pass in this proposal re-points a whole-section anchor to a subsection anchor, so the insertion into
+  `spec/04` was a no-op for the population it exists to serve. Measured over `git ls-files` under the read
+  exclusion §4.6 states, that population is 513 occurrences of the `§4.4 line(s) N` form and 106 of the
+  `§4.7 line(s) N` form, all of which would have landed on `#44-event--checkpoint-store` and
+  `#47-runtime-adapter`, which is the precision loss SPEC-4's own rationale names as the defect. The
+  `spec/04` half of the insertion moves into SPEC-3's atomic sub-step, ordered after the reduction and
+  before the line pass, with the `spec/README.md` rows and the `tests/spec-map.json` keys each heading
+  takes. The headings are inserted after the reduction rather than before it because §4.7 loses the Part A,
+  Part B, and message-schema-table prose at `spec/04_system-components.md` lines 695 through 731 to §28, so
+  titles authored earlier would name material that leaves the section; both orderings put the insertion
+  ahead of the line pass, which is the property the citations depend on. The `spec/10` §10.1 and `spec/13`
+  §13.2 insertions stay in SPEC-4, where the pass that converts their citations is the tree-wide one, and
+  SPEC-4's ordering paragraph now covers those two files alone. SPEC-3's Target and its index-row
+  paragraph, SPEC-4's Target, the §3.5 step 4 ordering sentence, the anchor-sense paragraph's statement
+  that §4.7 carries no numbered subsections, and the §11 files-touched entry are updated to state the same
+  placement.
+- **Correction to the bullet above: the spec-map half of the heading walker's predicate was enumerated
+  over a set that excluded the sixteen `spec/04` headings the move added to SPEC-3.** The index-row
+  paragraph was updated for the move, but the paragraph immediately after it still listed the headings
+  SPEC-3 writes a `tests/spec-map.json` key for as §28.5 through §28.8, the §28.5.1 through §28.5.7 card
+  headings, `## 29`, and each `### N.M` subsection of `spec/29`, closed with "all of them named in §4.8".
+  An implementor following that list writes no key for §4.4.1 through §4.4.5 or §4.7.1 through §4.7.11,
+  each of which now carries a `spec/README.md` row from the same sub-step, so the walker is red at the exit
+  of the sub-step that lands it, which is the failure the same paragraph names. The closing qualifier was
+  also false for the new headings: §4.8 fixes titles and derived anchors for `spec/28` and `spec/29`
+  alone, while the §4.4 and §4.7 titles are authored inside SPEC-3 from the paragraph subjects that survive
+  the reduction. The enumeration now names the sixteen headings and states where each group's title comes
+  from. The two statements of the walker's route to green, in TEST-1's heading-walker paragraph and in the
+  gates-land-green paragraph, carried the same omission and now read "the §4.4, §4.7, §28, and §29 rows and
+  keys SPEC-3 writes".
+
+### Pass 49 (2026-07-30, automated)
+
+- **The falsified-sentence class omitted the four crash-recovery pointers that name §4.7 as the owner of
+  the pod-side cumulative usage total.** The §4.7 reduction moves the message-schema table at
+  `spec/04_system-components.md` lines 715 through 731 to §28, and the `llm_request_completed` row at line
+  731 is the only sentence in §4.7 that states the adapter retains a per-session cumulative token total.
+  The surviving `ReportUsage` RPC row at `spec/04_system-components.md` line 663 states that the gateway
+  pulls token counts and persists them to Postgres, with no retention and no re-report across a gateway
+  restart. Four sentences cite §4.7 for that retained cumulative and were not members of the class:
+  `spec/11_policy-and-controls.md` line 53 ("Crash Recovery for Quota Counters", which takes the maximum of
+  the Postgres checkpoint and the pod-reported cumulative), line 153 (the in-memory billing write-ahead
+  buffer reconstructed from pod-reported token usage), line 171 (the `GATEWAY_CRASH_RECONSTRUCTION` billing
+  correction reason), and `spec/12_storage-architecture.md` line 161 (the Postgres-failover
+  write-durability row for billing events in the write-ahead buffer). None carries a line citation or a
+  reserved bare noun phrase, and §4.7 keeps its `#47-runtime-adapter` anchor, so by the class's own
+  reasoning no pass reaches any of them and each would have survived the reduction asserting an ownership
+  §4.7 gave up, leaving the specification's quota and billing reconstruction rule pointing at a section
+  that no longer states the mechanism it depends on. All four are now members, re-pointed by hand at the
+  §28.5 card that owns the intra-pod runtime-operations channel in the same SPEC-3 change as the reduction,
+  on the same footing as the `spec/11_policy-and-controls.md` line 49 member. The class population now
+  reads twenty-six and the §4.7-pointer count reads fourteen in the class paragraph, in the closing
+  paragraph, and in the §3.4 class row. `spec/12_storage-architecture.md` is added to SPEC-3's Target and
+  the §11 files-touched entry now names `spec/11_policy-and-controls.md` lines 49, 53, 153, and 171 and
+  `spec/12_storage-architecture.md` line 161.
+
+### Pass 50 (2026-07-30, automated)
+
+- **SPEC-3 claimed the `spec/24` line 114 correction gave the shipped compliance suite a capability it
+  stages no code for.** §3.1, SPEC-3, and the §11 bullet all read as though adding
+  `schemas/runtime-ops-events.schema.json` to the enumeration makes the suite able to validate
+  `CH-RUNTIMEOPS`, which contradicts §7's statement that this proposal changes no runtime behavior.
+  `cmd/lenny-compliance/schemavalidate.go` lines 29 through 34 declare two schema files, `loadSchemas` at
+  lines 46 through 70 compiles those two alone, and `checkLifecycleHandshake` at
+  `cmd/lenny-compliance/full.go` lines 225 through 258 checks the handshake reply field by field with no
+  schema involved, so after application the sentence that gates a third-party adapter from
+  `pending_validation` to `active` would have named an artifact no code path reads, with no claim-register
+  row recording it. The three statements now say the correction makes the specification and the published
+  runtime-author reference name the artifact the suite is required to assert against, and SPEC-3 seeds a
+  third explicitly-written claim-register row alongside the R12 and R14 rows: status `ABSENT`,
+  `deferral_id` R8, naming `cmd/lenny-compliance/schemavalidate.go` as the surface that reads two schema
+  files and no third. R8 is the plan's reciprocal host-conformance step, which covers the frame-level
+  requirements of `schemas/runtime-ops-events.schema.json` in `cmd/lenny-compliance`
+  (`gateway-runtime-comms-remediation.md` lines 991 through 1002). Staging the harness change here was
+  rejected because §7 scopes this proposal to naming and relocation.
+- **SPEC-3 edited the `docs/reference/adapter-contract.md` "Canonical artifacts" table by hand and left its
+  JSONL row crediting the wrong artifact with the runtime-operations frames.** Line 659's Purpose cell ends
+  its frame list with "lifecycle frames", which is the wrong-mechanism claim SPEC-2 corrects in the
+  artifact's own `description` and at `spec/15_external-api-surface.md` line 1463. That artifact's `$defs`
+  are `messageEnvelope`, `from`, `heartbeat`, `heartbeat_ack`, `shutdown`, `tool_call`, `tool_result`,
+  `response`, `status`, and `set_tracing_context`, while the runtime-operations frames are `$defs` of the
+  file SPEC-2 renames to `schemas/runtime-ops-events.schema.json`. With only the new row added, the page a
+  third-party runtime author reads would have carried two adjacent rows crediting two artifacts with the
+  same frames, and no pass or gate reaches the cell, because it carries no reserved phrase in either banned
+  spelling, no retired identifier, no line citation, and no fragment. The row is now a staged hand
+  correction in SPEC-3, with its Purpose cell rewritten over the frames the artifact schematizes. Line 659
+  is named in SPEC-3's Target list and in the §11 bullet for that page.
+- **SPEC-3 staged the §29 off-holder matrix as the normative statement of off-holder behavior for a route
+  and state §7.2 already governs.** `spec/07_session-lifecycle.md` line 330 requires a `delivery: immediate`
+  message landing on a non-coordinator replica to be forwarded to the session's coordinator, and requires
+  the forwarding replica to fall back to inbox buffering with a `queued` receipt when the coordinator is
+  unreachable so the message is not silently dropped. The coordinator is the holder
+  (`spec/04_system-components.md` line 489 and `pkg/gateway/podlifecycle/podsession/registry.go` lines 12
+  and 13). The claim that no section states the off-holder case today was therefore false for that row, and
+  a typed refusal there would have contradicted §7.2's no-drop fallback. SPEC-3 now states that the §29 rows
+  for `POST /v1/sessions/{id}/messages` and for `lenny/send_message` with `delivery: immediate` restate
+  §7.2's requirement and cite
+  §7.2 as the owning section, that `spec/07` line 330 gains a pointer to the matrix in the same change, and
+  that every other row states a case no section states today. Relocating the paragraph into §29 was
+  rejected because the rule is session-lifecycle state-machine content the surrounding paths in §7.2 depend
+  on. `spec/07_session-lifecycle.md` line 330 is named in SPEC-3's Target list and in the §11 entry for
+  that file.
+- **Correction to the §7.2 reconciliation above: it covered one of the two message sources §7.2 governs.**
+  `spec/07_session-lifecycle.md` line 330 states the coordinator-routing rule and its no-drop fallback for
+  both sources, which are the external client route `POST /v1/sessions/{id}/messages` and the inter-session
+  `lenny/send_message` tool (`spec/09_mcp-integration.md` line 29), and the MCP tool surface is in the
+  matrix's row domain. The §29 row for `lenny/send_message` with `delivery: immediate` therefore states a
+  case §7.2 already states, so as written SPEC-3 would have had an implementor specify an independent typed
+  refusal there against §7.2's fallback, and its closing exception, which is route-agnostic, contradicted
+  the restatement sentence. SPEC-3 now names both routes as restating §7.2 and citing it as owner, and
+  reads "Every row other than those two `delivery: immediate` resume rows states a case no section states
+  today."
+- **Correction to the staged `docs/reference/adapter-contract.md` line 659 rewrite: it listed `from` as a
+  stdin/stdout frame.** `from` is a property subschema of `messageEnvelope`
+  (`schemas/lenny-adapter-jsonl.schema.json` line 39, defined at lines 70 through 73 as adapter-injected
+  sender context) rather than a frame; the artifact's top-level `oneOf` at lines 9 through 19 admits nine
+  frames and does not include it. The ten-name list was the artifact's `$defs`, carried over from SPEC-2's
+  enumeration. SPEC-3 now names the frames the top-level `oneOf` admits, so the replacement cell does not
+  present sender context as a wire frame in a published runtime-author reference.
+- **Correction to the coordinator-is-holder citation: the quoted sentence is on lines 12 and 13.**
+  `pkg/gateway/podlifecycle/podsession/registry.go` line 11 ends the teardown clause and the handoff clause
+  runs from line 12 to line 13. Both the SPEC-3 sentence and the review record above now cite lines 12
+  and 13.
+
+### Pass 51 (2026-07-30, automated)
+
+- **SPEC-2 was assigned claim-register rows in a register SPEC-3 states does not exist yet, and no sub-step
+  wrote them.** SPEC-2's change text read that each field it adds "gets a claim-register row with status
+  `UNWIRED`", while `tests/claim-map.json` is absent from SPEC-2's Target list and SPEC-3 states that "the
+  register does not exist before it and the validator fails a missing register file". SPEC-3's seeding
+  instruction was closed over the reference document's status tables plus three explicitly written rows,
+  and the fields SPEC-2 adds do not exist in the tree today (`schemas/lenny-adapter.proto` declares
+  `coordination_generation` only at lines 1338 and 1366), so no status table can carry a row for any of
+  them. At SPEC-3's exit the validator's per-field rule would have fired on every field SPEC-2 added,
+  contradicting §3.5's rule that each gate has exactly one landing sub-step that supplies its route to
+  green. SPEC-3's seeding instruction now carries a fourth explicitly written group, one `UNWIRED` row per
+  field SPEC-2 adds, each with a `deferral_id` naming the plan step that reads it, which is R16 for the
+  generation fence and R22 for the slot identifiers (`gateway-runtime-comms-remediation.md` lines 438,
+  1950, and 1958). SPEC-2 now states that those rows are seeded by SPEC-3 with the rest of the register,
+  and TEST-1's per-field cases name SPEC-3 as the seeding sub-step. Creating the register in SPEC-2 was
+  rejected because it splits one register and one validator across two sub-steps.
+- **The §4.7 reduction falsifies a third `§4.7` pointer in the shipped proto, which was in no edit list and
+  reachable by no pass.** `schemas/lenny-adapter.proto` line 1063 reads
+  `STATUS_INTERRUPT_TIMEOUT = 2; // deadline elapsed with no acknowledgement (§4.7)`, and the only §4.7
+  statement of that status is the `interrupt_request` row at `spec/04_system-components.md` line 723, which
+  sits inside the 715 through 731 table the reduction moves. The surviving `Interrupt` RPC row at line 654
+  reads "Interrupt current agent work" alone, and line 723 is that file's only occurrence of the status
+  name, so after application the comment would attribute a spec-named failure status to a section that no
+  longer states it, and it ships mirrored at `pkg/proto/adapter/v1/lenny-adapter.pb.go` line 457. The site
+  is now a member of the falsified-sentence class on the same disposition as the §15.7 graceful-shutdown
+  member, hand-corrected to name the §28.5 card that owns the intra-pod runtime-operations channel in the
+  same SPEC-3 change as the reduction and carried into `pkg/proto/` by the `make generate-proto` run SPEC-3
+  already takes. The class population reads twenty-seven and the §4.7-pointer count reads fifteen in §3.4's
+  class row, in the class paragraph, and in its closing sentence, and line 1063 is named in SPEC-3's Target
+  list and in §11. The adjacent `STATUS_BUSY` comment at line 1064 is recorded as a non-member, because
+  `spec/04_system-components.md` line 677 states the `BUSY` drop above the reduction boundary.
+- **`docs/runtime-author-guide/publishing.md` line 367 was exempted from the supersession check and never
+  corrected, leaving three published statements of one artifact set in disagreement.** The sentence states
+  that the compliance suite validates every JSON Lines frame a runtime emits against
+  `lenny-adapter-jsonl.schema.json` and `messagepart.schema.json`, which after SPEC-2 routes the
+  runtime-operations frames to an artifact whose top-level `oneOf` does not admit them. That is the defect
+  SPEC-3 corrects at `spec/24_lenny-ctl-command-reference.md` line 114 and in the
+  `docs/reference/adapter-contract.md` "Canonical artifacts" table, on the page a runtime author reads
+  immediately before publishing and which links to the corrected table for the schema list. No pass or gate
+  reaches the sentence. SPEC-3 now stages the same hand correction, restating the sentence over the
+  artifact set the suite is required to assert against, and the exemption's second ground is restated over
+  the corrected sentence rather than over that page's frames. The site is named in SPEC-3's Target list, in
+  the supersession check's accept cases in TEST-1, and in §11.
+
+### Pass 52 (2026-07-30, automated)
+
+- **The renamed RPC's own doc comment and its message-type comment state the wrong mechanism, and neither
+  was in any edit list.** `schemas/lenny-adapter.proto` lines 223 through 226 credit the gateway-to-adapter
+  gRPC stream with `checkpoint_ready`, `interrupt_acknowledged`, `credentials_acknowledged`, and
+  `deadline_approaching`, which are `CH-RUNTIMEOPS` frames on the intra-pod socket, and send the reader to
+  §15.4 for the taxonomy. Lines 1594 through 1598 state that the envelope taxonomy is defined in
+  `lenny-adapter-jsonl.schema.json`, which is the claim SPEC-2 falsifies when it rewrites that artifact's
+  `description` and `spec/15_external-api-surface.md` line 1463. The stream carries the event set
+  `pkg/adapter/controlchannel.go` lines 17 through 44 declare, which is `RATE_LIMITED`, `AUTH_EXPIRED`,
+  `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`, `FINAL_USAGE_REPORT`, and
+  `CheckpointBarrierAck`. No pass reaches either comment, and SPEC-2's identifier pass renames the RPC and
+  the two message types inside them, which would leave a precise false statement that `CH-ADAPTEREVENTS`
+  carries the intra-pod runtime-operations frames, in the published gRPC contract and in its mirrors at
+  `pkg/proto/adapter/v1/lenny-adapter_grpc.pb.go` lines 242 and 687 and
+  `pkg/proto/adapter/v1/lenny-adapter.pb.go` line 6327. Both sites are now members of SPEC-2's
+  hand-authored wrong-mechanism class, rewritten over the event set the handler emits and pointed at the
+  adapter-to-gateway events table at `spec/04_system-components.md` lines 679 through 689, which is the
+  specification statement of that taxonomy. That table sits above line 691, where the block SPEC-3's §4.7
+  reduction moves opens, so it stays in §4.7 and neither comment joins the class SPEC-3 re-points at a
+  §28.5 card. Pointing the comments at `schemas/runtime-ops-events.schema.json` was rejected, because that
+  artifact schematizes the intra-pod frames rather than the adapter-to-gateway events these two messages
+  carry. §11's `schemas/lenny-adapter.proto` bullet names both sites, and the `make generate-proto` run
+  SPEC-2 already takes carries both corrections into `pkg/proto/`.
+- **The §15.4 wire-artifact pointer kept saying the runtime adapter contract is published as three
+  artifacts while the same change widened every parallel statement to four.** `spec/15_external-api-surface.md`
+  line 1460 states a three-artifact contract and the bullets at lines 1462 through 1464 name
+  `schemas/lenny-adapter.proto`, `schemas/lenny-adapter-jsonl.schema.json`, and
+  `schemas/messagepart.schema.json`, while SPEC-3 adds `schemas/runtime-ops-events.schema.json` by hand to
+  `spec/24_lenny-ctl-command-reference.md` line 114, to the `docs/reference/adapter-contract.md`
+  "Canonical artifacts" table and its lead sentence at line 654, and to
+  `docs/runtime-author-guide/publishing.md` line 367. The pointer is carved out of the §15.4 reduction
+  unchanged, is reachable by no pass, and is exempt from the supersession check on its first ground, so
+  nothing repaired it, and §15.4 would have asserted a three-artifact set two lines above its own
+  corrected line 1463 on the section third-party runtime authors read as the contract. SPEC-3 now restates
+  line 1460 over the artifact set without a count and adds a fourth bullet naming
+  `schemas/runtime-ops-events.schema.json` and the Full-level runtime-operations frames it schematizes, in
+  the same change as the three other statements of that set. The supersession check's first-ground
+  exemption is restated over the corrected enumeration, as pass 51 did for the `publishing.md` site. The
+  site is named in SPEC-3's Target list, in the §15.4 carve-out paragraph, and in §11's
+  `spec/15_external-api-surface.md` bullet. This also makes §8's claim to close the specification half of
+  the misdescribed-wire-artifact record true; `gateway-runtime-comms.md` lines 2468 through 2472 record
+  that half as the framing of the contract as three artifacts.
+- **The §15.4 preamble carve-out paragraph still described the reduced §15.4 as a three-artifact set after
+  the same sub-step widened it to four.** The paragraph reasoning about
+  `spec/15_external-api-surface.md` line 1466 said the line's three opening sentences state the
+  compatibility contract for "the same three artifacts §15.4 is reduced to", two paragraphs after the
+  sub-step restated line 1460 over the artifact set without a count and added a fourth bullet. Line 1466
+  itself carries no count and so ranges over whatever the bullet list names. The count is removed from the
+  carve-out paragraph, which now matches the count-free phrasing the rest of the sub-step adopted.
+- **The citation offered for §8's both-halves claim covered one half.** The line 1460 correction paragraph
+  cited `gateway-runtime-comms.md` lines 2467 through 2471 as recording both halves of the
+  misdescribed-wire-artifact record. That range is the specification half alone, and its line 2467 is
+  blank while the sentence it ends runs to line 2472. The shipped-artifact half, which is the wrong
+  `description` in `schemas/lenny-adapter-jsonl.schema.json`, is the separate paragraph at lines 2474
+  through 2478. The citation is split accordingly, and the parallel citation in this pass's own record
+  above is corrected to lines 2468 through 2472.
+
 ## 10. Open decisions for review
 
 **All decisions below were RATIFIED on the 2026-07-29 sign-off and remain settled. None is open.** The
@@ -5652,7 +6107,13 @@ question, and the re-review that follows treats them as closed.
   Adapter-Agent Security Boundary item at `spec/04_system-components.md` line 890 that stays in §4.7. It also carries one hand-authored correction that SPEC-2
   lands rather than SPEC-3: the artifact-scope sentence at line 1463, which credits
   `schemas/lenny-adapter-jsonl.schema.json` with schematizing the runtime-operations frames that live in
-  `schemas/runtime-ops-events.schema.json`. Separately from those, it carries the seven same-page links into
+  `schemas/runtime-ops-events.schema.json`. It carries one further hand-authored correction, landed by
+  SPEC-3 with the other statements of the same artifact set: the §15.4 wire-artifact pointer at line 1460,
+  restated over the artifact set without a count, with a fourth bullet after line 1464 naming
+  `schemas/runtime-ops-events.schema.json` and the Full-level runtime-operations frames it schematizes, so
+  the specification, `spec/24_lenny-ctl-command-reference.md` line 114, the
+  `docs/reference/adapter-contract.md` "Canonical artifacts" table, and
+  `docs/runtime-author-guide/publishing.md` line 367 name one artifact set. Separately from those, it carries the seven same-page links into
   the retired `1541-adapterbinary-protocol` anchor that SPEC-3 hand-corrects under the carve-out class, at
   lines 1838, 2165, 2489, 2584 (the first of the two links on that line), 2662, 2684, and 2733. Each of the
   seven takes both legs of the target-and-label rule: the target becomes the surviving
@@ -5664,6 +6125,9 @@ question, and the re-review that follows treats them as closed.
   hand-corrected in the same SPEC-3 change as the heading split. Each takes both legs of the
   target-and-label rule: the target becomes `15_external-api-surface.md#messageenvelope--unified-message-format`
   and the label becomes `Section 15.4` at lines 116, 323, and 349, and `§15.4` at lines 296, 343, and 433.
+  The same file's coordinator-routing paragraph at line 330 gains a pointer to the §29 off-holder matrix,
+  which restates that paragraph's requirement for the `delivery: immediate` route rather than replacing it,
+  so the forward-to-coordinator rule and its no-drop fallback keep one owning section.
 - `spec/21_planned-post-v1.md` line 31, for one hand-authored correction the §15.4.1 reduction forces in the
   same SPEC-3 change. Its
   `[Section 15.4.1](15_external-api-surface.md#translation-fidelity-matrix)` link keeps its target, because
@@ -5673,8 +6137,9 @@ question, and the re-review that follows treats them as closed.
   interrupt row in `spec/15_external-api-surface.md`, for the sentences whose current text names the wrong
   participant, corrected by hand.
 - `spec/04_system-components.md` line 241, `spec/05_runtime-registry-and-pool-model.md` lines 41 and 47,
-  `spec/09_mcp-integration.md` line 8, `spec/11_policy-and-controls.md` line 49,
-  `schemas/lenny-adapter.proto` lines 214 through 216 and line 1577, and
+  `spec/09_mcp-integration.md` line 8, `spec/11_policy-and-controls.md` lines 49, 53, 153, and 171,
+  `spec/12_storage-architecture.md` line 161,
+  `schemas/lenny-adapter.proto` lines 214 through 216, line 1063, and line 1577, and
   `docs/runbooks/credential-rotation-failure.md` lines 11 and 19, for the §4.7 pointers whose cited material
   the §4.7 reduction relocates, re-pointed by hand at the §28.5 card that owns it in the same SPEC-3 change
   as the reduction. Each survives every pass, because §4.7 keeps its anchor, none of them carries a line
@@ -5715,8 +6180,13 @@ question, and the re-review that follows treats them as closed.
   under the
   generated-file exclusion §4.6 states and the N3 exclusion list for root-level markdown.
 - `schemas/lenny-adapter.proto` and `schemas/lenny-adapter-jsonl.schema.json`, for the renames and the
-  incorrect descriptions SPEC-2 corrects. `schemas/lenny-adapter.proto` is edited a second time under
-  SPEC-3, for the line pass and for the two §4.7 handshake comments listed above, and both edits are carried
+  incorrect descriptions SPEC-2 corrects. The `schemas/lenny-adapter.proto` corrections in that sub-step are
+  the `CheckpointBarrierAck` comment at lines 166 through 172, the renamed RPC's own doc comment at lines
+  223 through 226, and the request and response message comment at lines 1594 through 1598, the last two of
+  which state that the gateway-to-adapter stream carries the intra-pod runtime-operations frames and take
+  the corrections SPEC-2 lists. `schemas/lenny-adapter.proto` is edited a second time under
+  SPEC-3, for the line pass, for the two §4.7 handshake comments listed above, and for the
+  `STATUS_INTERRUPT_TIMEOUT` comment at line 1063, and both edits are carried
   into `pkg/proto/` by the `make generate-proto` run each sub-step already takes.
 - `schemas/runtime-ops-events.schema.json` (renamed from `schemas/lifecycle-events.schema.json` by SPEC-2),
   `schemas/messagepart.schema.json`, and `schemas/lenny-adapter-jsonl.schema.json` a second time under
@@ -5747,8 +6217,11 @@ question, and the re-review that follows treats them as closed.
   "Canonical artifacts" lead sentence at line 654 and table at line 658, which name the three artifacts the
   external-adapter compliance suite asserts against and omit the runtime-ops events schema; the table gains
   a row for that schema and the lead sentence is restated over the artifacts the table names, in the same
-  SPEC-3 change as the `spec/24` line 114 correction, so the two published statements of the
-  adapter-validated artifact set agree.
+  SPEC-3 change as the `spec/24` line 114 and `docs/runtime-author-guide/publishing.md` line 367
+  corrections, so the three published statements of the adapter-validated artifact set agree. The table's `lenny-adapter-jsonl.schema.json` row at line 659 is
+  hand-corrected in the same change, because its Purpose cell credits that artifact with the
+  runtime-operations frames the new row carries, which is the wrong-mechanism claim SPEC-2 corrects in the
+  artifact's own `description` and at `spec/15_external-api-surface.md` line 1463.
 - The adapter manifest emitter, the adapter flag, and the three runtime SDKs, rewritten by script.
 - `pkg/adapter/controlchannel.go` and `pkg/adapter/controlchannel_test.go`, renamed to
   `pkg/adapter/adapterevents.go` and `pkg/adapter/adapterevents_test.go` under N4, with the RPC and its
@@ -5760,7 +6233,14 @@ question, and the re-review that follows treats them as closed.
   manifest emitter and its integration fixture.
 - `cmd/runtimes/streaming-echo/main.go`, the manifest reader outside the three runtime SDKs, which parses
   the renamed key through its own struct tag and is what the tier-4 run exercises.
-- `docs/runtime-author-guide/`, for the renamed manifest key.
+- `docs/runtime-author-guide/`, for the renamed manifest key, and
+  `docs/runtime-author-guide/publishing.md` line 367 a second time under SPEC-3, for the schema list that
+  states the artifact set the compliance suite validates a runtime's JSON Lines frames against. That
+  sentence names two artifacts and quantifies over every frame the runtime emits, so after SPEC-2 moves the
+  runtime-operations frames to `schemas/runtime-ops-events.schema.json` it routes them to an artifact that
+  does not schematize them. It is restated by hand over the corrected artifact set in the same SPEC-3
+  change as the `spec/24` line 114 and `docs/reference/adapter-contract.md` corrections, so the three
+  published statements of that set agree.
 - `spec/09_mcp-integration.md`, `docs/runbooks/artifact-replication-residency-violation.md`,
   `docs/runbooks/legal-hold-escrow-residency-violation.md`, `docs/runbooks/ops-lock-split-brain.md`, and
   `docs/runbooks/otlp-plaintext-egress-detected.md`, and
@@ -5847,7 +6327,10 @@ question, and the re-review that follows treats them as closed.
 - `spec/24_lenny-ctl-command-reference.md` line 114, for the compliance-suite artifact enumeration, which
   gains `schemas/runtime-ops-events.schema.json` by hand. That sentence is the one that gates a third-party adapter from
   `pending_validation` to `active`, and its three-artifact list omits the runtime-ops events schema today,
-  so the correction is what makes the shipped compliance suite able to validate `CH-RUNTIMEOPS`. The
+  so the correction is what makes the specification and the two published runtime-author pages name the
+  artifact the suite is required to assert against for `CH-RUNTIMEOPS`. The shipped harness compiles two
+  schema files, and that distance is carried as the `ABSENT` claim-register row with `deferral_id` R8 that
+  SPEC-3 seeds. The
   enumeration stays rather than becoming a reference to §28.7, because §28.7 is derived from the whole
   schemas directory and would either bind the gate to artifacts a runtime adapter never implements or leave
   the asserted set undecidable; the sentence is exempt from the supersession check on the ground that it
@@ -5855,12 +6338,13 @@ question, and the re-review that follows treats them as closed.
   `spec/18_build-sequence.md` phase-deliverable lists take no hand edit here, for the phase-scoping reason
   SPEC-3 states; that file is listed above for its reserved-phrase occurrences at lines 164, 165, and 408,
   which SPEC-1's name pass rewrites.
-- `spec/10_gateway-internals.md` §10.1 and `spec/13_security-model.md` §13.2, together with
-  `spec/04_system-components.md` §4.4 and §4.7, for the numbered subsection headings SPEC-4 inserts so the
+- `spec/10_gateway-internals.md` §10.1 and `spec/13_security-model.md` §13.2, for the numbered subsection
+  headings SPEC-4 inserts, and `spec/04_system-components.md` §4.4 and §4.7, for the same headings inserted
+  in SPEC-3, so the
   retired line citations into those sections land on anchors at paragraph granularity rather than on a
   whole-section anchor. Each new heading also lands a `spec/README.md` row and a `tests/spec-map.json` key
-  in the same change. `spec/04_system-components.md` is listed above for the §4.7 reduction, a separate
-  edit in SPEC-4.
+  in the same change. The `spec/04` headings land in SPEC-3 because SPEC-3's atomic line pass converts
+  every citation into that file, so the headings have to exist before it runs.
 - `gateway-runtime-comms.md`, for the point-in-time header naming the working-tree commit and the sections
   that supersede it. The body is unchanged, and a tier-11 test pins both the header and the body so the
   document stays a historical record rather than becoming a maintained second description of the same
