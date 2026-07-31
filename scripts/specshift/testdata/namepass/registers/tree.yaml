@@ -22,18 +22,30 @@ entries:
       - LNK-POD-GRPC
       - CH-LLMPROXY
     replacement: LNK-POD-GRPC and CH-LLMPROXY links
+  # The second site of this carrier stands in a comment inside a function
+  # body, which is a comment of a tracked Go file like any other and so a
+  # site the register resolves. Its string literal is operator-facing
+  # text outside the domain and takes no entry.
   - file: pkg/carrier/carrier.go
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
-  # The site of this carrier opens its own line inside an element of a
-  # package-level composite literal, which the parser attaches to
-  # nothing. The trailing comment of the same carrier is outside the
-  # position the law governs, so it takes no entry.
+  - file: pkg/carrier/carrier.go
+    occurrence: 2
+    identifiers:
+      - CH-ADAPTEREVENTS
+  # The first site of this carrier opens its own line inside an element
+  # of a package-level composite literal, which the parser attaches to
+  # nothing. The second trails the code it annotates on the same line.
+  # Both are comments of the carrier, so both take an entry.
   - file: pkg/catalog/catalog.go
     occurrence: 1
     identifiers:
       - CH-PODLIFECYCLE
+  - file: pkg/catalog/catalog.go
+    occurrence: 2
+    identifiers:
+      - LNK-GWCONTROL
   # A tracked Go file under sdks/ is a carrier like any other tracked Go
   # file, and this site wraps across two comment lines.
   - file: sdks/runtime/go/runtime/lifecycle_test.go

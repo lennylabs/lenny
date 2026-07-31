@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: MIT
+#
+# The replacement carries the first identifier only as the prefix of a
+# longer identifier, so the first stands at no position of its own and
+# the site's second sense would be collapsed onto the longer one.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - LNK-POD
+      - CH-LLMPROXY
+    replacement: the LNK-POD-GRPC link and the CH-LLMPROXY channel

@@ -21,7 +21,7 @@ import (
 // alike, with the plural admitted in both. The two reserved words and
 // the head noun are held here as a regular-expression literal rather
 // than in prose anywhere in this package, because the naming law's
-// domain covers the doc comments of every tracked Go file and a specimen
+// domain covers the comments of every tracked Go file and a specimen
 // written in one would be a site of the class this pass removes.
 //
 // The separator class admits the byte the continuation join leaves
@@ -165,21 +165,21 @@ func covered(spans []span, match span) bool {
 // the phrase in text the law does not govern, and a pass reading them
 // would abort at every one while the lint reported none. A tracked Go
 // file under sdks/ is inside the domain like any other tracked Go file,
-// so the doc comments of the Go runtime SDK are read here.
+// so the comments of the Go runtime SDK are read here.
 //
 // A carrier inside the domain is read whole except for Go, where the
-// pass holds two positions. The first is the prose comment the scope
-// package's position rule states, so a site in a function-body comment
-// or in a trailing inline comment is outside the pass while a site in a
-// header block, in the documentation of a declaration, or between the
-// elements of a package-level literal is inside it. The second is the
-// string literal the pinned-literal register
-// names, which is how the specification prose, heading slugs, and
-// intra-spec links a tier-11 reconciliation test pins are rewritten by
-// the same run that rewrites the specification they pin. Every other
-// string literal is outside the pass: `lenny runtime validate` prints
-// one as operator-facing help text, which this migration leaves
-// unchanged.
+// pass holds two positions. The first is the comment, in every position
+// a comment stands: the scope package's rule admits the header block,
+// the documentation of a declaration, the prose between the elements of
+// a package-level literal, an implementation comment inside a function
+// body, and a comment trailing the code it annotates alike, so the
+// pass's Go population is the population the naming lint reads. The
+// second is the string literal the pinned-literal register names, which
+// is how the specification prose, heading slugs, and intra-spec links a
+// tier-11 reconciliation test pins are rewritten by the same run that
+// rewrites the specification they pin. Every other string literal is
+// outside the pass: `lenny runtime validate` prints one as
+// operator-facing help text, which this migration leaves unchanged.
 func carrierFilter(target, content string, pinned map[int]bool) (func(int) bool, error) {
 	if !scope.ReservedPhraseCarrier(target) {
 		return func(int) bool { return false }, nil
@@ -195,20 +195,20 @@ func carrierFilter(target, content string, pinned map[int]bool) (func(int) bool,
 }
 
 // goAdmittedSpans returns the byte spans of a Go carrier the matcher
-// reads a site in, which are the prose comments the scope package's
-// position rule governs together with the string literals the
-// pinned-literal register resolves for this carrier.
+// reads a site in, which are the comments the scope package's position
+// rule governs together with the string literals the pinned-literal
+// register resolves for this carrier.
 func goAdmittedSpans(target, content string, pinned map[int]bool) ([]span, error) {
 	fset, file, err := parseGo(target, content)
 	if err != nil {
 		return nil, err
 	}
-	prose, err := scope.GoProseCommentSpans(target, content)
+	comments, err := scope.GoCommentSpans(target, content)
 	if err != nil {
 		return nil, err
 	}
 	var out []span
-	for _, p := range prose {
+	for _, p := range comments {
 		out = append(out, span{lo: p[0], hi: p[1]})
 	}
 	for i, literal := range stringLiteralSpans(fset, file) {
@@ -231,21 +231,20 @@ func goStringLiteralCount(target, content string) (int, error) {
 }
 
 // parseGo parses a Go carrier, which is what the string literals the
-// pinned-literal register numbers are enumerated from. The prose
-// comments the same carrier holds come from the scope package, which
-// states the position rule the naming lint reads against.
+// pinned-literal register numbers are enumerated from. The comments the
+// same carrier holds come from the scope package, which states the
+// position rule the naming lint reads against.
 //
 // A file the parser cannot read fails the run rather than being read
-// whole or skipped. Reading it whole would rewrite an implementation
-// comment and an operator-facing literal the law does not govern, and
-// skipping it would leave every pinned literal it carries with no pass
-// able to write it, which is the writerless site the shared domain
-// exists to prevent.
+// whole or skipped. Reading it whole would rewrite an operator-facing
+// literal the law does not govern, and skipping it would leave every
+// pinned literal it carries with no pass able to write it, which is the
+// writerless site the shared domain exists to prevent.
 func parseGo(target, content string) (*token.FileSet, *ast.File, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read the doc comments of %s: %w", target, err)
+		return nil, nil, fmt.Errorf("read the comments of %s: %w", target, err)
 	}
 	return fset, file, nil
 }

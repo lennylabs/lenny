@@ -137,6 +137,14 @@ func loadSenses(path string) (map[string]map[int]Entry, error) {
 // an identifier the entry names and the replacement omits would not
 // reach the tree, and a replacement that carries a reserved phrase would
 // leave the site in the population the pass exists to empty.
+//
+// An identifier is carried by a replacement when it stands there as a
+// token on word boundaries, which is the same occurrence relation the
+// declared-identifier check reads. Substring containment is a wider
+// relation, and the identifier grammar admits an identifier that is a
+// proper prefix of another, so a replacement naming the longer one alone
+// would pass a containment test while writing the shorter one at no
+// position at all, collapsing the site's second sense onto the first.
 func validateEntry(path string, i int, e Entry) error {
 	where := fmt.Sprintf("reserved-phrase sense register %s: entry %d", path, i)
 	if strings.TrimSpace(e.File) == "" {
@@ -162,8 +170,12 @@ func validateEntry(path string, i int, e Entry) error {
 		}
 		return reservedFree(where, e.Identifiers[0])
 	}
+	carried := map[string]bool{}
+	for _, token := range identifierTokens(e.Replacement) {
+		carried[token] = true
+	}
 	for _, id := range e.Identifiers {
-		if !strings.Contains(e.Replacement, id) {
+		if !carried[id] {
 			return fmt.Errorf("%s names %s and its replacement %q does not carry it", where, id, e.Replacement)
 		}
 	}

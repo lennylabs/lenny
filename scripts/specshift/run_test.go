@@ -4234,23 +4234,21 @@ func TestNamePassEnumeratesAndWritesAGoHeaderCommentBlock(t *testing.T) {
 	}
 }
 
-// TestNamePassEnumeratesAndWritesACommentInsideAPackageLevelLiteral
-// pins the Go position rule against the second layout parser attachment
-// misses. A comment written between the elements of a package-level
-// composite literal is attached to no declaration, because the parser
-// attaches a doc group to a declaration and to a field rather than to a
-// literal element, and the tracked tree carries prose of exactly that
-// layout. A rule resting on attachment alone would leave the site with
-// no pass able to write it while the naming lint read it, which is the
-// writerless site the shared domain exists to prevent, and it would fail
-// the run outright at the entry the register carries for the site. The
-// case pins the other half of the position rule in the same carrier: a
-// comment trailing the code it annotates on the same line is outside the
-// law's domain, takes no register entry, and stands after the run.
+// TestNamePassEnumeratesAndWritesEveryCommentPositionOfAGoCarrier pins
+// the Go site population against the two comment positions the parser
+// attaches to nothing. Prose written between the elements of a
+// package-level composite literal is attached to no declaration, because
+// the parser attaches a doc group to a declaration and to a field rather
+// than to a literal element, and a comment trailing the code it
+// annotates is attached to nothing either. Both are comments of a
+// tracked Go file, so both are sites the register resolves and the pass
+// writes; a rule admitting a subset would leave a site the naming lint
+// reports with no pass able to write it, which is the writerless site
+// the shared domain exists to prevent.
 //
 // spec: §28.1 (N3, the naming law: the Go domain is the comment text of
 // a tracked Go file)
-func TestNamePassEnumeratesAndWritesACommentInsideAPackageLevelLiteral(t *testing.T) {
+func TestNamePassEnumeratesAndWritesEveryCommentPositionOfAGoCarrier(t *testing.T) {
 	t.Parallel()
 	const target = "pkg/catalog/catalog.go"
 	root := nameTree(t, "tree")
@@ -4258,12 +4256,35 @@ func TestNamePassEnumeratesAndWritesACommentInsideAPackageLevelLiteral(t *testin
 	assertSubstituted(t, root, target)
 	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", target))
 	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
-	if !strings.Contains(after, "CH-PODLIFECYCLE") {
-		t.Errorf("%s carries no substitution after the pass:\n%s", target, after)
+	for _, id := range []string{"CH-PODLIFECYCLE", "LNK-GWCONTROL"} {
+		if !strings.Contains(after, id) {
+			t.Errorf("%s does not carry %s after the pass:\n%s", target, id, after)
+		}
 	}
 	trailing := fixtureLine(t, before, `Name: "minimal"`)
-	if !strings.Contains(after, trailing) {
-		t.Errorf("the pass rewrote the trailing comment %q:\n%s", trailing, after)
+	if strings.Contains(after, trailing) {
+		t.Errorf("the pass left the trailing comment %q unwritten:\n%s", trailing, after)
+	}
+}
+
+// TestNamePassWritesACommentInsideAFunctionBody pins the other position
+// a rule resting on parser attachment would drop. An implementation
+// comment is a comment of a tracked Go file, so its reserved-phrase site
+// takes a register entry and is written at the identifier the entry
+// records, while the string literal of the same carrier stays outside
+// the law's domain.
+//
+// spec: §28.1 (N3, the naming law: the Go domain is the comment text of
+// a tracked Go file)
+func TestNamePassWritesACommentInsideAFunctionBody(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/carrier/carrier.go"
+	root := nameTree(t, "tree")
+	applyNamePass(t, root, "tree.yaml")
+	assertSubstituted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	if !strings.Contains(after, "CH-ADAPTEREVENTS") {
+		t.Errorf("%s does not carry the body comment's identifier after the pass:\n%s", target, after)
 	}
 }
 
@@ -4385,55 +4406,81 @@ func TestMarkdownAnchorIdentifiersAreOneSharedExclusion(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
-		text string
-		want []string
+		// fixture is the specimen file, read rather than written here,
+		// so the reserved phrases it carries stay out of this source.
+		fixture string
+		// open and endBefore delimit the one span the case expects,
+		// with open empty when the case expects none.
+		open      string
+		endBefore string
 	}{
 		{
-			name: "the kramdown attribute is excluded whole",
-			text: "## Lifecycle\n{: #lifecycle-channel }\n",
-			want: []string{"{: #lifecycle-channel }"},
+			name:      "the kramdown attribute is excluded whole",
+			fixture:   "kramdown.md",
+			open:      "{:",
+			endBefore: "\n",
 		},
 		{
-			name: "a link is excluded from its fragment alone",
-			text: "see [the overview](../lifecycle-channel/overview.md#control-channel).\n",
-			want: []string{"#control-channel"},
+			name:      "a link is excluded from its fragment alone",
+			fixture:   "link-with-fragment.md",
+			open:      "#",
+			endBefore: ")",
 		},
 		{
-			name: "a link carrying no fragment is excluded nowhere",
-			text: "see [the overview](../lifecycle-channel/overview.md).\n",
-			want: nil,
+			name:    "a link carrying no fragment is excluded nowhere",
+			fixture: "link-without-fragment.md",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			var got []string
-			for _, s := range scope.MarkdownAnchorIdentifiers(tc.text) {
-				got = append(got, tc.text[s[0]:s[1]])
+			text := readFixtureFile(t, filepath.Join(fixtureNamePass, "anchors", tc.fixture))
+			var want [][2]int
+			if tc.open != "" {
+				want = [][2]int{spanFrom(t, text, tc.open, tc.endBefore)}
 			}
-			if strings.Join(got, "|") != strings.Join(tc.want, "|") {
-				t.Errorf("the excluded spans of %q are %q, want %q", tc.text, got, tc.want)
+			got := scope.MarkdownAnchorIdentifiers(text)
+			if fmt.Sprint(got) != fmt.Sprint(want) {
+				t.Errorf("the excluded spans of %s are %v, want %v", tc.fixture, got, want)
 			}
 		})
 	}
 }
 
-// TestGoProseCommentPositionIsOneSharedRule pins where the in-file
-// position the naming law governs in a Go carrier lives and which
-// layouts it reaches. The pass that writes the reserved-phrase sites of
-// a Go file and the lint that reads them are held to one statement of
-// the position, so it sits on the shared file-domain surface beside the
+// spanFrom returns the half-open byte span of a fixture text that opens
+// at the marker and ends before the next occurrence of the terminator,
+// so a case states an expected span without holding a copy of the text
+// it covers in this source.
+func spanFrom(t *testing.T, text, open, endBefore string) [2]int {
+	t.Helper()
+	lo := strings.Index(text, open)
+	if lo < 0 {
+		t.Fatalf("no fixture text opens at %q", open)
+	}
+	rest := strings.Index(text[lo:], endBefore)
+	if rest < 0 {
+		t.Fatalf("no fixture text after %q reaches %q", open, endBefore)
+	}
+	return [2]int{lo, lo + rest}
+}
+
+// TestGoCommentPositionIsOneSharedRule pins where the in-file position
+// the naming law governs in a Go carrier lives and which layouts it
+// reaches. The pass that writes the reserved-phrase sites of a Go file
+// and the lint that reads them are held to one statement of the
+// position, so it sits on the shared file-domain surface beside the
 // carrier predicate and the anchor exclusion rather than inside either
-// consumer. Parser attachment alone does not decide it: a header block
-// behind the blank line a build constraint forces and a comment between
-// the elements of a package-level composite literal are attached to
-// nothing, and a rule that dropped them would leave a site the lint
-// reports with no pass able to write it. A comment trailing the code it
-// annotates and an implementation comment inside a function body stay
-// outside, so a phrase in either takes no register entry.
+// consumer. The law's Go domain is the comment text of the file, so
+// every comment is inside it: a header block behind the blank line a
+// build constraint forces, the documentation of a declaration or a
+// field, a comment between the elements of a package-level composite
+// literal, an implementation comment inside a function body, and a
+// comment trailing the code it annotates alike. A rule admitting a
+// subset would leave the sites outside it with no pass able to write
+// them while the naming lint reported them.
 //
 // spec: §28.1 (N3, the naming law: the lint reads the same Go comment
 // position the name pass writes)
-func TestGoProseCommentPositionIsOneSharedRule(t *testing.T) {
+func TestGoCommentPositionIsOneSharedRule(t *testing.T) {
 	t.Parallel()
 	const src = `//go:build tier11_docs
 
@@ -4461,9 +4508,9 @@ func Names() int {
 }
 `
 	admitted := map[string]bool{}
-	spans, err := scope.GoProseCommentSpans("pkg/catalog/catalog.go", src)
+	spans, err := scope.GoCommentSpans("pkg/catalog/catalog.go", src)
 	if err != nil {
-		t.Fatalf("read the prose comments of the carrier: %v", err)
+		t.Fatalf("read the comments of the carrier: %v", err)
 	}
 	for _, s := range spans {
 		admitted[src[s[0]:s[1]]] = true
@@ -4471,36 +4518,34 @@ func Names() int {
 	for _, tc := range []struct {
 		name string
 		text string
-		want bool
 	}{
-		{"a header block behind a build constraint", "// A header prose block the build constraint separates from the package", true},
-		{"a comment documenting a declaration", "// Entry documents a declaration.", true},
-		{"a comment documenting a field", "// Name documents a field.", true},
-		{"a comment inside a package-level literal", "// A comment between the elements of a package-level literal.", true},
-		{"a comment trailing the code it annotates", "// A comment trailing the code it annotates.", false},
-		{"an implementation comment inside a function body", "// An implementation comment inside a function body.", false},
+		{"a header block behind a build constraint", "// A header prose block the build constraint separates from the package"},
+		{"a comment documenting a declaration", "// Entry documents a declaration."},
+		{"a comment documenting a field", "// Name documents a field."},
+		{"a comment inside a package-level literal", "// A comment between the elements of a package-level literal."},
+		{"a comment trailing the code it annotates", "// A comment trailing the code it annotates."},
+		{"an implementation comment inside a function body", "// An implementation comment inside a function body."},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if admitted[tc.text] != tc.want {
-				t.Errorf("the position rule reads %q as admitted=%t, want %t", tc.text, admitted[tc.text], tc.want)
+			if !admitted[tc.text] {
+				t.Errorf("the position rule reads %q as outside the law, want inside it", tc.text)
 			}
 		})
 	}
 }
 
-// TestGoProseCommentPositionFailsACarrierTheParserCannotRead pins the
+// TestGoCommentPositionFailsACarrierTheParserCannotRead pins the
 // fail-closed half of the shared position rule. A Go file the parser
 // cannot read has no comment position at all, so reading it whole would
-// rewrite the implementation comments and the operator-facing literals
-// the law does not govern, and skipping it would leave every governed
-// comment it carries with no writer.
+// rewrite the operator-facing literals the law does not govern, and
+// skipping it would leave every comment it carries with no writer.
 //
 // spec: §28.1 (N3, the naming law: the Go domain is the comment text of
 // a tracked Go file)
-func TestGoProseCommentPositionFailsACarrierTheParserCannotRead(t *testing.T) {
+func TestGoCommentPositionFailsACarrierTheParserCannotRead(t *testing.T) {
 	t.Parallel()
-	_, err := scope.GoProseCommentSpans("pkg/carrier/carrier.go", "package carrier\n\nfunc Ack( {\n")
+	_, err := scope.GoCommentSpans("pkg/carrier/carrier.go", "package carrier\n\nfunc Ack( {\n")
 	if err == nil {
 		t.Fatal("the position rule read a carrier the parser cannot parse")
 	}
@@ -4693,7 +4738,10 @@ func TestNamePassDryRunOutputEqualsTheAppliedDiff(t *testing.T) {
 // once, and one or more identifiers with the position of each recorded.
 // An entry naming more than one identifier without the replacement text
 // they sit in states no position for either, and a replacement that
-// omits an identifier the entry names never writes it. A substitution
+// omits an identifier the entry names never writes it. An identifier
+// standing in the replacement only as the prefix of a longer identifier
+// is omitted in the same sense, because it reaches no position of its
+// own and the site's sense would be collapsed onto the longer one. A substitution
 // that is itself a site of the class leaves the site standing after the
 // pass has run over the file, where the naming lint reads it and no
 // further pass writes it.
@@ -4714,6 +4762,7 @@ func TestNamePassRejectsEverySenseEntrySchemaDefect(t *testing.T) {
 		{"two identifiers with no recorded position", "invalid-position-unstated.yaml", "position of each is unstated"},
 		{"a replacement omitting an identifier", "invalid-replacement-omits-identifier.yaml", "CH-LLMPROXY"},
 		{"a substitution that is itself a site", "invalid-reserved-replacement.yaml", "the class the pass removes"},
+		{"a replacement carrying an identifier only as the prefix of a longer one", "invalid-replacement-carries-a-prefix-alone.yaml", "names LNK-POD and"},
 	} {
 		t.Run(tc.defect, func(t *testing.T) {
 			t.Parallel()
@@ -4820,29 +4869,6 @@ func TestNamePassWritesADocCommentOfAGoFileUnderSdks(t *testing.T) {
 		t.Errorf("the applied diff does not name %s", target)
 	}
 	assertSubstituted(t, root, target)
-}
-
-// TestNamePassReadsNoSiteInAGoCommentOutsideADocComment pins the in-file
-// position the law governs in a Go carrier. The naming lint reads the
-// doc comment of a tracked Go file, so an implementation comment inside
-// a function body is outside the population on both sides: the pass
-// neither demands a register entry for it nor rewrites it, and the
-// doc comment of the same file is substituted in the same run.
-//
-// spec: §28.1 (N3, the naming law: the Go domain is the doc comment of a
-// tracked Go file)
-func TestNamePassReadsNoSiteInAGoCommentOutsideADocComment(t *testing.T) {
-	t.Parallel()
-	const target = "pkg/carrier/carrier.go"
-	root := nameTree(t, "tree")
-	applyNamePass(t, root, "tree.yaml")
-	assertSubstituted(t, root, target)
-	before := readFixtureFile(t, filepath.Join(fixtureNamePass, "tree", target))
-	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
-	implementation := fixtureLine(t, before, "implementation comment here")
-	if !strings.Contains(after, implementation) {
-		t.Errorf("the pass rewrote the implementation comment %q:\n%s", implementation, after)
-	}
 }
 
 // TestNamePassFailsAnEntryNamingAnIdentifierNoRegisterDeclares pins

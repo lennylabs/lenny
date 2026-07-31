@@ -22,7 +22,7 @@ var entries = []Entry{
 		Full: true,
 	},
 	{
-		Name: "minimal", // The trailing comment here names the lifecycle channel, which is outside the position the law governs.
+		Name: "minimal", // The trailing comment here names the control channel, which is a comment of the carrier and a site the pass writes.
 		Full: false,
 	},
 }
