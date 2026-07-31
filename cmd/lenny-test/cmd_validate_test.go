@@ -5,6 +5,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -355,23 +356,58 @@ func TestHasAnnotationBefore(t *testing.T) {
 	}
 }
 
-// changeGraphCompletenessRoot builds a temp repo root holding the given
-// tracked source files (each written under its path), a change-graph
-// whose globs block carries the given keys, and a coverage baseline
-// carrying the given prefixes. It returns the root so a caller can
-// re-read the baseline after a run rewrote it.
+// writeChangeGraphSource writes a source file under the root, creating
+// its parent directories. It leaves the file untracked; the caller
+// decides whether git tracks it.
+func writeChangeGraphSource(t *testing.T, root, rel string) {
+	t.Helper()
+	full := filepath.Join(root, rel)
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", full, err)
+	}
+	if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", full, err)
+	}
+}
+
+// trackChangeGraphSources adds the given repo-relative paths to the
+// root's git index, which is where the completeness check reads the
+// tracked source domain from.
+func trackChangeGraphSources(t *testing.T, root string, paths ...string) {
+	t.Helper()
+	if len(paths) == 0 {
+		return
+	}
+	cmd := exec.Command("git", append([]string{"add", "--"}, paths...)...)
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add %v: %v: %s", paths, err, out)
+	}
+}
+
+// changeGraphCompletenessRoot builds a temp git repo root holding the
+// given tracked source files (each written under its path and added to
+// the index), every source tree the check requires, a change-graph whose
+// globs block carries the given keys, and a coverage baseline carrying
+// the given prefixes. It returns the root so a caller can re-read the
+// baseline after a run rewrote it.
 func changeGraphCompletenessRoot(t *testing.T, sources, globs, prefixes []string) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, p := range sources {
-		full := filepath.Join(root, p)
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatalf("mkdir %s: %v", full, err)
-		}
-		if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
-			t.Fatalf("write %s: %v", full, err)
+	initCmd := exec.Command("git", "init", "-q")
+	initCmd.Dir = root
+	if out, err := initCmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for _, tree := range changeGraphSourceTrees {
+		if err := os.MkdirAll(filepath.Join(root, tree), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", tree, err)
 		}
 	}
+	for _, p := range sources {
+		writeChangeGraphSource(t, root, p)
+	}
+	trackChangeGraphSources(t, root, sources...)
 	globMap := map[string]any{}
 	for _, g := range globs {
 		globMap[g] = map[string]any{"unit": []string{"pkg/..."}}
@@ -428,8 +464,9 @@ func TestValidateChangeGraphCompleteness(t *testing.T) {
 	expectPass(t, r)
 
 	// A path covered by a change-graph glob key passes, whether the key
-	// names the file's directory, an ancestor of it, or the file itself.
-	for _, key := range []string{"pkg/adapter", "pkg/adapter/...", "pkg", "pkg/adapter/adapter.go"} {
+	// names the file's directory, an ancestor of it, the file itself, or
+	// the directory with a trailing separator.
+	for _, key := range []string{"pkg/adapter", "pkg/adapter/", "pkg", "pkg/adapter/adapter.go"} {
 		r = changeGraphCompletenessFixture(t,
 			[]string{"pkg/adapter/adapter.go"}, []string{key}, nil)
 		expectPass(t, r)
@@ -469,14 +506,9 @@ func TestValidateChangeGraphCompletenessNewPathNeedsAGlob(t *testing.T) {
 		[]string{"pkg/adapter/adapter.go"}, nil, []string{"pkg/adapter/"})
 	expectPass(t, runChangeGraphCompleteness(root))
 
-	// The later change creates a source tree of its own.
-	newFile := filepath.Join(root, "scripts", "specshift", "run.go")
-	if err := os.MkdirAll(filepath.Dir(newFile), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(newFile, []byte("package main\n"), 0o644); err != nil {
-		t.Fatalf("write: %v", err)
-	}
+	// The later change creates a source tree of its own and tracks it.
+	writeChangeGraphSource(t, root, "scripts/specshift/run.go")
+	trackChangeGraphSources(t, root, "scripts/specshift/run.go")
 	r := runChangeGraphCompleteness(root)
 	expectFail(t, r, "scripts/specshift/run.go")
 
@@ -581,8 +613,104 @@ func TestValidateChangeGraphCompletenessUnreadableInputs(t *testing.T) {
 		expectFail(t, runChangeGraphCompleteness(root), "change graph")
 	}
 
-	// A walk that selects no tracked source path fails and names the
-	// check, rather than reporting a fully covered tree.
+	// An enumeration that selects no tracked source path fails and names
+	// the check, rather than reporting a fully covered tree.
 	root = changeGraphCompletenessRoot(t, nil, []string{"pkg/adapter"}, nil)
 	expectFail(t, runChangeGraphCompleteness(root), "change-graph completeness", "no tracked source path")
+}
+
+// TestChangeGraphCoverageBaselineCarriesLicenseHeader pins the rewritten
+// baseline to the SPDX header every tracked YAML file under tests/ needs.
+// The check rewrites the file in place whenever a prefix retires, so a
+// preamble without the header would turn the license gate red on the
+// next run that retires anything.
+func TestChangeGraphCoverageBaselineCarriesLicenseHeader(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "baseline.yaml")
+	for _, prefixes := range [][]string{nil, {"pkg/adapter/"}} {
+		if err := writeChangeGraphCoverageBaseline(path, prefixes); err != nil {
+			t.Fatalf("write baseline: %v", err)
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read baseline: %v", err)
+		}
+		if !strings.HasPrefix(string(body), "# SPDX-License-Identifier: MIT\n") {
+			t.Fatalf("rewritten baseline lost its SPDX header: %q", string(body))
+		}
+		if _, err := readChangeGraphCoverageBaseline(path); err != nil {
+			t.Fatalf("rewritten baseline no longer parses: %v", err)
+		}
+	}
+}
+
+// TestValidateChangeGraphCompletenessDomainIsGitTracked pins the source
+// domain to what git tracks. A source file that exists on disk but is
+// not in the index (a scratch script, an ignored generated tree) is
+// outside the gate, because the only remedy the gate names is a glob key
+// in tests/change-graph.json and that remedy is wrong for a file git
+// does not track. The same file fails once it is tracked.
+func TestValidateChangeGraphCompletenessDomainIsGitTracked(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go"}, []string{"pkg/adapter"}, nil)
+
+	// An untracked source file, and one an ignore rule covers, leave the
+	// check green.
+	writeChangeGraphSource(t, root, "scripts/scratch.sh")
+	writeChangeGraphSource(t, root, "pkg/preflight/tmp/gen.go")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("tmp/\n"), 0o644); err != nil {
+		t.Fatalf("write gitignore: %v", err)
+	}
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	// Tracking one of them brings it into the domain, and it fails until
+	// the change graph gains a key for it.
+	trackChangeGraphSources(t, root, "scripts/scratch.sh")
+	expectFail(t, runChangeGraphCompleteness(root), "scripts/scratch.sh")
+}
+
+// TestValidateChangeGraphCompletenessMissingSourceTreeFails pins the
+// per-tree inspection rule: a source tree that is absent or unreadable
+// fails the check and names the tree. A run that inspected less than the
+// tree must not reach the downward rewrite, which would otherwise retire
+// every baseline prefix under the tree it never looked at, irreversibly.
+func TestValidateChangeGraphCompletenessMissingSourceTreeFails(t *testing.T) {
+	root := changeGraphCompletenessRoot(t,
+		[]string{"pkg/adapter/adapter.go", "cmd/lenny-ctl/main.go"},
+		nil,
+		[]string{"pkg/adapter/", "cmd/lenny-ctl/"})
+
+	if err := os.RemoveAll(filepath.Join(root, "cmd")); err != nil {
+		t.Fatalf("remove tree: %v", err)
+	}
+	expectFail(t, runChangeGraphCompleteness(root), "cmd/", "absent or unreadable")
+
+	// The baseline still carries both prefixes: the failing run wrote
+	// nothing, so the prefixes under the missing tree survive.
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 2 {
+		t.Fatalf("a run over a partial tree rewrote the baseline: %v", prefixes)
+	}
+}
+
+// TestValidateChangeGraphCompletenessRejectsUnselectableGlobKey pins the
+// coverage predicate to the selector's predicate. tiersForChangedPath
+// matches a changed path against a glob key with a literal prefix
+// comparison, so a key spelled with a trailing `/...` selects no tiers
+// for any path. Accepting it as coverage would certify a path the graph
+// resolves nothing for, so the key spelling fails the check instead.
+func TestValidateChangeGraphCompletenessRejectsUnselectableGlobKey(t *testing.T) {
+	r := changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"}, []string{"pkg/adapter/..."}, nil)
+	expectFail(t, r, "pkg/adapter/...")
+
+	// The same key form fails even when another key already covers the
+	// path, so no run certifies a tree carrying one.
+	r = changeGraphCompletenessFixture(t,
+		[]string{"pkg/adapter/adapter.go"},
+		[]string{"pkg/adapter", "cmd/lenny-ctl/..."}, nil)
+	expectFail(t, r, "cmd/lenny-ctl/...")
 }

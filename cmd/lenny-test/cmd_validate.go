@@ -7,6 +7,8 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -338,11 +340,6 @@ var (
 	changeGraphSourceExts  = []string{".go", ".sh"}
 )
 
-// changeGraphSkippedDirs are directory names the source walk never
-// descends into: dot-directories hold tooling state, and vendor and
-// node_modules hold third-party code that no change-graph glob owns.
-var changeGraphSkippedDirs = map[string]bool{"vendor": true, "node_modules": true}
-
 // validateChangeGraphCompleteness is the reverse predicate of
 // validateChangeGraphFileExistence. That check walks the glob keys of
 // tests/change-graph.json and fails a key that resolves to nothing on
@@ -353,6 +350,12 @@ var changeGraphSkippedDirs = map[string]bool{"vendor": true, "node_modules": tru
 //
 // The tracked source domain is exactly:
 //
+//   - the paths git tracks, as reported by `git ls-files`. Membership
+//     comes from the index rather than from a filesystem walk, because
+//     the only remedy the check names is a glob key in
+//     tests/change-graph.json, and that remedy is wrong for a file git
+//     does not track. A scratch script, an ignored generated tree, or
+//     any other untracked source file is therefore outside the gate.
 //   - the top-level trees cmd/, pkg/, scripts/, and tests/. tests/ and
 //     scripts/ are in the domain because the change graph already keys
 //     entries under both (tests/testinfra/containers,
@@ -377,9 +380,11 @@ var changeGraphSkippedDirs = map[string]bool{"vendor": true, "node_modules": tru
 // change creates fails until the change graph gains its key.
 //
 // The check fails rather than reporting coverage when the change graph
-// or the baseline is missing or malformed, and when the walk selects no
-// tracked source path at all, because a gate that inspects nothing must
-// not certify the tree.
+// or the baseline is missing or malformed, when one of the source trees
+// is absent or unreadable, and when the enumeration selects no tracked
+// source path at all, because a gate that inspects nothing must not
+// certify the tree, and because the downward rewrite would otherwise
+// retire every baseline prefix under a tree the run never inspected.
 func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string) checkResult {
 	const name = "change-graph completeness"
 
@@ -391,13 +396,13 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 	if err != nil {
 		return newResult(name, false, err.Error())
 	}
-	sources, err := walkTrackedSourcePaths(root)
+	sources, err := trackedSourcePaths(root)
 	if err != nil {
 		return newResult(name, false, err.Error())
 	}
 	if len(sources) == 0 {
 		return newResult(name, false,
-			"the change-graph completeness walk selected no tracked source path; "+
+			"the change-graph completeness enumeration selected no tracked source path; "+
 				"a gate that inspects nothing cannot certify the tree")
 	}
 
@@ -451,8 +456,15 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 }
 
 // readChangeGraphGlobKeys returns the glob keys of the change graph with
-// any trailing `/...` or `/` stripped, so a key can be matched as a
-// directory prefix.
+// any trailing `/` stripped, so a key can be matched as a directory
+// prefix.
+//
+// A key spelled with a trailing `/...` is rejected rather than accepted
+// as a directory prefix. The selector that consumes the graph matches a
+// changed path against a key with a plain prefix comparison
+// (tiersForChangedPath), so a `pkg/foo/...` key matches no path and
+// selects no tiers. Treating it as coverage here would certify a path
+// the graph selects nothing for, which is the hole this check closes.
 func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -469,9 +481,13 @@ func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	}
 	keys := make(map[string]bool, len(doc.Globs))
 	for key := range doc.Globs {
-		probe := strings.TrimSuffix(key, "/...")
-		probe = strings.TrimSuffix(probe, "/")
-		keys[probe] = true
+		if strings.HasSuffix(key, "/...") {
+			return nil, fmt.Errorf(
+				"change graph %s: glob key %q ends in /..., which the change selector matches as a literal prefix and therefore never selects; key the directory instead",
+				path, key,
+			)
+		}
+		keys[strings.TrimSuffix(key, "/")] = true
 	}
 	return keys, nil
 }
@@ -554,6 +570,8 @@ func readChangeGraphCoverageBaseline(path string) ([]string, error) {
 // when the set shrank.
 func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
 	var b strings.Builder
+	b.WriteString("# SPDX-License-Identifier: MIT\n")
+	b.WriteString("#\n")
 	b.WriteString("# Change-graph coverage baseline.\n")
 	b.WriteString("#\n")
 	b.WriteString("# Every tracked source path listed here was already covered by no\n")
@@ -579,42 +597,55 @@ func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
 	return nil
 }
 
-// walkTrackedSourcePaths returns every repo-relative path in the tracked
-// source domain, sorted. A tree that is absent from the checkout is
-// skipped; the caller fails the run when the whole walk selects nothing.
-func walkTrackedSourcePaths(root string) ([]string, error) {
-	out := []string{}
+// trackedSourcePaths returns every repo-relative path in the tracked
+// source domain, sorted. A source tree that is absent or unreadable is a
+// failure rather than a skip: the run that inspects less than the tree
+// would still rewrite the baseline downward, retiring every prefix under
+// the tree it never looked at, and the rewrite is one-way.
+func trackedSourcePaths(root string) ([]string, error) {
 	for _, tree := range changeGraphSourceTrees {
-		base := filepath.Join(root, tree)
-		if _, err := os.Stat(base); err != nil {
-			continue
+		if _, err := os.Stat(filepath.Join(root, tree)); err != nil {
+			return nil, fmt.Errorf(
+				"change-graph completeness: source tree %s/ is absent or unreadable: %w", tree, err,
+			)
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			name := d.Name()
-			if d.IsDir() {
-				if path != base && (strings.HasPrefix(name, ".") || changeGraphSkippedDirs[name]) {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !isTrackedSourceFile(name) {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return fmt.Errorf("relativize %s: %w", path, err)
-			}
-			out = append(out, filepath.ToSlash(rel))
-			return nil
-		})
-		if err != nil {
-			return nil, fmt.Errorf("walk %s: %w", tree, err)
+	}
+	tracked, err := gitTrackedPaths(root, changeGraphSourceTrees)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(tracked))
+	for _, p := range tracked {
+		if isTrackedSourceFile(path.Base(p)) {
+			out = append(out, p)
 		}
 	}
 	sort.Strings(out)
+	return out, nil
+}
+
+// gitTrackedPaths returns the paths git tracks under the given trees,
+// relative to root and slash-separated. It fails closed when git is
+// unavailable or the listing errors, so a run that cannot establish
+// what is tracked cannot certify the tree.
+func gitTrackedPaths(root string, trees []string) ([]string, error) {
+	if _, err := exec.LookPath("git"); err != nil {
+		return nil, fmt.Errorf("change-graph completeness: locate git to list tracked sources: %w", err)
+	}
+	args := append([]string{"ls-files", "-z", "--"}, trees...)
+	cmd := exec.Command("git", args...)
+	cmd.Dir = root
+	body, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("change-graph completeness: list tracked files under %s: %w",
+			strings.Join(trees, ", "), err)
+	}
+	out := []string{}
+	for _, p := range strings.Split(string(body), "\x00") {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
 	return out, nil
 }
 

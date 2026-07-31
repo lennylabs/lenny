@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MIT
+#
 # Change-graph coverage baseline.
 #
 # Every tracked source path listed here was already covered by no
