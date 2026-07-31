@@ -64,6 +64,33 @@ const (
 	headMember    = "member"
 )
 
+// qualifierBody is the short sub-element name a citation may interpose between
+// its reference and the keyword, which is one to three tokens. A token is a
+// word that may carry an internal hyphen, and the last token may instead be a
+// number, a numeric range, or a quoted fragment, which is how `item 3`,
+// `paths 1-7`, and `"Version negotiation"` are written. The words `table` and
+// `preamble` are instances of the general rule rather than the only one-word
+// spellings.
+//
+// A qualifier narrower than this leaves every citation carrying a sub-element
+// name the matcher does not admit unconverted, unread by the resolver, and
+// uncounted by the ratchet, so its file reaches a zero count with the stale
+// pointer standing. Widening it does not turn prose into a citation, because
+// the branch the qualifier sits on still requires the literal keyword and a
+// member behind it; the colon branch, which stands directly against the
+// reference and would read an English or a YAML colon as the keyword, carries
+// no qualifier at all.
+//
+// The first token is a word rather than a number, so a member list is never
+// read as a sub-element name.
+const (
+	qualifierWord  = `[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*`
+	qualifierQuote = `"[^"\n` + joinClass + `]*"|'[^'\n` + joinClass + `]*'`
+	qualifierTail  = `(?:` + qualifierWord + `|[0-9]+(?:[-\x{2013}\x{2014}][0-9]+)?|` + qualifierQuote + `)`
+	qualifierBody  = `(?:` + qualifierQuote + `|` + qualifierWord +
+		`(?:` + sp + `+` + qualifierWord + `)?(?:` + sp + `+` + qualifierTail + `)?)`
+)
+
 // headExpr matches the head of a citation: the reference, the optional
 // qualifier, the keyword or the colon standing in for it, and the first member.
 // Every further member is consumed by the scanner in citation.go, which orders
@@ -94,10 +121,7 @@ var headExpr = regexp.MustCompile(
 		`:` + joinClass + `?` +
 		`|` +
 		// The optional short qualifier naming a sub-element of the section.
-		// A qualifier of three words is spelled in words alone, because a
-		// numbered third token belongs to a member list rather than to a
-		// sub-element name: `line 315 and line 321` is two members.
-		`(?:` + sp + `+(?P<` + headQualifier + `>[A-Za-z]+` + sp + `+[0-9A-Za-z]+|[A-Za-z]+(?:` + sp + `+[A-Za-z]+){2}|table|preamble|[A-Z][A-Z0-9]*-[0-9]+))?` +
+		`(?:` + sp + `+(?P<` + headQualifier + `>` + qualifierBody + `))?` +
 		// The keyword itself. It may open a parenthesis of the carrier's own,
 		// with or without the word `spec` behind it, so a qualified citation
 		// whose keyword and member sit inside a parenthesis is read whole; the
@@ -162,7 +186,13 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 //
 // Every alternative is written against its member with glossSp whitespace, so a
 // gloss opens on the line its member sits on rather than across a continuation
-// the join consumed.
+// the join consumed, and no alternative's body admits the join byte, so a gloss
+// that opened on its member's line also closes on that line. A delimited
+// alternative whose body admitted the join would close on the following comment
+// line, which is a fourth wrap position the form does not carry: the citation
+// text a register is keyed by would carry that line's marker and prose, and the
+// anchor the pass writes in place of the whole citation would delete the
+// newline, the comment marker, and the words ahead of the closing delimiter.
 //
 // A quoted alternative also requires whitespace ahead of its opening quote,
 // because a quote written directly against a member's last digit is the closing
@@ -171,9 +201,9 @@ var memberExpr = regexp.MustCompile(`^` + memberBody)
 var glossExpr = regexp.MustCompile(
 	"^(?:" +
 		glossSp + `*\(` + glossBody + `*\)` +
-		`|` + glossSp + `+"[^"\n]*"` +
-		`|` + glossSp + `+'[^'\n]*'` +
-		"|" + glossSp + "+`[^`\n]*`" +
+		`|` + glossSp + `+"[^"\n` + joinClass + `]*"` +
+		`|` + glossSp + `+'[^'\n` + joinClass + `]*'` +
+		"|" + glossSp + "+`[^`\n" + joinClass + "]*`" +
 		`|` + glossSp + `+` + glossWord + `(?:` + glossSp + `+` + glossWord + `)?(?:` + glossSp + `*\(` + glossBody + `*\))?` +
 		")",
 )
@@ -188,7 +218,7 @@ var glossExpr = regexp.MustCompile(
 // the citation does not own, so converting the citation to an anchor would
 // delete the opening word of the following sentence.
 const (
-	glossBody = `[^()\n]`
+	glossBody = `[^()\n` + joinClass + `]`
 	glossWord = `[A-Za-z][A-Za-z0-9_/-]*(?:\.[A-Za-z0-9_/-]+)*`
 )
 

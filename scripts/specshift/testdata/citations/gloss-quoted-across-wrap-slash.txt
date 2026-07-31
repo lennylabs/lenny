@@ -1,0 +1,2 @@
+// spec: §9.2 line 240 messagingScope "the scope the session opens
+// with, quoted from the table"

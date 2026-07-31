@@ -78,19 +78,27 @@ func (f Failure) String() string {
 
 // Resolver answers whether a citation still points inside the section it names.
 // It holds the range of every numbered section under spec/, computed from the
-// ## through ###### headings.
+// headings headingExpr reads.
 type Resolver struct {
 	byNumber map[string]Section
 	byFile   map[string][]Section
 }
 
-// headingExpr matches the headings a section's range is computed from, which
-// are the `##` through `######` headings. A level-one heading is the document
-// title: it declares no section and closes none, so a file that states its
-// number at level one carries no section under that number, and a
-// section-level citation naming it is reported as a heading the specification
-// does not declare.
-var headingExpr = regexp.MustCompile(`^(#{2,6})[ \t]+(.*)$`)
+// headingExpr matches the headings a section's range is computed from. The
+// ranges below it are computed from the `##` through `######` headings, and a
+// level-one heading is read as well so a file that states its numbered title at
+// that level declares the section it names. A level-one heading carrying no
+// leading number is an ordinary document title: numberExpr alone excludes it,
+// the same way it excludes an unnumbered sub-heading, and it closes the
+// headings above it without declaring a section.
+//
+// Reading level two and below alone leaves a file whose numbered title sits at
+// level one declaring no section under that number, so every section-level
+// citation into it is reported as naming a heading the specification does not
+// declare. That report is false, it gives no line-containment verdict for a
+// section that exists, and it puts the file's first lines inside no section for
+// the path form.
+var headingExpr = regexp.MustCompile(`^(#{1,6})[ \t]+(.*)$`)
 
 // fenceExpr matches the opening or closing line of a fenced code block. A line
 // opening with hashes inside a fence is a comment in an example rather than a
@@ -293,6 +301,21 @@ func (r *Resolver) resolveSection(c Citation) []Failure {
 // contains it. A file that does not resolve under spec/ is its own failure
 // rather than a member that fell outside a section, because the remedy is the
 // path rather than the line number.
+//
+// A path-form member is anchored on the deepest section containing its start
+// line, which is the section the citation means, and it straddles when its end
+// line falls outside that section. A range that runs from a section's preamble
+// into one of its own subsections is anchored on the parent, whose range covers
+// its subsections, so it resolves the way the same range written in the
+// section-number spelling resolves against that parent.
+//
+// Asking instead whether any section of the file contains both endpoints leaves
+// the straddle unreportable against the specification's layout, where a file
+// opens with a whole-file heading whose range runs to the end of the file: that
+// heading contains both endpoints of every range, so a range crossing a
+// boundary inside it resolves clean, is never reported for hand correction, and
+// holds its file above a zero count while the same range written by section
+// number is reported.
 func (r *Resolver) resolvePath(c Citation) []Failure {
 	sections, ok := r.byFile[c.File]
 	if !ok {
@@ -303,7 +326,7 @@ func (r *Resolver) resolvePath(c Citation) []Failure {
 	}
 	var out []Failure
 	for _, m := range c.Members {
-		start, startOK := deepest(sections, m.Start)
+		anchor, startOK := deepest(sections, m.Start)
 		end, endOK := deepest(sections, m.End)
 		switch {
 		case !startOK || !endOK:
@@ -312,31 +335,15 @@ func (r *Resolver) resolvePath(c Citation) []Failure {
 				Member: m,
 				Detail: fmt.Sprintf("falls in no section of %s", c.File),
 			})
-		case !containsBoth(sections, m):
+		case !anchor.Contains(m.End):
 			out = append(out, Failure{
 				Kind:   StraddlingRange,
 				Member: m,
-				Detail: fmt.Sprintf("starts in §%s and ends in §%s", start.Number, end.Number),
+				Detail: fmt.Sprintf("starts in §%s and ends in §%s", anchor.Number, end.Number),
 			})
 		}
 	}
 	return out
-}
-
-// containsBoth reports whether one section of the file contains both endpoints
-// of the member. A range that runs from a section's preamble into one of its
-// own subsections lies inside the containing section, so it resolves rather
-// than straddling: a section's range covers its subsections, and the same range
-// written in the section-number spelling resolves against the parent. Reporting
-// it as a straddle would send a citation with nothing to correct into the
-// hand-correction list and hold its file above a zero count.
-func containsBoth(sections []Section, m Member) bool {
-	for _, s := range sections {
-		if s.Contains(m.Start) && s.Contains(m.End) {
-			return true
-		}
-	}
-	return false
 }
 
 // deepest returns the most specific section of a file containing the line,

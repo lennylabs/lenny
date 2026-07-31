@@ -1948,6 +1948,10 @@ func TestFindReadsEverySpellingOfTheRetiredCitationForm(t *testing.T) {
 		{"qualifier-parenthetical.txt", "§10.3", "NET-063", []string{"327-327"}},
 		{"qualifier-words.txt", "§10.3", "revocation deny list", []string{"352-352"}},
 		{"qualifier-parenthetical-preamble.txt", "§24", "preamble", []string{"17-17"}},
+		{"qualifier-word.txt", "§25.8", "Metrics", []string{"312-312"}},
+		{"qualifier-hyphen-words.txt", "§25.3", "error-code table", []string{"601-604"}},
+		{"qualifier-numeric-range.txt", "§7.2", "paths 1-7", []string{"300-310"}},
+		{"qualifier-quoted.txt", "§15.2", `"Version negotiation"`, []string{"100-110"}},
 		{"gloss-trailing.txt", "§7.3", "", []string{"408-408"}},
 		{"gloss-bare.txt", "§9.2", "", []string{"240-240"}},
 		{"path-form.txt", "spec/04_system-components.md", "", []string{"1145-1145"}},
@@ -2496,6 +2500,12 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 // in place of the whole citation would delete the newline, the following line's
 // comment marker, and its opening words, merging two comment lines and, in the
 // # dialect, leaving the following text outside any comment.
+//
+// The rule holds for a delimited gloss as well as for a bare one. A
+// parenthesized or quoted gloss that opens on its member's line and closes on
+// the following comment line ends at the wrap, and the member ends with it, so
+// no citation span carries a comment marker the form does not name. The last
+// three cases carry that spelling in the // and the # dialect.
 func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -2506,6 +2516,9 @@ func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 		{"citation-then-comment-hash.txt", ""},
 		{"gloss-then-comment-slash.txt", "messagingScope"},
 		{"gloss-then-comment-hash.txt", "tombstone"},
+		{"gloss-paren-across-wrap-slash.txt", "tmpfs reservation"},
+		{"gloss-paren-across-wrap-hash.txt", "tmpfs reservation"},
+		{"gloss-quoted-across-wrap-slash.txt", "messagingScope"},
 	} {
 		c := oneCitation(t, tc.fixture)
 		if want := wantCitation(t, tc.fixture); c.Text != want {
@@ -2524,11 +2537,13 @@ func TestFindEndsACitationAtTheCommentLineThatCarriesIt(t *testing.T) {
 // That tree carries a section with two subsections and one nested
 // sub-subsection, a second file with two subsections, a third file with two
 // top-level headings so a section-level range ends before the next heading of
-// its own level, and a fourth file that states its numbered title at level one
-// and carries a fenced code block with a numbered heading-like line in it, so
-// neither the title nor the fenced line declares a section. The ranges the
-// cases below state are the tree's, and the fixture files themselves are the
-// statement of record.
+// its own level, a fourth file that states its numbered title at level one and
+// carries a fenced code block with a numbered heading-like line in it, so the
+// title declares its section while the fenced line declares none, and a fifth
+// file laid out the way every specification file is, which is a whole-file
+// heading whose range runs to the end of the file with two sibling subsections
+// under it. The ranges the cases below state are the tree's, and the fixture
+// files themselves are the statement of record.
 func citationResolver(t *testing.T) *citation.Resolver {
 	t.Helper()
 	r, err := citation.NewResolver(context.Background(),
@@ -2571,22 +2586,27 @@ func TestSectionRangeCoversASectionAndItsSubsections(t *testing.T) {
 	}
 }
 
-// TestSectionIndexExcludesALevelOneHeading pins the heading rule the range
-// computation is stated over, which is the ## through ###### headings. A
-// specification file that states its number in a level-one title declares no
-// section under that number, so a section-level citation naming it is reported
-// as a heading the specification does not declare rather than resolving against
-// the whole file. Indexing level one instead widens the resolver's answer over
-// a population the seeded baseline is measured on. The file's own ## headings
-// are indexed as usual, and the walk skips fenced code, because a heading-like
-// line inside an example is a comment and indexing it declares sections the
-// specification does not have, including one that collides with a genuine
-// section number.
-func TestSectionIndexExcludesALevelOneHeading(t *testing.T) {
+// TestSectionIndexReadsANumberedLevelOneHeading pins the section a file
+// declares when it states its number in a level-one title. That heading
+// declares the section it names, so a section-level citation into the file
+// resolves against the whole of it and a path-form citation into its opening
+// lines resolves against the section containing them. Reading level two and
+// below alone reports every such citation as naming a heading the
+// specification does not declare, which is untrue of a section that exists,
+// gives no line-containment verdict for it, and leaves the file's first lines
+// inside no section for the path form.
+//
+// A level-one heading carrying no number is an ordinary document title and
+// declares nothing, the ranges below the title are computed as usual, and the
+// walk skips fenced code, because a heading-like line inside an example is a
+// comment and indexing it declares sections the specification does not have,
+// including one that collides with a genuine section number.
+func TestSectionIndexReadsANumberedLevelOneHeading(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
-	if s, ok := r.Section("30"); ok {
-		t.Errorf("a level-one heading declared %v", s)
+	top, ok := r.Section("30")
+	if !ok || top.File != "spec/30_level-one-title.md" || top.Start != 1 || top.End != 11 {
+		t.Errorf("§30 is %v (present=%v), want lines 1-11 of the level-one-titled file", top, ok)
 	}
 	child, ok := r.Section("30.1")
 	if !ok || child.File != "spec/30_level-one-title.md" || child.Start != 9 || child.End != 11 {
@@ -2595,12 +2615,27 @@ func TestSectionIndexExcludesALevelOneHeading(t *testing.T) {
 	if s, ok := r.Section("1"); ok {
 		t.Errorf("a numbered heading inside a fenced code block declared %v", s)
 	}
-	top := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt"))
-	if len(top) != 1 || top[0].Kind != citation.UnknownSection {
-		t.Errorf("a citation naming the level-one heading reported %v, want one unknown-section failure", top)
+	if f := r.Resolve(oneCitation(t, "resolve/level-one-heading.txt")); len(f) != 0 {
+		t.Errorf("a citation naming the level-one section reported %v, want it to resolve", f)
 	}
 	if f := r.Resolve(oneCitation(t, "resolve/level-one-subsection.txt")); len(f) != 0 {
 		t.Errorf("a citation naming the file's own subsection reported %v, want it to resolve", f)
+	}
+	if f := r.Resolve(oneCitation(t, "resolve/path-level-one-preamble.txt")); len(f) != 0 {
+		t.Errorf("a path-form citation into the file's opening lines reported %v, want it to resolve", f)
+	}
+	unnumbered := map[string]string{"spec/31_untitled.md": "# Untitled\n\nProse.\n\n## 31.1 Only Section\n\nBody.\n"}
+	list := func(context.Context) ([]string, error) { return []string{"spec/31_untitled.md"}, nil }
+	read := func(target string) ([]byte, error) { return []byte(unnumbered[target]), nil }
+	plain, err := citation.NewResolver(context.Background(), list, read)
+	if err != nil {
+		t.Fatalf("NewResolver over an unnumbered level-one title: %v", err)
+	}
+	if s, ok := plain.Section("31"); ok {
+		t.Errorf("an unnumbered level-one title declared %v", s)
+	}
+	if s, ok := plain.Section("31.1"); !ok || s.Start != 5 {
+		t.Errorf("§31.1 is %v (present=%v), want it to start at line 5", s, ok)
 	}
 }
 
@@ -2625,6 +2660,9 @@ func TestResolveReportsEveryFailureClassDistinctly(t *testing.T) {
 		{"resolve/straddling.txt", []citation.FailureKind{citation.StraddlingRange}},
 		{"resolve/path-straddling.txt", []citation.FailureKind{citation.StraddlingRange}},
 		{"resolve/path-preamble-into-subsection.txt", nil},
+		{"resolve/path-straddling-under-whole-file-parent.txt", []citation.FailureKind{citation.StraddlingRange}},
+		{"resolve/path-preamble-under-whole-file-parent.txt", nil},
+		{"resolve/straddling-under-whole-file-parent.txt", []citation.FailureKind{citation.StraddlingRange}},
 		{"resolve/unknown-section.txt", []citation.FailureKind{citation.UnknownSection}},
 		{"resolve/path-unknown-file.txt", []citation.FailureKind{citation.UnknownFile}},
 		{"resolve/path-outside-any-section.txt", []citation.FailureKind{citation.OutsideSection}},
@@ -2677,16 +2715,22 @@ func TestResolveResolvesThePathFormAgainstTheContainingSection(t *testing.T) {
 	}
 }
 
-// TestResolvePathRangeStraddlesOnlyWhenNoSectionContainsBothEndpoints pins the
-// straddling rule for the path form. A range that runs from a section's
-// preamble into one of its own subsections lies inside the section that
-// contains it, so it resolves, and the same range written in the section-number
-// spelling resolves too. A range whose endpoints fall in two sibling sections
-// has no containing section, so it is reported as a straddle, which is the
-// citation the pass fails rather than guessing an anchor for. Reporting the
-// first as a straddle would send a citation with nothing to correct into the
-// hand-correction list and hold its file above a zero count.
-func TestResolvePathRangeStraddlesOnlyWhenNoSectionContainsBothEndpoints(t *testing.T) {
+// TestResolvePathAnchorsAMemberOnTheDeepestSectionContainingItsStart pins the
+// straddling rule for the path form. A member is anchored on the deepest
+// section containing its start line, and it straddles when its end line falls
+// outside that section. A range that runs from a section's preamble into one of
+// its own subsections is anchored on the parent, whose range covers its
+// subsections, so it resolves the way the same range written in the
+// section-number spelling resolves against that parent.
+//
+// The last case is the layout every specification file carries, which is a
+// whole-file heading whose range runs to the end of the file. Asking instead
+// whether any section of the file contains both endpoints lets that heading
+// answer for every range, so a range crossing a boundary inside it resolves
+// clean under the path form while the same range written by section number is
+// reported, and the citation is never sent for hand correction while it holds
+// its file above a zero count.
+func TestResolvePathAnchorsAMemberOnTheDeepestSectionContainingItsStart(t *testing.T) {
 	t.Parallel()
 	r := citationResolver(t)
 	inner := oneCitation(t, "resolve/path-preamble-into-subsection.txt")
@@ -2701,6 +2745,22 @@ func TestResolvePathRangeStraddlesOnlyWhenNoSectionContainsBothEndpoints(t *test
 	f := r.Resolve(crossing)
 	if len(f) != 1 || f[0].Kind != citation.StraddlingRange {
 		t.Errorf("a range crossing into a sibling section reported %v, want one straddling range", f)
+	}
+	whole, ok := r.Section("40")
+	under := oneCitation(t, "resolve/path-straddling-under-whole-file-parent.txt")
+	if !ok || !whole.Contains(under.Members[0].Start) || !whole.Contains(under.Members[0].End) {
+		t.Fatalf("the fixture range %v does not sit inside the whole-file section (%v)", under.Members, whole)
+	}
+	byPath := r.Resolve(under)
+	if len(byPath) != 1 || byPath[0].Kind != citation.StraddlingRange {
+		t.Errorf("a range crossing a boundary under a whole-file heading reported %v, want one straddling range", byPath)
+	}
+	byNumber := r.Resolve(oneCitation(t, "resolve/straddling-under-whole-file-parent.txt"))
+	if len(byNumber) != 1 || byNumber[0].Kind != citation.StraddlingRange {
+		t.Errorf("the same range written by section number reported %v, want one straddling range", byNumber)
+	}
+	if f := r.Resolve(oneCitation(t, "resolve/path-preamble-under-whole-file-parent.txt")); len(f) != 0 {
+		t.Errorf("a range from the whole-file preamble into its own subsection reported %v", f)
 	}
 }
 
