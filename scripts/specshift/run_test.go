@@ -3595,6 +3595,83 @@ func TestLinePassReportsEveryUnconvertibleSiteInOneRun(t *testing.T) {
 	}
 }
 
+// TestLinePassFailsAConversionThatComposesTheRetiredFormAgain pins the
+// post-condition on the conversion. The pass replaces a citation with
+// the anchor of the section it names, and the text beside the citation
+// stays where it was written, so for two spellings the anchor and that
+// text compose a fresh citation of the retired form. Writing the file
+// would leave it above zero after the pass has run over it, and a
+// second run would convert the composed citation, whose span now covers
+// the carrier's own prose. Each spelling is reported for hand
+// correction instead, and the tree is left byte-identical.
+//
+// The cases are one per composing spelling: a bare-word gloss running
+// to a trailing colon, whose anchor then stands against that colon and
+// reads the integer opening the next comment line as a member; and a
+// separator word followed by a parenthesized reference on the next
+// comment line, whose reference the anchor's qualifier then absorbs.
+//
+// spec: §28.1 (N8, the citation rule: a citation that cannot be retired
+// mechanically is reported rather than converted, and a conversion
+// leaves no citation of the retired form standing)
+func TestLinePassFailsAConversionThatComposesTheRetiredFormAgain(t *testing.T) {
+	t.Parallel()
+	// composed is the head of the text the abort quotes, held short of a
+	// span the matcher reads as the retired form so the fixture rule
+	// keeps holding that form in testdata/ alone. The head is what
+	// distinguishes the composition: the anchor standing against the
+	// carrier's colon, and the qualifier that absorbed the words behind
+	// the separator.
+	for _, tc := range []struct {
+		spelling string
+		carriers string
+		register string
+		target   string
+		composed string
+	}{
+		{
+			spelling: "a gloss running to a trailing colon",
+			carriers: "fail/reformed-colon",
+			register: "fail-reformed-colon.yaml",
+			target:   "pkg/carrier/gloss.go",
+			composed: "§4.6: 1",
+		},
+		{
+			spelling: "a separator word ahead of a wrapped reference",
+			carriers: "fail/reformed-join",
+			register: "fail-reformed-join.yaml",
+			target:   "pkg/carrier/join.go",
+			composed: "§4.8 workspace and egress",
+		},
+	} {
+		t.Run(tc.spelling, func(t *testing.T) {
+			t.Parallel()
+			root := lineTree(t, tc.carriers)
+			before := treeSnapshot(t, root)
+			_, err := planLinePass(t, root, tc.register)
+			if err == nil {
+				t.Fatal("the line pass wrote a conversion that composes the retired form again")
+			}
+			abort, ok := pass.AsAbort(err)
+			if !ok {
+				t.Fatalf("the composed citation was not reported as a fail-closed abort: %v", err)
+			}
+			if abort.Path != tc.target || abort.Line == 0 {
+				t.Errorf("the abort does not name the carrier and the line: %v", abort)
+			}
+			if !strings.Contains(abort.Reason, tc.composed) {
+				t.Errorf("the abort does not name the composed citation %q: %v", tc.composed, abort)
+			}
+			if !strings.Contains(abort.Reason, "composes the retired form again") {
+				t.Errorf("the abort does not say what it reports: %v", abort)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}
+
 // TestLinePassLeavesEveryWriteExcludedCarrierByteIdentical pins the
 // write exclusion. A citation in the staged proposal tree, in either
 // historical audit record, and in either root planning document is left

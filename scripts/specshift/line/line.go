@@ -23,8 +23,10 @@
 // leaves behind.
 //
 // The pass fails closed. A straddling range, a path-form citation naming
-// a file that does not resolve under spec/, and a stripped
-// served-artifact citation whose authoring source keeps no tie are each
+// a file that does not resolve under spec/, a stripped
+// served-artifact citation whose authoring source keeps no tie, and a
+// conversion whose emitted anchor composes the retired form again with
+// the carrier text beside it are each
 // reported for hand correction rather than converted against a guess,
 // and the harness leaves the tree byte-identical. Every such site of the
 // whole walk is reported by one run, so the hand correction works from a
@@ -136,6 +138,9 @@ func (r *Rewriter) Rewrite(ctx context.Context, path string, content []byte) ([]
 	if err := fileTies(path, after, strips); err != nil {
 		return nil, err
 	}
+	if err := reformed(path, after); err != nil {
+		return nil, err
+	}
 	// The accounting identity is checked against the text rather than
 	// against the plan that produced it, so a conversion that dropped
 	// its anchor fails here instead of retiring a pointer.
@@ -192,6 +197,39 @@ func fileTies(path, after string, strips []strip) error {
 		if err := fileTie(after, s); err != nil {
 			aborts = append(aborts, abortAt(path, s.site, err))
 		}
+	}
+	return pass.Aborted(aborts)
+}
+
+// reformed reports every citation of the retired form the rewritten
+// text still carries.
+//
+// The pass converts or strips every citation it read, so the rewritten
+// text is required to carry none. A citation standing in it is one the
+// replacement itself composed, out of the anchor the conversion emitted
+// and the carrier text beside the citation it replaced. Two spellings
+// compose that way: a citation whose bare-word gloss ran to a trailing
+// colon, whose anchor then stands directly against that colon and reads
+// the integer opening the next comment line as a member; and a citation
+// followed by a separator word and a further parenthesized reference,
+// whose anchor and qualifier then absorb the words behind the separator
+// and read that reference as the keyword and its member.
+//
+// The site is reported for hand correction rather than written, because
+// both halves of the retirement break otherwise. The file holds a
+// non-zero count after the pass has run over it, so it never reaches
+// the zero the migration exits on; and a second run over the rewritten
+// file converts the composed citation, whose span now covers the
+// carrier's own prose, so the prose is deleted. The accounting identity
+// does not catch it: the composed citation is counted on both sides of
+// the identity, so the accounting balances.
+func reformed(path, after string) error {
+	var aborts []*pass.Abort
+	for _, c := range citation.Find(after) {
+		aborts = append(aborts, abortAt(path, c, fmt.Errorf(
+			"converting this file composes the retired form again out of the emitted anchor and the text beside it, as %q, so the site is left for hand correction",
+			c.Text,
+		)))
 	}
 	return pass.Aborted(aborts)
 }
