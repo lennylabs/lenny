@@ -389,8 +389,9 @@ type registerRules struct {
 	now time.Time
 	// openItem reports whether a blocker names an item that is still
 	// open. The domain the harness runs with is openItemIDs, which is
-	// the open findings of the tracked audit records together with the
-	// remediation steps the tracked plan documents declare. A nil
+	// the open findings of the tracked audit records, the remediation
+	// steps the tracked plan documents declare, and the sub-steps of the
+	// proposals that have not landed, in qualified form. A nil
 	// resolver resolves nothing, so the blocker rule fails closed
 	// rather than certifying every entry.
 	openItem func(blocker string) bool
@@ -641,18 +642,24 @@ func repoRegisterRules(root string) registerRules {
 	}
 }
 
-// openItemIDs returns every identifier a register blocker may name. Two
-// namespaces are open items: a finding still marked OPEN in a tracked
-// audit record, and a remediation step declared by a tracked plan
-// document. The step identifiers are part of the domain because a gate
-// lands green by seeding its register with an entry blocked on the
-// remediation step that retires the entry, and because the audit
-// records state findings as they were written rather than the work
-// still outstanding. A step leaves the domain when its plan document
-// stops declaring it.
+// openItemIDs returns every identifier a register blocker may name.
+// Three namespaces are open items: a finding still marked OPEN in a
+// tracked audit record, a remediation step declared by a tracked plan
+// document, and a sub-step declared by a proposal that has not landed,
+// named in the qualified form the proposal namespace uses. The step and
+// sub-step identifiers are part of the domain because a gate lands
+// green by seeding its register with an entry blocked on the work that
+// retires the entry, and because the audit records state findings as
+// they were written rather than the work still outstanding. A step
+// leaves the domain when its plan document stops declaring it, and a
+// sub-step leaves it when the proposal queue records the proposal as
+// landed.
 func openItemIDs(root string) map[string]bool {
 	out := openFindingIDs(root)
 	for id := range remediationStepIDs(root) {
+		out[id] = true
+	}
+	for id := range openProposalStepIDs(root) {
 		out[id] = true
 	}
 	return out
@@ -663,32 +670,48 @@ func openItemIDs(root string) map[string]bool {
 // (R11), and a sub-step as that identifier with a lowercase letter
 // suffix (R11a). A sub-step is as open as the step it sits under, so
 // the sub-step spelling is in the domain and an entry blocked on one
-// resolves. Any other spelling declares nothing, so a heading that
-// separates a prefix from its number with a hyphen is outside the
-// domain and an entry blocked on it fails the blocker rule.
+// resolves. A heading that separates a prefix from its number with a
+// hyphen belongs to the proposal namespace below, which a blocker names
+// in its qualified form, so it declares no plan step here.
 const remediationStepID = `[A-Z]+[0-9]+[a-z]?`
 
-// remediationStepHeadings holds every spelling a tracked plan uses to
-// declare a step in a markdown heading. All three are in use in the
-// plans this harness reads, and a step declared in any of them is
-// outstanding work, so an entry blocked on it resolves. Prose that
-// merely names a step, and a section heading that carries no step
-// identifier, declare nothing.
-var remediationStepHeadings = []*regexp.Regexp{
-	// The identifier opens the heading text: "### R3. Title".
-	regexp.MustCompile(`^#{2,6} (` + remediationStepID + `)\. `),
-	// The identifier follows a section number and precedes a colon:
-	// "### 3.6 R1a: register, prose, and Go symbols".
-	regexp.MustCompile(`^#{2,6} [0-9]+(?:\.[0-9]+)* (` + remediationStepID + `):`),
-	// The identifier closes the heading in parentheses:
-	// "## 3. Step 1: channel identification and naming (R1)".
-	regexp.MustCompile(`^#{2,6} .*\((` + remediationStepID + `)\)[ \t]*$`),
+// proposalStepID is the identifier a proposal gives one of its own
+// sub-steps: an uppercase name, a hyphen, and a number, optionally with
+// a lowercase sub-step suffix. The spelling is disjoint from
+// remediationStepID, so a plan step and a proposal sub-step can never
+// be confused for one another.
+const proposalStepID = `[A-Z]+-[0-9]+[a-z]?`
+
+// stepHeadingPatterns builds the heading spellings that declare an
+// identifier matching id. All three spellings are in use in the plans
+// and proposals this harness reads, and an identifier declared in any
+// of them names outstanding work. Prose that merely names a step, and a
+// section heading that carries no identifier, declare nothing.
+func stepHeadingPatterns(id string) []*regexp.Regexp {
+	return []*regexp.Regexp{
+		// The identifier opens the heading text: "### R3. Title".
+		regexp.MustCompile(`^#{2,6} (` + id + `)\. `),
+		// The identifier follows a section number and precedes a colon:
+		// "### 3.6 R1a: register, prose, and Go symbols".
+		regexp.MustCompile(`^#{2,6} [0-9]+(?:\.[0-9]+)* (` + id + `):`),
+		// The identifier closes the heading in parentheses:
+		// "## 3. Step 1: channel identification and naming (R1)".
+		regexp.MustCompile(`^#{2,6} .*\((` + id + `)\)[ \t]*$`),
+	}
 }
 
-// remediationStepHeadingID returns the step identifier a heading line
-// declares, and reports whether the line declares one at all.
-func remediationStepHeadingID(line string) (string, bool) {
-	for _, re := range remediationStepHeadings {
+var (
+	// remediationStepHeadings declares a step of a tracked plan.
+	remediationStepHeadings = stepHeadingPatterns(remediationStepID)
+	// proposalStepHeadings declares a sub-step of a proposal.
+	proposalStepHeadings = stepHeadingPatterns(proposalStepID)
+)
+
+// headingStepID returns the identifier a heading line declares under
+// one set of heading spellings, and reports whether the line declares
+// one at all.
+func headingStepID(line string, patterns []*regexp.Regexp) (string, bool) {
+	for _, re := range patterns {
 		if m := re.FindStringSubmatch(line); m != nil {
 			return m[1], true
 		}
@@ -696,13 +719,19 @@ func remediationStepHeadingID(line string) (string, bool) {
 	return "", false
 }
 
+// remediationStepHeadingID returns the plan step identifier a heading
+// line declares, and reports whether the line declares one at all.
+func remediationStepHeadingID(line string) (string, bool) {
+	return headingStepID(line, remediationStepHeadings)
+}
+
 // remediationStepIDs returns the step identifiers the root-level
-// remediation plans declare. The plans are the only documents that
-// carry outstanding work: a step leaves the domain when its plan stops
-// declaring it, which is what the plan's own closure step performs. A
-// proposal under proposals/ is a permanent staged record that keeps
-// declaring its steps after they land, so its headings are outside the
-// domain and a blocker naming one does not resolve.
+// remediation plans declare. A step leaves the domain when its plan
+// stops declaring it, which is what the plan's own closure step
+// performs. A proposal declares its own sub-steps in a separate
+// namespace, read by openProposalStepIDs, because a proposal keeps
+// declaring its sub-steps after it lands and so needs a retirement
+// signal of its own.
 func remediationStepIDs(root string) map[string]bool {
 	out := map[string]bool{}
 	docs, _ := filepath.Glob(filepath.Join(root, "*-remediation.md"))
@@ -718,6 +747,98 @@ func remediationStepIDs(root string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// proposalBlockerSeparator joins a proposal number to one of that
+// proposal's sub-step identifiers, so a blocker names the document that
+// declares the work as well as the work itself: "0042:WIRE-1". The
+// qualification is required rather than optional. A bare sub-step
+// identifier says nothing about which proposal owns it, several
+// proposals reuse the same sub-step names, and nothing would retire an
+// entry blocked on a name no document is measured against.
+const proposalBlockerSeparator = ":"
+
+// proposalNumber matches the leading number of a proposal filename,
+// which is how the proposal queue and every cross-reference name a
+// proposal.
+var proposalNumber = regexp.MustCompile(`^([0-9]{4})_`)
+
+// proposalLanded matches how the proposal queue records that a proposal
+// has landed or been closed out. That record is the retirement signal
+// for the proposal's sub-steps: a cluster stays on an in-flight status
+// until its proposal integrates, and the queue is the sole writer's
+// view of which proposals are still in flight.
+var proposalLanded = regexp.MustCompile(`\b(?:landed|closed):([0-9]{4})\b`)
+
+// openProposalStepIDs returns the qualified identifiers of the
+// sub-steps that in-flight proposals declare. A gate whose remediation
+// is staged by a proposal rather than by a plan step lands green by
+// seeding its register with an entry blocked on the sub-step that
+// retires the entry, so those sub-steps are open items for as long as
+// the proposal is in flight. A proposal the queue records as landed,
+// and a proposal whose own status line declares it superseded, declare
+// no outstanding work, so their sub-steps leave the domain and every
+// entry blocked on one fails the blocker rule.
+func openProposalStepIDs(root string) map[string]bool {
+	out := map[string]bool{}
+	landed := landedProposalNumbers(root)
+	files, _ := filepath.Glob(filepath.Join(root, "proposals", "*.md"))
+	for _, f := range files {
+		m := proposalNumber.FindStringSubmatch(filepath.Base(f))
+		if m == nil {
+			continue
+		}
+		number := m[1]
+		if landed[number] {
+			continue
+		}
+		body, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(body), "\n")
+		if proposalIsSuperseded(lines) {
+			continue
+		}
+		for _, line := range lines {
+			if id, ok := headingStepID(line, proposalStepHeadings); ok {
+				out[number+proposalBlockerSeparator+id] = true
+			}
+		}
+	}
+	return out
+}
+
+// landedProposalNumbers returns the proposals the queue records as
+// landed or closed. A queue that cannot be read retires nothing, which
+// leaves the superseded check and the expiry rule as the remaining
+// ends for an entry rather than certifying one indefinitely.
+func landedProposalNumbers(root string) map[string]bool {
+	out := map[string]bool{}
+	body, err := os.ReadFile(filepath.Join(root, "PROPOSAL-QUEUE.md"))
+	if err != nil {
+		return out
+	}
+	for _, m := range proposalLanded.FindAllStringSubmatch(string(body), -1) {
+		out[m[1]] = true
+	}
+	return out
+}
+
+// proposalIsSuperseded reports whether a proposal's own status line
+// declares it superseded. A superseded proposal will never be
+// implemented, so its sub-steps name no outstanding work even while the
+// queue still carries its cluster on an in-flight status.
+func proposalIsSuperseded(lines []string) bool {
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "- **Status") {
+			continue
+		}
+		if strings.Contains(line, "SUPERSEDED") {
+			return true
+		}
+	}
+	return false
 }
 
 // openFindingIDs returns the identifiers of the findings still marked

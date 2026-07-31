@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -419,7 +420,7 @@ const wellFormedRegister = `
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/04_system-components.md line 437
+  - subject: pkg/gateway/binding/registry.go
     verdict: tracked
     owner: alice
     opened_at: 2026-07-01
@@ -430,16 +431,16 @@ entries:
 
 func TestCheckRegisterWellFormed(t *testing.T) {
 	path := writeYAML(t, "exceptions-spec-citations.yaml", wellFormedRegister)
-	r := checkRegister("register", path, []string{"spec/04_system-components.md line 437"}, testRegisterRules())
+	r := checkRegister("register", path, []string{"pkg/gateway/binding/registry.go"}, testRegisterRules())
 	expectPass(t, r)
 }
 
 func TestCheckRegisterUnregisteredViolationFails(t *testing.T) {
 	path := writeYAML(t, "exceptions-spec-citations.yaml", wellFormedRegister)
 	r := checkRegister("register", path,
-		[]string{"spec/04_system-components.md line 437", "spec/10_gateway.md line 12"},
+		[]string{"pkg/gateway/binding/registry.go", "pkg/adapter/controlchannel.go"},
 		testRegisterRules())
-	expectFail(t, r, "unregistered violation", "spec/10_gateway.md line 12")
+	expectFail(t, r, "unregistered violation", "pkg/adapter/controlchannel.go")
 }
 
 func TestCheckRegisterPassedExpiryFails(t *testing.T) {
@@ -447,7 +448,7 @@ func TestCheckRegisterPassedExpiryFails(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: tracked
     owner: alice
     opened_at: 2026-01-01
@@ -463,7 +464,7 @@ func TestCheckRegisterBlockerWithNoOpenItemFails(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: tracked
     owner: alice
     opened_at: 2026-07-01
@@ -493,7 +494,7 @@ func TestCheckRegisterNilClockFailsClosed(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: tracked
     owner: alice
     opened_at: 2026-01-01
@@ -542,7 +543,7 @@ func TestCheckRegisterVerdictIsTheExemptionDisposition(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: %s
     owner: alice
     opened_at: 2026-07-01
@@ -567,7 +568,7 @@ func TestCheckRegisterIncompleteEntryFails(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: unclear
 `)
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()),
@@ -579,14 +580,14 @@ func TestCheckRegisterDuplicateSubjectFails(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: tracked
     owner: alice
     opened_at: 2026-07-01
     expiry: 2026-09-30
     blocker: F-1.2.3
     reason: First.
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: intentional
     owner: bob
     opened_at: 2026-07-01
@@ -753,7 +754,7 @@ func TestCheckRegisterNonDateFieldsFail(t *testing.T) {
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: intentional
     owner: alice
     opened_at: yesterday
@@ -849,11 +850,11 @@ func TestRemediationStepIDsReadsTrackedPlanDocuments(t *testing.T) {
 }
 
 // TestRemediationStepIDsRejectHyphenatedHeadingIdentifiers pins that a
-// heading identifier written as an uppercase prefix, a hyphen, and a
-// number declares no step. No tracked plan spells a step that way, and
-// admitting the spelling widens the open-item domain to labels that
-// name sections of other documents, so a register entry blocked on one
-// would resolve and never be retired by the plan that owns the work.
+// heading identifier written as an uppercase name, a hyphen, and a
+// number declares no plan step. No tracked plan spells a step that way;
+// that spelling belongs to the proposal namespace, which a blocker
+// names in its qualified form so the proposal that owns the work is
+// named alongside it.
 func TestRemediationStepIDsRejectHyphenatedHeadingIdentifiers(t *testing.T) {
 	root := t.TempDir()
 	plan := "### R3. Specification and test tooling\n" +
@@ -925,17 +926,17 @@ func TestRemediationSubStepInTrackedPlanResolvesAsAnOpenItem(t *testing.T) {
 	}
 }
 
-// TestRemediationStepIDsExcludeStagedProposalHeadings pins that a step
-// heading in a staged proposal is outside the open-item domain. A
-// proposal keeps declaring its steps after they land, so admitting its
-// headings would make the blocker rule resolve every identifier the
-// plan's vocabulary reuses and no entry could ever be retired by it.
-func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
-	root := stagedProposalRoot(t)
+// TestRemediationStepIDsExcludeProposalSubStepHeadings pins that a
+// proposal's own sub-step headings do not enter the plan-step
+// namespace. A plan step is named bare, and a proposal sub-step is
+// named qualified by its proposal, so the two namespaces stay disjoint
+// and a bare identifier is measured against the plans alone.
+func TestRemediationStepIDsExcludeProposalSubStepHeadings(t *testing.T) {
+	root := proposalStepRoot(t)
 	steps := remediationStepIDs(root)
-	for _, id := range []string{"R7", "R8"} {
+	for _, id := range []string{"WIRE-1", "GATE-2", "R7"} {
 		if steps[id] {
-			t.Errorf("a staged proposal heading must not declare an open step: %s in %v", id, steps)
+			t.Errorf("a proposal heading must not declare a plan step: %s in %v", id, steps)
 		}
 	}
 	if !steps["R3"] {
@@ -943,25 +944,197 @@ func TestRemediationStepIDsExcludeStagedProposalHeadings(t *testing.T) {
 	}
 }
 
-// stagedProposalRoot builds a tree carrying one remediation plan that
-// declares step R3 and one staged proposal whose headings spell steps
-// R7 and R8 in the same way a plan spells its own.
-func stagedProposalRoot(t *testing.T) string {
+// proposalStepRoot builds a tree carrying one remediation plan that
+// declares step R3 and three proposals: one still in flight, one the
+// queue records as landed, and one whose status line declares it
+// superseded. The in-flight and the landed proposal declare the same
+// sub-step identifier, so a case that passes on one and fails on the
+// other can only be reading the qualification.
+func proposalStepRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "gateway-remediation.md"),
-		[]byte("### R3. Specification and test tooling\n"), 0o644); err != nil {
-		t.Fatalf("write plan: %v", err)
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
 	}
+	write("gateway-remediation.md", "### R3. Specification and test tooling\n")
+	write("PROPOSAL-QUEUE.md", "### C-01 — a cluster\n- **status:** landed:0002\n")
 	if err := os.Mkdir(filepath.Join(root, "proposals"), 0o755); err != nil {
 		t.Fatalf("mkdir proposals: %v", err)
 	}
-	staged := "### R7. Add the enum and its validator\n" +
-		"### R8. Gate cases\n"
-	if err := os.WriteFile(filepath.Join(root, "proposals", "0001_new_x.md"), []byte(staged), 0o644); err != nil {
-		t.Fatalf("write proposal: %v", err)
-	}
+	write(filepath.Join("proposals", "0001_new_x.md"),
+		"- **Status:** Approved.\n"+
+			"### WIRE-1. Add the enum and its validator\n"+
+			"### 4.2 GATE-2: gate cases\n"+
+			"### R7. A step spelled the way a plan spells one\n")
+	write(filepath.Join("proposals", "0002_fix_y.md"),
+		"- **Status:** Implemented green.\n"+
+			"### WIRE-1. The same sub-step name, already landed\n")
+	write(filepath.Join("proposals", "0003_new_z.md"),
+		"- **Status: SUPERSEDED (2026-07-27). Do not implement.**\n"+
+			"### GATE-3. Work that will never be done\n")
 	return root
+}
+
+// TestProposalStepIDsAdmitInFlightSubSteps pins that the sub-steps of a
+// proposal that has not landed are open items, named by the proposal
+// that declares them. A gate whose remediation a proposal stages lands
+// green by seeding its register with an entry blocked on the sub-step
+// that retires the entry, so without this namespace that entry is
+// unwritable and the gate cannot land at all.
+func TestProposalStepIDsAdmitInFlightSubSteps(t *testing.T) {
+	steps := openProposalStepIDs(proposalStepRoot(t))
+	for _, want := range []string{"0001:WIRE-1", "0001:GATE-2"} {
+		if !steps[want] {
+			t.Errorf("%s should be an open item: %v", want, steps)
+		}
+	}
+}
+
+// TestProposalStepIDsExcludeLandedSubSteps pins the retirement signal
+// for the proposal namespace: once the queue records a proposal as
+// landed, its sub-steps stop resolving, so an entry blocked on one must
+// be retired rather than carried indefinitely.
+func TestProposalStepIDsExcludeLandedSubSteps(t *testing.T) {
+	steps := openProposalStepIDs(proposalStepRoot(t))
+	if steps["0002:WIRE-1"] {
+		t.Errorf("a landed proposal declares no open sub-step: %v", steps)
+	}
+	if !steps["0001:WIRE-1"] {
+		t.Errorf("the same sub-step name is still open under the in-flight proposal: %v", steps)
+	}
+}
+
+// TestProposalStepIDsExcludeSupersededSubSteps pins that a superseded
+// proposal names no outstanding work even while the queue still carries
+// its cluster, so an entry blocked on one of its sub-steps fails.
+func TestProposalStepIDsExcludeSupersededSubSteps(t *testing.T) {
+	steps := openProposalStepIDs(proposalStepRoot(t))
+	if steps["0003:GATE-3"] {
+		t.Errorf("a superseded proposal declares no open sub-step: %v", steps)
+	}
+}
+
+// TestRegisterBlockerNamingInFlightProposalSubStepResolves pins the
+// blocker rule against the route a gate staged by a proposal takes to
+// land green: an entry blocked on a sub-step of a proposal still in
+// flight resolves.
+func TestRegisterBlockerNamingInFlightProposalSubStepResolves(t *testing.T) {
+	root := proposalStepRoot(t)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - subject: pkg/adapter/controlchannel.go
+    verdict: tracked
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2099-01-01
+    blocker: 0001:WIRE-1
+    reason: Blocked on the proposal sub-step that retires the entry.
+`)
+	expectPass(t, checkRegister("register", path, nil, repoRegisterRules(root)))
+}
+
+// TestRegisterBlockerNamingLandedProposalSubStepFails pins the third
+// ratchet rule over the proposal namespace: a sub-step of a proposal
+// the queue records as landed is not outstanding work, so the entry
+// fails and the exemption ends with the proposal that promised it.
+func TestRegisterBlockerNamingLandedProposalSubStepFails(t *testing.T) {
+	root := proposalStepRoot(t)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - subject: pkg/adapter/controlchannel.go
+    verdict: deferred
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2099-01-01
+    blocker: 0002:WIRE-1
+    reason: Blocked on a sub-step of a proposal that has landed.
+`)
+	expectFail(t, checkRegister("register", path, nil, repoRegisterRules(root)),
+		"0002:WIRE-1", "does not resolve to an open item")
+}
+
+// TestRegisterBlockerNamingUnqualifiedProposalSubStepFails pins that a
+// proposal sub-step must be named together with the proposal that
+// declares it. Several proposals reuse the same sub-step names, so a
+// bare identifier names no document the harness can measure and nothing
+// would ever retire the entry.
+func TestRegisterBlockerNamingUnqualifiedProposalSubStepFails(t *testing.T) {
+	root := proposalStepRoot(t)
+	path := writeYAML(t, "exceptions-spec-citations.yaml", `
+kind: exception-register
+version: 1
+entries:
+  - subject: pkg/adapter/controlchannel.go
+    verdict: deferred
+    owner: alice
+    opened_at: 2026-07-01
+    expiry: 2099-01-01
+    blocker: WIRE-1
+    reason: Blocked on a sub-step named without its proposal.
+`)
+	expectFail(t, checkRegister("register", path, nil, repoRegisterRules(root)),
+		"WIRE-1", "does not resolve to an open item")
+}
+
+// TestEverySubStepAnInFlightProposalDeclaresResolvesAsAnOpenItem pins
+// the proposal namespace against the tracked tree: every sub-step an
+// un-landed proposal declares resolves as an open item, so a gate whose
+// remediation one of them stages can seed its register.
+func TestEverySubStepAnInFlightProposalDeclaresResolvesAsAnOpenItem(t *testing.T) {
+	root := repoRoot()
+	steps := openProposalStepIDs(root)
+	if len(steps) == 0 {
+		t.Skip("not-yet-applicable: no proposal in flight declares a sub-step")
+	}
+	rules := repoRegisterRules(root)
+	for id := range steps {
+		if !rules.resolvesBlocker(id) {
+			t.Errorf("a blocker naming the declared sub-step %s must resolve", id)
+		}
+	}
+}
+
+// retiredLineCitation matches a citation naming a specification file
+// and a line number. The migration replaces every such citation with an
+// anchored one, and the gates that drive it measure every tracked file
+// outside a small exclusion list, so a citation written as a fixture
+// enters the measured population with no route out other than deleting
+// the fixture.
+var retiredLineCitation = regexp.MustCompile(`spec/[0-9A-Za-z_./-]+\.md line [0-9]+`)
+
+// TestRegisterContractSourcesCarryNoLineCitation pins that neither the
+// register directory nor the contract's own cases seed the population
+// the citation migration measures. The register subject field is opaque
+// to the validator, so a case that needs a subject writes one in any
+// other vocabulary, and the directory's documentation models that
+// vocabulary for every register seeded later.
+func TestRegisterContractSourcesCarryNoLineCitation(t *testing.T) {
+	root := repoRoot()
+	paths := []string{filepath.Join("cmd", "lenny-test", "cmd_validate_yaml_test.go")}
+	entries, err := os.ReadDir(filepath.Join(root, "tests", "registers"))
+	if err != nil {
+		t.Fatalf("read tests/registers: %v", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			paths = append(paths, filepath.Join("tests", "registers", e.Name()))
+		}
+	}
+	for _, rel := range paths {
+		body, err := os.ReadFile(filepath.Join(root, rel))
+		if err != nil {
+			t.Fatalf("read %s: %v", rel, err)
+		}
+		if m := retiredLineCitation.FindString(string(body)); m != "" {
+			t.Errorf("%s carries the retired citation form %q; write the subject in another vocabulary", rel, m)
+		}
+	}
 }
 
 // TestRegisterBlockerNamingOpenRemediationStepResolves pins that a
@@ -970,12 +1143,12 @@ func stagedProposalRoot(t *testing.T) string {
 // domain holding the audit findings alone would reject every entry the
 // remediation plan writes.
 func TestRegisterBlockerNamingOpenRemediationStepResolves(t *testing.T) {
-	root := stagedProposalRoot(t)
+	root := proposalStepRoot(t)
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: tracked
     owner: alice
     opened_at: 2026-07-01
@@ -986,25 +1159,25 @@ entries:
 	expectPass(t, checkRegister("register", path, nil, repoRegisterRules(root)))
 }
 
-// TestRegisterBlockerNamingStagedProposalStepFails pins the third
-// ratchet rule: an entry blocked on a step identifier that only a
-// staged proposal declares fails, because that step is not outstanding
-// work a plan carries. Without this the rule resolves every identifier
-// the proposals have ever used and only the expiry rule can end an
-// entry.
-func TestRegisterBlockerNamingStagedProposalStepFails(t *testing.T) {
-	root := stagedProposalRoot(t)
+// TestRegisterBlockerNamingPlanStepOnlyAProposalDeclaresFails pins the
+// third ratchet rule over the plan namespace: a bare identifier is
+// measured against the plan documents alone, so an entry blocked on a
+// plan-spelled identifier that only a proposal declares fails. A
+// proposal names its own work in the qualified form, which carries its
+// own retirement signal.
+func TestRegisterBlockerNamingPlanStepOnlyAProposalDeclaresFails(t *testing.T) {
+	root := proposalStepRoot(t)
 	path := writeYAML(t, "exceptions-spec-citations.yaml", `
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/10_gateway.md line 12
+  - subject: pkg/adapter/controlchannel.go
     verdict: deferred
     owner: alice
     opened_at: 2026-07-01
     expiry: 2099-01-01
     blocker: R7
-    reason: Blocked on a step a staged proposal declares.
+    reason: Blocked on a plan-spelled step that only a proposal declares.
 `)
 	expectFail(t, checkRegister("register", path, nil, repoRegisterRules(root)),
 		"R7", "does not resolve to an open item")

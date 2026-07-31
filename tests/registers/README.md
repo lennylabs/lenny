@@ -46,7 +46,7 @@ Example, in `exceptions-spec-citations.yaml`:
 kind: exception-register
 version: 1
 entries:
-  - subject: spec/04_system-components.md line 437
+  - subject: spec/04_system-components.md §4.6
     verdict: tracked
     owner: alice
     opened_at: 2026-07-31
@@ -54,6 +54,14 @@ entries:
     blocker: R3
     reason: The citation resolves after the section split lands.
 ```
+
+A subject is written in the vocabulary the gate measures, and the
+validator holds it to no format. A subject that names a specification
+location uses the anchored form above. The citation migration rewrites
+every citation that names a file and a line number into that form, and
+its gates measure every tracked file in this directory, so a register
+written in the retired form would enter the population that migration
+is closing.
 
 ## Ratchet rules
 
@@ -66,16 +74,22 @@ inside the tier-0 static check:
 3. An entry whose `blocker` resolves to no open item fails, so an
    exemption names outstanding work.
 
-The open-item domain the harness runs with holds two namespaces: the
-findings still marked `OPEN` in `BUILD-GAPS.md` and `TEST-GAPS.md`, and
-the steps the root-level remediation plans declare, including a sub-step
-written with a lowercase suffix such as `R11a`. A gate lands green by
-seeding its register with an entry blocked on the remediation step that
-retires the entry, so a step identifier resolves in the same way a
-finding identifier does, and a step leaves the domain when its plan
-stops declaring it. A heading in a staged proposal under `proposals/` is
-outside the domain: a proposal keeps declaring its steps after they
-land, so a blocker naming one would never stop resolving.
+The open-item domain the harness runs with holds three namespaces:
+
+- The findings still marked `OPEN` in `BUILD-GAPS.md` and `TEST-GAPS.md`.
+- The steps the root-level remediation plans declare, including a
+  sub-step written with a lowercase suffix such as `R11a`. A step leaves
+  the domain when its plan stops declaring it.
+- The sub-steps of a proposal that has not landed, named by the proposal
+  that declares them, as in `0042:WIRE-1`. The qualification is
+  required, because several proposals reuse the same sub-step names. A
+  sub-step leaves the domain when `PROPOSAL-QUEUE.md` records the
+  proposal as landed, and a proposal whose own status line declares it
+  superseded is out of the domain from that point.
+
+A gate lands green by seeding its register with an entry blocked on the
+work that retires the entry, so a step or sub-step identifier resolves
+in the same way a finding identifier does.
 
 A register file that is missing or does not parse fails rather than
 exempting nothing silently.
