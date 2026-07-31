@@ -18,7 +18,8 @@ It is the implementation stage of the proposal pipeline: `change-proposal` write
 
 ## Hard constraints
 
-- Spec first. The staged spec edits are applied and verified, and committed as their own commit, before any code is written.
+- Spec first. The staged spec edits are applied and verified before any code is written, **one sub-step at a time**: each sub-step is applied, verified to clean, and committed on its own before the next begins. Later sub-steps consume what earlier ones produce, so applying every file at once discards that order and leaves the verification loop unable to tell which sub-step is wrong. Per sub-step, a defect is attributable to the sub-step that introduced it and a bad sub-step is revertable without discarding the ones that already verified clean.
+- An edit whose anchor cannot be located with certainty **stops the run** (`status: "spec-unappliable"`); it is never skipped so the remaining edits can proceed. Skipping leaves a file in which a later discrepancy cannot be told apart from an edit that never ran, which is the state the verification loop cannot converge out of. A clean stop names what blocked; a partial tree does not.
 - Spec edits are applied only through this skill's verified apply loop, never by hand. The guard hook blocks direct `spec/` writes unless an approved proposal is pending; once the proposal reads "Applied to spec" the hook blocks spec writes again, so the code phase cannot touch `spec/`.
 - Spec content rules hold over verbatim application: the spec never references source code paths, and cross-references other spec content by section number, never line number. A new section or subsection is appended at the end of its level and numbered as the next ordinal, never inserted between existing siblings, so existing numbering and cross-references stay stable. The apply loop rephrases or drops staged text that would violate these and records the deviation.
 - Code changes follow `.claude/rules/spec-driven-development.md`, `.claude/rules/code-best-practices.md`, and `.claude/rules/test-coverage.md`: every behavior traces to a spec section, tests run across every tier the change reaches, and they pass.
@@ -59,8 +60,9 @@ On interruption (auth expiry, crash): stop the stale task with TaskStop, then re
 3. On `status: "spec-only"`: the spec is landed, verified, and committed; report it and the findings left for the code stage.
 4. On `status: "implemented-not-green"`: report which tiers failed, whether coverage fell below the floor, and any unresolved design-conformance findings (`reviewFindings`); the findings are left OPEN and the commits remain on the branch. The `resumeNote` says how to continue.
 5. On `status: "build-step-stuck"`: a build step stayed red after `maxStepAttempts`, so the sequence aborted before its dependents. Report the `stuckStep`, the spec and partial code commits on the branch, and the `resumeNote`; the findings are left OPEN.
-6. On `status: "not-approved"`, `"spec-not-clean"`, `"spec-applied-with-blockers"`, or `"not-aligned"`: report the reason. `spec-not-clean` and `spec-applied-with-blockers` leave the spec edits in the working tree for inspection; `not-aligned` means a re-run found the spec drifted from the proposal.
-7. Do not push or open a PR unless the user asks.
+6. On `status: "spec-unappliable"`: an edit's anchor could not be located, so the run stopped at that edit rather than skipping it. Report the `substep`, the unappliable edits with their reasons, and that sub-steps before it are already committed. The proposal must state the missing anchor, title, or value before a re-run; revert `spec/` to the last sub-step commit first.
+7. On `status: "not-approved"`, `"spec-not-clean"`, `"spec-applied-with-blockers"`, or `"not-aligned"`: report the reason. `spec-not-clean` now names the `substep` that failed to converge. `spec-not-clean` and `spec-applied-with-blockers` leave the spec edits in the working tree for inspection; `not-aligned` means a re-run found the spec drifted from the proposal.
+8. Do not push or open a PR unless the user asks.
 
 ## The subworkflow
 

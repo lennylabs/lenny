@@ -13,7 +13,12 @@
 //   }})
 //
 // Spec always comes first: the staged spec edits are applied and verified
-// before any code. With implementCode false the run stops after the spec
+// before any code, one sub-step at a time. Each sub-step is applied, verified
+// to clean, and committed before the next begins, so a defect is attributable
+// to the sub-step that introduced it and a bad sub-step is revertable without
+// discarding the ones that already verified clean. An edit whose anchor cannot
+// be located stops the run rather than being skipped, because a partially
+// applied file makes every other discrepancy ambiguous. With implementCode false the run stops after the spec
 // is landed and committed (the former spec-apply behavior). The code phase
 // is the implement-proposal-build subworkflow (blast radius + ordered
 // build sequence + step-by-step implementation with tests).
@@ -241,130 +246,226 @@ if (plan.specEdits.length === 0) {
       files.length +
       " files; applying",
   );
-  const applyResults = (
-    await parallel(
-      files.map((f) => () => {
-        const edits = plan.specEdits.filter((e) => e.targetFile === f);
-        return agent(
-          "Apply staged spec edits from an approved proposal to one spec file.\n\n" +
-            "HARD CONSTRAINT: the only file you may edit is " +
-            repo +
-            "/" +
-            f +
-            ". Never modify the proposal or any other file.\n\n" +
-            "Proposal: " +
-            proposal +
-            " (read the whole 'Proposed spec changes' section first for context).\n" +
-            "Edits to apply to this file, in order:\n" +
-            JSON.stringify(edits, null, 2) +
-            "\n\nFor each edit: read the proposal subsection, locate the anchor in the target file by its quoted text and section heading, and apply the staged text exactly as written (fenced blocks verbatim; replacement instructions replace exactly the text they name). " +
-            SPEC_RULES +
-            "\n\nIf an anchor cannot be located with certainty, skip that edit and record it as unappliable with the reason; never guess a location. Return the applied edit ids, the unappliable edits, and every rule-forced deviation.",
-          { schema: APPLY_RESULT, label: "apply:" + f.split("/").pop(), phase: "Apply spec" },
-        );
-      }),
-    )
-  ).filter(Boolean);
 
-  unappliable = applyResults.flatMap((r) => r.unappliable);
-  deviations = applyResults.flatMap((r) => r.deviations);
-  appliedIds = new Set(applyResults.flatMap((r) => r.applied));
-  if (deviations.length > 0) log(deviations.length + " rule-forced deviations recorded");
-  if (unappliable.length > 0) log(unappliable.length + " edits unappliable (drifted anchors)");
+  // Apply sub-step by sub-step rather than file by file across the whole proposal.
+  // A large proposal stages its edits as an ordered sequence of sub-steps, each with
+  // its own exit criteria and its own gates that go green at its exit, and later
+  // sub-steps consume what earlier ones produce. Applying every file at once
+  // discards that order: a defect introduced by the first sub-step surfaces only
+  // after the last one has been applied on top of it, and the verification loop then
+  // sees one undifferentiated tree in which it cannot tell which sub-step is wrong.
+  // Per sub-step the tree is verified and committed before the next begins, so a
+  // defect is attributable to the sub-step that introduced it and a bad sub-step is
+  // revertable without discarding the ones that already verified clean.
+  const substeps = [];
+  for (const e of plan.specEdits) {
+    if (!substeps.includes(e.subsection)) substeps.push(e.subsection);
+  }
+  log(
+    plan.specEdits.length +
+      " staged spec edits across " +
+      files.length +
+      " files in " +
+      substeps.length +
+      " sub-step(s); applying one sub-step at a time",
+  );
 
-  const verifiableEdits = plan.specEdits.filter((e) => appliedIds.has(e.id));
-  const DEVIATION_NOTE =
-    deviations.length > 0
-      ? "\n\nRecorded rule-forced deviations (EXPECTED differences from the staged text; do not report them as discrepancies):\n" +
-        JSON.stringify(deviations, null, 2)
-      : "";
-
-  const verifyFilePrompt = (f, edits, round) =>
-    "You verify that applied spec edits align exactly with the proposal that staged them. Round " +
-    round +
-    ".\n\nYou are a read-only verifier; do not edit any file. Work in " +
-    repo +
-    ".\n\nProposal: " +
-    proposal +
-    ". Target file: " +
-    f +
-    ". Edits expected in this file:\n" +
-    JSON.stringify(edits, null, 2) +
-    "\n\nMethod: read each proposal subsection; read the current target file; run `git diff -- " +
-    f +
-    "` to see exactly what changed against the clean baseline. Verify all of:\n" +
-    "1. Every staged block appears at its anchored location, character-exact (modulo the recorded deviations below).\n" +
-    "2. Text the proposal replaces or removes is gone, and nothing it keeps was altered.\n" +
-    "3. The diff for this file contains nothing beyond the staged edits: no stray edits, no duplicate insertions, no truncated surroundings.\n" +
-    "4. Every cross-reference the applied text adds resolves: a §X.Y number names an existing section, and a relative markdown link's anchor exists in its target file.\n" +
-    "5. No added line references source code files or implementation paths, and no added cross-reference uses line numbers (flag cross-references only; incidental prose containing the word 'line' is fine).\n" +
-    DEVIATION_NOTE +
-    "\n\nReport each discrepancy with exact expected and observed quotes and a concrete fix. An empty list means the file aligns.";
-
-  const sweepPrompt = (round) =>
-    "You are a mechanical rules sweep over the applied spec diff. Round " +
-    round +
-    ".\n\nYou are a read-only verifier; do not edit any file. Work in " +
-    repo +
-    ".\n\nRun `git diff -- spec/`. Inspect the added lines (lines starting with '+') for the first two checks below, and compare added against removed lines (lines starting with '-') for the renumbering check. Flag as a discrepancy:\n" +
-    "- any reference to source code files or implementation paths: pkg/, cmd/, charts/, sdks/, tests/, migrations/, or a source file extension such as .go (added lines only);\n" +
-    "- any cross-reference by line number ('line 123', 'lines 45-48') to spec or any other file. Cross-references only; incidental prose is fine (added lines only);\n" +
-    "- any sign that a new section or subsection was inserted between existing ones instead of appended at the end of its level: an existing heading whose number changed (the diff removes a heading at one number and adds the same titled heading at a higher number), or a new heading inserted ahead of an existing sibling so the following siblings are renumbered. Renumbering an existing section breaks its cross-references; a new section or subsection belongs at the end of its level. Quote the renumbered headings, name the file, and give the fix (append the new section or subsection at the end of its level and restore the original numbering of the rest).\n" +
-    "Pre-existing text that the diff leaves unchanged is out of scope. Quote each offending line exactly, name its file, and give the rule-conformant replacement." +
-    DEVIATION_NOTE;
-
-  const fixPrompt = (f, found, round) =>
-    "You fix verified discrepancies between applied spec edits and the proposal that staged them. Round " +
-    round +
-    ".\n\nHARD CONSTRAINT: the only file you may edit is " +
-    repo +
-    "/" +
-    f +
-    ". Never modify the proposal or any other file.\n\nProposal: " +
-    proposal +
-    ".\n" +
-    SPEC_RULES +
-    "\n\nDiscrepancies to fix (the expected text is authoritative except where a content rule forces a deviation, which you record in your reply):\n" +
-    JSON.stringify(found, null, 2) +
-    "\n\nMake the smallest edits that resolve each discrepancy. Return a short summary of each fix.";
-
-  let round = 0;
-  let clean = false;
-  while (round < maxApplyRounds && !clean) {
-    round++;
-    log("Spec verification round " + round);
-    const checks = files.map((f) => () =>
-      agent(verifyFilePrompt(f, verifiableEdits.filter((e) => e.targetFile === f), round), {
-        schema: DISCREPANCIES,
-        label: "verify:" + f.split("/").pop() + ":r" + round,
-        phase: "Apply spec",
-      }),
+  for (const ss of substeps) {
+    const ssEdits = plan.specEdits.filter((e) => e.subsection === ss);
+    const ssFiles = [...new Set(ssEdits.map((e) => e.targetFile))];
+    log(
+      "Sub-step " + ss + ": " + ssEdits.length + " edit(s) across " + ssFiles.length + " file(s)",
     );
-    checks.push(() =>
-      agent(sweepPrompt(round), { schema: DISCREPANCIES, label: "verify:rules-sweep:r" + round, phase: "Apply spec" }),
-    );
-    const results = (await parallel(checks)).filter(Boolean);
-    if (results.length === 0) {
-      applyHistory.push({ round, discrepancies: -1, note: "verifiers failed" });
-      break;
+    const applyResults = (
+      await parallel(
+        ssFiles.map((f) => () => {
+          const edits = ssEdits.filter((e) => e.targetFile === f);
+          return agent(
+            "Apply staged spec edits from an approved proposal to one spec file.\n\n" +
+              "HARD CONSTRAINT: the only file you may edit is " +
+              repo +
+              "/" +
+              f +
+              ". Never modify the proposal or any other file.\n\n" +
+              "Proposal: " +
+              proposal +
+              " (read the whole 'Proposed spec changes' section first for context).\n" +
+              "Edits to apply to this file, in order:\n" +
+              JSON.stringify(edits, null, 2) +
+              "\n\nFor each edit: read the proposal subsection, locate the anchor in the target file by its quoted text and section heading, and apply the staged text exactly as written (fenced blocks verbatim; replacement instructions replace exactly the text they name). " +
+              SPEC_RULES +
+              "\n\nIf an anchor cannot be located with certainty, STOP: record that edit as unappliable with the reason, apply NOTHING FURTHER in this file, and return what you applied up to that point. Never guess a location, and never skip an edit in order to continue with the ones after it. Skipping leaves a file in which a later discrepancy cannot be told apart from an edit that never ran, and that is the state the verification loop cannot converge out of; a clean stop at the first unappliable edit is diagnosable, a partially applied file is not. Return the applied edit ids, the unappliable edits, and every rule-forced deviation.",
+            { schema: APPLY_RESULT, label: "apply:" + ss + ":" + f.split("/").pop(), phase: "Apply spec" },
+          );
+        }),
+      )
+    ).filter(Boolean);
+
+    unappliable = applyResults.flatMap((r) => r.unappliable);
+    deviations = deviations.concat(applyResults.flatMap((r) => r.deviations));
+    for (const id of applyResults.flatMap((r) => r.applied)) appliedIds.add(id);
+    if (deviations.length > 0) log(deviations.length + " rule-forced deviations recorded");
+
+    // Stop on unappliable rather than verifying a partial tree. An edit that could
+    // not be located means the proposal and the tree disagree about something the
+    // proposal was responsible for stating, and no number of verify-and-fix rounds
+    // resolves that: the fixer can edit spec/ but not the proposal, so the same
+    // discrepancy returns every round. Worse, a partially applied tree makes every
+    // OTHER discrepancy ambiguous, because a reviewer cannot tell "the applied text
+    // is wrong" from "that edit never ran", which is what made both earlier
+    // applications of a large proposal oscillate instead of converge. Returning here
+    // leaves the applied prefix in the working tree for inspection and names exactly
+    // what blocked, which is the actionable report.
+    if (unappliable.length > 0) {
+      log(
+        unappliable.length +
+          " edit(s) unappliable; stopping before verification rather than verifying a partial tree",
+      );
+      return {
+        status: "spec-unappliable",
+        reason:
+          "an edit could not be located with certainty, so application stopped at that edit rather than skipping it. " +
+          "The proposal must state the missing anchor, title, or value before it can be applied. The partially applied " +
+          "edits are in the working tree for inspection; revert spec/ before re-running.",
+        unappliable,
+        applied: [...appliedIds],
+        deviations,
+      };
     }
-    const found = results.flatMap((r) => r.discrepancies);
-    applyHistory.push({ round, discrepancies: found.length, titles: found.map((d) => d.title) });
-    log("Round " + round + ": " + found.length + " discrepancies");
-    if (found.length === 0) {
-      clean = true;
-      break;
-    }
-    const fixFiles = [...new Set(found.map((d) => d.file))];
-    await parallel(
-      fixFiles.map((f) => () =>
-        agent(fixPrompt(f, found.filter((d) => d.file === f), round), {
-          label: "fix:" + f.split("/").pop() + ":r" + round,
+
+    const verifiableEdits = ssEdits.filter((e) => appliedIds.has(e.id));
+    const DEVIATION_NOTE =
+      deviations.length > 0
+        ? "\n\nRecorded rule-forced deviations (EXPECTED differences from the staged text; do not report them as discrepancies):\n" +
+          JSON.stringify(deviations, null, 2)
+        : "";
+
+    const verifyFilePrompt = (f, edits, round) =>
+      "You verify that applied spec edits align exactly with the proposal that staged them. Round " +
+      round +
+      ".\n\nYou are a read-only verifier; do not edit any file. Work in " +
+      repo +
+      ".\n\nProposal: " +
+      proposal +
+      ". Target file: " +
+      f +
+      ". Edits expected in this file:\n" +
+      JSON.stringify(edits, null, 2) +
+      "\n\nMethod: read each proposal subsection; read the current target file; run `git diff -- " +
+      f +
+      "` to see exactly what changed against the clean baseline. Verify all of:\n" +
+      "1. Every staged block appears at its anchored location, character-exact (modulo the recorded deviations below).\n" +
+      "2. Text the proposal replaces or removes is gone, and nothing it keeps was altered.\n" +
+      "3. The diff for this file contains nothing beyond the staged edits: no stray edits, no duplicate insertions, no truncated surroundings.\n" +
+      "4. Every cross-reference the applied text adds resolves: a §X.Y number names an existing section, and a relative markdown link's anchor exists in its target file.\n" +
+      "5. No added line references source code files or implementation paths, and no added cross-reference uses line numbers (flag cross-references only; incidental prose containing the word 'line' is fine).\n" +
+      DEVIATION_NOTE +
+      "\n\nReport each discrepancy with exact expected and observed quotes and a concrete fix. An empty list means the file aligns.";
+
+    const sweepPrompt = (round) =>
+      "You are a mechanical rules sweep over the applied spec diff. Round " +
+      round +
+      ".\n\nYou are a read-only verifier; do not edit any file. Work in " +
+      repo +
+      ".\n\nRun `git diff -- spec/`. Inspect the added lines (lines starting with '+') for the first two checks below, and compare added against removed lines (lines starting with '-') for the renumbering check. Flag as a discrepancy:\n" +
+      "- any reference to source code files or implementation paths: pkg/, cmd/, charts/, sdks/, tests/, migrations/, or a source file extension such as .go (added lines only);\n" +
+      "- any cross-reference by line number ('line 123', 'lines 45-48') to spec or any other file. Cross-references only; incidental prose is fine (added lines only);\n" +
+      "- any sign that a new section or subsection was inserted between existing ones instead of appended at the end of its level: an existing heading whose number changed (the diff removes a heading at one number and adds the same titled heading at a higher number), or a new heading inserted ahead of an existing sibling so the following siblings are renumbered. Renumbering an existing section breaks its cross-references; a new section or subsection belongs at the end of its level. Quote the renumbered headings, name the file, and give the fix (append the new section or subsection at the end of its level and restore the original numbering of the rest).\n" +
+      "Pre-existing text that the diff leaves unchanged is out of scope. Quote each offending line exactly, name its file, and give the rule-conformant replacement." +
+      DEVIATION_NOTE;
+
+    const fixPrompt = (f, found, round) =>
+      "You fix verified discrepancies between applied spec edits and the proposal that staged them. Round " +
+      round +
+      ".\n\nHARD CONSTRAINT: the only file you may edit is " +
+      repo +
+      "/" +
+      f +
+      ". Never modify the proposal or any other file.\n\nProposal: " +
+      proposal +
+      ".\n" +
+      SPEC_RULES +
+      "\n\nDiscrepancies to fix (the expected text is authoritative except where a content rule forces a deviation, which you record in your reply):\n" +
+      JSON.stringify(found, null, 2) +
+      "\n\nMake the smallest edits that resolve each discrepancy. Return a short summary of each fix.";
+
+    let round = 0;
+    let clean = false;
+    while (round < maxApplyRounds && !clean) {
+      round++;
+      log("  " + ss + " verification round " + round);
+      const checks = ssFiles.map((f) => () =>
+        agent(verifyFilePrompt(f, verifiableEdits.filter((e) => e.targetFile === f), round), {
+          schema: DISCREPANCIES,
+          label: "verify:" + ss + ":" + f.split("/").pop() + ":r" + round,
           phase: "Apply spec",
         }),
-      ),
+      );
+      checks.push(() =>
+        agent(sweepPrompt(round), { schema: DISCREPANCIES, label: "verify:" + ss + ":rules-sweep:r" + round, phase: "Apply spec" }),
+      );
+      const results = (await parallel(checks)).filter(Boolean);
+      if (results.length === 0) {
+        applyHistory.push({ substep: ss, round, discrepancies: -1, note: "verifiers failed" });
+        break;
+      }
+      const found = results.flatMap((r) => r.discrepancies);
+      applyHistory.push({ substep: ss, round, discrepancies: found.length, titles: found.map((d) => d.title) });
+      log("  " + ss + " round " + round + ": " + found.length + " discrepancies");
+      if (found.length === 0) {
+        clean = true;
+        break;
+      }
+      const fixFiles = [...new Set(found.map((d) => d.file))];
+      await parallel(
+        fixFiles.map((f) => () =>
+          agent(fixPrompt(f, found.filter((d) => d.file === f), round), {
+            label: "fix:" + ss + ":" + f.split("/").pop() + ":r" + round,
+            phase: "Apply spec",
+          }),
+        ),
+      );
+    }
+    if (!clean) {
+      specStatus = "not-clean";
+      return {
+        status: "spec-not-clean",
+        reason:
+          "sub-step " +
+          ss +
+          " did not converge within " +
+          maxApplyRounds +
+          " verification rounds. Sub-steps before it are committed; its own edits are in the working " +
+          "tree for inspection. Revert spec/ to the last sub-step commit before re-running.",
+        substep: ss,
+        applyHistory,
+        unappliable,
+      };
+    }
+
+    // Commit this sub-step before the next one starts, so the next sub-step is
+    // applied against a clean baseline and its diff is its own.
+    await agent(
+      "Commit the spec edits just applied for one sub-step of an approved proposal.\n\n" +
+        "HARD CONSTRAINT: commit only files under spec/. Do not edit any file, do not amend an " +
+        "existing commit, and do not touch the proposal.\n\n" +
+        "Proposal: " +
+        proposal +
+        "\nSub-step just applied and verified: " +
+        ss +
+        "\n\nRun `git status --porcelain -- spec/` and `git diff --stat -- spec/` to see what changed, " +
+        "stage those files, and commit on the current branch with a message in the repository's " +
+        "convention (read `git log --oneline -5` first) describing what the spec now says. The message " +
+        "references durable sources only: it may name the proposal file path, and it MUST NOT carry the " +
+        "proposal's internal scaffolding labels, which are its change or section ids, decision ids, " +
+        "review pass numbers, or a step number that exists only in the proposal, even if git log shows " +
+        "prior commits that used them. Describe the behavior the spec now states instead. If nothing " +
+        "under spec/ changed, commit nothing and say so.",
+      { label: "commit-spec:" + ss, phase: "Apply spec" },
     );
+    log("Sub-step " + ss + " verified and committed");
   }
+
 
   specStatus = clean ? (unappliable.length > 0 ? "applied-with-blockers" : "applied") : "not-clean";
 
@@ -388,12 +489,15 @@ if (plan.specEdits.length === 0) {
 
   // Clean apply: record the status on the proposal and commit the spec edits.
   await agent(
-    "Record application on a proposal's Status bullet, then commit the applied spec edits.\n\n" +
+    "Record application on a proposal's Status bullet and commit that change.\n\n" +
       "Work in " +
       repo +
       ". Edit only " +
       proposal +
-      " (the Status bullet) and commit the applied spec/ files alongside it. Do not edit code or other files.\n\n" +
+      " (the Status bullet). Do not edit code, spec/, or any other file.\n\n" +
+      "The spec edits are ALREADY COMMITTED: each sub-step was applied, verified, and committed on its " +
+      "own as it landed, so `git status --porcelain -- spec/` is expected to be empty here and there is " +
+      "nothing under spec/ left to stage. This commit records only that the proposal has been applied.\n\n" +
       '1. In ' +
       proposal +
       ', replace the Status bullet\'s leading state (for example "Approved for implementation as written (...).") with: "Applied to spec (' +
@@ -401,14 +505,18 @@ if (plan.specEdits.length === 0) {
       ')." Preserve later clauses that remain true; follow ' +
       repo +
       "/.claude/rules/doc-style.md.\n" +
-      "2. Commit the changed spec/ files together with " +
+      "2. Commit " +
       relProposal +
-      " on the current branch, message in the repository's convention (read `git log --oneline -5`), e.g. 'spec: apply " +
+      " on the current branch, message in the repository's convention (read `git log --oneline -5`), e.g. " +
+      "'proposals: record " +
       relProposal +
-      "'. Spec lands as its own commit before any code. The commit message references durable sources only: it may name the proposal file path (above) or a BUILD-GAPS finding id for traceability, but must NOT carry the proposal's internal scaffolding labels — its change/section ids (`S1`, `SPEC-D`), decision ids (`D8`, `RES-1`), review pass numbers, or a step that exists only in the proposal — even if `git log` shows prior commits that used them.",
+      " as applied to spec'. The commit message references durable sources only: it may name the proposal " +
+      "file path or a BUILD-GAPS finding id for traceability, but must NOT carry the proposal's internal " +
+      "scaffolding labels, which are its change or section ids, decision ids, review pass numbers, or a " +
+      "step that exists only in the proposal, even if `git log` shows prior commits that used them.",
     { label: "mark-and-commit-spec", phase: "Apply spec" },
   );
-  log("Spec applied, status recorded, and committed");
+  log("Spec applied and committed per sub-step; status recorded");
 }
 
 // ---- Implement code (optional) via the build subworkflow ----
