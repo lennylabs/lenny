@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MIT
+#
+# Per-occurrence senses the name pass reads. The reserved-phrase class
+# excludes it for the same reason a citation gate excludes its baseline.
+kind: reserved-phrase-senses
+version: 1
+entries: []

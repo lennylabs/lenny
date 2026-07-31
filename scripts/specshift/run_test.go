@@ -198,40 +198,131 @@ func TestClassReadDomainIsExportedForTheReservedPhraseAndIdentifierClasses(t *te
 	if len(records) != 3 {
 		t.Fatalf("PlanningRecords() = %v", records)
 	}
-	for _, p := range []scope.Pass{scope.Name, scope.Identifier} {
-		domain, err := scope.ClassReadDomain(context.Background(), list, p)
+	for _, c := range []scope.Class{scope.ClassReservedPhrase, scope.ClassIdentifier} {
+		domain, err := scope.ClassReadDomain(context.Background(), list, c)
 		if err != nil {
-			t.Fatalf("ClassReadDomain(%s): %v", p, err)
+			t.Fatalf("ClassReadDomain(%s): %v", c, err)
 		}
 		in := membership(domain)
 		for _, rec := range records {
 			if in[rec] {
-				t.Errorf("%s class read domain admits %s", p, rec)
+				t.Errorf("%s class read domain admits %s", c, rec)
 			}
 		}
 		// The generated artifacts stay in the class read domain: the
 		// residual scan ranges wider than the pass writes.
 		if !in["charts/lenny/crds/lenny.dev_runtimes.yaml"] {
-			t.Errorf("%s class read domain omits a generated artifact", p)
+			t.Errorf("%s class read domain omits a generated artifact", c)
 		}
 		if !in["pkg/carrier/carrier.go"] {
-			t.Errorf("%s class read domain omits the ordinary carrier", p)
+			t.Errorf("%s class read domain omits the ordinary carrier", c)
 		}
 	}
-	for _, p := range []scope.Pass{scope.Anchor, scope.Line} {
-		domain, err := scope.ClassReadDomain(context.Background(), list, p)
+	for _, c := range []scope.Class{scope.ClassAnchor, scope.ClassLineCitations} {
+		domain, err := scope.ClassReadDomain(context.Background(), list, c)
 		if err != nil {
-			t.Fatalf("ClassReadDomain(%s): %v", p, err)
+			t.Fatalf("ClassReadDomain(%s): %v", c, err)
 		}
 		in := membership(domain)
 		for _, rec := range records {
 			if !in[rec] {
-				t.Errorf("%s class read domain omits %s", p, rec)
+				t.Errorf("%s class read domain omits %s", c, rec)
 			}
 		}
 	}
-	if _, err := scope.ClassReadDomain(context.Background(), list, scope.Pass("reduction")); err == nil {
+	if _, err := scope.ClassReadDomain(context.Background(), list, scope.Class("reduction")); err == nil {
 		t.Error("ClassReadDomain with an unknown class returned no error")
+	}
+}
+
+// TestClassReadDomainExcludesTheClassOwnRegisters pins the third
+// exclusion of a class's read domain. A residual entry holds a copy of
+// its member's text, so a scan that read its own residual register, or
+// the pass or baseline register its gate consumes, would report that
+// copy under the register's own path as a further member, and the entry
+// seeded for the copy would add another copy. The seeding does not
+// converge. The exclusion is per class: another class's register stays
+// ordinary tree content, because a member found there is recorded in a
+// register the reading class does not open.
+func TestClassReadDomainExcludesTheClassOwnRegisters(t *testing.T) {
+	t.Parallel()
+	list, _ := treeDomain(t)
+	domain, err := scope.ClassReadDomain(context.Background(), list, scope.ClassReservedPhrase)
+	if err != nil {
+		t.Fatalf("ClassReadDomain(%s): %v", scope.ClassReservedPhrase, err)
+	}
+	in := membership(domain)
+	own := scope.ClassReservedPhrase.Registers()
+	if len(own) != 2 {
+		t.Fatalf("Registers() = %v", own)
+	}
+	for _, reg := range own {
+		if in[reg] {
+			t.Errorf("%s class read domain admits its own register %s", scope.ClassReservedPhrase, reg)
+		}
+		ok, err := scope.ReadableForClass(scope.ClassReservedPhrase, reg)
+		if err != nil {
+			t.Fatalf("ReadableForClass(%s, %s): %v", scope.ClassReservedPhrase, reg, err)
+		}
+		if ok {
+			t.Errorf("ReadableForClass(%s, %q) = true, want false", scope.ClassReservedPhrase, reg)
+		}
+	}
+	const other = "tests/registers/residual-anchors.yaml"
+	if !in[other] {
+		t.Errorf("%s class read domain omits another class's register %s", scope.ClassReservedPhrase, other)
+	}
+	if _, err := scope.ReadableForClass(scope.Class("reduction"), "pkg/carrier/carrier.go"); err == nil {
+		t.Error("ReadableForClass with an unknown class returned no error")
+	}
+}
+
+// TestEveryClassCarriesItsOwnRegistersAndNoPassLacksAClass pins that the
+// register set is held as data for every class the residual scan covers,
+// and that each pass resolves to the class whose domain it writes, so a
+// gate reads the exclusion from here instead of re-deriving it.
+func TestEveryClassCarriesItsOwnRegistersAndNoPassLacksAClass(t *testing.T) {
+	t.Parallel()
+	for _, c := range scope.Classes() {
+		regs := c.Registers()
+		if len(regs) == 0 {
+			t.Errorf("class %s carries no register", c)
+		}
+		want := "tests/registers/residual-" + string(c) + ".yaml"
+		if regs[0] != want {
+			t.Errorf("class %s first register = %q, want %q", c, regs[0], want)
+		}
+	}
+	for _, p := range scope.Passes() {
+		c, err := scope.PassClass(p)
+		if err != nil {
+			t.Fatalf("PassClass(%s): %v", p, err)
+		}
+		if !c.Valid() {
+			t.Errorf("PassClass(%s) = %q, which is not a class", p, c)
+		}
+	}
+	if _, err := scope.PassClass(scope.Pass("reduction")); err == nil {
+		t.Error("PassClass with an unknown pass returned no error")
+	}
+}
+
+// TestWriteDomainExcludesThePassOwnRegisters pins that a pass does not
+// site-rewrite the register that drives it or the residual register that
+// records its class. A pass that rewrote its own driver would edit the
+// record of the work it is doing while doing it.
+func TestWriteDomainExcludesThePassOwnRegisters(t *testing.T) {
+	t.Parallel()
+	list, read := treeDomain(t)
+	domain, err := scope.WriteDomain(context.Background(), list, scope.Name, read)
+	if err != nil {
+		t.Fatalf("WriteDomain(%s): %v", scope.Name, err)
+	}
+	in := membership(domain)
+	for _, reg := range scope.ClassReservedPhrase.Registers() {
+		if in[reg] {
+			t.Errorf("%s pass write domain admits its own register %s", scope.Name, reg)
+		}
 	}
 }
 

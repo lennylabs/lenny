@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual members of the reserved-phrase class. The scan for that class
+# holds a copy of each member's text here, so it does not read this file
+# as tree content.
+kind: residual-reserved-phrases
+version: 1
+entries: []

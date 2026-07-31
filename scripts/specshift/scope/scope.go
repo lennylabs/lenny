@@ -2,8 +2,9 @@
 
 // Package scope holds the one implementation of the specshift file
 // domain. It carries the tracked-tree walk, the read exclusion list the
-// gates and the passes share, the per-pass write exclusion list, and the
-// per-file generated-artifact rule.
+// gates and the passes share, the per-class register exclusion, the
+// per-pass write exclusion list, and the per-file generated-artifact
+// rule.
 //
 // Every pass and every gate reads the domain from here. A gate that
 // re-derived the list would drift from the pass that writes the same
@@ -108,6 +109,136 @@ var planningRecords = []string{
 // identifier passes write against instead of restating it.
 func PlanningRecords() []string { return append([]string(nil), planningRecords...) }
 
+// Class names one class of the migration's residual scan. A class is a
+// broad predicate over the tracked tree together with the register that
+// records the members the enumeration does not carry.
+type Class string
+
+// The classes the residual scan ranges over.
+const (
+	// ClassReservedPhrase is the bare reserved noun phrase in prose.
+	ClassReservedPhrase Class = "reserved-phrases"
+	// ClassIdentifier is the retired channel identifier spelling.
+	ClassIdentifier Class = "identifiers"
+	// ClassAnchor is the reference into a retired section anchor.
+	ClassAnchor Class = "anchors"
+	// ClassLineCitations is the line citation into a spec file.
+	ClassLineCitations Class = "line-citations"
+	// ClassLineCitationResolution is the line citation whose target no
+	// longer resolves.
+	ClassLineCitationResolution Class = "line-citation-resolution"
+	// ClassGeneratedArtifact is the file the generated-artifact rule
+	// selects.
+	ClassGeneratedArtifact Class = "generated-artifacts"
+	// ClassChangeGraphCoverage is the tracked path with no glob key in
+	// the change graph.
+	ClassChangeGraphCoverage Class = "change-graph-coverage"
+	// ClassSkipReason is the skip reason that opens with no category.
+	ClassSkipReason Class = "skip-reasons"
+)
+
+// classRegisters holds, per class, the registers the class's own scan
+// cannot read as tree content: its residual register, plus the pass or
+// baseline register the class's own gate already excludes.
+//
+// A residual entry holds a copy of its member's text, so a scan that
+// read the register would report that copy under the register's own path
+// as a further residual, and the entry seeded for that copy would add
+// another copy. The seeding does not converge. The same argument covers
+// the pass or baseline register the gate consumes.
+//
+// The set is per class rather than global. Another class's register is
+// ordinary tree content: a member found there is recorded in this
+// class's own register, whose text this class does not read, so that
+// seeding does terminate.
+//
+// A path here need not exist yet. Later sub-steps seed the registers of
+// the classes whose passes they build, and an exclusion for a register
+// that has not landed selects nothing.
+var classRegisters = map[Class][]string{
+	ClassReservedPhrase: {
+		"tests/registers/residual-reserved-phrases.yaml",
+		"tests/registers/reserved-phrase-senses.yaml",
+	},
+	ClassIdentifier: {
+		"tests/registers/residual-identifiers.yaml",
+		"tests/registers/identifier-senses.yaml",
+	},
+	ClassAnchor: {
+		"tests/registers/residual-anchors.yaml",
+		"tests/registers/anchor-senses.yaml",
+	},
+	ClassLineCitations: {
+		"tests/registers/residual-line-citations.yaml",
+		"tests/registers/line-citations.yaml",
+	},
+	ClassLineCitationResolution: {
+		"tests/registers/residual-line-citation-resolution.yaml",
+		"tests/registers/line-citation-resolution.yaml",
+	},
+	// The generated-artifact class is driven by the per-file rule in
+	// this package rather than by a register, so it excludes its
+	// residual register alone.
+	ClassGeneratedArtifact: {
+		"tests/registers/residual-generated-artifacts.yaml",
+	},
+	ClassChangeGraphCoverage: {
+		"tests/registers/residual-change-graph-coverage.yaml",
+		"tests/registers/change-graph-coverage.yaml",
+	},
+	ClassSkipReason: {
+		"tests/registers/residual-skip-reasons.yaml",
+		"tests/registers/skip-reasons.yaml",
+	},
+}
+
+// Classes returns every class name in a stable order.
+func Classes() []Class {
+	names := make([]Class, 0, len(classRegisters))
+	for c := range classRegisters {
+		names = append(names, c)
+	}
+	sort.Slice(names, func(i, j int) bool { return names[i] < names[j] })
+	return names
+}
+
+// Valid reports whether the name is one of the classes.
+func (c Class) Valid() bool {
+	_, ok := classRegisters[c]
+	return ok
+}
+
+// Registers returns the registers the class's own scan excludes.
+func (c Class) Registers() []string {
+	return append([]string(nil), classRegisters[c]...)
+}
+
+// passClasses maps each pass to the class its sites belong to, so the
+// pass and the residual scan that follows it read one domain.
+var passClasses = map[Pass]Class{
+	Name:       ClassReservedPhrase,
+	Identifier: ClassIdentifier,
+	Anchor:     ClassAnchor,
+	Line:       ClassLineCitations,
+}
+
+// PassClass returns the class of the pass.
+func PassClass(p Pass) (Class, error) {
+	c, ok := passClasses[p]
+	if !ok {
+		return "", fmt.Errorf("class of pass %q: unknown pass", p)
+	}
+	return c, nil
+}
+
+// planningExcludedClasses are the classes whose scan additionally
+// excludes the root-level planning records, matching the write domain of
+// the name and identifier passes.
+var planningExcludedClasses = map[Class]bool{
+	ClassReservedPhrase: true,
+	ClassIdentifier:     true,
+}
+
 // pathKeyedRegisters are the test-infrastructure registers keyed by file
 // path, which a run that renames a file invalidates.
 //
@@ -159,26 +290,32 @@ func Readable(p string) bool {
 }
 
 // ReadableForClass reports whether a tracked path is inside the read
-// domain of one class, which is the shared read domain less the
-// root-level planning records for the reserved-phrase and identifier
-// classes. The generated-artifact rule is not applied here: a generated
-// artifact is inside a gate's read domain and carries a per-file count,
-// and its route to zero is the regeneration of its source.
+// domain of one class. That domain is the shared read domain less two
+// further exclusions: the root-level planning records, for the
+// reserved-phrase and identifier classes, and the class's own registers,
+// which the class cannot read as tree content. The generated-artifact
+// rule is not applied here: a generated artifact is inside a gate's read
+// domain and carries a per-file count, and its route to zero is the
+// regeneration of its source.
 //
 // The residual scan for a class ranges over this domain, so the scan,
 // the exclusion, and the pass's own denylist cannot drift apart.
-func ReadableForClass(p Pass, target string) (bool, error) {
-	if !p.Valid() {
-		return false, fmt.Errorf("class read domain: unknown pass %q", p)
+func ReadableForClass(c Class, target string) (bool, error) {
+	if !c.Valid() {
+		return false, fmt.Errorf("class read domain: unknown class %q", c)
 	}
 	if !Readable(target) {
 		return false, nil
 	}
-	if p != Name && p != Identifier {
-		return true, nil
+	if planningExcludedClasses[c] {
+		for _, rec := range planningRecords {
+			if target == rec {
+				return false, nil
+			}
+		}
 	}
-	for _, rec := range planningRecords {
-		if target == rec {
+	for _, reg := range classRegisters[c] {
+		if target == reg {
 			return false, nil
 		}
 	}
@@ -196,7 +333,11 @@ func ReadableForClass(p Pass, target string) (bool, error) {
 // path-keyed registers runs through KeyWritable, so a register excluded
 // from reading is still rekeyed by the run that renames a file.
 func Writable(p Pass, target string, read FileReader) (bool, error) {
-	inClass, err := ReadableForClass(p, target)
+	c, err := PassClass(p)
+	if err != nil {
+		return false, err
+	}
+	inClass, err := ReadableForClass(c, target)
 	if err != nil {
 		return false, err
 	}
@@ -318,14 +459,14 @@ func ReadDomain(ctx context.Context, list Lister) ([]string, error) {
 // ClassReadDomain returns the tracked paths inside one class's read
 // domain, sorted. It is the domain the residual scan for that class
 // ranges over.
-func ClassReadDomain(ctx context.Context, list Lister, p Pass) ([]string, error) {
+func ClassReadDomain(ctx context.Context, list Lister, c Class) ([]string, error) {
 	readable, err := ReadDomain(ctx, list)
 	if err != nil {
 		return nil, err
 	}
 	domain := make([]string, 0, len(readable))
 	for _, target := range readable {
-		ok, err := ReadableForClass(p, target)
+		ok, err := ReadableForClass(c, target)
 		if err != nil {
 			return nil, err
 		}
@@ -335,7 +476,7 @@ func ClassReadDomain(ctx context.Context, list Lister, p Pass) ([]string, error)
 	}
 	if len(domain) == 0 {
 		return nil, fmt.Errorf("%s class read domain over %d readable path(s): the exclusion list selected zero files",
-			p, len(readable))
+			c, len(readable))
 	}
 	return domain, nil
 }
