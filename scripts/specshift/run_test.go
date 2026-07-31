@@ -1953,6 +1953,69 @@ func TestFindReadsEverySpellingOfTheRetiredCitationForm(t *testing.T) {
 	}
 }
 
+// TestFindRequiresTheColonMemberToStandAgainstTheReference pins the colon
+// spelling to the form: the first member is written directly against the colon.
+// A colon alternative that admitted authored whitespace reads an English or a
+// YAML colon as the citation keyword, so a status code, a timeout, a depth
+// limit, or a register key becomes a phantom citation. Each phantom enters the
+// per-file count of a file that carries no citation, and its only route to zero
+// is the pass rewriting prose.
+func TestFindRequiresTheColonMemberToStandAgainstTheReference(t *testing.T) {
+	t.Parallel()
+	if found := citation.Find(citationFixture(t, "colon-prose.txt")); len(found) != 0 {
+		t.Errorf("Find over prose colons returned %v, want no citation", found)
+	}
+	spaced := oneCitation(t, "colon-qualifier-then-prose.txt")
+	if spaced.Text != "§25.2 line 396" {
+		t.Errorf("citation text is %q, want %q", spaced.Text, "§25.2 line 396")
+	}
+	if got := members(spaced); !sameStrings(got, []string{"396-396"}) {
+		t.Errorf("members are %v, want the cited line rather than the prose behind the colon", got)
+	}
+}
+
+// TestFindJoinsAWrappedColonCitation pins the one spaced colon spelling the
+// form admits, which is a colon citation wrapped across two comment lines. The
+// space stands for the wrap the join consumed rather than for whitespace an
+// author wrote, so the citation is read whole while an authored space after a
+// colon still ends the match.
+func TestFindJoinsAWrappedColonCitation(t *testing.T) {
+	t.Parallel()
+	c := oneCitation(t, "colon-wrapped.txt")
+	if c.Text != "spec/25_example-operability.md: 9-11" {
+		t.Errorf("joined citation text is %q, want the wrapped colon citation", c.Text)
+	}
+	if c.File != "spec/25_example-operability.md" {
+		t.Errorf("reference is %q, want the path form", c.Ref())
+	}
+	if got := members(c); !sameStrings(got, []string{"9-11"}) {
+		t.Errorf("members are %v, want 9-11", got)
+	}
+	if !strings.Contains(c.Raw, "\n") {
+		t.Errorf("raw citation %q does not span the wrap", c.Raw)
+	}
+}
+
+// TestFindConsumesMembersWrittenAfterTheHeadClosingParenthesis pins that a
+// member list resuming behind the parenthesis the head opened is consumed with
+// the rest of the citation. Stopping at that parenthesis drops the remaining
+// members, which the resolver then does not read and the ratchet does not
+// count, so the rewritten carrier reads as an anchor followed by orphan
+// integers while its file reaches a zero count with a stale pointer surviving.
+func TestFindConsumesMembersWrittenAfterTheHeadClosingParenthesis(t *testing.T) {
+	t.Parallel()
+	c := oneCitation(t, "members-after-close-paren.txt")
+	if got := members(c); !sameStrings(got, []string{"3333-3358", "3404-3406"}) {
+		t.Errorf("members are %v, want both the parenthesized and the trailing member", got)
+	}
+	if c.Text != "§25.8 Image Resolution (lines 3333-3358), line 3404-3406" {
+		t.Errorf("citation text is %q, want it to run to the last member", c.Text)
+	}
+	if c.Qualifier != "Image Resolution" {
+		t.Errorf("qualifier is %q, want %q", c.Qualifier, "Image Resolution")
+	}
+}
+
 // TestFindConsumesEveryMemberRatherThanTheHead pins the failure a matcher that
 // stopped at the first separator produces. The remaining members stay in place,
 // where the resolver does not read them and the ratchet does not count them, so
@@ -2187,7 +2250,9 @@ func TestFindReportsTheCarrierLineOfEachCitation(t *testing.T) {
 // whose sections are §4 (lines 1 through 19), §4.1 (5 through 12), §4.2 (13
 // through 19), §4.2.1 (17 through 19), §7, §7.1, §7.2, and, in a file carrying
 // two top-level headings, §25.1 (1 through 8), §25.1.1 (5 through 8), and §25.2
-// (9 through 11).
+// (9 through 11). A further file states its numbered title at level one and
+// carries a fenced code block with a numbered comment in it, giving §30 (1
+// through 11) and §30.1 (9 through 11).
 func citationResolver(t *testing.T) *citation.Resolver {
 	t.Helper()
 	r, err := citation.NewResolver(context.Background(),
@@ -2227,6 +2292,41 @@ func TestSectionRangeCoversASectionAndItsSubsections(t *testing.T) {
 	}
 	if len(r.Sections()) == 0 {
 		t.Error("the resolver indexed no section")
+	}
+}
+
+// TestSectionRangeCoversAFileWhoseNumberedTitleIsLevelOne pins that a
+// specification file stating its numbered title at level one is indexed under
+// that number and spans its file. Excluding level one leaves the number absent,
+// so every section-level citation naming it is reported as a heading the
+// specification does not carry when the heading is there. The same walk skips
+// fenced code, because a numbered `#` line inside an example is a shell comment
+// and indexing it declares sections the specification does not have, including
+// one that collides with a genuine section number.
+func TestSectionRangeCoversAFileWhoseNumberedTitleIsLevelOne(t *testing.T) {
+	t.Parallel()
+	r := citationResolver(t)
+	top, ok := r.Section("30")
+	if !ok {
+		t.Fatal("§30 is absent from the resolver index")
+	}
+	if top.File != "spec/30_level-one-title.md" || top.Start != 1 || top.End != 11 {
+		t.Errorf("§30 is %v, want it to span the whole of its file", top)
+	}
+	child, ok := r.Section("30.1")
+	if !ok || child.Start != 9 || child.End != 11 {
+		t.Errorf("§30.1 is %v (present=%v), want lines 9-11", child, ok)
+	}
+	if s, ok := r.Section("1"); ok {
+		t.Errorf("a numbered comment inside a fenced code block declared %v", s)
+	}
+	inside := oneCitation(t, "resolve/level-one-title.txt")
+	if f := r.Resolve(inside); len(f) != 0 {
+		t.Errorf("a citation naming the level-one section reported %v, want it to resolve", f)
+	}
+	outside := r.Resolve(oneCitation(t, "resolve/level-one-title-outside.txt"))
+	if len(outside) != 1 || outside[0].Kind != citation.OutsideSection {
+		t.Errorf("a citation past the end of the level-one section reported %v, want one outside-section failure", outside)
 	}
 }
 

@@ -78,9 +78,19 @@ type Resolver struct {
 	byFile   map[string][]Section
 }
 
-// headingExpr matches a markdown heading of level two through six. A level-one
-// heading is the document title and declares no section.
-var headingExpr = regexp.MustCompile(`^(#{2,6})[ \t]+(.*)$`)
+// headingExpr matches a markdown heading of any level. A level-one heading
+// declares a section when it carries a leading dotted number, because a
+// specification file may state its numbered title at level one; the unnumbered
+// level-one document title declares nothing and closes nothing. Excluding level
+// one outright leaves such a file's number absent from the index, so every
+// section-level citation naming it is reported as a heading the specification
+// does not carry.
+var headingExpr = regexp.MustCompile(`^(#{1,6})[ \t]+(.*)$`)
+
+// fenceExpr matches the opening or closing line of a fenced code block. A `#`
+// line inside a fence is a shell comment in an example rather than a heading,
+// and reading it as one declares sections the specification does not have.
+var fenceExpr = regexp.MustCompile("^[ \t]*(?:```|~~~)")
 
 // numberExpr reads the section number a heading declares, which is the leading
 // dotted number of its text. A heading with no leading number is a sub-heading
@@ -155,7 +165,15 @@ func parseSections(path, content string) []Section {
 		start  int
 	}
 	var headings []heading
+	fenced := false
 	for i, line := range lines {
+		if fenceExpr.MatchString(line) {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
 		m := headingExpr.FindStringSubmatch(line)
 		if m == nil {
 			continue
@@ -163,6 +181,9 @@ func parseSections(path, content string) []Section {
 		h := heading{level: len(m[1]), start: i + 1}
 		if n := numberExpr.FindStringSubmatch(strings.TrimSpace(m[2])); n != nil {
 			h.number = n[1]
+		}
+		if h.level == 1 && h.number == "" {
+			continue
 		}
 		headings = append(headings, h)
 	}

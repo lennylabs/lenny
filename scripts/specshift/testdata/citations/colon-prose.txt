@@ -1,0 +1,4 @@
+// The §4.9 error taxonomy: 401, 403 are the statuses the translator maps.
+# spec/10_gateway.md: 14
+// §13.4 maximum path depth: 32 segments.
+// §7.1 default token lifetime: 300 seconds.

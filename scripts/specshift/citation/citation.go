@@ -155,27 +155,41 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 	if path := group(joined, loc, headFile); path != "" {
 		c.File = normalizePath(path)
 	}
-	c.Qualifier = strings.Join(strings.Fields(group(joined, loc, headQualifier)), " ")
+	c.Qualifier = strings.Join(strings.Fields(render(group(joined, loc, headQualifier))), " ")
 
-	first, ok := parseMember(group(joined, loc, headMember))
+	first, ok := parseMember(render(group(joined, loc, headMember)))
 	if !ok {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end := consumeMembers(joined, loc[1], nextHead(joined, loc[1]), &c.Members)
-	end = closeParen(joined, end, group(joined, loc, headParen) != "")
-	c.Text = joined[loc[0]:end]
+	end := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
 
-// closeParen consumes the parenthesis a head that opened one closes with, so
-// the citation text of the parenthetical spelling is balanced and the pass
-// rewrites the whole of it.
-func closeParen(joined string, end int, opened bool) int {
-	if opened && end < len(joined) && joined[end] == ')' {
-		return end + 1
+// consumeCitation extends the citation from the end of its head over every
+// continuation member, closes the parenthesis a head that opened one closes
+// with, and keeps consuming past that parenthesis.
+//
+// A member list may resume after the head's closing parenthesis, as in
+// `§25.8 Image Resolution (lines 3333-3358), line 3404-3406`. Stopping at the
+// parenthesis would leave those members in place, where the resolver does not
+// read them and the ratchet does not count them, and the rewritten carrier
+// would read as an anchor followed by orphan integers while its file reached a
+// zero count with a stale pointer surviving.
+func consumeCitation(joined string, pos int, members *[]Member, opened bool) int {
+	end := consumeMembers(joined, pos, nextHead(joined, pos), members)
+	if !opened || end >= len(joined) || joined[end] != ')' {
+		return end
 	}
-	return end
+	closed := end + 1
+	// The citation continues past the parenthesis only when a member list
+	// resumes behind it. Prose written after the parenthesis is outside the
+	// citation, the same way prose written after any last member is.
+	if _, _, ok := nextMember(joined, closed); !ok {
+		return closed
+	}
+	return consumeMembers(joined, closed, nextHead(joined, closed), members)
 }
 
 // nextHead returns the offset of the next citation head at or after from, or
@@ -265,7 +279,7 @@ func glossRun(joined string, pos, limit int) (int, string, bool) {
 			end = at
 		}
 	}
-	return end, strings.TrimSpace(joined[pos:end]), true
+	return end, strings.TrimSpace(render(joined[pos:end])), true
 }
 
 // glossSegment returns one gloss segment at pos, empty when there is none. A
@@ -287,12 +301,12 @@ func glossSegment(text string, pos int) string {
 // word of this one. A quoted or parenthesized gloss closes on its own delimiter
 // and is left alone.
 func trimTrailingSeparatorWord(segment string) string {
-	trimmed := strings.TrimRight(segment, " \t")
+	trimmed := strings.TrimRight(segment, spaceBytes)
 	rest, ok := strings.CutSuffix(trimmed, separatorWord)
 	if !ok || (rest != "" && isWordByte(rest[len(rest)-1])) {
 		return segment
 	}
-	return strings.TrimRight(rest, " \t")
+	return strings.TrimRight(rest, spaceBytes)
 }
 
 // separatorWord is the one member separator spelled as a word.
@@ -301,7 +315,7 @@ const separatorWord = "and"
 // opensWithSeparatorWord reports whether a gloss segment begins with the
 // separator word standing on its own.
 func opensWithSeparatorWord(segment string) bool {
-	rest, ok := strings.CutPrefix(strings.TrimLeft(segment, " \t"), separatorWord)
+	rest, ok := strings.CutPrefix(strings.TrimLeft(segment, spaceBytes), separatorWord)
 	return ok && (rest == "" || !isWordByte(rest[0]))
 }
 
@@ -319,7 +333,7 @@ func nextMember(joined string, pos int) (int, Member, bool) {
 	if text == "" {
 		return pos, Member{}, false
 	}
-	m, ok := parseMember(text)
+	m, ok := parseMember(render(text))
 	if !ok {
 		return pos, Member{}, false
 	}
