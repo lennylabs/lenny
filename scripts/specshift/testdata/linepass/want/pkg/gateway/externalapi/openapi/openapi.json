@@ -1,5 +1,6 @@
 {
   "openapi": "3.1.0",
+  "x-lenny-spec-section": "§4.6",
   "components": {
     "schemas": {
       "Sandbox": {

@@ -15,16 +15,22 @@
 // converted, because the text of those artifacts is what a client reads
 // and a specification anchor is not part of the client contract. The
 // artifacts are named in servedArtifacts, and a strip that would delete
-// the site's only tie to the specification fails instead.
+// the site's only tie to the specification fails instead. The tie of a
+// Go carrier stands in the doc comment of the declaration the served
+// text sits in. A data artifact has no comment channel, so its tie
+// stands in the document itself and is decided against the text the run
+// leaves behind.
 //
 // The pass fails closed. A straddling range, a path-form citation naming
 // a file that does not resolve under spec/, and a stripped
 // served-artifact citation whose authoring source keeps no tie are each
 // reported for hand correction rather than converted against a guess,
-// and the harness leaves the tree byte-identical. A run that retired a
-// citation without emitting the anchor that replaces it fails on the
-// accounting identity Account states, so a file cannot reach a count of
-// zero by having its pointers deleted.
+// and the harness leaves the tree byte-identical. Every such site of the
+// whole walk is reported by one run, so the hand correction works from a
+// named population rather than from a plan-and-fix cycle per site. A run
+// that retired a citation without emitting the anchor that replaces it
+// fails on the accounting identity Account states, so a file cannot
+// reach a count of zero by having its pointers deleted.
 //
 // The write domain, which excludes the historical audit records, the
 // staged proposals, and every file the per-file generated-artifact rule
@@ -119,50 +125,80 @@ func (r *Rewriter) Rewrite(ctx context.Context, path string, content []byte) ([]
 	}
 	served, err := servedSites(path, text)
 	if err != nil {
-		return nil, abortAt(path, found[0], err)
+		return nil, pass.Aborted([]*pass.Abort{abortAt(path, found[0], err)})
 	}
-	edits, stripped, err := plan(sections, path, text, found, served)
+	edits, strips, err := plan(sections, path, text, found, served)
 	if err != nil {
 		return nil, err
 	}
 	after := applyEdits(text, edits)
+	if err := documentTies(path, after, strips); err != nil {
+		return nil, err
+	}
 	// The accounting identity is checked against the text rather than
 	// against the plan that produced it, so a conversion that dropped
 	// its anchor fails here instead of retiring a pointer.
-	if err := Account(text, after, stripped); err != nil {
-		return nil, abortAt(path, found[0], err)
+	if err := Account(text, after, len(strips)); err != nil {
+		return nil, pass.Aborted([]*pass.Abort{abortAt(path, found[0], err)})
 	}
 	return []byte(after), nil
 }
 
 // plan decides, per citation, whether it is stripped or converted, and
-// returns the edits together with how many were stripped.
-func plan(sections *citation.Resolver, path, text string, found []citation.Citation, served *servedSpans) ([]edit, int, error) {
+// returns the edits together with the strips it planned.
+//
+// Every site the pass cannot convert is collected before the plan fails,
+// so one run names the whole hand-correction population rather than its
+// first member. Nothing is written until the plan succeeds, so reporting
+// them all still leaves the tree byte-identical.
+func plan(sections *citation.Resolver, path, text string, found []citation.Citation, served *servedSpans) ([]edit, []strip, error) {
 	edits := make([]edit, 0, len(found))
-	stripped := 0
+	var strips []strip
+	var aborts []*pass.Abort
 	for _, c := range found {
 		if served.covers(c) {
-			e, err := stripSite(sections, text, c, served)
+			e, s, err := stripSite(sections, text, c, served)
 			if err != nil {
-				return nil, 0, abortAt(path, c, err)
+				aborts = append(aborts, abortAt(path, c, err))
+				continue
 			}
 			edits = append(edits, e)
-			stripped++
+			strips = append(strips, s)
 			continue
 		}
 		anchor, err := anchorFor(sections, c)
 		if err != nil {
-			return nil, 0, abortAt(path, c, err)
+			aborts = append(aborts, abortAt(path, c, err))
+			continue
 		}
 		edits = append(edits, edit{start: c.Offset, end: c.Offset + len(c.Raw), text: anchor})
 	}
-	return edits, stripped, nil
+	if len(aborts) > 0 {
+		return nil, nil, pass.Aborted(aborts)
+	}
+	return edits, strips, nil
+}
+
+// documentTies holds every strip from a data artifact to the tie it has
+// to leave standing in the rewritten document, and reports all of the
+// ones that keep none.
+func documentTies(path, after string, strips []strip) error {
+	var aborts []*pass.Abort
+	for _, s := range strips {
+		if !s.document {
+			continue
+		}
+		if err := documentTie(after, s); err != nil {
+			aborts = append(aborts, abortAt(path, s.site, err))
+		}
+	}
+	return pass.Aborted(aborts)
 }
 
 // abortAt reports a site the pass cannot convert, naming the file and
 // the line so the operator can hand-correct it. The harness turns the
 // abort into a run that leaves the tree byte-identical.
-func abortAt(path string, c citation.Citation, cause error) error {
+func abortAt(path string, c citation.Citation, cause error) *pass.Abort {
 	return &pass.Abort{Path: path, Line: c.Line, Reason: cause.Error()}
 }
 

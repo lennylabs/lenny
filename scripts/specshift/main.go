@@ -191,18 +191,25 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 }
 
 // reportAbort turns a fail-closed abort into an operator-facing message
-// naming the file and the line, and passes any other error through. A run
-// that failed while writing and could not put back what it had written is
+// naming every file and line the run could not resolve, and passes any
+// other error through. Every site is named because the operator
+// hand-corrects the population before the pass is re-run. A run that
+// failed while writing and could not put back what it had written is
 // reported as a tree that needs an operator, because the unchanged-tree
 // message would be false for it.
 func reportAbort(err error) error {
 	if errors.Is(err, pass.ErrTreeNotRestored) {
 		return fmt.Errorf("the tree is not clean and needs an operator: %w", err)
 	}
-	if a, ok := pass.AsAbort(err); ok {
-		return fmt.Errorf("aborted with the tree unchanged at %s", a.Error())
+	sites, ok := pass.AllAborts(err)
+	if !ok {
+		return err
 	}
-	return err
+	lines := make([]string, 0, len(sites))
+	for _, site := range sites {
+		lines = append(lines, site.Error())
+	}
+	return fmt.Errorf("aborted with the tree unchanged at %s", strings.Join(lines, "; "))
 }
 
 // printWriteDomain prints the tracked paths the pass may write.

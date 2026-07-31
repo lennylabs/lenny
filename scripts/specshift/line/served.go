@@ -4,7 +4,8 @@ package line
 
 import (
 	"fmt"
-	"go/scanner"
+	"go/ast"
+	"go/parser"
 	"go/token"
 	"regexp"
 	"sort"
@@ -18,16 +19,19 @@ import (
 type servedKind int
 
 const (
-	// servedValues is a data artifact whose whole content is served, so
-	// every citation it carries sits in text a client reads. It has no
-	// comment channel, so it carries no authoring site a tie could
-	// survive in and the surviving-tie rule does not range over it.
-	servedValues servedKind = iota
+	// servedDocument is a data artifact whose whole content is served, so
+	// every citation it carries sits in text a client reads.
+	servedDocument servedKind = iota
 	// servedLiterals is a Go source whose string literals become the
 	// served artifact. A citation in one of those literals is served; a
 	// citation in a comment of the same file is an ordinary authoring
 	// site and converts like any other comment.
 	servedLiterals
+	// servedDescTags is a Go source whose `desc:` struct-tag values are
+	// copied verbatim into a generated document an operator reads. Only
+	// the text inside a `desc:` value is served; every other literal of
+	// the file is an ordinary authoring site and converts.
+	servedDescTags
 )
 
 // servedArtifacts names the served client artifacts and where each one
@@ -35,15 +39,15 @@ const (
 //
 // The OpenAPI document is served verbatim to clients and is the source
 // the MCP tool inventory is generated from. The MCP tool definitions are
-// served as tool schemas. The chart values struct tags are copied
-// verbatim into the generated chart JSON schema, which is what an
+// served as tool schemas. The chart values `desc:` struct tags are
+// copied verbatim into the generated chart JSON schema, which is what an
 // operator reads. A specification anchor in any of them is a pointer
 // into a document the client does not have, so the citation is removed
 // rather than converted.
 var servedArtifacts = map[string]servedKind{
-	"pkg/gateway/externalapi/openapi/openapi.json": servedValues,
+	"pkg/gateway/externalapi/openapi/openapi.json": servedDocument,
 	"pkg/gateway/mcpfabric/mcptools/mcptools.go":   servedLiterals,
-	"pkg/chart/values/values.go":                   servedLiterals,
+	"pkg/chart/values/values.go":                   servedDescTags,
 }
 
 // ServedArtifacts returns the served client artifacts in a stable order,
@@ -62,10 +66,14 @@ func ServedArtifacts() []string {
 type servedSpans struct {
 	kind  servedKind
 	spans [][2]int
+	// src is the parsed Go source of a Go carrier, which is where the
+	// tie a strip has to leave standing is read from. It is nil for a
+	// data artifact.
+	src *goSource
 }
 
 // servedSites returns the served spans of a file. A Go served artifact
-// the scanner cannot read fails rather than being classified, because a
+// the parser cannot read fails rather than being classified, because a
 // pass that could not tell a served literal from a comment would convert
 // a citation into text a client reads.
 func servedSites(path, text string) (*servedSpans, error) {
@@ -73,14 +81,18 @@ func servedSites(path, text string) (*servedSpans, error) {
 	if !ok {
 		return nil, nil
 	}
-	if kind == servedValues {
+	if kind == servedDocument {
 		return &servedSpans{kind: kind, spans: [][2]int{{0, len(text)}}}, nil
 	}
-	spans, err := stringLiteralSpans(path, text)
+	src, err := parseGo(path, text)
 	if err != nil {
 		return nil, err
 	}
-	return &servedSpans{kind: kind, spans: spans}, nil
+	spans := src.stringLiteralSpans()
+	if kind == servedDescTags {
+		spans = src.descTagSpans()
+	}
+	return &servedSpans{kind: kind, spans: spans, src: src}, nil
 }
 
 // covers reports whether the citation sits in served text.
@@ -96,80 +108,206 @@ func (s *servedSpans) covers(c citation.Citation) bool {
 	return false
 }
 
-// requiresTie reports whether a strip from this artifact has to leave a
-// tie standing in the file's authoring source. A Go source carries the
-// tie in the doc comment above the site and is held to the standing rule
-// that spec-derived code cites its section, so stripping the only
-// carrier would delete the tie rather than relocate it. A data artifact
-// has no comment channel and so has no authoring site to hold one.
-func (s *servedSpans) requiresTie() bool { return s != nil && s.kind == servedLiterals }
-
-// stringLiteralSpans returns the byte span of every string literal in a
-// Go source.
-func stringLiteralSpans(path, src string) ([][2]int, error) {
-	fset := token.NewFileSet()
-	file := fset.AddFile(path, fset.Base(), len(src))
-	var s scanner.Scanner
-	s.Init(file, []byte(src), nil, 0)
-	var spans [][2]int
-	for {
-		pos, tok, lit := s.Scan()
-		if tok == token.EOF {
-			break
-		}
-		if tok == token.STRING {
-			start := file.Offset(pos)
-			spans = append(spans, [2]int{start, start + len(lit)})
-		}
-	}
-	if s.ErrorCount > 0 {
-		return nil, fmt.Errorf("the served Go artifact does not scan, so a served literal cannot be told from a comment")
-	}
-	return spans, nil
+// goSource is a parsed Go carrier, which answers where its served text
+// sits and which doc comment stands over a given offset.
+type goSource struct {
+	fset *token.FileSet
+	file *ast.File
 }
 
-// stripSite returns the edit that removes a served citation, and fails
-// when the strip would leave the site with no tie to the specification.
-func stripSite(sections *citation.Resolver, text string, c citation.Citation, served *servedSpans) (edit, error) {
-	if served.requiresTie() {
-		number, err := anchorNumber(sections, c)
-		if err != nil {
-			return edit{}, err
+// parseGo parses a Go carrier with its comments attached.
+func parseGo(path, src string) (*goSource, error) {
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, path, src, parser.ParseComments)
+	if err != nil {
+		return nil, fmt.Errorf("the served Go artifact does not parse, so a served site cannot be told from an authoring one: %w", err)
+	}
+	return &goSource{fset: fset, file: file}, nil
+}
+
+// offset returns the byte offset of a position.
+func (g *goSource) offset(p token.Pos) int { return g.fset.Position(p).Offset }
+
+// span returns the byte span of a node.
+func (g *goSource) span(n ast.Node) [2]int { return [2]int{g.offset(n.Pos()), g.offset(n.End())} }
+
+// stringLiteralSpans returns the byte span of every string literal in
+// the source.
+func (g *goSource) stringLiteralSpans() [][2]int {
+	var spans [][2]int
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.BasicLit); ok && lit.Kind == token.STRING {
+			spans = append(spans, g.span(lit))
 		}
-		if !tieSurvives(text, c.Line, number) {
-			return edit{}, fmt.Errorf("stripping the served citation would delete the site's only tie, because the doc comment above it names no §%s", number)
+		return true
+	})
+	return spans
+}
+
+// descTagKey opens the struct-tag value the chart schema generator
+// copies verbatim into the generated document.
+const descTagKey = `desc:"`
+
+// descTagSpans returns the byte span of the value of every `desc:`
+// struct tag in the source. The key is read out of the tag literal as it
+// is written, which is the raw-quoted form the convention uses, so an
+// offset inside the literal is an offset in the file. A tag written as
+// an interpreted string escapes its inner quotes and so carries no
+// `desc:"` run; it is left an ordinary carrier and its citation
+// converts.
+func (g *goSource) descTagSpans() [][2]int {
+	var spans [][2]int
+	ast.Inspect(g.file, func(n ast.Node) bool {
+		field, ok := n.(*ast.Field)
+		if !ok || field.Tag == nil {
+			return true
 		}
+		lit := field.Tag.Value
+		key := strings.Index(lit, descTagKey)
+		if key < 0 {
+			return true
+		}
+		open := key + len(descTagKey)
+		width := strings.IndexByte(lit[open:], '"')
+		if width < 0 {
+			return true
+		}
+		start := g.offset(field.Tag.Pos())
+		spans = append(spans, [2]int{start + open, start + open + width})
+		return true
+	})
+	return spans
+}
+
+// docRun returns the doc comment standing over the declaration the
+// offset sits in, empty when that declaration carries none.
+//
+// The tie a strip leaves behind is read from the enclosing declaration
+// rather than from the source line above the citation, because a served
+// string literal spans several lines and the declaration's doc comment
+// stands above the declaration rather than above the literal. The walk
+// stops at the innermost declaration containing the offset, so a comment
+// on an enclosing type is not read as the tie of a field whose only
+// carrier the strip empties.
+func (g *goSource) docRun(offset int) string {
+	for _, decl := range g.file.Decls {
+		if !within(g.span(decl), offset) {
+			continue
+		}
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			return commentText(d.Doc)
+		case *ast.GenDecl:
+			return g.genDeclDoc(d, offset)
+		}
+	}
+	return ""
+}
+
+// genDeclDoc returns the doc comment of the innermost part of a
+// declaration containing the offset. A struct field owns its own doc
+// comment, a spec of a parenthesized group owns its own, and a
+// single-spec declaration carries its doc comment on the declaration.
+func (g *goSource) genDeclDoc(d *ast.GenDecl, offset int) string {
+	for _, spec := range d.Specs {
+		if !within(g.span(spec), offset) {
+			continue
+		}
+		if field := g.fieldContaining(spec, offset); field != nil {
+			return commentText(field.Doc)
+		}
+		if doc := specDoc(spec); doc != nil {
+			return commentText(doc)
+		}
+		if d.Lparen.IsValid() {
+			return ""
+		}
+	}
+	return commentText(d.Doc)
+}
+
+// fieldContaining returns the innermost struct field of the node whose
+// span contains the offset.
+func (g *goSource) fieldContaining(n ast.Node, offset int) *ast.Field {
+	var found *ast.Field
+	ast.Inspect(n, func(node ast.Node) bool {
+		field, ok := node.(*ast.Field)
+		if !ok || !within(g.span(field), offset) {
+			return true
+		}
+		found = field
+		return true
+	})
+	return found
+}
+
+// specDoc returns the doc comment a declaration spec carries.
+func specDoc(spec ast.Spec) *ast.CommentGroup {
+	switch s := spec.(type) {
+	case *ast.ValueSpec:
+		return s.Doc
+	case *ast.TypeSpec:
+		return s.Doc
+	}
+	return nil
+}
+
+// commentText returns the text of a comment group, empty when there is
+// none.
+func commentText(doc *ast.CommentGroup) string {
+	if doc == nil {
+		return ""
+	}
+	return doc.Text()
+}
+
+// within reports whether the offset falls inside the span.
+func within(span [2]int, offset int) bool { return offset >= span[0] && offset < span[1] }
+
+// strip is one removed served citation together with the tie the run has
+// to leave standing in its place. A strip emits no anchor, so the
+// section it named has to stay named somewhere: a removal that leaves no
+// tie reads to both the ratchet and the resolver as a retirement.
+type strip struct {
+	site   citation.Citation
+	number string
+	// document records that the tie stands in the artifact itself rather
+	// than in a doc comment, which is where a data artifact holds one: it
+	// has no comment channel, so the document is the only authoring
+	// channel it has, and whether the tie stands there is decided against
+	// the text the run leaves behind.
+	document bool
+}
+
+// stripSite returns the edit that removes a served citation, together
+// with the tie the strip has to leave standing, and fails when the site
+// keeps no tie. The tie of a Go carrier is decided here against the doc
+// comment of the declaration the site sits in. The tie of a data
+// artifact is decided by the caller against the rewritten document.
+func stripSite(sections *citation.Resolver, text string, c citation.Citation, served *servedSpans) (edit, strip, error) {
+	number, err := anchorNumber(sections, c)
+	if err != nil {
+		return edit{}, strip{}, err
+	}
+	record := strip{site: c, number: number, document: served.kind == servedDocument}
+	if !record.document && !anchorOf(number).MatchString(served.src.docRun(c.Offset)) {
+		return edit{}, strip{}, fmt.Errorf(
+			"stripping the served citation would delete the site's only tie, because the doc comment over its declaration names no §%s", number,
+		)
 	}
 	start, end := stripSpan(text, c.Offset, c.Offset+len(c.Raw))
-	return edit{start: start, end: end}, nil
+	return edit{start: start, end: end}, record, nil
 }
 
-// tieSurvives reports whether the doc comment immediately above the
-// served site still names the section. The comment run is read from the
-// pre-run text, and a citation the run carries converts to the anchor
-// for the same section in the same pass, so a tie found here is a tie
-// that stands after the run.
-func tieSurvives(text string, line int, number string) bool {
-	run := docCommentAbove(text, line)
-	if run == "" {
-		return false
+// documentTie reports whether the section a data artifact's stripped
+// citation named is still named in the document the run leaves behind.
+func documentTie(after string, s strip) error {
+	if anchorOf(s.number).MatchString(after) {
+		return nil
 	}
-	return anchorOf(number).MatchString(run)
-}
-
-// docCommentAbove returns the contiguous run of line comments standing
-// directly above the 1-based line, empty when the line carries none.
-func docCommentAbove(text string, line int) string {
-	lines := strings.Split(text, "\n")
-	var run []string
-	for i := line - 2; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if !strings.HasPrefix(trimmed, "//") {
-			break
-		}
-		run = append(run, trimmed)
-	}
-	return strings.Join(run, "\n")
+	return fmt.Errorf(
+		"stripping the served citation would delete the document's only tie, because nothing else in it names §%s", s.number,
+	)
 }
 
 // anchorOf returns the expression matching a reference to one section,

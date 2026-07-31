@@ -20,3 +20,17 @@ var claimSandbox = tool{
 	// spec: §4.6 line 5
 	Description: "Claim a sandbox for the session (spec: §4.6 line 5).",
 }
+
+// sendMessageInputSchema is the served input schema of the send-message
+// tool. Its citations sit several lines below the doc comment that ties
+// the declaration to the specification, which is where the tie stands
+// once the served text is stripped.
+//
+// spec: §4.6 line 5, §4.8 line 14
+var sendMessageInputSchema = `{
+	"type": "object",
+	"description": "The envelope the session sends (spec: §4.6 line 5).",
+	"properties": {
+		"body": { "description": "The plan the message carries. §4.8 line 14." }
+	}
+}`

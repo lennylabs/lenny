@@ -3309,6 +3309,86 @@ func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T)
 	assertConverted(t, root, "pkg/spellings/dotted.go")
 }
 
+// TestLinePassReadsAServedLiteralTieFromItsDeclarationDocComment pins
+// where the tie of a served Go literal stands. A served string literal
+// spans several lines and its doc comment stands over the declaration
+// rather than over the line the citation sits on, so a strip whose tie
+// is looked for on the preceding source line would report a tie the
+// declaration plainly carries as missing and stop the pass on every such
+// site.
+//
+// spec: §28.1 (N8, the citation rule: a stripped citation leaves a
+// standing tie to the section it named)
+func TestLinePassReadsAServedLiteralTieFromItsDeclarationDocComment(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/gateway/mcpfabric/mcptools/mcptools.go"
+	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", target))
+	cited := citation.Find(before)
+	if len(cited) == 0 {
+		t.Fatalf("the served fixture %s carries no citation", target)
+	}
+	// The fixture holds a served citation at least two lines below the
+	// declaration whose doc comment carries its tie, which is the layout
+	// the served tool schemas are written in.
+	declared := lineNumberOf(before, "var sendMessageInputSchema")
+	if declared == 0 {
+		t.Fatal("the served fixture holds no multi-line served literal")
+	}
+	deep := false
+	for _, c := range cited {
+		if c.Line >= declared+2 {
+			deep = true
+		}
+	}
+	if !deep {
+		t.Fatal("the served fixture holds no citation below its declaration's own line")
+	}
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	assertConverted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	if strings.Contains(after, "line 14") {
+		t.Errorf("%s carries a line number after the strip:\n%s", target, after)
+	}
+	if !strings.Contains(after, "§4.8") {
+		t.Errorf("the strip left no tie to the section the served literal named:\n%s", after)
+	}
+}
+
+// lineNumberOf returns the 1-based line the prefix first stands on, zero
+// when the text does not carry it.
+func lineNumberOf(text, prefix string) int {
+	for i, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+// TestLinePassConvertsAChartValuesLiteralOutsideADescTag pins the served
+// surface of the chart values source. What the chart schema generator
+// copies verbatim is the `desc:` struct-tag value, so a citation in any
+// other string literal of that file is an ordinary authoring site and
+// converts to an anchor like every other carrier.
+//
+// spec: §28.1 (N8, the citation rule: a citation of the retired form is
+// replaced by the anchor of the section it names)
+func TestLinePassConvertsAChartValuesLiteralOutsideADescTag(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/chart/values/values.go"
+	root := lineTree(t, "tree")
+	applyLinePass(t, root, "tree.yaml")
+	assertConverted(t, root, target)
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	if !strings.Contains(after, `"The cluster-type dimension is stated in §4.6."`) {
+		t.Errorf("the literal outside the desc tag was not converted to its anchor:\n%s", after)
+	}
+	if !strings.Contains(after, `desc:"Cluster-type composition dimension (laptop, eks, or gke)."`) {
+		t.Errorf("the served desc tag was not stripped:\n%s", after)
+	}
+}
+
 // TestLinePassFailsAStraddlingRangeRatherThanGuessingAnAnchor pins the
 // first fail-and-report case. A range whose endpoints fall in two
 // sections names no single anchor, so the pass reports it for hand
@@ -3397,6 +3477,88 @@ func TestLinePassFailsAStrippedServedCitationWithNoSurvivingTie(t *testing.T) {
 	}
 	if !strings.Contains(abort.Reason, "tie") {
 		t.Errorf("the abort does not name the tie the strip would delete: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestLinePassFailsAServedJSONStripWithNoSurvivingTie pins that the
+// surviving-tie rule ranges over every served artifact rather than over
+// the Go carriers alone. A data artifact has no comment channel, so the
+// document itself is the only authoring channel it has: a strip that
+// leaves nothing in the document naming the section deletes the tie
+// rather than relocating it, and both the ratchet and the resolver read
+// that deletion as a retirement.
+//
+// spec: §28.1 (N8, the citation rule: a retired citation leaves a
+// standing tie to the section it named)
+func TestLinePassFailsAServedJSONStripWithNoSurvivingTie(t *testing.T) {
+	t.Parallel()
+	const target = "pkg/gateway/externalapi/openapi/openapi.json"
+	root := lineTree(t, "fail/served-json-no-tie")
+	before := treeSnapshot(t, root)
+	_, err := planLinePass(t, root, "fail-served-json-no-tie.yaml")
+	if err == nil {
+		t.Fatal("the line pass stripped the document's only tie")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the missing tie was not reported as a fail-closed abort: %v", err)
+	}
+	if abort.Path != target {
+		t.Errorf("the abort does not name the served document: %v", abort)
+	}
+	if !strings.Contains(abort.Reason, "tie") {
+		t.Errorf("the abort does not name the tie the strip would delete: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+	// The same strip stands when the document keeps a tie, so the rule
+	// is the surviving tie rather than a refusal to strip JSON.
+	kept := lineTree(t, "tree")
+	applyLinePass(t, kept, "tree.yaml")
+	assertConverted(t, kept, target)
+}
+
+// TestLinePassReportsEveryUnconvertibleSiteInOneRun pins the disposition
+// of the sites the pass hands back. The operator hand-corrects the whole
+// population before the pass is re-run, so a run that stopped at the
+// first site would need one run per site to enumerate what the
+// correction covers. Every site of the walk is named, across the files
+// of the tree and within one file, and the tree is left byte-identical.
+//
+// spec: §28.1 (N8, the citation rule: a citation that cannot be retired
+// mechanically is reported rather than converted against a guess)
+func TestLinePassReportsEveryUnconvertibleSiteInOneRun(t *testing.T) {
+	t.Parallel()
+	root := lineTree(t, "fail/many-sites")
+	before := treeSnapshot(t, root)
+	_, err := planLinePass(t, root, "fail-many-sites.yaml")
+	if err == nil {
+		t.Fatal("the line pass converted the sites it cannot resolve")
+	}
+	sites, ok := pass.AllAborts(err)
+	if !ok {
+		t.Fatalf("the sites were not reported as fail-closed aborts: %v", err)
+	}
+	reported := make(map[string]bool, len(sites))
+	for _, site := range sites {
+		reported[fmt.Sprintf("%s:%d", site.Path, site.Line)] = true
+	}
+	for _, want := range []string{"pkg/carrier/straddle.go:9", "pkg/carrier/straddle.go:14", "pkg/carrier/unknown.go:7"} {
+		if !reported[want] {
+			t.Errorf("the run does not report %s; it reported %v", want, reported)
+		}
+	}
+	// The operator-facing message names each of them, because it is what
+	// the hand correction is worked from.
+	message := reportAbort(err).Error()
+	for _, want := range []string{"straddle.go:9", "straddle.go:14", "unknown.go:7"} {
+		if !strings.Contains(message, want) {
+			t.Errorf("the reported message does not name %s: %s", want, message)
+		}
 	}
 	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
 		t.Error("the failed run wrote to the tree")

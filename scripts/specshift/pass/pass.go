@@ -9,8 +9,10 @@
 // applying a pass.
 //
 // The harness fails closed. A pass that reaches a site its register does
-// not carry returns an Abort naming the file and the line, the run stops
-// before its first write, and the tree is left byte-identical. A write
+// not carry returns an Abort naming the file and the line, no file is
+// written, and the tree is left byte-identical. The walk continues past
+// such a site and reports every one it finds, so the operator reads the
+// whole hand-correction population from one run. A write
 // that fails part way through the diff is rolled back from the diff's
 // own Before contents, so a failed run leaves the tree byte-identical
 // whether it failed in planning or in writing. Guessing a substitution
@@ -84,11 +86,68 @@ func (a *Abort) Error() string {
 }
 
 // AsAbort reports whether the error chain carries an Abort, and returns
-// it.
+// the first one.
 func AsAbort(err error) (*Abort, bool) {
-	var a *Abort
-	if errors.As(err, &a) {
-		return a, true
+	sites, ok := AllAborts(err)
+	if !ok {
+		return nil, false
+	}
+	return sites[0], true
+}
+
+// Aborts is the fail-closed outcome of a run that reached more than one
+// site it cannot resolve. A pass reports every such site of its whole
+// walk in one run, because the operator hand-corrects the population
+// before the pass is re-run and a report of the first site alone would
+// need one run per site to enumerate it.
+type Aborts struct {
+	Sites []*Abort
+}
+
+// Error implements error, naming every site the run could not resolve.
+func (a *Aborts) Error() string {
+	lines := make([]string, 0, len(a.Sites)+1)
+	lines = append(lines, fmt.Sprintf("%d site(s) need hand correction:", len(a.Sites)))
+	for _, site := range a.Sites {
+		lines = append(lines, "  "+site.Error())
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Unwrap exposes the individual sites, so a caller inspecting the chain
+// for an Abort finds the first of them.
+func (a *Aborts) Unwrap() []error {
+	out := make([]error, 0, len(a.Sites))
+	for _, site := range a.Sites {
+		out = append(out, site)
+	}
+	return out
+}
+
+// Aborted returns the fail-closed error for the sites a run could not
+// resolve: nothing when there are none, the site itself when there is
+// one, and the whole collection otherwise.
+func Aborted(sites []*Abort) error {
+	switch len(sites) {
+	case 0:
+		return nil
+	case 1:
+		return sites[0]
+	default:
+		return &Aborts{Sites: sites}
+	}
+}
+
+// AllAborts reports whether the error chain carries one or more aborts,
+// and returns them in the order the walk reached them.
+func AllAborts(err error) ([]*Abort, bool) {
+	var many *Aborts
+	if errors.As(err, &many) {
+		return many.Sites, true
+	}
+	var one *Abort
+	if errors.As(err, &one) {
+		return []*Abort{one}, true
 	}
 	return nil, false
 }
@@ -176,9 +235,18 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
 	var diff Diff
+	// A site the pass cannot resolve is collected rather than returned,
+	// so one dry run names every site of the walk that needs hand
+	// correction. The plan writes nothing, so the tree is byte-identical
+	// whether the walk ends on the first unresolved site or on the last.
+	var aborts []*Abort
 	for _, target := range domain {
 		if err := h.planInto(ctx, &diff, r, target, true); err != nil {
-			return Diff{}, err
+			sites, ok := AllAborts(err)
+			if !ok {
+				return Diff{}, err
+			}
+			aborts = append(aborts, sites...)
 		}
 	}
 	// The registers outside the site-rewrite domain take the key rewrite
@@ -191,9 +259,16 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 		}
 		for _, target := range keyed {
 			if err := h.planInto(ctx, &diff, r, target, false); err != nil {
-				return Diff{}, err
+				sites, ok := AllAborts(err)
+				if !ok {
+					return Diff{}, err
+				}
+				aborts = append(aborts, sites...)
 			}
 		}
+	}
+	if err := Aborted(aborts); err != nil {
+		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
 	sort.Slice(diff.Files, func(i, j int) bool { return diff.Files[i].Path < diff.Files[j].Path })
 	return diff, nil

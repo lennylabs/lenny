@@ -3,6 +3,13 @@
 // Package values holds the chart values the schema generator reads.
 package values
 
+// clusterHelp is the prompt the answer file shows. It is an ordinary
+// string literal rather than a served description, so its citation is
+// converted rather than stripped.
+//
+// spec: §4.6 line 5
+const clusterHelp = "The cluster-type dimension is stated in §4.6 line 5."
+
 // Values is the chart values document.
 type Values struct {
 	// Cluster is the §4.6 cluster-type composition dimension. The
