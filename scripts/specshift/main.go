@@ -43,7 +43,6 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
-	"github.com/lennylabs/lenny/scripts/specshift/register"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
@@ -68,12 +67,12 @@ type options struct {
 // in the engine skeleton.
 var builtPasses = map[scope.Pass]pass.Rewriter{}
 
-// rewriterFor returns the pass implementation for a name. A request for
-// a pass that is not built fails rather than reporting an empty diff,
-// because a pass that reported no work would read as a completed
-// migration.
-func rewriterFor(name scope.Pass) (pass.Rewriter, error) {
-	r, ok := builtPasses[name]
+// rewriterFor returns the pass implementation for a name from a pass
+// table. A request for a pass that is not built fails rather than
+// reporting an empty diff, because a pass that reported no work would
+// read as a completed migration.
+func rewriterFor(passes map[scope.Pass]pass.Rewriter, name scope.Pass) (pass.Rewriter, error) {
+	r, ok := passes[name]
 	if !ok {
 		return nil, fmt.Errorf("pass %q is not built yet", name)
 	}
@@ -127,6 +126,12 @@ func passNames() string {
 // run parses the command line and executes one pass, or prints one
 // pass's write domain.
 func run(ctx context.Context, args []string, out io.Writer) error {
+	return runWith(ctx, builtPasses, args, out)
+}
+
+// runWith is run over a supplied pass table, so a caller drives the
+// engine with the passes it built.
+func runWith(ctx context.Context, passes map[scope.Pass]pass.Rewriter, args []string, out io.Writer) error {
 	opts, err := parseArgs(ctx, args)
 	if err != nil {
 		return err
@@ -138,15 +143,18 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if opts.register == "" {
 		return fmt.Errorf("-register is required to run the %s pass", opts.pass)
 	}
-	// The register is loaded and validated before the pass is resolved.
-	// A missing or malformed register that loaded as an empty document
-	// would let the run report zero work, which reads as a completed
-	// migration rather than as the failure it is.
-	if _, err := register.Load(opts.register); err != nil {
+	rewriter, err := rewriterFor(passes, opts.pass)
+	if err != nil {
 		return err
 	}
-	rewriter, err := rewriterFor(opts.pass)
-	if err != nil {
+	// The pass validates the register that drives it before any file is
+	// read. The schema is the pass's own, because a driving register is
+	// keyed for the rewrite it drives rather than by the residual entry
+	// schema the triage registers carry. A missing or malformed register
+	// that loaded as an empty document would let the run report zero
+	// work, which reads as a completed migration rather than as the
+	// failure it is.
+	if err := rewriter.LoadRegister(opts.register); err != nil {
 		return err
 	}
 	var diff pass.Diff

@@ -98,6 +98,18 @@ func AsAbort(err error) (*Abort, bool) {
 type Rewriter interface {
 	// Pass names which write domain the rewriter runs in.
 	Pass() scope.Pass
+	// LoadRegister reads and validates the register that drives the pass,
+	// and fails on a missing or malformed one rather than proceeding with
+	// no sites to rewrite, because a run that reported zero work would
+	// read as a completed migration.
+	//
+	// Each pass owns this rather than a shared loader, because a driving
+	// register is keyed for the rewrite it drives: a sense map is keyed by
+	// file and occurrence and a citation register is keyed per file. The
+	// residual registers, which record a triage decision under one entry
+	// schema, are a separate family and are read by the residual gate
+	// through the register package.
+	LoadRegister(path string) error
 	// Rewrite computes the new contents of one file.
 	Rewrite(ctx context.Context, path string, content []byte) ([]byte, error)
 }

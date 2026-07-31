@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/register"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -79,6 +81,50 @@ func TestReadDomainFailsOnAnEmptyTree(t *testing.T) {
 	empty := func(context.Context) ([]string, error) { return nil, nil }
 	if _, err := scope.ReadDomain(context.Background(), empty); err == nil {
 		t.Fatal("ReadDomain over an empty tree returned no error")
+	}
+}
+
+// TestReadDomainFailsWhenTheExclusionListSelectsZeroFiles pins the
+// zero-inspection case over a tree that is not empty. A walk root
+// pointed at an excluded subtree lists paths and then filters every one
+// of them, and an empty domain reads to every caller as a completed
+// inspection: the pass reports an empty diff and the gate reports green
+// over content neither opened.
+func TestReadDomainFailsWhenTheExclusionListSelectsZeroFiles(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		paths []string
+	}{
+		{"a walk root under the staged proposal tree", []string{"proposals/0001_example.md", "proposals/0002_example.md"}},
+		{"a walk root inside a fixture directory", []string{"pkg/carrier/testdata/fixture.md"}},
+		{"a tree whose only paths are the citation registers", []string{
+			"tests/registers/line-citations.yaml",
+			"tests/registers/line-citation-resolution.yaml",
+		}},
+	} {
+		paths := tc.paths
+		list := func(context.Context) ([]string, error) { return paths, nil }
+		domain, err := scope.ReadDomain(context.Background(), list)
+		if err == nil {
+			t.Errorf("ReadDomain over %s returned %v with no error", tc.name, domain)
+		}
+	}
+}
+
+// TestWriteDomainFailsWhenEveryReadablePathIsExcludedFromWriting pins
+// the same guard over the write domain, which has exclusions of its own.
+// A pass whose write domain collapses to nothing aborts rather than
+// reporting the empty diff of a completed migration.
+func TestWriteDomainFailsWhenEveryReadablePathIsExcludedFromWriting(t *testing.T) {
+	t.Parallel()
+	_, read := treeDomain(t)
+	list := func(context.Context) ([]string, error) {
+		return []string{"charts/lenny/values.schema.json", "charts/lenny/crds/lenny.dev_runtimes.yaml"}, nil
+	}
+	domain, err := scope.WriteDomain(context.Background(), list, scope.Line, read)
+	if err == nil {
+		t.Fatalf("WriteDomain over a tree of generated artifacts returned %v with no error", domain)
 	}
 }
 
@@ -247,6 +293,53 @@ func TestGeneratedRuleSelectsAMarkedHeader(t *testing.T) {
 	}
 }
 
+// TestGeneratedRuleTreatsProseAboutGenerationAsAuthored pins that the
+// header disjunct reads a declaration rather than any sentence that
+// mentions generation. A file the rule wrongly selects is removed from
+// every pass's write domain with no route back, because a residual
+// triage records the misclassification without returning the file to a
+// write domain, so its per-file citation count can never reach zero.
+func TestGeneratedRuleTreatsProseAboutGenerationAsAuthored(t *testing.T) {
+	t.Parallel()
+	list, read := treeDomain(t)
+	authored := []string{
+		// A markdown body sentence. Markdown's leading `#` is a heading
+		// rather than a comment, so no line of this file is a declaration.
+		"docs/authored-guide.md",
+		// A comment line whose generation phrase sits mid-sentence.
+		"pkg/carrier/toolcache.conf",
+	}
+	for _, target := range authored {
+		if got, err := scope.Generated(target, read); err != nil || got != scope.NotGenerated {
+			t.Errorf("Generated(%s) = %q, %v; want %q", target, got, err, scope.NotGenerated)
+		}
+	}
+	for _, p := range scope.Passes() {
+		domain, err := scope.WriteDomain(context.Background(), list, p, read)
+		if err != nil {
+			t.Fatalf("WriteDomain(%s): %v", p, err)
+		}
+		in := membership(domain)
+		for _, target := range authored {
+			if !in[target] {
+				t.Errorf("%s pass write domain omits the authored carrier %s", p, target)
+			}
+		}
+	}
+}
+
+// TestGeneratedRuleSelectsAMarkupDeclarationInAnHTMLComment pins the
+// other half of the dialect rule: a markup carrier declares generation
+// in an HTML comment, which is its only comment syntax, and a
+// declaration on a continuation line of that block still counts.
+func TestGeneratedRuleSelectsAMarkupDeclarationInAnHTMLComment(t *testing.T) {
+	t.Parallel()
+	_, read := treeDomain(t)
+	if got, err := scope.Generated("docs/generated-note.md", read); err != nil || got != scope.HeaderMarker {
+		t.Fatalf("Generated(docs/generated-note.md) = %q, %v; want %q", got, err, scope.HeaderMarker)
+	}
+}
+
 // TestGeneratedRuleFailsWithoutAReader pins that the rule reports a
 // missing reader rather than answering that a file is an ordinary
 // carrier.
@@ -340,22 +433,58 @@ func TestLoadRejectsAMissingOrMalformedRegister(t *testing.T) {
 	}
 }
 
-// TestRunFailsOnAMissingRegisterRatherThanReportingZeroWork pins the same
-// outcome at the command line, where a run that reported no work would
-// read as a completed migration.
-func TestRunFailsOnAMissingRegisterRatherThanReportingZeroWork(t *testing.T) {
+// TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite pins that the
+// driving register is validated by the pass that consumes it rather than
+// against the residual entry schema. The two register families are held
+// apart: a driving register is keyed for the rewrite it drives, while a
+// residual register records a triage decision as a member, a class, a
+// disposition, and a reason. Handing a pass its own register runs the
+// pass, and handing it a residual register fails.
+func TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite(t *testing.T) {
 	t.Parallel()
+	stub := &suffixRewriter{p: scope.Line, suffix: "// rewritten\n", registerKind: "line-citations"}
+	passes := map[scope.Pass]pass.Rewriter{scope.Line: stub}
 	var out bytes.Buffer
-	err := run(context.Background(), []string{
-		"-root", repoRoot(t),
+	err := runWith(context.Background(), passes, []string{
+		"-root", fixtureTreeRoot(t),
 		"-pass", "line",
-		"-register", filepath.Join(fixtureRegisters, "absent.yaml"),
+		"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
 	}, &out)
-	if err == nil {
-		t.Fatal("run with a missing register returned no error")
+	if err != nil {
+		t.Fatalf("run over the pass's own register: %v", err)
 	}
-	if out.Len() != 0 {
-		t.Errorf("run with a missing register wrote %q", out.String())
+	if stub.loadedRegister != filepath.Join(fixtureRegisters, "pass-line-citations.yaml") {
+		t.Errorf("the pass loaded %q rather than the register the run named", stub.loadedRegister)
+	}
+	if !strings.Contains(out.String(), "line pass (dry run)") {
+		t.Errorf("the run did not report the dry run: %q", out.String())
+	}
+	// The residual loader does not accept a driving register, which is
+	// why the pass owns the validation of its own.
+	if _, err := register.Load(filepath.Join(fixtureRegisters, "pass-line-citations.yaml")); err == nil {
+		t.Error("the residual loader accepted a register keyed for a pass")
+	}
+
+	for _, tc := range []struct {
+		name     string
+		register string
+	}{
+		{"a residual register", filepath.Join(fixtureRegisters, "valid.yaml")},
+		{"a missing register", filepath.Join(fixtureRegisters, "absent.yaml")},
+		{"a malformed register", filepath.Join(fixtureRegisters, "pass-malformed.yaml")},
+	} {
+		var rejected bytes.Buffer
+		err := runWith(context.Background(), passes, []string{
+			"-root", fixtureTreeRoot(t),
+			"-pass", "line",
+			"-register", tc.register,
+		}, &rejected)
+		if err == nil {
+			t.Errorf("run with %s returned no error", tc.name)
+		}
+		if rejected.Len() != 0 {
+			t.Errorf("run with %s wrote %q", tc.name, rejected.String())
+		}
 	}
 }
 
@@ -640,7 +769,7 @@ func TestRunReportsAPassThatIsNotBuiltRatherThanAnEmptyDiff(t *testing.T) {
 	err := run(context.Background(), []string{
 		"-root", repoRoot(t),
 		"-pass", "anchor",
-		"-register", filepath.Join(fixtureRegisters, "valid.yaml"),
+		"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
 	}, &out)
 	if err == nil {
 		t.Fatal("run with a pass that is not built returned no error")
@@ -702,15 +831,47 @@ func TestNewHarnessWritesUnderItsRootAndPreservesMode(t *testing.T) {
 }
 
 // suffixRewriter appends a marker to every file in the write domain, and
-// optionally aborts on one named file at one named line.
+// optionally aborts on one named file at one named line. It stands in
+// for a built pass: it owns its driving register's keying and validates
+// that register itself.
 type suffixRewriter struct {
 	p         scope.Pass
 	suffix    string
 	abortPath string
 	abortLine int
+
+	// registerKind is the kind the pass's own driving register declares.
+	registerKind string
+	// loadedRegister records the register the run handed the pass.
+	loadedRegister string
 }
 
 func (s *suffixRewriter) Pass() scope.Pass { return s.p }
+
+// LoadRegister validates the register keyed for this pass's rewrite. A
+// residual register, which carries a member, a class, a disposition, and
+// a reason, is a different family and does not drive a pass.
+func (s *suffixRewriter) LoadRegister(path string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read the %s pass register %s: %w", s.p, path, err)
+	}
+	var doc struct {
+		Kind  string         `yaml:"kind"`
+		Files map[string]int `yaml:"files"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parse the %s pass register %s: %w", s.p, path, err)
+	}
+	if doc.Kind != s.registerKind {
+		return fmt.Errorf("the %s pass register %s declares kind %q, want %q", s.p, path, doc.Kind, s.registerKind)
+	}
+	if len(doc.Files) == 0 {
+		return fmt.Errorf("the %s pass register %s carries no sites", s.p, path)
+	}
+	s.loadedRegister = path
+	return nil
+}
 
 func (s *suffixRewriter) Rewrite(_ context.Context, path string, content []byte) ([]byte, error) {
 	if path == s.abortPath {
@@ -745,6 +906,17 @@ func repoRoot(t *testing.T) string {
 	root, err := scope.RepoRoot(context.Background(), ".")
 	if err != nil {
 		t.Fatalf("resolve the repo root: %v", err)
+	}
+	return root
+}
+
+// fixtureTreeRoot returns the absolute path of the fixture tree, which a
+// run drives as its own tracked tree.
+func fixtureTreeRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(fixtureTree)
+	if err != nil {
+		t.Fatalf("resolve the fixture tree: %v", err)
 	}
 	return root
 }

@@ -221,8 +221,13 @@ func DirLister(dir string) Lister {
 }
 
 // ReadDomain returns the tracked paths inside the read domain, sorted.
-// It fails when the tree contributes no tracked path, because a walk
-// that inspected nothing must not certify the tree.
+//
+// It fails on a domain that selected nothing over a tree that is not
+// empty, as well as on an empty tree. A walk root pointed at an excluded
+// subtree, or an exclusion list that happens to cover every path the
+// walk produced, otherwise yields an empty domain that every caller
+// reads as a completed inspection: a pass reports an empty diff and a
+// gate reports green over content neither of them opened.
 func ReadDomain(ctx context.Context, list Lister) ([]string, error) {
 	all, err := list(ctx)
 	if err != nil {
@@ -237,11 +242,17 @@ func ReadDomain(ctx context.Context, list Lister) ([]string, error) {
 			domain = append(domain, p)
 		}
 	}
+	if len(domain) == 0 {
+		return nil, fmt.Errorf("read domain over %d tracked path(s): the exclusion list selected zero files", len(all))
+	}
 	sort.Strings(domain)
 	return domain, nil
 }
 
-// WriteDomain returns the tracked paths the pass may write, sorted.
+// WriteDomain returns the tracked paths the pass may write, sorted. It
+// carries the same zero-inspection guard ReadDomain does, over its own
+// filtered result: a pass whose write domain collapses to nothing aborts
+// rather than reporting the empty diff of a completed migration.
 func WriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) ([]string, error) {
 	readable, err := ReadDomain(ctx, list)
 	if err != nil {
@@ -256,6 +267,10 @@ func WriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) ([]s
 		if ok {
 			domain = append(domain, target)
 		}
+	}
+	if len(domain) == 0 {
+		return nil, fmt.Errorf("%s pass write domain over %d readable path(s): the exclusion list selected zero files",
+			p, len(readable))
 	}
 	return domain, nil
 }
