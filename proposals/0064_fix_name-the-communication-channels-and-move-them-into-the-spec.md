@@ -5,9 +5,13 @@
   sub-step that was part of this proposal now lives there, for the sequencing reason §3.5 states. Applying
   this proposal against a tree without `scripts/specshift` and the registers means hand-editing the sites
   this document deliberately does not enumerate, which is how both earlier application attempts failed.
-- **Status:** **Verified (2026-07-30). Converged after 10 adversarial review rounds (16 findings
-  fixed); awaiting sign-off.** Sign-off does not authorize application before 0065 lands, which the
-  prerequisite above states. The following decisions stand as staged: the wire-contract rename is in
+- **Status:** **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
+  adversarial review rounds (16 findings fixed) across 4 full-pool sweeps, the certifying sweep running
+  every lens complete with zero confirmed findings. This supersedes the sign-off of 2026-07-29, which was
+  withdrawn after the application that followed it did not converge; the split that followed is what
+  reconciled this proposal with the pipeline that applies it. **Sign-off does not authorize application
+  before 0065 lands**, which the prerequisite above states, and application now stops of its own accord
+  against a tree without it, because every sub-step here is a run of a pass 0065 builds. The following decisions stand as staged: the wire-contract rename is in
   scope now, accepting that it breaks the runtime author contract, because deferring it costs more with
   every later step that lands first; and `spec/29` is a separate file from `spec/28`. The §28 and §29
   line budgets the plan states are sizing indicators and are left as written. The convergence record

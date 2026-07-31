@@ -1,7 +1,14 @@
 # Proposal: Build the specification-migration tooling and the gates that prove a migration complete
 
-- **Status:** Verified (2026-07-30). Converged after 10 adversarial review rounds (20 findings fixed);
-  awaiting sign-off.
+- **Status:** **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
+  adversarial review rounds (20 findings fixed) across 3 full-pool sweeps, the certifying sweep running
+  every lens complete with zero confirmed findings. One change landed after that sweep and so carries no
+  adversarial review: §3.3 recorded a divergence from proposal 0064 over the `testdata/` exclusion, and
+  0064 now states the same clause directly, so the paragraph was replaced with one recording the agreement
+  and the reason the exclusion is load-bearing. It touches no staged change, gate, register, or design
+  section, and the measurement it states was verified over `git ls-files`.
+- **Lands before:** `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`,
+  which is blocked on this proposal. Nothing here depends on 0064.
 - **Date:** 2026-07-30.
 - **Scope:** The tooling half of the first three steps of `gateway-runtime-comms-remediation.md`, split out
   of proposal 0064 so that it lands first. This proposal changes no specification file. It builds
