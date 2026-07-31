@@ -322,11 +322,11 @@ func validateFlakeBudgetYAML(path string) checkResult {
 //     exemption names outstanding work.
 //
 // tests/registers/ also holds files that deliberately do not use this
-// schema, and the kind each file declares is what separates them. A
-// file declaring one of the other kinds is validated by the gate that
-// reads it, against its own schema, and the shared contract asserts
-// nothing about it. A file declaring no recognized kind fails, so a
-// register is never left unvalidated by every gate at once:
+// schema, and the declared kind is what separates them. The shared
+// contract owns exactly the files that declare kind:
+// exception-register. Every other file in the directory is validated
+// by the gate that reads it, against its own schema, and the shared
+// contract asserts nothing about it and imposes no key on it:
 //
 //   - a residual register carries a member, a class, an in-class or
 //     excluded disposition, and a reason. An exclusion is permanent,
@@ -366,29 +366,12 @@ type registerEntry struct {
 	Reason string `yaml:"reason"`
 }
 
-// The kinds a file under tests/registers/ may declare. Membership of
-// the shared contract is a declaration inside the file rather than a
-// filename convention, so a register carrying its own schema is never
-// held to the shared entry schema and a file declaring nothing the
-// harness recognizes fails instead of going unvalidated.
-const (
-	// registerKindException marks a register the shared contract owns.
-	registerKindException = "exception-register"
-	// registerKindResidual marks a per-class residual register.
-	registerKindResidual = "residual-register"
-	// registerKindBaseline marks a count or population baseline a pass
-	// rewrites downward.
-	registerKindBaseline = "baseline"
-	// registerKindSenseMap marks a per-occurrence map from a site to the
-	// identifier a pass writes there.
-	registerKindSenseMap = "sense-map"
-)
-
-// registerKinds lists the recognized kinds in the order the failure
-// message names them.
-func registerKinds() []string {
-	return []string{registerKindException, registerKindResidual, registerKindBaseline, registerKindSenseMap}
-}
+// registerKindException is the kind an exception register declares.
+// Membership of the shared contract is a declaration inside the file
+// rather than a filename convention, so a register carrying the shared
+// entry schema is held to it under any name and a file carrying its own
+// schema is left to the gate that reads it.
+const registerKindException = "exception-register"
 
 // registerFile is one parsed exception register.
 type registerFile struct {
@@ -443,22 +426,30 @@ func loadRegisterFile(path string) (*registerFile, error) {
 	return &doc, nil
 }
 
-// registerFileKind reads the kind one file under tests/registers/
-// declares. A file that cannot be read or parsed is an error rather
-// than a file of no kind, so the directory sweep reports it instead of
-// passing over it.
-func registerFileKind(path string) (string, error) {
+// declaresSharedContract reports whether one file under
+// tests/registers/ declares the shared entry schema. A document that is
+// not a mapping, or a mapping with no kind key, or a mapping declaring
+// another kind, carries a schema of its own, so the shared contract
+// does not range over it. A file that cannot be read or parsed is an
+// error rather than a file of another kind, so the directory sweep
+// reports it instead of passing over it.
+func declaresSharedContract(path string) (bool, error) {
 	body, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read register %s: %w", path, err)
+		return false, fmt.Errorf("read register %s: %w", path, err)
 	}
-	var doc struct {
-		Kind string `yaml:"kind"`
-	}
+	var doc yaml.Node
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return "", fmt.Errorf("parse register %s: %w", path, err)
+		return false, fmt.Errorf("parse register %s: %w", path, err)
 	}
-	return strings.TrimSpace(doc.Kind), nil
+	root := &doc
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return false, nil
+		}
+		root = root.Content[0]
+	}
+	return strings.TrimSpace(mappingValue(root, "kind")) == registerKindException, nil
 }
 
 // The dispositions a register entry may record. The set classifies why
@@ -599,10 +590,9 @@ func checkRegister(name, path string, violations []string, rules registerRules) 
 // themselves hold, so an entry that has outlived its expiry or its
 // blocker fails the tier even before the gate that reads it runs. A
 // residual register, a baseline, and a sense map carry schemas of their
-// own, so the sweep dispatches on the kind each file declares and
-// leaves those files to the gate that reads them. A file declaring no
-// recognized kind fails, so a register no schema claims cannot slip
-// past every gate at once.
+// own, so the sweep selects the files declaring kind:
+// exception-register and leaves every other file to the gate that reads
+// it, without imposing a key of its own on those schemas.
 func validateRegistersDir(dir string, rules registerRules) checkResult {
 	const name = "tests/registers"
 	if _, err := os.Stat(dir); err != nil {
@@ -617,23 +607,19 @@ func validateRegistersDir(dir string, rules registerRules) checkResult {
 	held := 0
 	for _, f := range files {
 		base := filepath.Base(f)
-		kind, err := registerFileKind(f)
+		shared, err := declaresSharedContract(f)
 		if err != nil {
 			problems = append(problems, fmt.Sprintf("%s: %v", base, err))
 			continue
 		}
-		switch kind {
-		case registerKindException:
-			held++
-			if r := checkRegister(name, f, nil, rules); !r.ok {
-				problems = append(problems, fmt.Sprintf("%s: %s", base, r.detail))
-			}
-		case registerKindResidual, registerKindBaseline, registerKindSenseMap:
+		if !shared {
 			// The gate that reads this file validates it against its own
 			// schema; the shared contract does not range over it.
-		default:
-			problems = append(problems, fmt.Sprintf("%s: declares kind %q; every register declares one of %s",
-				base, kind, strings.Join(registerKinds(), ", ")))
+			continue
+		}
+		held++
+		if r := checkRegister(name, f, nil, rules); !r.ok {
+			problems = append(problems, fmt.Sprintf("%s: %s", base, r.detail))
 		}
 	}
 	if len(problems) > 0 {

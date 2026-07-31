@@ -643,15 +643,31 @@ entries:
 		"change-graph-exceptions.yaml", "expiry 2026-07-30 has passed")
 }
 
-// TestValidateRegistersDirFailsUnrecognizedKind pins that a file no
-// schema claims fails the sweep. A register validated by neither the
-// shared contract nor another gate would otherwise sit in the tree
-// unchecked while the sweep reported a clean directory.
-func TestValidateRegistersDirFailsUnrecognizedKind(t *testing.T) {
+// TestValidateRegistersDirLeavesFilesDeclaringNoSharedKind pins that
+// the shared contract imposes no document key on the schemas it does
+// not own. A line-citation baseline keyed per file, a resolution
+// baseline keyed by file and citation text, and a residual register
+// keyed by member and class all carry no kind key, because the schemas
+// are specified by their keying alone. Each is validated by the gate
+// that reads it, so the sweep passes over them instead of failing the
+// tier for a key their schema never states.
+func TestValidateRegistersDirLeavesFilesDeclaringNoSharedKind(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
-		"undeclared.yaml":   "version: 1\nentries: []\n",
-		"mistyped.yaml":     "kind: exceptions\nversion: 1\nentries: []\n",
+		"line-citations.yaml": "version: 1\nfiles:\n  spec/10_gateway.md: 14\n",
+		"resolutions.yaml": `version: 1
+entries:
+  - file: spec/10_gateway.md
+    citation: the runtime lifecycle channel
+    resolves: false
+`,
+		"residual-line-citations.yaml": `version: 1
+entries:
+  - member: spec/10_gateway.md
+    class: line-citations
+    disposition: excluded
+    reason: The record states findings as they were written.
+`,
 		"exceptions-a.yaml": wellFormedRegister,
 	}
 	for name, body := range files {
@@ -659,8 +675,30 @@ func TestValidateRegistersDirFailsUnrecognizedKind(t *testing.T) {
 			t.Fatalf("write %s: %v", name, err)
 		}
 	}
-	expectFail(t, validateRegistersDir(dir, testRegisterRules()),
-		"undeclared.yaml", "mistyped.yaml", "exception-register, residual-register, baseline, sense-map")
+	r := validateRegistersDir(dir, testRegisterRules())
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "1 register") {
+		t.Errorf("only the exception register is held to the shared contract: %s", r.detail)
+	}
+}
+
+// TestValidateRegistersDirLeavesNonMappingDocuments pins that a
+// register whose document is a sequence rather than a mapping is left
+// to the gate that reads it. Such a document can carry no top-level
+// kind key at all, so treating the absent key as a violation would fail
+// the tier for a schema the shared contract does not own.
+func TestValidateRegistersDirLeavesNonMappingDocuments(t *testing.T) {
+	dir := t.TempDir()
+	files := map[string]string{
+		"skip-reasons.yaml": "- file: tests/e2e/gateway_test.go\n  call_site: TestDrain\n  reason: host capability absent\n",
+		"exceptions-a.yaml": wellFormedRegister,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	expectPass(t, validateRegistersDir(dir, testRegisterRules()))
 }
 
 // TestValidateRegistersDirSkipsRegistersWithTheirOwnSchema pins that

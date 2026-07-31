@@ -6,24 +6,24 @@ carry, so a register is the only way an exemption enters the tree.
 
 ## Which files the shared contract owns
 
-Every file in this directory declares a `kind`. The shared validator in
-`cmd/lenny-test/cmd_validate_yaml.go` holds each file declaring
-`exception-register` to the entry schema and the ratchet rules below,
-and leaves each other recognized kind to the gate that reads it. A file
-declaring no recognized kind fails `validate-maps`, so a register that
-no schema claims cannot sit in the tree unchecked.
+An exception register declares `kind: exception-register`. The shared
+validator in `cmd/lenny-test/cmd_validate_yaml.go` holds every file
+carrying that declaration to the entry schema and the ratchet rules
+below. Every other file in this directory carries a schema of its own
+and is validated by the gate that reads it, so the shared validator
+passes over it and imposes no key on it.
 
-| Kind | Schema | Validated by |
+| File | Schema | Validated by |
 |:--|:--|:--|
-| `exception-register` | The shared entry schema below. | The shared validator, on every run of `validate-maps`. |
-| `residual-register` | A member, a class, an `in-class` or `excluded` disposition, and a reason. | The residual gate for that class. |
-| `baseline` | Keyed for the rewrite it drives, and rewritten downward as that rewrite proceeds. | The gate that reads it. |
-| `sense-map` | Keyed by file and occurrence, recording the identifier a pass writes at each site. | The pass that reads it, and the gate over its output. |
+| An exception register | The shared entry schema below, declared with `kind: exception-register`. | The shared validator, on every run of `validate-maps`. |
+| A residual register | A member, a class, an `in-class` or `excluded` disposition, and a reason. | The residual gate for that class. |
+| A baseline | Keyed for the rewrite it drives, and rewritten downward as that rewrite proceeds. | The gate that reads it. |
+| A sense map | Keyed by file and occurrence, recording the identifier a pass writes at each site. | The pass that reads it, and the gate over its output. |
 
 The filename convention is `exceptions-<gate>.yaml` for an exception
 register and `residual-<class>.yaml` for a residual register. The name
-is a convention for readers, and the `kind` key is what decides which
-schema a file is held to.
+is a convention for readers, and the `kind: exception-register`
+declaration is what puts a file under the shared contract.
 
 ## Entry schema
 
@@ -82,7 +82,7 @@ exempting nothing silently.
 
 ## Residual registers
 
-A file declaring `kind: residual-register` records the triage of the
+A residual register records the triage of the
 members a class's broad predicate matches beyond its enumeration. It
 holds a member, a class, an `in-class` or `excluded` disposition, and a
 reason. An exclusion is permanent and an in-class entry is retired by
