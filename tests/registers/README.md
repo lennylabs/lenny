@@ -74,25 +74,24 @@ inside the tier-0 static check:
 3. An entry whose `blocker` resolves to no open item fails, so an
    exemption names outstanding work.
 
-The open-item domain the harness runs with holds three namespaces:
+The open-item domain the harness runs with holds two namespaces:
 
 - The findings still marked `OPEN` in `BUILD-GAPS.md` and `TEST-GAPS.md`.
 - The steps the root-level remediation plans declare, including a
   sub-step written with a lowercase suffix such as `R11a`. A step leaves
   the domain when its plan stops declaring it.
-- The sub-steps of a proposal that has not landed, named by the proposal
-  that declares them, as in `0042:WIRE-1`. The qualification is
-  required, because several proposals reuse the same sub-step names. A
-  sub-step leaves the domain when `PROPOSAL-QUEUE.md` records the
-  proposal as landed, and a proposal whose own status line declares it
-  superseded is out of the domain from that point.
 
 A gate lands green by seeding its register with an entry blocked on the
-work that retires the entry, so a step or sub-step identifier resolves
-in the same way a finding identifier does.
+remediation step that retires the entry, so a step identifier resolves
+in the same way a finding identifier does. A heading declared by any
+other document, including a document that stages work rather than
+tracking it, is not an open item and fails the third rule.
 
-A register file that is missing or does not parse fails rather than
-exempting nothing silently.
+A register file that is missing, empty, or unparseable fails rather
+than exempting nothing silently. A file whose entries carry the shared
+schema but that declares no `kind` fails as well, so a register cannot
+leave the contract by an edit that drops the declaration. The sweep
+reads both the `.yaml` and the `.yml` filename extensions.
 
 ## Residual registers
 
