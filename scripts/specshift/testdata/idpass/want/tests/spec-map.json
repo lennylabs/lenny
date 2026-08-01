@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "sections": {
+    "28.3": {
+      "title": "Registers",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "pkg/adapter/runtimeops_test.go::TestRuntimeOpsChannelServes"
+      ],
+      "packages": [
+        "pkg/adapter/runtimeops.go"
+      ],
+      "schemas": [
+        "schemas/runtime-ops-events.schema.json"
+      ]
+    }
+  }
+}

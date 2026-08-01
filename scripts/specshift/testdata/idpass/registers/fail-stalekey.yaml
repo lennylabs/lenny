@@ -1,0 +1,8 @@
+# The carrier moves, and the spec map names its old path inside a note
+# the key rewrite cannot move.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS

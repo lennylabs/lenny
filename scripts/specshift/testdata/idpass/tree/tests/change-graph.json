@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "globs": {
+    "pkg/adapter/lifecyclechannel.go": {
+      "unit": ["pkg/adapter/..."]
+    }
+  }
+}

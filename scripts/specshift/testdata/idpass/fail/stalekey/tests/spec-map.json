@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "sections": {
+    "28.3": {
+      "title": "Registers",
+      "packages": [
+        "pkg/adapter/lifecyclechannel.go"
+      ],
+      "notes": "The operations live in pkg/adapter/lifecyclechannel.go."
+    }
+  }
+}

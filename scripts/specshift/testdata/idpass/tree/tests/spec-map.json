@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "sections": {
+    "28.3": {
+      "title": "Registers",
+      "spec_file": "spec/28_communication-channels.md",
+      "tests": [
+        "pkg/adapter/lifecyclechannel_test.go::TestLifecycleChannelServes"
+      ],
+      "packages": [
+        "pkg/adapter/lifecyclechannel.go"
+      ],
+      "schemas": [
+        "schemas/lifecycle-events.schema.json"
+      ]
+    }
+  }
+}

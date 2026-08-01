@@ -1,0 +1,6 @@
+kind: line-citation-resolution-baseline
+version: 1
+files:
+    - path: pkg/adapter/runtimeops.go
+      citations:
+        - §28.1 line 400

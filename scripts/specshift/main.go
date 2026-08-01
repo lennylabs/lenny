@@ -44,6 +44,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/anchor"
+	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
@@ -77,9 +78,10 @@ type options struct {
 // identifier space those files declare.
 func builtPasses(root string) map[scope.Pass]pass.Rewriter {
 	return map[scope.Pass]pass.Rewriter{
-		scope.Name:   name.New(scope.GitLister(root), scope.DirReader(root)),
-		scope.Anchor: anchor.New(scope.GitLister(root), scope.DirReader(root)),
-		scope.Line:   line.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Name:       name.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Identifier: identifier.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Anchor:     anchor.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Line:       line.New(scope.GitLister(root), scope.DirReader(root)),
 	}
 }
 
@@ -190,8 +192,12 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 		mode = "applied"
 	}
 	fmt.Fprintf(out, "%s pass (%s): %d file(s)\n", opts.pass, mode, len(diff.Files))
-	for _, p := range diff.Paths() {
-		fmt.Fprintf(out, "  %s\n", p)
+	for _, f := range diff.Files {
+		if f.To != "" {
+			fmt.Fprintf(out, "  %s -> %s\n", f.Path, f.To)
+			continue
+		}
+		fmt.Fprintf(out, "  %s\n", f.Path)
 	}
 	return nil
 }

@@ -1,0 +1,5 @@
+kind: line-citation-count-baseline
+version: 1
+files:
+    - path: pkg/adapter/runtimeops.go
+      count: 1

@@ -570,6 +570,19 @@ func DirWriter(dir string) func(target string, content []byte) error {
 	}
 }
 
+// DirRemover returns a remover rooted at dir. A path that is already
+// absent is reported as removed, so the rollback of a move whose write
+// never landed is not itself a failure.
+func DirRemover(dir string) func(target string) error {
+	return func(target string) error {
+		err := os.Remove(filepath.Join(dir, filepath.FromSlash(target)))
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", target, err)
+		}
+		return nil
+	}
+}
+
 // Lister reports the tracked paths of a tree, repo-relative and
 // slash-separated.
 type Lister func(ctx context.Context) ([]string, error)

@@ -35,9 +35,22 @@ import (
 // contents, so a diff is replayable without the tree it was computed
 // against.
 type FileDiff struct {
-	Path   string
+	Path string
+	// To is the path the file moves to, and is empty when the file stays
+	// where it is. A move is part of the diff rather than a step beside
+	// it, so the dry run states it, the apply performs it, and a failed
+	// apply puts the file back under its old path.
+	To     string
 	Before []byte
 	After  []byte
+}
+
+// Destination returns the path the file has after the diff is applied.
+func (f FileDiff) Destination() string {
+	if f.To != "" {
+		return f.To
+	}
+	return f.Path
 }
 
 // Diff is a pass's whole change, ordered by path.
@@ -64,7 +77,10 @@ func (d Diff) Equal(other Diff) bool {
 	}
 	for i, f := range d.Files {
 		o := other.Files[i]
-		if f.Path != o.Path || !bytes.Equal(f.Before, o.Before) || !bytes.Equal(f.After, o.After) {
+		if f.Path != o.Path || f.To != o.To {
+			return false
+		}
+		if !bytes.Equal(f.Before, o.Before) || !bytes.Equal(f.After, o.After) {
 			return false
 		}
 	}
@@ -198,6 +214,23 @@ type KeyRewriter interface {
 	RewriteKeys(ctx context.Context, path string, content []byte) ([]byte, error)
 }
 
+// Mover is the third write channel, which a pass that renames a file
+// implements. The naming law reaches the name of a file as well as its
+// contents, so the pass that rewrites a retired identifier inside a
+// carrier is the pass that moves the carrier whose own name carries it.
+//
+// The move travels in the diff, so the dry run states it before it
+// happens, an abort anywhere leaves every file under its old path, and
+// the register key rewrite that follows the move is planned in the same
+// run.
+type Mover interface {
+	// MoveTo returns the path the file takes after the pass, or the
+	// empty string when the file stays where it is. It carries the same
+	// fail-closed obligation Rewrite does: a path the pass cannot
+	// resolve returns an Abort rather than a guess.
+	MoveTo(ctx context.Context, path string) (string, error)
+}
+
 // Harness walks a pass's write domain and turns it into a diff. Its
 // dependencies are injected so a test drives it over a fixture tree.
 type Harness struct {
@@ -207,19 +240,26 @@ type Harness struct {
 	Read scope.FileReader
 	// Write writes a repo-relative tracked path.
 	Write func(path string, content []byte) error
+	// Remove deletes a repo-relative tracked path. It is used by the
+	// move channel alone, so a harness driving a pass that moves no file
+	// needs none.
+	Remove func(path string) error
 }
 
 // NewHarness returns a harness over the tracked tree at root.
 func NewHarness(root string) *Harness {
 	return &Harness{
-		List:  scope.GitLister(root),
-		Read:  scope.DirReader(root),
-		Write: scope.DirWriter(root),
+		List:   scope.GitLister(root),
+		Read:   scope.DirReader(root),
+		Write:  scope.DirWriter(root),
+		Remove: scope.DirRemover(root),
 	}
 }
 
 // NewHarnessOver returns a harness with each dependency supplied, so a
-// caller can drive a pass over a tree other than a git checkout.
+// caller can drive a pass over a tree other than a git checkout. It
+// carries no remover, so a caller driving a pass that moves files sets
+// Remove as well.
 func NewHarnessOver(list scope.Lister, read scope.FileReader, write func(string, []byte) error) *Harness {
 	return &Harness{List: list, Read: read, Write: write}
 }
@@ -271,7 +311,40 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
 	sort.Slice(diff.Files, func(i, j int) bool { return diff.Files[i].Path < diff.Files[j].Path })
+	if err := checkDestinations(ctx, h.List, diff); err != nil {
+		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+	}
 	return diff, nil
+}
+
+// checkDestinations refuses a plan whose moves would overwrite a file.
+// A destination another file of the diff also takes, and a destination
+// the tree already carries, both end with one of the two files gone and
+// the run reporting a clean move.
+func checkDestinations(ctx context.Context, list scope.Lister, diff Diff) error {
+	moved := map[string]string{}
+	for _, f := range diff.Files {
+		if f.To == "" {
+			continue
+		}
+		if other, ok := moved[f.To]; ok {
+			return fmt.Errorf("%s and %s both move to %s", other, f.Path, f.To)
+		}
+		moved[f.To] = f.Path
+	}
+	if len(moved) == 0 {
+		return nil
+	}
+	paths, err := list(ctx)
+	if err != nil {
+		return fmt.Errorf("list tracked tree: %w", err)
+	}
+	for _, p := range paths {
+		if from, ok := moved[p]; ok && from != p {
+			return fmt.Errorf("%s moves to %s, which the tree already carries", from, p)
+		}
+	}
+	return nil
 }
 
 // planInto computes one file's change and appends it to the diff when
@@ -306,11 +379,25 @@ func (h *Harness) planInto(ctx context.Context, diff *Diff, r Rewriter, target s
 			return fmt.Errorf("plan %s pass: rekey %s: %w", r.Pass(), target, err)
 		}
 	}
-	if bytes.Equal(before, after) {
+	// A file moves through the site channel alone. A path-keyed register
+	// reached through the key channel is a fixed location the passes and
+	// the gates address by name, so it is rekeyed where it stands.
+	to := ""
+	if mv, ok := r.(Mover); ok && site {
+		to, err = mv.MoveTo(ctx, target)
+		if err != nil {
+			return fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+		}
+		if to == target {
+			to = ""
+		}
+	}
+	if to == "" && bytes.Equal(before, after) {
 		return nil
 	}
 	diff.Files = append(diff.Files, FileDiff{
 		Path:   target,
+		To:     to,
 		Before: before,
 		After:  append([]byte(nil), after...),
 	})
@@ -337,8 +424,12 @@ func (h *Harness) Apply(ctx context.Context, r Rewriter) (Diff, error) {
 	if h.Write == nil {
 		return Diff{}, fmt.Errorf("apply %s pass: harness is missing a writer", r.Pass())
 	}
+	if h.Remove == nil && diff.moves() {
+		return Diff{}, fmt.Errorf("apply %s pass: the plan moves %d file(s) and the harness is missing a remover",
+			r.Pass(), diff.moveCount())
+	}
 	for i, f := range diff.Files {
-		if err := h.Write(f.Path, f.After); err != nil {
+		if err := h.writeOne(f); err != nil {
 			cause := fmt.Errorf("apply %s pass: %w", r.Pass(), err)
 			// The failing entry is restored along with the entries
 			// already written: a writer that truncates before it fails
@@ -350,16 +441,57 @@ func (h *Harness) Apply(ctx context.Context, r Rewriter) (Diff, error) {
 	return diff, nil
 }
 
+// moves reports whether the diff carries a file move.
+func (d Diff) moves() bool { return d.moveCount() > 0 }
+
+// moveCount returns how many files the diff moves.
+func (d Diff) moveCount() int {
+	n := 0
+	for _, f := range d.Files {
+		if f.To != "" {
+			n++
+		}
+	}
+	return n
+}
+
+// writeOne applies one entry of the diff. A moved file is written under
+// its new path and removed from its old one, in that order, so a failure
+// between the two leaves the content present under both names rather
+// than under neither.
+func (h *Harness) writeOne(f FileDiff) error {
+	if err := h.Write(f.Destination(), f.After); err != nil {
+		return err
+	}
+	if f.To == "" {
+		return nil
+	}
+	if err := h.Remove(f.Path); err != nil {
+		return fmt.Errorf("remove %s after moving it to %s: %w", f.Path, f.To, err)
+	}
+	return nil
+}
+
 // restore puts back the pre-run contents of the files a failed apply had
-// already written, and returns the cause. A restore that itself fails
-// returns a distinct error carrying ErrTreeNotRestored, because an
-// operator handling a half-written tree needs a different message from
-// one handling a run that changed nothing.
+// already written, and returns the cause. A moved file is written back
+// under its old path and removed from its new one, so a rolled-back tree
+// carries neither a copy under the new name nor a hole under the old.
+// A restore that itself fails returns a distinct error carrying
+// ErrTreeNotRestored, because an operator handling a half-written tree
+// needs a different message from one handling a run that changed
+// nothing.
 func (h *Harness) restore(written []FileDiff, cause error) error {
 	var failed []string
 	for _, f := range written {
 		if err := h.Write(f.Path, f.Before); err != nil {
 			failed = append(failed, fmt.Sprintf("%s: %v", f.Path, err))
+			continue
+		}
+		if f.To == "" {
+			continue
+		}
+		if err := h.Remove(f.To); err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", f.To, err))
 		}
 	}
 	if len(failed) == 0 {

@@ -1,0 +1,7 @@
+# The file name carries a retired spelling and no entry resolves it.
+kind: identifier-senses
+version: 1
+entries:
+  - file: docs/reference/channels.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

@@ -1,0 +1,39 @@
+# Every site of the fixture tree but the command-line file argument in
+# spec/17, whose sense the register leaves unrecorded.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: schemas/lifecycle-events.schema.json
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/channels.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

@@ -3,12 +3,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/scripts/specshift/identifier"
+	"github.com/lennylabs/lenny/scripts/specshift/pass"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // specMapTestFilesFixture builds a temp repo root with the given test
@@ -962,5 +968,119 @@ func TestChangeGraphCoverageBaselineEntriesAreDirectories(t *testing.T) {
 		if !strings.HasSuffix(p, "/") {
 			t.Errorf("baseline entry %q is not a directory prefix", p)
 		}
+	}
+}
+
+// identifierPassNamingTable is the naming table the specshift identifier
+// pass reads its spellings out of. The fixture carries the one row this
+// case needs, which retires the file-name stem of the source it moves.
+const identifierPassNamingTable = `# 28. Communication Channels
+
+## 28.3 Registers
+
+| Channel | Carrier | Retired spelling | Canonical spelling |
+|:--|:--|:--|:--|
+| ` + "`CH-RUNTIMEOPS`" + ` | path | ` + "`lifecyclechannel`" + ` | ` + "`runtimeops`" + ` |
+`
+
+// identifierPassSenseRegister resolves the one file-name site the
+// fixture carries, which is what the pass moves.
+const identifierPassSenseRegister = `kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+`
+
+// TestValidateChangeGraphCompletenessSurvivesAnIdentifierPassRename pins
+// the interaction between the completeness check and the pass that moves
+// a source file. The pass rewrites the glob key of every file it moves
+// in the same run, so the renamed path is covered by the moved key and
+// the coverage baseline is not grown to absorb it. Without the rekey the
+// renamed path arrives as a source no glob covers, and the only way back
+// to green would be a new baseline prefix, which the downward-only
+// rewrite refuses.
+func TestValidateChangeGraphCompletenessSurvivesAnIdentifierPassRename(t *testing.T) {
+	const (
+		from = "pkg/adapter/lifecyclechannel.go"
+		to   = "pkg/adapter/runtimeops.go"
+	)
+	root := changeGraphCompletenessRoot(t, []string{from}, []string{from}, nil)
+	writeIdentifierPassInputs(t, root)
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	runIdentifierPass(t, root)
+	trackIdentifierPassRename(t, root)
+	expectPass(t, runChangeGraphCompleteness(root))
+
+	globs, err := readChangeGraphGlobKeys(filepath.Join(root, "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	if !globs[to] || globs[from] {
+		t.Fatalf("the change-graph glob key did not move with the file: %v", globs)
+	}
+	prefixes, err := readChangeGraphCoverageBaseline(filepath.Join(root, changeGraphCoverageBaseline))
+	if err != nil {
+		t.Fatalf("read baseline: %v", err)
+	}
+	if len(prefixes) != 0 {
+		t.Fatalf("the coverage baseline grew to cover the renamed path: %v", prefixes)
+	}
+}
+
+// writeIdentifierPassInputs adds the tree content the identifier pass
+// reads: the naming table it takes its spellings from and the two
+// citation baselines its key channel rekeys. Everything is tracked,
+// because the pass reads the tree from the git index.
+func writeIdentifierPassInputs(t *testing.T, root string) {
+	t.Helper()
+	files := map[string]string{
+		"spec/28_communication-channels.md":             identifierPassNamingTable,
+		"tests/registers/line-citations.yaml":           "kind: line-citation-count-baseline\nversion: 1\nfiles: []\n",
+		"tests/registers/line-citation-resolution.yaml": "kind: line-citation-resolution-baseline\nversion: 1\nfiles: []\n",
+	}
+	var paths []string
+	for rel, content := range files {
+		full := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", full, err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+		paths = append(paths, rel)
+	}
+	sort.Strings(paths)
+	trackChangeGraphSources(t, root, append(paths,
+		"tests/change-graph.json", changeGraphCoverageBaseline)...)
+}
+
+// runIdentifierPass applies the specshift identifier pass over the
+// fixture root, driven by a register resolving its one file-name site.
+func runIdentifierPass(t *testing.T, root string) {
+	t.Helper()
+	register := filepath.Join(t.TempDir(), "identifier-senses.yaml")
+	if err := os.WriteFile(register, []byte(identifierPassSenseRegister), 0o644); err != nil {
+		t.Fatalf("write the sense register: %v", err)
+	}
+	r := identifier.New(scope.GitLister(root), scope.DirReader(root))
+	if err := r.LoadRegister(register); err != nil {
+		t.Fatalf("load the sense register: %v", err)
+	}
+	if _, err := pass.NewHarness(root).Apply(context.Background(), r); err != nil {
+		t.Fatalf("apply the identifier pass: %v", err)
+	}
+}
+
+// trackIdentifierPassRename records the move in the git index, which is
+// where the completeness check reads the tracked source domain from.
+func trackIdentifierPassRename(t *testing.T, root string) {
+	t.Helper()
+	cmd := exec.Command("git", "add", "-A")
+	cmd.Dir = root
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git add -A: %v: %s", err, out)
 	}
 }

@@ -1,0 +1,6 @@
+kind: identifier-senses
+version: 1
+entries:
+  - file: docs/reference/channels.md
+    occurrence: 1
+    channel: CH-NOSUCHCHANNEL

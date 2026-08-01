@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -20,6 +21,8 @@ import (
 
 	"github.com/lennylabs/lenny/scripts/specshift/anchor"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/scripts/specshift/gate"
+	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
@@ -1661,6 +1664,17 @@ type renamingRewriter struct {
 	suffixRewriter
 	from string
 	to   string
+	// move drives the third channel as well, so a case can exercise the
+	// file move a rename performs alongside the key rewrite it forces.
+	move bool
+}
+
+// MoveTo moves the one file the rewriter renames.
+func (r *renamingRewriter) MoveTo(_ context.Context, path string) (string, error) {
+	if !r.move || path != r.from {
+		return "", nil
+	}
+	return r.to, nil
 }
 
 func (r *renamingRewriter) RewriteKeys(_ context.Context, _ string, content []byte) ([]byte, error) {
@@ -6176,5 +6190,777 @@ func TestTheDriverCarriesTheAnchorPass(t *testing.T) {
 	}
 	if r.Pass() != scope.Anchor {
 		t.Errorf("the built pass names the %s write domain", r.Pass())
+	}
+}
+
+// fixtureIDPass holds the identifier pass fixtures: the shared
+// specification overlay carrying the naming table, the carriers of each
+// case, the expected contents, and the driving registers.
+const fixtureIDPass = "testdata/idpass"
+
+// idTree assembles the tree one identifier pass case runs over, which is
+// the shared specification fixture plus the case's own carriers, later
+// overlays overriding earlier ones.
+func idTree(t *testing.T, carriers ...string) string {
+	t.Helper()
+	root := t.TempDir()
+	copyTreeInto(t, filepath.Join(fixtureIDPass, "spec"), root)
+	for _, dir := range carriers {
+		copyTreeInto(t, filepath.Join(fixtureIDPass, dir), root)
+	}
+	return root
+}
+
+// idHarness returns the harness one identifier pass case runs through.
+// It carries a remover as well as a writer, because the pass moves the
+// carrier whose own name carries a retired spelling.
+func idHarness(root string) *pass.Harness {
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Remove = scope.DirRemover(root)
+	return h
+}
+
+// idRewriter returns the identifier pass over the tree at root, driven
+// by the named register fixture.
+func idRewriter(t *testing.T, root, register string) *identifier.Rewriter {
+	t.Helper()
+	r := identifier.New(scope.DirLister(root), scope.DirReader(root))
+	if err := r.LoadRegister(filepath.Join(fixtureIDPass, "registers", register)); err != nil {
+		t.Fatalf("load the identifier pass register %s: %v", register, err)
+	}
+	return r
+}
+
+// applyIDPass runs the identifier pass over the tree at root and returns
+// the applied diff.
+func applyIDPass(t *testing.T, root, register string) pass.Diff {
+	t.Helper()
+	diff, err := idHarness(root).Apply(context.Background(), idRewriter(t, root, register))
+	if err != nil {
+		t.Fatalf("apply the identifier pass: %v", err)
+	}
+	return diff
+}
+
+// planIDPass runs the identifier pass over the tree at root without
+// writing, and returns the error a fail-closed case expects.
+func planIDPass(t *testing.T, root, register string) (pass.Diff, error) {
+	t.Helper()
+	return idHarness(root).Plan(context.Background(), idRewriter(t, root, register))
+}
+
+// applyIDPassErr runs the identifier pass through the writing path and
+// returns the error a fail-closed case expects. The harness has a writer
+// and a remover, so a run that raised its abort after a write rather
+// than before one would leave the tree changed.
+func applyIDPassErr(t *testing.T, root, register string) (pass.Diff, error) {
+	t.Helper()
+	return idHarness(root).Apply(context.Background(), idRewriter(t, root, register))
+}
+
+// assertRewritten compares one carrier of the run against the expected
+// content held beside the fixture tree, under the path the carrier has
+// after the run.
+func assertRewritten(t *testing.T, root, target string) {
+	t.Helper()
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	want := readFixtureFile(t, filepath.Join(fixtureIDPass, "want", target))
+	if after != want {
+		t.Fatalf("%s after the identifier pass is\n%s\nwant\n%s", target, after, want)
+	}
+}
+
+// TestIdentifierPassAbortsAtAnUnregisteredOccurrenceAndLeavesTheTreeUnmodified
+// pins the fail-closed rule the whole pass rests on. An occurrence of a
+// retired spelling the sense register does not carry aborts the run
+// non-zero, names the file and the line, and leaves every carrier
+// byte-identical, including the sibling whose own occurrence the
+// register does resolve. A default substitution there would read as
+// canonical to the identifier-resolution gate, which reads the forward
+// relation and so does not observe one spelling resolved to the wrong
+// identifier.
+//
+// spec: §28.1 (N4, the naming law: the canonical identifier is written
+// in every carrier of the channel it denotes)
+func TestIdentifierPassAbortsAtAnUnregisteredOccurrenceAndLeavesTheTreeUnmodified(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "fail/unregistered")
+	before := treeSnapshot(t, root)
+	_, err := applyIDPassErr(t, root, "fail-unregistered.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass returned no error at an unregistered occurrence")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the pass returned %v, which is not an abort", err)
+	}
+	if abort.Path != "pkg/adapter/unregistered.go" {
+		t.Errorf("the abort names %s, want pkg/adapter/unregistered.go", abort.Path)
+	}
+	if abort.Line != 5 {
+		t.Errorf("the abort names line %d, want 5", abort.Line)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run left the tree modified")
+	}
+}
+
+// TestIdentifierPassAbortsAtAFileNameNoEntryResolves pins the same rule
+// over the file-name position. The naming law reaches the file-name
+// stem, so a carrier named after a retired spelling moves in the same
+// run, and moving it on a guess renames a file after a mechanism its
+// contents never mention while every path-keyed register follows the
+// guess.
+//
+// spec: §28.1 (N4, the naming law: the file-name stem of a carrier is
+// the channel's identifier)
+func TestIdentifierPassAbortsAtAFileNameNoEntryResolves(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "fail/unregisteredpath")
+	before := treeSnapshot(t, root)
+	_, err := applyIDPassErr(t, root, "fail-unregisteredpath.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass returned no error at an unresolved file name")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the pass returned %v, which is not an abort", err)
+	}
+	if abort.Path != "pkg/adapter/lifecyclechannel.go" {
+		t.Errorf("the abort names %s, want pkg/adapter/lifecyclechannel.go", abort.Path)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run left the tree modified")
+	}
+}
+
+// TestIdentifierPassWritesTheCanonicalSpellingOfEachResolvedOccurrence
+// pins the substitution and the move together. Each occurrence takes the
+// spelling the naming table states for the channel its entry names and
+// for the carrier it stands in, and the carrier whose own name carries a
+// retired spelling leaves the run under its canonical name with nothing
+// left behind at the old one.
+//
+// spec: §28.1 (N4, the naming law: the canonical identifier is written
+// in every carrier of the channel it denotes)
+func TestIdentifierPassWritesTheCanonicalSpellingOfEachResolvedOccurrence(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	applyIDPass(t, root, "tree.yaml")
+	for _, target := range []string{
+		"pkg/adapter/runtimeops.go",
+		"pkg/adapter/runtimeops_test.go",
+		"docs/reference/channels.md",
+		"schemas/runtime-ops-events.schema.json",
+	} {
+		assertRewritten(t, root, target)
+	}
+	after := treeSnapshot(t, root)
+	for _, gone := range []string{
+		"pkg/adapter/lifecyclechannel.go",
+		"pkg/adapter/lifecyclechannel_test.go",
+		"schemas/lifecycle-events.schema.json",
+	} {
+		if _, ok := after[gone]; ok {
+			t.Errorf("%s is still in the tree after the run moved it", gone)
+		}
+	}
+}
+
+// TestIdentifierPassResolvesAGrpcFullMethodLiteralFromTheProtoRow pins
+// the rule that selects a naming-table row by the form of the site. The
+// same retired token stands in a gRPC full-method literal and in the Go
+// symbol beside it, and the two take different canonical spellings: the
+// literal carries the RPC name the service definition declares, so a
+// literal resolved from the Go type row would name a method the service
+// does not declare while reading as canonical to every gate.
+//
+// spec: §28.1 (N4, the naming law: the proto RPC name stem is the
+// channel's identifier)
+func TestIdentifierPassResolvesAGrpcFullMethodLiteralFromTheProtoRow(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	applyIDPass(t, root, "tree.yaml")
+	assertRewritten(t, root, "pkg/adapter/holdstate.go")
+	after := readFixtureFile(t, filepath.Join(root, "pkg", "adapter", "holdstate.go"))
+	if !strings.Contains(after, "/lenny.adapter.v1.Adapter/AdapterEvents\"") {
+		t.Errorf("the full-method literal was not resolved from the proto RPC row:\n%s", after)
+	}
+	if !strings.Contains(after, "\"AdapterEventsChannel\"") {
+		t.Errorf("the Go symbol beside it was not resolved from the Go type row:\n%s", after)
+	}
+}
+
+// TestIdentifierPassLeavesASingleChannelSpellingAtANonChannelSiteAsItStands
+// pins both dispositions of the occurrence-scoped trigger. A spelling
+// the naming table maps to exactly one channel still occurs where the
+// text is not that channel, here a command-line file argument that
+// happens to carry the socket token. With no entry the run aborts rather
+// than substituting, and with an entry recording the occurrence as no
+// channel the site is left byte-identical while an equivalent occurrence
+// in an ordinary carrier is rewritten in the same run.
+//
+// spec: §28.1 (N4, the naming law: a spelling is rewritten where it
+// denotes the channel)
+func TestIdentifierPassLeavesASingleChannelSpellingAtANonChannelSiteAsItStands(t *testing.T) {
+	t.Parallel()
+	const argument = "spec/17_deployment-topology.md"
+	t.Run("no entry aborts the run", func(t *testing.T) {
+		t.Parallel()
+		root := idTree(t, "tree")
+		before := treeSnapshot(t, root)
+		_, err := applyIDPassErr(t, root, "fail-nonchannel.yaml")
+		if err == nil {
+			t.Fatal("the identifier pass returned no error at an unresolved non-channel site")
+		}
+		abort, ok := pass.AsAbort(err)
+		if !ok {
+			t.Fatalf("the pass returned %v, which is not an abort", err)
+		}
+		if abort.Path != argument {
+			t.Errorf("the abort names %s, want %s", abort.Path, argument)
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the aborted run left the tree modified")
+		}
+	})
+	t.Run("an entry recording no channel leaves the site", func(t *testing.T) {
+		t.Parallel()
+		root := idTree(t, "tree")
+		before := treeSnapshot(t, root)
+		diff := applyIDPass(t, root, "tree.yaml")
+		after := treeSnapshot(t, root)
+		if after[argument] != before[argument] {
+			t.Errorf("the non-channel site was rewritten:\n%s", after[argument])
+		}
+		if membership(diff.Paths())[argument] {
+			t.Errorf("the applied diff names %s, whose site the run left standing", argument)
+		}
+		assertRewritten(t, root, "docs/reference/channels.md")
+	})
+}
+
+// TestIdentifierPassLeavesEveryWriteExcludedCarrierByteIdentical pins the
+// write exclusion, which no gate reads and no gate could report. A
+// retired spelling in a staged proposal, in either historical audit
+// record, in either root planning document, or in any of the three build
+// and queue records is part of what was written at the time, so the run
+// leaves it byte-identical and names it in neither the dry run nor the
+// applied diff, while an equivalent occurrence in an ordinary carrier is
+// rewritten in the same run.
+//
+// spec: §28.1 (N3, the naming law: the record of a finding is not
+// rewritten by the migration that resolves it)
+func TestIdentifierPassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	excluded := []string{
+		"proposals/0001_example.md",
+		"BUILD-GAPS.md",
+		"TEST-GAPS.md",
+		"gateway-runtime-comms.md",
+		"gateway-runtime-comms-remediation.md",
+		"BUILD-PLAN.md",
+		"BUILD-PROGRESS.md",
+		"PROPOSAL-QUEUE.md",
+	}
+	before := treeSnapshot(t, root)
+	planned, err := planIDPass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the identifier pass: %v", err)
+	}
+	applied := applyIDPass(t, root, "tree.yaml")
+	after := treeSnapshot(t, root)
+	inPlan, inApplied := membership(planned.Paths()), membership(applied.Paths())
+	for _, target := range excluded {
+		if before[target] == "" {
+			t.Fatalf("the fixture tree carries no %s", target)
+		}
+		if after[target] != before[target] {
+			t.Errorf("%s was rewritten:\n%s", target, after[target])
+		}
+		if inPlan[target] {
+			t.Errorf("the dry-run output names the excluded %s", target)
+		}
+		if inApplied[target] {
+			t.Errorf("the applied diff names the excluded %s", target)
+		}
+	}
+	assertRewritten(t, root, "docs/reference/channels.md")
+}
+
+// TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates reads
+// each register after the run rather than asking a validator, because
+// the map validator does not existence-check the `schemas` paths and no
+// check reads a citation baseline at all, so a stale key there is
+// invisible to every gate until the gate that owns it fires on the wrong
+// file. Without the rekey the line-citation ratchet fires on a rename
+// that changed no citation, and every baselined non-resolving citation
+// under the old path reappears as a resolver failure.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	before := treeSnapshot(t, root)
+	diff := applyIDPass(t, root, "tree.yaml")
+	after := treeSnapshot(t, root)
+	inDiff := membership(diff.Paths())
+	for _, register := range scope.PathKeyedRegisters() {
+		if before[register] == "" {
+			t.Fatalf("the fixture tree carries no %s", register)
+		}
+		if !inDiff[register] {
+			t.Errorf("the applied diff omits the path-keyed register %s", register)
+		}
+		if strings.Contains(after[register], "lifecyclechannel") {
+			t.Errorf("%s still carries a key of the file the run moved:\n%s", register, after[register])
+		}
+		assertRewritten(t, root, register)
+	}
+	// The spec map carries three key positions a rename invalidates: the
+	// package path, the schemas entry no check existence-checks, and the
+	// `::<symbol>` reference, which is keyed by symbol rather than by
+	// path and is resolved against its declaring file by a tier-0 check.
+	spec := after["tests/spec-map.json"]
+	for _, want := range []string{
+		"pkg/adapter/runtimeops.go",
+		"schemas/runtime-ops-events.schema.json",
+		"pkg/adapter/runtimeops_test.go::TestRuntimeOpsChannelServes",
+	} {
+		if !strings.Contains(spec, want) {
+			t.Errorf("the spec map does not carry %s after the run:\n%s", want, spec)
+		}
+	}
+}
+
+// TestIdentifierPassFailsWhenARegisterStillNamesAMovedFile pins the
+// stale-key check that makes the rekey channel fail closed. A register
+// that writes a moved path inside a wider value, such as a note, keeps
+// pointing at a file the run has moved, and the rewrite that moves whole
+// keys cannot reach it. The run stops with the tree unchanged and the
+// operator corrects the value, rather than completing and leaving the
+// gates to fire on the wrong file afterwards.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func TestIdentifierPassFailsWhenARegisterStillNamesAMovedFile(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "fail/stalekey")
+	before := treeSnapshot(t, root)
+	_, err := applyIDPassErr(t, root, "fail-stalekey.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass completed with a register naming a file it moved")
+	}
+	if !strings.Contains(err.Error(), "tests/spec-map.json") {
+		t.Errorf("the failure does not name the register: %v", err)
+	}
+	if !strings.Contains(err.Error(), "pkg/adapter/lifecyclechannel.go") {
+		t.Errorf("the failure does not name the stale key: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run left the tree modified")
+	}
+}
+
+// TestIdentifierPassDryRunOutputEqualsTheAppliedDiff pins the entry
+// criterion for applying the pass. This pass's applied change is the
+// largest and the hardest to reverse, because it moves files and edits
+// the registers keyed by their paths, and no other case observes a
+// divergence: the register cases read the tree after the run, and the
+// identifier-resolution gate runs after the pass is applied.
+//
+// spec: §28.1 (N4, the naming law: the rename is reviewed before it is
+// applied)
+func TestIdentifierPassDryRunOutputEqualsTheAppliedDiff(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	before := treeSnapshot(t, root)
+	planned, err := planIDPass(t, root, "tree.yaml")
+	if err != nil {
+		t.Fatalf("plan the identifier pass: %v", err)
+	}
+	if len(planned.Files) == 0 {
+		t.Fatal("the dry run reports no work over the fixture tree")
+	}
+	moves := 0
+	for _, f := range planned.Files {
+		if f.To != "" {
+			moves++
+		}
+	}
+	if moves == 0 {
+		t.Fatal("the dry run reports no move over a tree carrying a file named after a retired spelling")
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the dry run wrote to the tree")
+	}
+	applied := applyIDPass(t, root, "tree.yaml")
+	if !planned.Equal(applied) {
+		t.Fatalf("the applied diff differs from the dry run: %v vs %v", planned.Paths(), applied.Paths())
+	}
+}
+
+// TestIdentifierPassRejectsAMalformedOrMissingSenseRegister pins that the
+// pass refuses to run rather than reporting the zero substitutions of a
+// completed migration. A register that loaded as empty would abort at the
+// first occurrence in the tree, which reads as a register nobody seeded,
+// and over an already-rewritten tree it would report a migration it never
+// performed.
+//
+// spec: §28.1 (N4, the naming law: the rename is driven by the register
+// of senses)
+func TestIdentifierPassRejectsAMalformedOrMissingSenseRegister(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	for _, tc := range []struct {
+		name     string
+		register string
+	}{
+		{"a missing register", "absent.yaml"},
+		{"a malformed register", "malformed.yaml"},
+		{"a register with no entries block", "no-entries-block.yaml"},
+		{"a register with no entry", "empty-entries.yaml"},
+		{"a register of another kind", "wrong-kind.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := identifier.New(scope.DirLister(root), scope.DirReader(root))
+			if err := r.LoadRegister(filepath.Join(fixtureIDPass, "registers", tc.register)); err == nil {
+				t.Fatalf("the identifier pass loaded %s", tc.name)
+			}
+			if _, err := idHarness(root).Plan(context.Background(), r); err == nil {
+				t.Error("a pass with no register loaded reported a plan")
+			}
+		})
+	}
+}
+
+// TestIdentifierPassRejectsEverySenseEntrySchemaDefect pins the entry
+// schema the substitution rests on: a site key naming one position,
+// which is either one occurrence of the content or the file name, and
+// one disposition, which is either the channel the site denotes or the
+// record that the site is no channel. An entry stating both positions is
+// two entries, an entry stating both dispositions says at once that the
+// site is a channel and that it is not, and a carrier named on an entry
+// that records no channel selects nothing.
+//
+// spec: §28.1 (N4, the naming law: each site's sense is recorded once)
+func TestIdentifierPassRejectsEverySenseEntrySchemaDefect(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	for _, tc := range []struct {
+		name     string
+		register string
+	}{
+		{"an entry with no file", "invalid-no-file.yaml"},
+		{"an entry stating no position", "invalid-no-position.yaml"},
+		{"an entry stating both positions", "invalid-both-positions.yaml"},
+		{"an entry stating no disposition", "invalid-no-disposition.yaml"},
+		{"an entry stating both dispositions", "invalid-both-dispositions.yaml"},
+		{"an entry naming a channel that is no identifier", "invalid-channel.yaml"},
+		{"an entry naming a carrier outside the closed set", "invalid-carrier.yaml"},
+		{"a position declared twice", "invalid-duplicate.yaml"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := identifier.New(scope.DirLister(root), scope.DirReader(root))
+			if err := r.LoadRegister(filepath.Join(fixtureIDPass, "registers", tc.register)); err == nil {
+				t.Errorf("the identifier pass loaded %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestIdentifierPassFailsAnEntryTheNamingTableOrTheTreeDoesNotBackPins
+// the two directions the register is checked in. A channel the naming
+// table does not carry states no spelling, so the site it resolves has
+// no substitution and the operator would be sent to the register rather
+// than to the table. An entry no site in the tree claims is written
+// nowhere, so the run would exit zero having reported a substitution it
+// never performed.
+//
+// spec: §28.1 (N4, the naming law: every entry resolves a site of the
+// tree to a spelling the table states)
+func TestIdentifierPassFailsAnEntryTheNamingTableOrTheTreeDoesNotBack(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		register string
+		names    string
+	}{
+		{"a channel the naming table does not carry", "fail-undeclared-channel.yaml", "CH-NOSUCHCHANNEL"},
+		{"an occurrence the file does not carry", "fail-unclaimed.yaml", "occurrence 4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := idTree(t, "tree")
+			before := treeSnapshot(t, root)
+			_, err := applyIDPassErr(t, root, tc.register)
+			if err == nil {
+				t.Fatalf("the identifier pass accepted %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name %s: %v", tc.names, err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run left the tree modified")
+			}
+		})
+	}
+}
+
+// TestIdentifierPassFailsWhenTheTreeCarriesNoNamingTable pins that the
+// pass reads its spellings out of the specification rather than from a
+// list of its own. A tree with no naming table resolves no site, so a
+// run over it would abort at every occurrence, which reads as a register
+// nobody seeded rather than as a tree the pass cannot run against yet.
+//
+// spec: §28.1 (N4, the naming law: the carrier spellings are stated in
+// the specification)
+func TestIdentifierPassFailsWhenTheTreeCarriesNoNamingTable(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	if err := os.Remove(filepath.Join(root, "spec", "28_communication-channels.md")); err != nil {
+		t.Fatalf("remove the naming table: %v", err)
+	}
+	_, err := planIDPass(t, root, "tree.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass planned a run over a tree with no naming table")
+	}
+	if !strings.Contains(err.Error(), "naming table") {
+		t.Errorf("the failure does not name the naming table: %v", err)
+	}
+}
+
+// TestTheDriverCarriesTheIdentifierPass pins that the pass the driver
+// runs is the built one, so a run of the engine over a checkout performs
+// the rename rather than reporting a pass that is not built.
+//
+// spec: §28.1 (N4, the naming law: the rename is performed by the
+// committed tooling)
+func TestTheDriverCarriesTheIdentifierPass(t *testing.T) {
+	t.Parallel()
+	built := builtPasses(repoRoot(t))
+	r, ok := built[scope.Identifier]
+	if !ok {
+		t.Fatal("the driver carries no identifier pass")
+	}
+	if r.Pass() != scope.Identifier {
+		t.Errorf("the built pass names the %s write domain", r.Pass())
+	}
+}
+
+// TestABaselinedCitationFollowsTheFileTheIdentifierPassRenamed pins the
+// interaction between the rekey channel and the citation resolver, which
+// the register-contents cases do not supply because the resolver reads
+// the tree rather than the register. A non-resolving citation carried in
+// the resolution baseline under the file it was written for still passes
+// after the run that moved that file, and fails when the rekey is
+// suppressed, which is what makes the baseline follow the file rather
+// than the path.
+//
+// spec: §28.1 (N8, the citation rule: an exemption is keyed to the file
+// the citation was written in)
+func TestABaselinedCitationFollowsTheFileTheIdentifierPassRenamed(t *testing.T) {
+	t.Parallel()
+	const baseline = "tests/registers/line-citation-resolution.yaml"
+	root := idTree(t, "tree", "resolver")
+	stale := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(baseline)))
+	applyIDPass(t, root, "tree.yaml")
+
+	resolver := gate.NewResolutionOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	report, err := resolver.Run(context.Background())
+	if err != nil {
+		t.Fatalf("run the citation resolver after the rename: %v", err)
+	}
+	if report.NonResolving == 0 {
+		t.Fatal("the fixture carries no non-resolving citation, so the case proves nothing")
+	}
+	if len(report.Failures) > 0 {
+		t.Errorf("the baseline did not follow the renamed file: %v", report.Failures)
+	}
+
+	// With the rekey suppressed, the same citation is a failure under the
+	// new path, which is the outcome the second write channel exists to
+	// prevent.
+	if err := dirWriterFor(root)(baseline, []byte(stale)); err != nil {
+		t.Fatalf("restore the pre-run baseline: %v", err)
+	}
+	suppressed, err := gate.NewResolutionOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root)).
+		Run(context.Background())
+	if err != nil {
+		t.Fatalf("run the citation resolver with the rekey suppressed: %v", err)
+	}
+	if len(suppressed.Failures) == 0 {
+		t.Error("the resolver passed with the baseline keyed to the path the run moved away from")
+	}
+}
+
+// TestIdentifierPassRefusesASiteNeitherTheFormNorTheRegisterResolves
+// pins the second half of the row-selection rule. A channel that states
+// the same retired spelling in more carriers than the site's form
+// selects between is resolved by the carrier the register entry names,
+// and an occurrence naming none aborts rather than taking the first row:
+// both spellings are canonical, so no gate downstream reads which of
+// them the site meant.
+//
+// spec: §28.1 (N4, the naming law: each carrier of a channel has one
+// canonical spelling)
+func TestIdentifierPassRefusesASiteNeitherTheFormNorTheRegisterResolves(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	before := treeSnapshot(t, root)
+	_, err := applyIDPassErr(t, root, "fail-ambiguous.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass resolved a site two naming-table rows answer for")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the pass returned %v, which is not an abort", err)
+	}
+	if abort.Path != "pkg/adapter/holdstate.go" {
+		t.Errorf("the abort names %s, want pkg/adapter/holdstate.go", abort.Path)
+	}
+	for _, carrier := range []string{"go-symbol", "metric"} {
+		if !strings.Contains(abort.Reason, carrier) {
+			t.Errorf("the abort does not name the %s row: %s", carrier, abort.Reason)
+		}
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run left the tree modified")
+	}
+	// The same site resolves once the entry names the carrier, which is
+	// what the fixture register does.
+	resolved := idTree(t, "tree")
+	applyIDPass(t, resolved, "tree.yaml")
+	assertRewritten(t, resolved, "pkg/adapter/holdstate.go")
+}
+
+// TestApplyPutsAMovedFileBackWhenALaterWriteFails pins the rollback of
+// the move channel. A move is a write of the new path and a removal of
+// the old one, so a failure later in the diff has to restore both halves:
+// a tree left carrying the file under both names, or under neither, is
+// neither the pre-run tree nor the applied one.
+func TestApplyPutsAMovedFileBackWhenALaterWriteFails(t *testing.T) {
+	t.Parallel()
+	const (
+		from = "pkg/carrier/carrier.go"
+		to   = "pkg/carrier/renamed.go"
+	)
+	root := copyFixtureTree(t)
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root),
+		failingWriter(root, "tests/registers/line-citations.yaml", nil))
+	h.Remove = scope.DirRemover(root)
+	r := &renamingRewriter{
+		suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+		from:           from,
+		to:             to,
+		move:           true,
+	}
+	before := treeSnapshot(t, root)
+	if _, err := h.Apply(context.Background(), r); err == nil {
+		t.Fatal("Apply returned no error when a later write failed")
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Errorf("the rolled-back tree is not the pre-run tree: %v", diffPaths(before, got))
+	}
+}
+
+// TestApplyRefusesAMoveWithNoRemoverAndAMoveOntoAnExistingFile pins the
+// two ways a move ends with a file gone. A harness with no remover would
+// leave the content under both names with the run reporting a clean
+// move, and a destination the tree already carries, or that a second
+// move also takes, overwrites a file the pass never read.
+func TestApplyRefusesAMoveWithNoRemoverAndAMoveOntoAnExistingFile(t *testing.T) {
+	t.Parallel()
+	const from = "pkg/carrier/carrier.go"
+	t.Run("no remover", func(t *testing.T) {
+		t.Parallel()
+		root := copyFixtureTree(t)
+		h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+		r := &renamingRewriter{
+			suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+			from:           from,
+			to:             "pkg/carrier/renamed.go",
+			move:           true,
+		}
+		if _, err := h.Apply(context.Background(), r); err == nil {
+			t.Fatal("Apply performed a move with no remover")
+		}
+	})
+	t.Run("a destination the tree carries", func(t *testing.T) {
+		t.Parallel()
+		root := copyFixtureTree(t)
+		h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+		h.Remove = scope.DirRemover(root)
+		r := &renamingRewriter{
+			suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+			from:           from,
+			to:             "pkg/carrier/toolcache.conf",
+			move:           true,
+		}
+		before := treeSnapshot(t, root)
+		if _, err := h.Plan(context.Background(), r); err == nil {
+			t.Fatal("Plan admitted a move onto a file the tree carries")
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the refused plan wrote to the tree")
+		}
+	})
+}
+
+// diffPaths names the paths two snapshots disagree on, so a rollback
+// failure reports what was left behind.
+func diffPaths(a, b map[string]string) []string {
+	var out []string
+	for p, content := range a {
+		if b[p] != content {
+			out = append(out, p)
+		}
+	}
+	for p := range b {
+		if _, ok := a[p]; !ok {
+			out = append(out, p)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// TestIdentifierPassRejectsEveryNamingTableRowDefect pins that a row the
+// reader cannot use fails the run rather than being skipped. A skipped
+// row is a retired spelling with no substitution, so the pass aborts at
+// every site carrying it and sends the operator to the sense register
+// rather than to the table the defect is in.
+//
+// spec: §28.1 (N4, the naming law: the carrier spellings are stated in
+// the specification)
+func TestIdentifierPassRejectsEveryNamingTableRowDefect(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		row  string
+	}{
+		{"a channel cell that is no identifier", "| runtime ops | socket | `@lenny-lifecycle` | `@lenny-runtime-ops` |"},
+		{"a carrier outside the closed set", "| `CH-RUNTIMEOPS` | prose | `@lenny-lifecycle` | `@lenny-runtime-ops` |"},
+		{"a row stating no canonical spelling", "| `CH-RUNTIMEOPS` | socket | `@lenny-lifecycle` |  |"},
+		{"a row retiring a spelling to itself", "| `CH-RUNTIMEOPS` | socket | `@lenny-lifecycle` | `@lenny-lifecycle` |"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := idTree(t, "tree")
+			table := filepath.Join(root, "spec", "28_communication-channels.md")
+			content := readFixtureFile(t, table)
+			if err := os.WriteFile(table, []byte(content+tc.row+"\n"), 0o644); err != nil {
+				t.Fatalf("write the naming table: %v", err)
+			}
+			_, err := planIDPass(t, root, "tree.yaml")
+			if err == nil {
+				t.Fatalf("the identifier pass accepted %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), "naming table") {
+				t.Errorf("the failure does not name the naming table: %v", err)
+			}
+		})
 	}
 }

@@ -1,0 +1,41 @@
+# The senses of the fixture tree, one entry per occurrence of a retired
+# spelling the pass cannot prove is the channel.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+  - file: schemas/lifecycle-events.schema.json
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/channels.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: spec/17_deployment-topology.md
+    occurrence: 1
+    not-a-channel: true

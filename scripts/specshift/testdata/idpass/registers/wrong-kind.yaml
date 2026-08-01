@@ -1,0 +1,6 @@
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

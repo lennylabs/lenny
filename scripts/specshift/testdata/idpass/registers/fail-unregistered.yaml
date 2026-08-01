@@ -1,0 +1,8 @@
+# The sibling carrier's site is resolved and the other file's is not, so
+# a run over the pair leaves both byte-identical.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/registered.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
