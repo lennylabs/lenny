@@ -813,26 +813,32 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 
 **Scope.** Anything that does not need a running process or container.
 
-**Checks.**
+**Checks.** The harness composes the check table in `cmd/lenny-test` and runs it in this order. A tier-11 test reconciles this list against that table, so a check added to or removed from the harness must be reflected here.
+
 1. `go vet ./...`
-2. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
-3. `gofumpt -l .` — formatting.
-4. `goimports -l -local github.com/lenny-labs/lenny .` — import ordering.
-5. `helm lint charts/lenny`.
-6. `helm template charts/lenny --values tests/testinfra/kind/values.yaml | conftest test --policy charts/lenny/policy/` — chart policy.
-7. `buf lint schemas/` and `buf breaking schemas/ --against .git#branch=main`.
+2. `go vet -tags=contract ./tests/tier3_contract/...` — the contract-tagged tests compile, even where they are expected to fail at runtime in the current phase.
+3. `buf lint` over the proto sources under `schemas/`.
+4. `buf breaking` against `.git#branch=main`. Off `main` the findings are reported as advisory, because a long-lived feature branch evolves the proto deliberately; on `main` the check hard-fails.
+5. `gofumpt -l .` — formatting.
+6. `goimports -l -local github.com/lennylabs/lenny .` — import ordering.
+7. `golangci-lint run` with the project's `.golangci.yml`. Enabled linters include `errcheck`, `staticcheck` (which absorbs the former `gosimple` checks in the v2 series), `unused`, `govet`, `ineffassign`, and `misspell`.
 8. `scripts/lint-schema.sh` — every tenant-scoped table has `tenant_id` as the leading index column (R-01).
 9. `scripts/lint-queries.sh` — no cross-tenant JOIN without the matching `a.tenant_id = b.tenant_id` clause (R-02), and the cross-tenant exception annotation inventory matches the documented list.
 10. `scripts/lint-migrations.sh` — every migration has a corresponding rollback script and a non-empty test under `tests/tier2_component/migrations/`.
-11. JSON Schema validation of every example payload under `docs/`.
-12. `markdown-link-check` over `docs/` and `spec/`.
-13. License header on every Go source file.
-14. ADR catalog cross-check: every ADR file has a matching entry in `docs/adr/index.md` and the spec §19 table.
-15. Spec-map and change-graph integrity (`lenny-test validate-maps`).
-16. Diagnosis-comment coverage (`lenny-test validate-diagnosis`).
-17. Proto-generated code is up to date (`buf generate && git diff --exit-code`).
+11. `scripts/check-adr-catalog.sh` — every ADR file has a matching entry in `docs/adr/index.md` and the spec §19 table.
+12. `scripts/check-doc-examples.sh` — JSON Schema validation of every example payload under `docs/`.
+13. `scripts/check-helm-charts.sh` — `helm lint charts/lenny` and the chart policy (`conftest test` over the rendered chart).
+14. `scripts/check-schema-breaking.sh` — breaking changes in the JSON Schema files under `schemas/` against `main`.
+15. `scripts/check-action-pins.sh` — every external `uses:` reference in a workflow is pinned to a commit digest (§20.16).
+16. `scripts/check-tool-pins.sh` — no `go install <path>@latest` in a workflow; tool installs are version-pinned (§20.16).
+17. `scripts/lint-determinism.sh` — §17.4 determinism rules across the test surface. Findings are reported without failing the tier while the pre-existing violations are migrated to `testinfra`.
+18. `scripts/lint-test-conventions.sh` — §17.6 and §17.7 test-authoring conventions. Findings are reported without failing the tier.
+19. `scripts/check-markdown-links.sh` — `markdown-link-check` over `docs/` and `spec/`. Findings are reported without failing the tier, because many internal links resolve only in the rendered site; the PR workflow keeps a hard gate against the rendered site.
+20. `go test ./tests/tier0_static/...` — the tier-0 Go tests. They cover the license header on every Go source file, the CRD and JSON Schema inventories, the change-graph selection tables, and the generated-code no-drift check for `pkg/proto/`. The no-drift test reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A tier-0 test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
+21. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
+22. `lenny-test validate-maps` — spec-map and change-graph integrity.
 
-**Gate.** Every check must pass. No retries.
+**Gate.** Every check must pass. A check that reaches no conclusion reports `unverified`, and the tier carries that status rather than `pass`. No retries.
 
 **Wall-clock target.** Under 30 seconds on a laptop.
 

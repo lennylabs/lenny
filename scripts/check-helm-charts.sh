@@ -3,9 +3,9 @@
 # scripts/check-helm-charts.sh — runs `helm lint` and `conftest test`
 # against the Helm chart at charts/lenny/.
 #
-# Static tier gate per TESTING.md §12.0 #5–6. When charts/lenny/ does
-# not yet exist (the chart is a Phase 3 deliverable) the script
-# reports and skips. When helm or conftest aren't on PATH it also
+# Static tier gate per TESTING.md §12.0 (helm lint and chart policy).
+# When charts/lenny/ does not yet exist (the chart is a Phase 3
+# deliverable) the script reports and skips. When helm or conftest aren't on PATH it also
 # skips with a diagnosis.
 
 set -euo pipefail

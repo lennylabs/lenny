@@ -432,7 +432,8 @@
     },
     "cmd/lenny-test": {
       "static": ["tests/tier0_static/..."],
-      "unit": ["cmd/lenny-test/..."]
+      "unit": ["cmd/lenny-test/..."],
+      "docs": ["tests/tier11_docs/static_tier_check_inventory_test.go"]
     },
     "cmd/lenny-test/verdictstatus": {
       "static": ["tests/tier0_static/..."],
@@ -440,7 +441,7 @@
       "docs": ["tests/tier11_docs/verdict_enum_test.go"]
     },
     "TESTING.md": {
-      "docs": ["tests/tier11_docs/verdict_enum_test.go"]
+      "docs": ["tests/tier11_docs/verdict_enum_test.go", "tests/tier11_docs/static_tier_check_inventory_test.go"]
     },
     "tests/registers": {
       "static": ["tests/tier0_static/..."],
