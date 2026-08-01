@@ -5787,6 +5787,73 @@ func TestAnchorPassFailsAMoveWhoseSuccessorHeadingDoesNotExist(t *testing.T) {
 	}
 }
 
+// TestAnchorPassFailsASuccessorWrittenOnlyInsideAFencedExample pins that
+// the anchor half of the heading index obeys the fence rule its heading
+// half obeys. A page documenting how a kramdown anchor attribute is
+// written shows the attribute inside a fenced code block, which is
+// example text and declares nothing. Reading it as a declaration would
+// let a successor naming that identifier pass the pre-write existence
+// check, and every inbound reference would then be written to a page
+// position no renderer produces.
+//
+// spec: §28.1 (N8, the citation rule: a redirect names a heading the
+// tree declares)
+func TestAnchorPassFailsASuccessorWrittenOnlyInsideAFencedExample(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fenced-anchor")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "successor-in-a-fenced-example.json")
+	if err == nil {
+		t.Fatal("the anchor pass ran with a successor an example inside a fenced code block writes")
+	}
+	if !strings.Contains(err.Error(), "2859-ch-fenced-example") {
+		t.Errorf("the failure does not name the successor: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestAnchorPassRedirectsALinkWhoseAnchorSurvivesOnlyInAFencedExample
+// pins the other half of the same rule. A link into a retired anchor
+// whose identifier appears in a fenced example on the page it addresses
+// is a reference the reduction retired, so it is redirected. Reading the
+// example as a declaration would read the link as one the reduction left
+// alone and leave a reference the fragment-link gate fails.
+//
+// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
+// names the heading the material moved to)
+func TestAnchorPassRedirectsALinkWhoseAnchorSurvivesOnlyInAFencedExample(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fenced-anchor")
+	applyAnchorPass(t, root, "tree.json")
+	assertRedirected(t, root, "docs/reference/anchor-style.md")
+}
+
+// TestAnchorPassFailsADestinationWrittenAboveTheFirstHeading pins that a
+// standalone anchor attribute standing before a document's first heading
+// declares nothing. It addresses no heading, so binding it to one would
+// resolve a destination against a heading with no number and no line and
+// write a reference to a position no renderer produces.
+//
+// spec: §28.1 (N8, the citation rule: a redirect names a heading the
+// tree declares)
+func TestAnchorPassFailsADestinationWrittenAboveTheFirstHeading(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fail/anchor-above-the-first-heading")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass ran with a destination only an attribute above the first heading writes")
+	}
+	if !strings.Contains(err.Error(), "the-preamble") {
+		t.Errorf("the failure does not name the destination: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
 // TestAnchorPassFailsASenseDestinationNoHeadingDeclares pins the same
 // check over the second register. A destination is resolved against the
 // headings of the tree before any file is written, so a typo in an entry

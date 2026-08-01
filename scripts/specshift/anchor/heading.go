@@ -116,6 +116,18 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 // either on the heading line or on the line below it, so the walk reads
 // both positions and attaches a standalone attribute to the heading
 // above it.
+//
+// The walk reads the lines outside every fenced code block, which is the
+// same set the heading half of the index reads. An attribute written
+// inside a fence is the example a page documenting how an anchor is
+// declared shows, and claiming it would address whichever heading
+// preceded the fence: a successor or a destination naming that id would
+// pass the pre-write existence check and land its inbound references at
+// a page position that does not resolve, and a link into a retired
+// anchor whose id appears in such an example would be read as a link the
+// reduction left alone. An attribute standing above the document's first
+// heading addresses no heading at all, so it declares nothing rather
+// than binding to a heading with no number and no line.
 func index(content string) (map[string]citation.Heading, []string) {
 	out := map[string]citation.Heading{}
 	var numbers []string
@@ -133,16 +145,20 @@ func index(content string) (map[string]citation.Heading, []string) {
 		}
 	}
 	var last citation.Heading
-	for i, line := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
-		if h, ok := headingAt[i+1]; ok {
-			last = h
+	seen := false
+	for _, line := range citation.ProseLines(content) {
+		if h, ok := headingAt[line.Number]; ok {
+			last, seen = h, true
 			claim(slug(h.Title), h)
 			for _, m := range explicitAnchorExpr.FindAllStringSubmatch(h.Title, -1) {
 				claim(m[1], h)
 			}
 			continue
 		}
-		if m := standaloneAnchorExpr.FindStringSubmatch(strings.TrimSpace(line)); m != nil {
+		if !seen {
+			continue
+		}
+		if m := standaloneAnchorExpr.FindStringSubmatch(strings.TrimSpace(line.Text)); m != nil {
 			claim(m[1], last)
 		}
 	}

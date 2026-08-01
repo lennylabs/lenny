@@ -45,6 +45,40 @@ func Headings(content string) []Heading {
 	return out
 }
 
+// Line is one line of a markdown document that sits outside every fenced
+// code block, with its 1-based line number.
+type Line struct {
+	Number int
+	Text   string
+}
+
+// ProseLines returns the lines of one markdown document that sit outside
+// every fenced code block, in source order. The fence's own delimiter
+// lines are dropped with the block they delimit, because neither carries
+// prose.
+//
+// The fence rule is stated here once because two consumers read it. The
+// heading walk drops a heading written inside a fence, and the anchor
+// pass drops a kramdown anchor attribute written inside one. Both are
+// example text: a page that documents how an anchor is declared shows
+// the attribute in a fenced block, and reading that line as a
+// declaration would claim an anchor no renderer gives the page.
+func ProseLines(content string) []Line {
+	var out []Line
+	fenced := false
+	for i, line := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
+		if fenceExpr.MatchString(line) {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		out = append(out, Line{Number: i + 1, Text: line})
+	}
+	return out
+}
+
 // AllHeadings returns every heading of one markdown document at every
 // level a renderer derives an anchor from, which begins at the level-one
 // page title, in source order.
@@ -58,22 +92,13 @@ func Headings(content string) []Heading {
 // A line inside a fenced code block is example text rather than a
 // heading.
 func AllHeadings(content string) []Heading {
-	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	var out []Heading
-	fenced := false
-	for i, line := range lines {
-		if fenceExpr.MatchString(line) {
-			fenced = !fenced
-			continue
-		}
-		if fenced {
-			continue
-		}
-		m := anyHeadingExpr.FindStringSubmatch(line)
+	for _, line := range ProseLines(content) {
+		m := anyHeadingExpr.FindStringSubmatch(line.Text)
 		if m == nil {
 			continue
 		}
-		h := Heading{Level: len(m[1]), Title: strings.TrimSpace(m[2]), Line: i + 1}
+		h := Heading{Level: len(m[1]), Title: strings.TrimSpace(m[2]), Line: line.Number}
 		if n := numberExpr.FindStringSubmatch(h.Title); n != nil {
 			h.Number = n[1]
 		}
