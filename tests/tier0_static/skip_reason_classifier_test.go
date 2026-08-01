@@ -483,21 +483,55 @@ func skipCallForm(call *ast.CallExpr) (string, bool) {
 }
 
 // skipReason reads the reason a skip call states. It reports the literal
-// text, whether the first argument is a string literal, and whether the
-// call states a first argument at all.
+// text, whether the first argument is readable as a string literal, and
+// whether the call states a first argument at all.
 func skipReason(call *ast.CallExpr) (string, bool, bool) {
 	if len(call.Args) == 0 {
 		return "", false, false
 	}
-	lit, ok := call.Args[0].(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return "", false, true
-	}
-	text, err := strconv.Unquote(lit.Value)
-	if err != nil {
+	text, ok := constantStringExpr(call.Args[0])
+	if !ok {
 		return "", false, true
 	}
 	return text, true, true
+}
+
+// constantStringExpr reads an expression whose text is fixed at parse
+// time, which is a string literal or a concatenation of string literals.
+// A reason a source line is too long to hold is spelled as a
+// concatenation across several lines, and its text is as readable as a
+// single literal's, so the predicate applies to it rather than the
+// non-literal branch. Reporting it as unreadable would both baseline
+// reasons that already open with a category and stop pinning the reason
+// text of the ones that do not.
+func constantStringExpr(expr ast.Expr) (string, bool) {
+	switch e := expr.(type) {
+	case *ast.ParenExpr:
+		return constantStringExpr(e.X)
+	case *ast.BasicLit:
+		if e.Kind != token.STRING {
+			return "", false
+		}
+		text, err := strconv.Unquote(e.Value)
+		if err != nil {
+			return "", false
+		}
+		return text, true
+	case *ast.BinaryExpr:
+		if e.Op != token.ADD {
+			return "", false
+		}
+		left, ok := constantStringExpr(e.X)
+		if !ok {
+			return "", false
+		}
+		right, ok := constantStringExpr(e.Y)
+		if !ok {
+			return "", false
+		}
+		return left + right, true
+	}
+	return "", false
 }
 
 // openedWithSkipCategory reports whether a reason opens with one of the
@@ -924,6 +958,50 @@ func TestSkipReasonClassifierReportsANonLiteralReason(t *testing.T) {
 	if !strings.Contains(got.String(), "non-literal") {
 		t.Errorf("the rendered failure %q does not state that the reason could not be read", got.String())
 	}
+}
+
+func TestSkipReasonClassifierReadsAReasonSpelledAsAConcatenation(t *testing.T) {
+	t.Parallel()
+	// A reason too long for one source line is spelled as a concatenation
+	// of literals. Its text is fixed at parse time, so the predicate reads
+	// it: a concatenation opening with a category is accepted, and a
+	// free-text one is reported with its text pinned rather than dropped
+	// into the branch for reasons the classifier cannot read.
+	t.Run("a category spelled across two literals is accepted", func(t *testing.T) {
+		t.Parallel()
+		tr := newSkipTree(t)
+		tr.carrier("tests/carrier/carrier_test.go",
+			`t.Skip("phase-gated: the hardening pass " +`,
+			`"has not landed yet")`)
+		tr.register()
+
+		rep := tr.runOK()
+		if rep.Sites != 1 {
+			t.Fatalf("inspected %d skip call site(s), want the one the carrier holds", rep.Sites)
+		}
+		if rep.Reported != 0 || len(rep.Failures) != 0 {
+			t.Errorf("a concatenated reason opening with a category was reported: %s",
+				strings.Join(skipFailureTexts(rep), "; "))
+		}
+	})
+	t.Run("free text spelled across two literals is reported with its text", func(t *testing.T) {
+		t.Parallel()
+		tr := newSkipTree(t)
+		tr.carrier("tests/carrier/carrier_test.go",
+			`t.Skip("docker is not " +`,
+			`"running on the host")`)
+		tr.register()
+
+		rep := tr.runOK()
+		if len(rep.Failures) != 1 {
+			t.Fatalf("reported %d failure(s) for a concatenated free-text reason, want 1: %s",
+				len(rep.Failures), strings.Join(skipFailureTexts(rep), "; "))
+		}
+		got := rep.Failures[0].Site
+		if got.Reason == nil || *got.Reason != "docker is not running on the host" {
+			t.Errorf("the failure carries %s, want the joined text of the two literals", got.reasonText())
+		}
+	})
 }
 
 func TestSkipReasonClassifierHoldsARegisteredSiteAndFailsTheSameReasonElsewhere(t *testing.T) {

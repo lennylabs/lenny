@@ -46,10 +46,12 @@ sites:
       function: TestStockChartReleaseChannelHasCompiledInTrustAnchor_spec_25_8
       site: 1
       call: Skip
+      reason: compiled-in canonical release-channel public key is not yet shipped in lenny-ops; generating it and defining the private-key custody process for releases.lenny.dev is an unresolved build/release decision
     - path: cmd/lenny-ops/servicebody_selfhealth_source_test.go
       function: TestSelfHealthEventCarriesReplicaIdentityInSourceReplicaIDField_spec_25_4
       site: 1
       call: Skip
+      reason: 'open spec-vs-code reconciliation: whether the replica identity documented as a structured source.replicaID field belongs in a restructured OperationalEvent.Source or the spec text should instead describe the existing data.replicaId/Subject location is undecided'
     - path: cmd/lenny-test/cmd_run_tier0gotest_test.go
       function: TestTier0GoTestArgsSurfaceTheMarkerFromAPassingPackage
       site: 1
@@ -668,6 +670,7 @@ sites:
       function: TestUpgradeChannelKeyDisablesReleaseChannelURL
       site: 2
       call: Skip
+      reason: 'pending a spec-vs-chart naming reconciliation: spec §25.8 names the release-channel disable key platform.upgradeChannel, but the chart reads platform.releaseChannel.url; see the open TEST-GAPS.md finding for this behavior for the two candidate resolutions'
     - path: tests/tier10_conformance/reference_battery_test.go
       function: requireDocker
       site: 1
@@ -707,6 +710,7 @@ sites:
       function: TestRunbookIndexSpecProseCountMatchesShippedSet
       site: 1
       call: Skip
+      reason: pending a change-proposal spec edit to spec/25_agent-operability.md removing the stale parenthetical runbook count (the guard hook blocks a direct spec write); see the open TEST-GAPS.md finding for this behavior
     - path: tests/tier11_docs/runbook_index_count_test.go
       function: TestRunbookIndexSpecProseCountMatchesShippedSet
       site: 2
@@ -746,6 +750,7 @@ sites:
       function: runSDKWarmArm
       site: 1
       call: Skipf
+      reason: 'NEEDS-OPERATOR: runtime class %q is not provisioned for this run. Provision its RuntimeClass + node pool via scripts/cloud/<provider>/up-runtimeclass-pools.sh and add %q to LENNY_BENCH_RUNTIME_CLASSES (gVisor needs no hardware virtualization; Kata needs nested-virt node pools).'
     - path: tests/tier1_unit/flagdefaults/flagdefaults_test.go
       function: TestRequiredFlagsExposedInHelp
       site: 1
@@ -770,14 +775,17 @@ sites:
       function: TestUpgradeOpsRollPatchesDeploymentWithDigestWhenRequireDigest
       site: 1
       call: Skip
+      reason: 'pkg/ops/upgradeservice has no OpsRoll Deployment-patch call site: grep for StrategicMergePatchType across pkg/ops/upgradeservice and cmd/lenny-ops finds none. The orchestrator is documented and built as operator-paced (it records phase transitions and audit/events; the actual kubectl/helm mutation is left to the operator or a Kubernetes seam between calls), so there is no product entry point this test can drive. Closing this gap needs a human decision on whether to add an in-process self-patch or keep the operator-paced model as the accepted reading of the spec sentence cited above.'
     - path: tests/tier2_component/embedded/bringup_test.go
       function: requireDockerDaemon
       site: 1
       call: Skip
+      reason: 'docker CLI absent: the Docker-backed embedded bring-up requires Docker; the live macOS/Windows-host leg runs where Docker Desktop is available'
     - path: tests/tier2_component/embedded/bringup_test.go
       function: requireDockerDaemon
       site: 2
       call: Skipf
+      reason: 'docker daemon unreachable (%v): the Docker-backed embedded bring-up requires a running daemon; the live macOS/Windows-host leg runs where Docker Desktop is available'
     - path: tests/tier2_component/observability/catalog_crosscheck_test.go
       function: helmTemplatePrometheusRule
       site: 1
@@ -817,10 +825,12 @@ sites:
       function: TestOCSFPerClassRequiredAttributesPresent
       site: 1
       call: Skip
+      reason: §11.7 maps identity onto actor.user only when the payload carries it and defines no top-level `user` attribute; whether Lenny must satisfy the published OCSF v1.1.0 per-class required attributes (top-level user for Authentication 3002, actor for API Activity 6003) when the source payload carries no identity is an open spec-mapping question pending a change proposal
     - path: tests/tier3_contract/ocsf_audit/published_schema_test.go
       function: TestOCSFClassUIDsMatchPublishedRegistry
       site: 1
       call: Skip
+      reason: Lenny's §11.7 class_uid assignments for Account Change, Entity Management, File System Activity, and the Application Security Finding dead-letter receipt do not match the externally published OCSF v1.1.0 class registry; this spans several spec chapters and needs a change proposal before the code (and the spec text asserting these numbers) can be corrected — re-enable once that lands
     - path: tests/tier3_contract/ops_endpoints/backup_test.go
       function: TestRestoreStatusProgressContract
       site: 1
@@ -895,6 +905,7 @@ sites:
       function: lookTool
       site: 1
       call: Skipf
+      reason: 'precondition not met: %s is not on PATH (%v); the §25.11 runner shells out to it, so the round trip cannot run without it'
     - path: tests/tier4_integration/checkpoint_capability_enforcement_test.go
       function: requireLiveObjectStore
       site: 1
@@ -924,6 +935,7 @@ sites:
       function: TestAdmissionDirectModeIsolationMultiTenantRejections
       site: 1
       call: Skipf
+      reason: 'the deployed %s webhook is configured tenancy-mode=%q dev-mode=%q; the §4.9 direct/standard and proxy/spiffe-disabled rejections enforce only under tenancy.mode: multi with global.devMode: false. The shared e2e install runs single-tenant/dev mode, so a multi-tenant install overlay is required to drive these rejections end to end.'
     - path: tests/tier5_e2e_kind/airgap_registry_mirror_test.go
       function: TestAirgapRegistryMirrorInstall
       site: 1
@@ -948,10 +960,12 @@ sites:
       function: TestAuditPipeline
       site: 4
       call: Skipf
+      reason: 'precondition not met: GET /v1/admin/audit-events/verify is not reachable (curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable'
     - path: tests/tier5_e2e_kind/auth_modes_test.go
       function: TestStandardBearerGatesSessionCreation
       site: 1
       call: Skipf
+      reason: pool %s did not free an idle pod within the retry window (body %v); the 503 RUNTIME_UNAVAILABLE envelope itself confirms the bearer passed the auth chain (an auth failure would be 401/403, not a pool-claim envelope)
     - path: tests/tier5_e2e_kind/auth_modes_test.go
       function: freshAdminBearer
       site: 1
@@ -966,18 +980,22 @@ sites:
       function: TestBackupImageProvidesPostgresClientTools
       site: 1
       call: Skip
+      reason: lenny-backup image omits pg_dump/pg_restore/psql; the §25.11 backup and restore Jobs cannot run until the image packages the Postgres client tools
     - path: tests/tier5_e2e_kind/backup_test.go
       function: TestBackupRestore
       site: 1
       call: Skipf
+      reason: 'precondition not met: `helm template` did not run (%v); cannot assert the §25.11 restore-test subsystem renders'
     - path: tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go
       function: TestCheckpointHandshakeUnderGvisorTagsConsistent
       site: 1
       call: Skip
+      reason: 'precondition not met: no checkpoint record or event carries a §4.4 consistency tag. checkpoint.ConsistencyForLevel (pkg/checkpoint/checkpoint.go) computes consistent/best-effort but has no non-test caller — the gateway checkpointer stores only {Ref, Source, Timestamp, Bytes} on the session WorkspaceSnapshot and session_checkpoint_meta (migration 0148) has no consistency column, so there is no observable to assert consistency: consistent against under gVisor. Wiring the level-derived consistency tag onto the persisted checkpoint record unblocks this test. See the file doc-comment for the full dependency list.'
     - path: tests/tier5_e2e_kind/checkpoint_isolation_profile_test.go
       function: TestSignalCheckpointingRefusedUnderSandboxedProfiles
       site: 1
       call: Skip
+      reason: 'precondition not met: no product code refuses the embedded SIGSTOP path under a sandboxed isolation profile. pkg/adapter/embeddedcheckpoint gates only on host platform (Linux vs. ErrNotSupported), not on the pod''s isolation profile, and no admission rule rejects a Runtime whose deploymentModel is embedded combined with isolationProfile sandboxed/microvm, so there is no enforcement point to verify the §4.4 refusal against. Adding that refusal (admission rejection or a runtime-level guard) unblocks this test.'
     - path: tests/tier5_e2e_kind/checkpoint_resume_test.go
       function: TestCheckpointOnPodLossResumesWorkspace
       site: 1
@@ -987,22 +1005,27 @@ sites:
       function: TestCheckpointOnPodLossResumesWorkspace
       site: 2
       call: Skip
+      reason: no completed checkpoint_manifest row landed within the wait budget; the pool's periodicCheckpointIntervalSeconds cadence exceeds the test budget on this install
     - path: tests/tier5_e2e_kind/checkpoint_resume_test.go
       function: TestCheckpointResumeMinIOOutageFallsBackToPostgresMinimalState
       site: 1
       call: Skip
+      reason: 'precondition not met: same §4.4 eviction-checkpoint wiring gap as TestCheckpointThenResumeRestoresWorkspace, plus a live MinIO-outage injector — tests/tier8_chaos/minio_outage_during_checkpoint_test.go, cited as reusable infrastructure for this scenario, is itself an unimplemented skip stub with no toxiproxy/MinIO-sidecar injector to call into.'
     - path: tests/tier5_e2e_kind/checkpoint_resume_test.go
       function: TestCheckpointThenResumeRestoresWorkspace
       site: 1
       call: Skip
+      reason: 'precondition not met: the §4.4 eviction checkpoint trigger is not wired on the live gateway — checkpoint.TriggerEviction (pkg/checkpoint/checkpoint.go) is defined but no gateway code path invokes the checkpointer with it, so evicting a bound agent pod today produces no checkpoint to resume from. The test also needs a sessiondriver.Resume helper for POST /v1/sessions/{id}/resume, which does not exist yet. See the file doc-comment above for the full dependency list.'
     - path: tests/tier5_e2e_kind/diagnostics_cause_chain_test.go
       function: TestDiagnoseCauseChainRealPodSignals
       site: 1
       call: Skipf
+      reason: the container runtime reported the OOM kill without the OOMKilled reason (reader signals = %+v; a genuine 16Mi tail /dev/zero OOM); the §25.6 reader keys OOM_KILLED on Terminated.Reason=="OOMKilled", which this runtime does not emit, so the OOM_KILLED classification cannot be exercised on this cluster
     - path: tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go
       function: TestConnectivityReportsGatewayReachability_spec_25_6
       site: 1
       call: Skip
+      reason: gateway binds no admin-API-over-TLS listener on its internal-TLS port and that port collides with the LLM-proxy port, so the lenny-ops gateway probe always reports the gateway unreachable regardless of health; the reachable:true assertion stays red until that port collision is resolved
     - path: tests/tier5_e2e_kind/diagnostics_connectivity_gateway_test.go
       function: TestConnectivityReportsGatewayReachability_spec_25_6
       site: 2
@@ -1022,10 +1045,12 @@ sites:
       function: TestDiagnosticsRunFixCertManagerExpiring
       site: 2
       call: Skip
+      reason: 'precondition not met: the lenny-webhook-selfsign cert-manager Issuer is not Ready; this test chains its throwaway Certificate to it rather than standing up a dedicated Issuer'
     - path: tests/tier5_e2e_kind/diagnostics_fix_test.go
       function: TestDiagnosticsRunFixCertManagerExpiring
       site: 3
       call: Skip
+      reason: 'precondition not met: the lenny-ops-sa ServiceAccount cannot get/list/watch/patch cert-manager.io Certificates or delete Secrets in lenny-system yet; the §25.6 certManagerExpiring auto-remediation needs this RBAC grant (charts/lenny/templates/ops-rbac.yaml) deployed to this cluster (a `helm upgrade`) before the live-cluster fix path is reachable'
     - path: tests/tier5_e2e_kind/eager_claim_e2e_test.go
       function: TestEagerClaimPoolExhaustionAtCreate
       site: 1
@@ -1045,6 +1070,7 @@ sites:
       function: TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey
       site: 1
       call: Skipf
+      reason: 'precondition not met: need two Ready gateway replicas for the cross-replica buffer fan-out, have %d (%v)'
     - path: tests/tier5_e2e_kind/event_buffer_fanout_test.go
       function: TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey
       site: 2
@@ -1054,6 +1080,7 @@ sites:
       function: TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey
       site: 3
       call: Skip
+      reason: 'precondition not met: the gateway replicas did not serve the circuit-breaker open used to seed a known event into each per-replica buffer'
     - path: tests/tier5_e2e_kind/event_buffer_fanout_test.go
       function: TestEventBufferFanOutDeduplicatesAcrossReplicasByEventKey
       site: 4
@@ -1073,6 +1100,7 @@ sites:
       function: TestEventStreamPollDuringRedisOutageServesGatewayOriginatedEvents
       site: 3
       call: Skip
+      reason: 'precondition not met: the gateway replica did not serve the circuit-breaker open used to seed a known event into its per-replica buffer'
     - path: tests/tier5_e2e_kind/event_buffer_fanout_test.go
       function: efEndpointAddresses
       site: 1
@@ -1099,6 +1127,7 @@ sites:
       function: TestSessionContinuesAfterCoordinatingGatewayReplicaLoss
       site: 1
       call: Skipf
+      reason: 'precondition not met: need two Ready gateway replicas for the replica-loss continuity contract, have %d (%v)'
     - path: tests/tier5_e2e_kind/gateway_replica_continuity_test.go
       function: TestSessionContinuesAfterCoordinatingGatewayReplicaLoss
       site: 2
@@ -1126,6 +1155,7 @@ sites:
       function: requireGvisorRuntimeClass
       site: 1
       call: Skip
+      reason: no "gvisor" RuntimeClass on the cluster; run tests/testinfra/kind/install-gvisor.sh (install.sh runs it automatically unless LENNY_KIND_SKIP_GVISOR=1)
     - path: tests/tier5_e2e_kind/gvisor_isolation_test.go
       function: requireGvisorRuntimeClass
       site: 2
@@ -1134,6 +1164,7 @@ sites:
       function: TestHAStreamingReconnectAcrossGatewayReplicas
       site: 1
       call: Skipf
+      reason: 'precondition not met: need two Ready gateway replicas for the cross-replica reconnect contract, have %d (%v)'
     - path: tests/tier5_e2e_kind/ha_streaming_replica_test.go
       function: TestHAStreamingReconnectAcrossGatewayReplicas
       site: 2
@@ -1193,6 +1224,7 @@ sites:
       function: TestNodeDrainCheckpointsActiveSession
       site: 1
       call: Skip
+      reason: 'precondition not met: the §4.4 eviction-checkpoint trigger is not wired on the live gateway — checkpoint.TriggerEviction (pkg/checkpoint/checkpoint.go) is defined but no gateway code path drives the §10.1 Checkpoint stream with it, so draining the node under a bound agent pod produces no preStop checkpoint to assert against. The adapter serves the chunked Checkpoint stream (pkg/adapter/checkpoint.go) and the presigned-chunk Resume restore (pkg/adapter/resume.go), but the gateway-side driver that opens the stream and mints the per-chunk grants is not yet wired; see the file doc-comment above for the full dependency list.'
     - path: tests/tier5_e2e_kind/ops_anonymous_rejected_test.go
       function: TestOpsAnonymousRejectedOnDeployedBinary_spec_25_4_1567
       site: 1
@@ -1227,6 +1259,7 @@ sites:
       function: TestRestoreTestResultReachesLennyOpsMetrics
       site: 1
       call: Skip
+      reason: charts/lenny/templates/ops-deployment.yaml renders no Postgres DSN for lenny-ops under any values combination, so the stock e2e install runs it in the degraded single-process mode (already reviewed as deliberate) where it never reads ops_restore_test_results; observing the republished gauge would require mutating the shared lenny-ops Deployment for the whole test binary run
     - path: tests/tier5_e2e_kind/runbook_index_test.go
       function: TestRunbookIndexServedOnDeployedBinary
       site: 1
@@ -1248,10 +1281,12 @@ sites:
       function: TestNodeDrainDuringActiveSession
       site: 1
       call: Skip
+      reason: 'precondition not met: agent-pod workload absent; §13.19 needs at least one Ready agent pod on a worker node to drain.'
     - path: tests/tier5_e2e_kind/scaffolds_test.go
       function: TestNodeDrainDuringActiveSession
       site: 2
       call: Skipf
+      reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the §13.19 node-drain path.'
     - path: tests/tier6_e2e_cloud/agent_objectstore_egress_test.go
       function: requireAgentNamespace
       site: 1
@@ -1287,50 +1322,36 @@ sites:
       site: 1
       call: Skipf
       reason: scenario %s does not implement RampableScenario (no capacity profile)
-    - path: tests/tier7b_load_kind/experiment_test.go
-      function: TestExperimentLoad
-      site: 2
-      call: Skip
-    - path: tests/tier7b_load_kind/post_hardening_test.go
-      function: TestPostHardeningSLO
-      site: 2
-      call: Skip
     - path: tests/tier7b_load_kind/scaffolds_test.go
       function: TestConcurrentWorkspaceSlots
       site: 2
       call: Skip
+      reason: 'external dependency: per-slot workspace multiplexing is pod-internal; the gateway exposes no per-slot endpoint, so the concurrent_workspace_slots scenario has no surface to load-test on the current build'
     - path: tests/tier7b_load_kind/scaffolds_test.go
       function: TestExperimentActiveUnderLoad
       site: 2
       call: Skip
-    - path: tests/tier7b_load_kind/scaffolds_test.go
-      function: TestFullSystemLoadBaseline
-      site: 2
-      call: Skip
-    - path: tests/tier7b_load_kind/scaffolds_test.go
-      function: TestFullSystemWithHardeningLoad
-      site: 2
-      call: Skip
+      reason: 'external dependency: no active experiment is configured on the e2e gateway, so the ExperimentRouter bucketing hot path has nothing to exercise; the experiment-routing scenario has no surface to load-test on the current build'
     - path: tests/tier7b_load_kind/scaffolds_test.go
       function: TestGateway10kSessions
       site: 2
       call: Skip
+      reason: 'external dependency: gateway_10k_sessions is cloud-only — the 10000-session, multi-replica footprint exceeds a Kind e2e cluster; it runs on the cloud-small nightly cluster per the §12.7 cadence'
     - path: tests/tier7b_load_kind/scaffolds_test.go
       function: TestPlaygroundRevocation
       site: 2
       call: Skip
+      reason: 'external dependency: the §27 playground is disabled on the e2e gateway (playground routes return 404), so the playground_revocation scenario has no surface to load-test on the current build'
     - path: tests/tier7b_load_kind/scaffolds_test.go
       function: TestTimeToHelloWorld
       site: 2
       call: Skip
+      reason: 'external dependency: the §17a TTHW install-replay harness does not exist, so the time-to-hello-world scenario has nothing to measure on the current build'
     - path: tests/tier7b_load_kind/scaffolds_test.go
       function: TestWebhookDeliveryLoad
       site: 2
       call: Skip
-    - path: tests/tier7b_load_kind/scaffolds_test.go
-      function: requireCloudLoad
-      site: 1
-      call: Skipf
+      reason: 'external dependency: the gateway exposes no webhook-subscription endpoint on the current build, so the webhook_delivery scenario has no surface to load-test'
     - path: tests/tier8_chaos/adr007_leader_kill_claim_test.go
       function: TestLeaderKillMidClaimNoDoubleAssignment
       site: 1
@@ -1360,14 +1381,19 @@ sites:
       function: TestAuditChainGapDetection
       site: 4
       call: Skipf
+      reason: |-
+        precondition not met: `lenny-migrate up` failed against the live Postgres (%v); cannot establish the audit_log schema for the gap-detection scenario
+        %s
     - path: tests/tier8_chaos/audit_chain_test.go
       function: TestAuditChainGapDetection
       site: 5
       call: Skipf
+      reason: 'precondition not met: GET /v1/admin/audit-events/verify is not reachable (curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable'
     - path: tests/tier8_chaos/component_failure_test.go
       function: TestCertManagerOutage
       site: 1
       call: Skipf
+      reason: 'precondition not met: cert-manager Deployment is not present (%v); the §10.3 PKI requires cert-manager'
     - path: tests/tier8_chaos/component_failure_test.go
       function: TestCertManagerOutage
       site: 2
@@ -1377,6 +1403,7 @@ sites:
       function: TestCertManagerOutage
       site: 3
       call: Skipf
+      reason: 'precondition not met: no Certificates found in lenny-system; the §10.3 mTLS PKI is not provisioned'
     - path: tests/tier8_chaos/component_failure_test.go
       function: TestCertManagerOutage
       site: 4
@@ -1391,10 +1418,14 @@ sites:
       function: TestEphemeralContainerCredGuardOutage
       site: 2
       call: Skipf
+      reason: 'precondition not met: %s webhook failurePolicy is %q, not Fail; the fail-closed assertion does not apply'
     - path: tests/tier8_chaos/component_failure_test.go
       function: TestEphemeralContainerCredGuardOutage
       site: 3
       call: Skipf
+      reason: |-
+        precondition not met: a benign ephemeral container was rejected while the cred-guard backend is healthy (%v); cannot attribute a later rejection to the outage
+        %s
     - path: tests/tier8_chaos/component_failure_test.go
       function: TestTokenServiceOutage
       site: 1
@@ -1424,6 +1455,10 @@ sites:
       function: requireSandboxClaimGuardReachable
       site: 1
       call: Skipf
+      reason: |-
+        not exercisable on this cluster: the lenny-sandboxclaim-guard webhook's admission call does not complete within its 5s budget. The webhook is deployed fail-closed and its configuration is verified by the tier-5 inventory test; its ServiceAccount has list/watch RBAC on sandboxclaims and the allow-admission-webhooks NetworkPolicy admits kube-apiserver egress (a labelled probe pod reaches the apiserver). The §4.6.1 guard's client.Reader List of sibling SandboxClaims nonetheless exceeds the 5s webhook timeout on this Kind cluster — the direct client's first-call API discovery latency is the likely cause. The double-claim runtime path needs that List to return inside the webhook budget.
+        probe output:
+        %s
     - path: tests/tier8_chaos/config_drift_test.go
       function: TestNetworkPolicyConfigDrift
       site: 1
@@ -1433,6 +1468,7 @@ sites:
       function: TestNetworkPolicyConfigDrift
       site: 2
       call: Skipf
+      reason: 'precondition not met: the bootstrap probe cannot reach the gateway before the drift (curl exit %d, status %d); %s may not admit bootstrap pods'
     - path: tests/tier8_chaos/config_drift_test.go
       function: TestNetworkPolicyDrift
       site: 1
@@ -1442,6 +1478,7 @@ sites:
       function: TestNetworkPolicyDrift
       site: 2
       call: Skipf
+      reason: 'precondition not met: %s already carries an over-broad ingress clause before the injection; cannot demonstrate an over-permissive drift'
     - path: tests/tier8_chaos/config_drift_test.go
       function: TestPoolConfigDrift
       site: 1
@@ -1466,10 +1503,14 @@ sites:
       function: TestSchemaMigrationDirtyFlag
       site: 3
       call: Skipf
+      reason: |-
+        precondition not met: `lenny-migrate up` failed against the live Postgres (%v); cannot establish an applied schema for the dirty-flag scenario
+        %s
     - path: tests/tier8_chaos/config_drift_test.go
       function: TestSchemaMigrationDirtyFlag
       site: 4
       call: Skipf
+      reason: 'precondition not met: `lenny-migrate version` does not report a clean schema (output: %q); the dirty-flag scenario assumes a clean starting state'
     - path: tests/tier8_chaos/leader_election_test.go
       function: TestControllerLeaderElectionDisruption
       site: 1
@@ -1484,10 +1525,12 @@ sites:
       function: TestPodKillDuringActiveSession
       site: 2
       call: Skipf
+      reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise this path.'
     - path: tests/tier8_chaos/mcp_management_gateway_outage_test.go
       function: TestMCPManagementGatewayOwnedToolDuringGatewayOutage
       site: 1
       call: Skip
+      reason: 'the §25.12 gateway-proxy tool-call dispatch (routing a generated admin.* tool through GatewayClient to the gateway admin API) is unbuilt: pkg/ops/mcp.Invoker has a single implementation (opsserver''s opsInvoker), which only replays a tool''s mapped request against the lenny-ops mux, so a gateway-owned tool call has nowhere to route to gateway or otherwise; this test documents the intended chaos exercise for when that dispatch exists'
     - path: tests/tier8_chaos/mcp_management_gateway_outage_test.go
       function: TestMCPManagementGatewayOwnedToolDuringGatewayOutage
       site: 2
@@ -1507,10 +1550,12 @@ sites:
       function: TestMinIOOutageDuringCheckpoint
       site: 1
       call: Skip
+      reason: tier-8 live exercise — requires toxiproxy + testcontainers MinIO; unit coverage lives in pkg/gateway/evictionfallback/* and tests/tier2_component/stores/evictionfallback_test.go
     - path: tests/tier8_chaos/node_drain_during_minio_outage_test.go
       function: TestNodeDrainDuringMinIOOutage
       site: 1
       call: Skip
+      reason: tier-8 live composite — needs the gateway eviction-checkpoint trigger driven on individual agent-pod eviction (checkpoint.TriggerEviction is unreferenced by gateway code today; see tests/tier5_e2e_kind/checkpoint_resume_test.go). The eviction-fallback / total-loss disposition is exercised against real fault-injected stores in tests/tier4_integration/eviction_fallback_outage_test.go; the drain driver is tier-5 TestNodeDrainDuringActiveSession and the §12.5 pre-drain gate is tier-8 TestMinIOUnavailable.
     - path: tests/tier8_chaos/nonce_only_degradation_test.go
       function: TestNonceOnlyModeDegradationAndRecovery
       site: 1
@@ -1530,6 +1575,7 @@ sites:
       function: TestGatewayAuditSurvivesOpsOutage
       site: 3
       call: Skipf
+      reason: 'precondition not met: gateway %s is not 200 before the injection (curl exit %d, status %d, body %q)'
     - path: tests/tier8_chaos/ops_down_audit_survives_test.go
       function: TestGatewayAuditSurvivesOpsOutage
       site: 4
@@ -1544,6 +1590,7 @@ sites:
       function: TestOpsLeaderElectionFailover
       site: 2
       call: Skipf
+      reason: 'precondition not met: %s did not reach %d replicas Ready within %s (state %s); a CPU-starved second replica on a single-host Kind cluster cannot exercise failover'
     - path: tests/tier8_chaos/ops_leader_failover_test.go
       function: TestOpsLeaderElectionFailover
       site: 3
@@ -1580,6 +1627,7 @@ sites:
       function: TestOpsSurfaceSurvivesGatewayOutageEndToEnd
       site: 4
       call: Skipf
+      reason: 'precondition not met: the gateway-resident audit query is not reachable before the injection (curl exit %d, status %d)'
     - path: tests/tier8_chaos/ops_survives_gateway_test.go
       function: TestGatewayHealthSummarySurvivesOpsOutage
       site: 1
@@ -1594,6 +1642,7 @@ sites:
       function: TestGatewayHealthSummarySurvivesOpsOutage
       site: 3
       call: Skipf
+      reason: 'precondition not met: gateway /v1/admin/health/summary is not 200 before the injection (curl exit %d, status %d)'
     - path: tests/tier8_chaos/ops_survives_gateway_test.go
       function: TestOpsSurvivesGatewayOutage
       site: 1
@@ -1678,6 +1727,7 @@ sites:
       function: TestMinIOUnavailable
       site: 3
       call: Skipf
+      reason: 'precondition not met: /internal/drain-readiness is not 200 before the injection (curl exit %d, status %d, body %q); MinIO or its artifact bucket is not healthy'
     - path: tests/tier8_chaos/store_failure_test.go
       function: assertStoreOutageDegrades
       site: 1
@@ -1702,6 +1752,7 @@ sites:
       function: TestWarmPodEvictionProactiveReplacement
       site: 1
       call: Skip
+      reason: 'precondition not met: no warm pool sits at its steady state (Ready idle count == minWarm >= 2) to exercise minAvailable = minWarm-1 one-at-a-time eviction'
     - path: tests/tier8_chaos/warm_pod_eviction_test.go
       function: TestWarmPodEvictionProactiveReplacement
       site: 2
@@ -1768,6 +1819,7 @@ sites:
       function: TestAuditChainContinuity
       site: 3
       call: Skipf
+      reason: 'precondition not met: GET /v1/admin/audit-events/verify is not reachable (curl exit %d, status %d, body %q); the §11.7 verifier endpoint is unavailable'
     - path: tests/tier9_security/audit_integrity_test.go
       function: TestAuditSequenceMonotonicity
       site: 1
@@ -1787,6 +1839,9 @@ sites:
       function: TestBackupServiceAccountScopeEnforcedLiveRBAC_spec_25_11
       site: 1
       call: Skipf
+      reason: |-
+        precondition not met: lenny-backup-sa is not installed in %s (%v); the §25.11 backup identity ships with the chart core inventory
+        %s
     - path: tests/tier9_security/controller_rbac_test.go
       function: TestControllerCanPatchSandboxesLiveRBAC
       site: 1
@@ -1796,6 +1851,7 @@ sites:
       function: TestCredentialFileDeliveryContract
       site: 1
       call: Skip
+      reason: no §4.9 credential lease is delivered to any e2e agent pod, so the adapter never materializes /run/lenny/credentials.json; the real-pod §4.7 delivery-contract assertion needs a credential-bearing session first
     - path: tests/tier9_security/credential_file_contract_test.go
       function: TestCredentialFileDeliveryContract
       site: 2
@@ -1808,6 +1864,7 @@ sites:
       function: TestCredentialFileDeliveryContract
       site: 3
       call: Skipf
+      reason: '§4.7 credential-file probe: no %s materialized under /run/lenny in cred-shell-echo pod %s (no active credential-bearing session)'
     - path: tests/tier9_security/credential_leakage_test.go
       function: TestCredentialLeakageEnvironment
       site: 1
@@ -1836,6 +1893,7 @@ sites:
       function: findCredShellPod
       site: 1
       call: Skip
+      reason: '§12.9.8 probe: no cred-shell-echo agent pod present; install.sh applies agent-workload.yaml which declares the cred-shell-echo-pool. Without the pool the §12.9.8 boundary cannot be probed.'
     - path: tests/tier9_security/elicitation_tamper_test.go
       function: TestElicitationPlatformFloor
       site: 1
@@ -1950,6 +2008,7 @@ sites:
       function: TestSSRFCallbackValidation
       site: 2
       call: Skipf
+      reason: 'precondition not met: could not bootstrap the synthetic tenant %q for the positive control (curl exit %d, status %d, body %q); a persisted connector needs a registered tenants row'
     - path: tests/tier9_security/tenant_isolation_test.go
       function: TestTenantIsolationCrossStore
       site: 1
@@ -1969,6 +2028,7 @@ sites:
       function: TestTenantIsolationCrossStore
       site: 4
       call: Skipf
+      reason: 'precondition not met: GET /v1/admin/audit-events is not reachable (curl exit %d, status %d, body %q)'
     - path: tests/tier9_security/tls_test.go
       function: TestMTLSCertificatesReady
       site: 1
