@@ -23,6 +23,31 @@ func writeYAML(t *testing.T, name, body string) string {
 	return path
 }
 
+// readFixture returns the body of a fixture register held under
+// testdata.
+//
+// A case whose fixture has to present a reserved noun phrase, a retired
+// anchor, or the retired citation form verbatim holds that text here
+// rather than in a Go string literal in this source. Fixture text of
+// that kind is input to a gate rather than a pointer into the
+// specification, and its route out of the population is the deletion of
+// the case rather than a retirement, so a baseline entry or a per-file
+// count seeded for it would never fall. testdata sits outside the read
+// domain of the citation resolver, the ratchet, and the residual scan,
+// and outside the write domain of every pass, so no gate reports its own
+// input.
+//
+// spec: §28.1 (N3, the naming law: the prohibition's domain excludes the
+// fixture trees)
+func readFixture(t *testing.T, name string) string {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("testdata", filepath.FromSlash(name)))
+	if err != nil {
+		t.Fatalf("read the fixture %s: %v", name, err)
+	}
+	return string(body)
+}
+
 // expectFail asserts a check failed and the detail contains every
 // substring in want. expectPass asserts OK status.
 func expectFail(t *testing.T, r checkResult, want ...string) {
@@ -758,12 +783,7 @@ func TestValidateRegistersDirLeavesFilesDeclaringNoSharedKind(t *testing.T) {
 	dir := t.TempDir()
 	files := map[string]string{
 		"line-citations.yaml": "version: 1\nfiles:\n  spec/10_gateway.md: 14\n",
-		"resolutions.yaml": `version: 1
-entries:
-  - file: spec/10_gateway.md
-    citation: the runtime lifecycle channel
-    resolves: false
-`,
+		"resolutions.yaml":    readFixture(t, "registers/line-citation-resolution.yaml"),
 		"residual-line-citations.yaml": `version: 1
 entries:
   - member: spec/10_gateway.md
@@ -899,14 +919,7 @@ entries:
   - file: spec/10_gateway.md
     citations: 14
 `,
-		"identifier-senses.yaml": `
-kind: sense-map
-version: 1
-occurrences:
-  - file: spec/10_gateway.md
-    line: 12
-    identifier: runtime-lifecycle-channel
-`,
+		"identifier-senses.yaml": readFixture(t, "registers/identifier-senses.yaml"),
 	}
 	for name, body := range files {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {

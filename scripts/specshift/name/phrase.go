@@ -41,6 +41,30 @@ var reservedExpr = regexp.MustCompile(
 // a regular-expression escape.
 var joinClass = fmt.Sprintf(`\x{%04x}`, citation.JoinByte)
 
+// FindReservedPhrases returns the source line of every bare reserved
+// noun phrase a text carries, wherever it stands, in source order.
+//
+// The pass reads the positions the naming law governs, which in a Go
+// file is the doc comment. This answers the wider question a gate
+// package asks of its own source: whether the phrase stands anywhere in
+// it, a string literal holding a fixture body included. A fixture of
+// that kind belongs under testdata, which sits outside the read domain
+// of the gates and the write domain of every pass, so a caller can hold
+// its own tree to that rule.
+//
+// It is exported so no caller restates the phrase. The matcher is
+// written once, as a regular-expression literal in this file, because a
+// specimen written anywhere else would be a site of the class the pass
+// removes.
+func FindReservedPhrases(content string) []int {
+	joined, offsets := citation.Join(content)
+	var lines []int
+	for _, m := range reservedExpr.FindAllStringIndex(joined, -1) {
+		lines = append(lines, citation.LineOf(content, offsets[m[0]]))
+	}
+	return lines
+}
+
 // site is one occurrence of a reserved noun phrase, given as a byte span
 // of the source together with the line it opens on and the text it
 // covers with the continuation join rendered as a space.

@@ -1,0 +1,6 @@
+kind: sense-map
+version: 1
+occurrences:
+  - file: spec/10_gateway.md
+    line: 12
+    identifier: runtime-lifecycle-channel

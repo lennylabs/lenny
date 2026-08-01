@@ -523,6 +523,65 @@ func TestProducerOutputDisjunctSelectsACopyAndSparesItsAuthoredNeighbour(t *test
 	}
 }
 
+// TestNoGateSourceOutsideItsFixtureTreeCarriesAReservedPhrase holds the
+// three trees that carry the passes and the gates to the rule their own
+// fixtures rest on. A case that has to present a reserved noun phrase
+// verbatim holds it in a file under testdata, which the tree beside each
+// of them exists for, rather than in a Go string literal in the test
+// source.
+//
+// A phrase written in the source instead is a live prose site: the file
+// is inside the name pass's write domain and inside the reserved-phrase
+// class's residual domain, so the pass aborts on it, and its route out
+// of the population is the deletion of the case rather than a
+// retirement. Under testdata it is neither, because testdata sits
+// outside every read and write domain.
+//
+// The retired citation form is held to the same rule by the
+// line-citation ratchet, which counts it per file and never raises a
+// count, so it is not measured again here.
+//
+// spec: §28.1 (N3, the naming law: no bare reserved noun phrase stands
+// in prose, and the prohibition's domain excludes the fixture trees)
+func TestNoGateSourceOutsideItsFixtureTreeCarriesAReservedPhrase(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	all, err := scope.GitLister(root)(context.Background())
+	if err != nil {
+		t.Fatalf("list the tracked tree: %v", err)
+	}
+	trees := []string{"scripts/specshift/", "cmd/lenny-test/", "tests/tier0_static/"}
+	read := scope.DirReader(root)
+	measured := 0
+	for _, target := range all {
+		if !underAny(target, trees) || !scope.Readable(target) {
+			continue
+		}
+		measured++
+		content, err := read(target)
+		if err != nil {
+			t.Fatalf("read %s: %v", target, err)
+		}
+		for _, line := range name.FindReservedPhrases(string(content)) {
+			t.Errorf("%s:%d carries a reserved noun phrase in its own source; hold the fixture text under testdata",
+				target, line)
+		}
+	}
+	if measured == 0 {
+		t.Fatal("no tracked source under the pass and gate trees was measured")
+	}
+}
+
+// underAny reports whether a path sits under one of the prefixes.
+func underAny(target string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(target, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
 // TestEveryTestInfrastructureRegisterIsRekeyedByARename pins the rekey
 // domain over the committed tree. Every register under tests/registers
 // is keyed by a tracked path or carries one at the head of a member, and
