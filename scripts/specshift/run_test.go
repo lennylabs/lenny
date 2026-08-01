@@ -5523,6 +5523,92 @@ func TestAnchorPassAbortsAtACitationTheSenseRegisterDoesNotRecord(t *testing.T) 
 	}
 }
 
+// TestAnchorPassRedirectsALinkFromARootLevelCarrierWithoutLeavingTheRoot
+// pins the destination a redirect is written with from a document at the
+// root of the repository. The root is the directory the successor's path
+// is already stated from, so the rewritten link names it directly. A
+// link written as if the carrier sat one directory down would resolve
+// nowhere, which is the outcome the fragment-link gate fails on.
+//
+// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
+// names the heading the material moved to)
+func TestAnchorPassRedirectsALinkFromARootLevelCarrierWithoutLeavingTheRoot(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	assertRedirected(t, root, "README.md")
+}
+
+// TestAnchorPassAbortsAtACitationOfARetiredSectionTheMapDoesNotCarry
+// pins the second fail-closed rule over the citation class. A citation
+// naming a section no heading of the tree declares, for which the
+// anchor-move map records no successor, aborts the run non-zero, names
+// the file and the line, and leaves the tree byte-identical. Passing
+// over it would leave a citation of a section that is gone while the run
+// exited zero, and the change that empties the map is the change that
+// destroys the record of what the run should have done.
+//
+// The sense register records the occurrence, so the abort is the one the
+// missing map entry raises rather than the unrecorded-sense abort.
+//
+// spec: §28.1 (N8, the citation rule: a citation whose destination is
+// unresolved is reported rather than left naming a heading that is gone)
+func TestAnchorPassAbortsAtACitationOfARetiredSectionTheMapDoesNotCarry(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fail/unmapped-citation")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass returned no error at a citation of a retired section the map does not carry")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/unmapped.go" || abort.Line != 7 {
+		t.Errorf("the abort names %s line %d, want pkg/carrier/unmapped.go line 7", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "15.9.9") || !strings.Contains(abort.Reason, "tree.json") {
+		t.Errorf("the abort names neither the citation nor the anchor-move map: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
+	}
+}
+
+// TestAnchorPassAbortsAtALinkIntoARetiredAnchorTheMapDoesNotCarry pins
+// the same rule over the link class. A fragment link into an anchor no
+// document of the tree declares, for which the map records no successor,
+// aborts the run non-zero, names the file and the line, and leaves the
+// tree byte-identical. The link resolves nowhere as it stands, so
+// leaving it in place reports the zero work of a completed migration
+// over a reference the migration was supposed to redirect.
+//
+// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
+// names the heading the material moved to)
+func TestAnchorPassAbortsAtALinkIntoARetiredAnchorTheMapDoesNotCarry(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fail/unmapped-link")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass returned no error at a link into a retired anchor the map does not carry")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "docs/reference/unmapped.md" || abort.Line != 4 {
+		t.Errorf("the abort names %s line %d, want docs/reference/unmapped.md line 4", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "1544-flow-control") || !strings.Contains(abort.Reason, "tree.json") {
+		t.Errorf("the abort names neither the anchor nor the anchor-move map: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
+	}
+}
+
 // TestAnchorPassFailsAMoveWhoseSuccessorHeadingDoesNotExist pins that
 // every redirect is held to a heading of the tree before any file is
 // written. A successor nothing declares would send every inbound

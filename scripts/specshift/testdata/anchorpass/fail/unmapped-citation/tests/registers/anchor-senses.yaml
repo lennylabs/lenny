@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The register records the occurrence the carrier carries, so a run that
+# stops at it stopped over the missing anchor-move entry rather than
+# over an unrecorded sense.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/unmapped.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format

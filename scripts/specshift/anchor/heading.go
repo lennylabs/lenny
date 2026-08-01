@@ -15,15 +15,26 @@ import (
 
 // headings indexes every anchor the markdown documents of the tree
 // declare, per file, together with the section number of the heading
-// each anchor addresses.
+// each anchor addresses, and the set of section numbers the tree's
+// headings declare.
 //
 // The index is what holds a redirect to a heading that exists. A
 // successor anchor nothing declares would send every inbound reference
 // to a page position that does not resolve, and no gate over the anchor
 // classes reads meaning, so the run fails before it writes rather than
 // after.
+//
+// The index is also what tells a surviving destination from a retired
+// one at a reference the anchor-move map does not carry. A link into an
+// anchor the tree still declares and a citation of a section a heading
+// still declares are references the reduction left alone, and both
+// stand. A reference the tree declares nowhere names material that
+// moved with no redirect recorded for it, which the pass reports rather
+// than passing over.
 type headings struct {
 	byFile map[string]map[string]citation.Heading
+	// sections holds every section number a heading of the tree declares.
+	sections map[string]bool
 }
 
 // explicitAnchorExpr reads the kramdown attribute that gives a heading
@@ -55,7 +66,7 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 	if err != nil {
 		return nil, fmt.Errorf("index the headings of the tree: %w", err)
 	}
-	h := &headings{byFile: map[string]map[string]citation.Heading{}}
+	h := &headings{byFile: map[string]map[string]citation.Heading{}, sections: map[string]bool{}}
 	for _, target := range domain {
 		if filepath.Ext(target) != ".md" {
 			continue
@@ -67,7 +78,11 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 		if err != nil {
 			return nil, fmt.Errorf("read %s to index its headings: %w", target, err)
 		}
-		h.byFile[target] = index(string(content))
+		anchors, numbers := index(string(content))
+		h.byFile[target] = anchors
+		for _, number := range numbers {
+			h.sections[number] = true
+		}
 	}
 	if len(h.byFile) == 0 {
 		return nil, fmt.Errorf("index the headings of the tree: no markdown document in the read domain")
@@ -76,17 +91,18 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 }
 
 // index returns the anchors one document declares, each with the
-// heading it addresses. The first claim on an anchor keeps it, which is
-// how a renderer that suffixes a repeated slug addresses the first of
-// them.
+// heading it addresses, and the section numbers its headings declare.
+// The first claim on an anchor keeps it, which is how a renderer that
+// suffixes a repeated slug addresses the first of them.
 //
 // A heading is addressable by the slug of its text, and by the explicit
 // anchor a kramdown attribute declares for it. The attribute is written
 // either on the heading line or on the line below it, so the walk reads
 // both positions and attaches a standalone attribute to the heading
 // above it.
-func index(content string) map[string]citation.Heading {
+func index(content string) (map[string]citation.Heading, []string) {
 	out := map[string]citation.Heading{}
+	var numbers []string
 	claim := func(a string, h citation.Heading) {
 		if _, taken := out[a]; taken || a == "" {
 			return
@@ -96,6 +112,9 @@ func index(content string) map[string]citation.Heading {
 	headingAt := map[int]citation.Heading{}
 	for _, h := range citation.Headings(content) {
 		headingAt[h.Line] = h
+		if h.Number != "" {
+			numbers = append(numbers, h.Number)
+		}
 	}
 	var last citation.Heading
 	for i, line := range strings.Split(strings.TrimSuffix(content, "\n"), "\n") {
@@ -111,7 +130,7 @@ func index(content string) map[string]citation.Heading {
 			claim(m[1], last)
 		}
 	}
-	return out
+	return out, numbers
 }
 
 // slug returns the anchor a renderer derives from a heading's text: the
@@ -159,4 +178,19 @@ func (h *headings) citationFor(t Target) (string, error) {
 func (h *headings) carries(target string) bool {
 	_, ok := h.byFile[target]
 	return ok
+}
+
+// declaresAnchor reports whether the document still declares the anchor,
+// which is what separates a link the reduction left alone from a link
+// into an anchor that was retired.
+func (h *headings) declaresAnchor(target, anchor string) bool {
+	_, ok := h.byFile[target][anchor]
+	return ok
+}
+
+// declaresSection reports whether a heading of the tree still declares
+// the section number, which is what separates a citation the reduction
+// left alone from a citation of a section that was retired.
+func (h *headings) declaresSection(number string) bool {
+	return h.sections[number]
 }

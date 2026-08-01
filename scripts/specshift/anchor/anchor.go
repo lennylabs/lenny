@@ -12,10 +12,17 @@
 // carries one successor per anchor. Both forms of that link are inside
 // the pass, the file-qualified `[...](NN_file.md#anchor)` form and the
 // same-page `[...](#anchor)` form, which is the majority form inside a
-// specification file. A link into a surviving anchor carries no map
-// entry and is left as it stands, and so is a link whose destination is
-// not a tracked markdown document of the tree, which covers an absolute
-// URL the fragment-link gate does not read either.
+// specification file. A link into an anchor the tree still declares is
+// left as it stands, and so is a link whose destination is not a tracked
+// markdown document of the tree, which covers an absolute URL the
+// fragment-link gate does not read either.
+//
+// A reference into a destination the tree declares nowhere and the map
+// carries no entry for aborts the run naming the file and the line,
+// which holds for a link and for a bare citation alike. The reference
+// resolves nowhere as it stands, so leaving it in place while the run
+// exits zero reports the zero work of a completed migration over a
+// reference the migration was supposed to redirect.
 //
 // A bare section citation of the §X.Y form, in a comment or in prose
 // alike, is decided per occurrence by the sense register. The map cannot
@@ -132,24 +139,40 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 // plan resolves every site of one file against the register that decides
 // its class.
 //
+// A site the anchor-move map does not carry names a destination no
+// heading of the tree declares, so there is no redirect to write and no
+// reference worth leaving in place. It aborts the run. Passing over it
+// would leave a reference into a heading that is gone while the run
+// exited zero, which reads as the completed migration it is not, and the
+// change that empties the map is the change that destroys the record of
+// what the run should have done.
+//
 // Every unresolved site is collected before the plan fails, so one run
 // names the whole hand-correction population rather than its first
 // member. Nothing is written until the plan succeeds, so reporting them
 // all still leaves the tree byte-identical.
+//
+// A citation the map does not carry still takes its occurrence number,
+// so the sense register's numbering of a file is the position of the
+// citation among every citation of a retired section that file carries,
+// whether or not the map happens to carry a redirect for it.
 func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	edits := make([]edit, 0, len(sites))
 	var aborts []*pass.Abort
 	citations := 0
 	for _, s := range sites {
+		if s.kind == citationSite {
+			citations++
+		}
+		if !s.mapped {
+			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: r.unmappedReason(s)})
+			continue
+		}
 		if s.kind == linkSite {
-			move, ok := r.moves.anchor(s.anchor)
-			if !ok {
-				continue
-			}
+			move, _ := r.moves.anchor(s.anchor)
 			edits = append(edits, edit{start: s.start, end: s.end, text: linkTarget(target, s, move.Successor)})
 			continue
 		}
-		citations++
 		sense, ok := r.senses[target][citations]
 		if !ok {
 			aborts = append(aborts, &pass.Abort{
@@ -170,6 +193,18 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 		return nil, err
 	}
 	return edits, nil
+}
+
+// unmappedReason states why a site the anchor-move map does not carry
+// stops the run, naming what the reference points at and the map that
+// records no successor for it.
+func (r *Rewriter) unmappedReason(s site) string {
+	if s.kind == linkSite {
+		return fmt.Sprintf("the link into %s#%s names an anchor no document of the tree declares, and %s carries no successor for it",
+			s.file, s.anchor, r.moves.path)
+	}
+	return fmt.Sprintf("the citation of §%s names a section no heading of the tree declares, and %s carries no successor for it",
+		s.section, r.moves.path)
 }
 
 // checkRegisters indexes the tree's headings, loads the sense register

@@ -41,6 +41,11 @@ type site struct {
 	// samePage records that the link was written in the same-page form,
 	// so a redirect that stays on the page keeps that form.
 	samePage bool
+	// mapped records that the anchor-move map carries the redirect for
+	// what the site names. A site the map does not carry names a
+	// destination no heading of the tree declares, which the pass reports
+	// rather than leaving in place.
+	mapped bool
 }
 
 // fragmentLinkExpr matches a markdown link with a fragment. The first
@@ -55,6 +60,14 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 
 // findSites returns every reference one file carries that names a
 // retired anchor or a retired section, in source order.
+//
+// The heading index decides what is retired, rather than the
+// anchor-move map: a reference whose destination the tree still declares
+// is one the reduction left alone and stands, and every other reference
+// names a destination that is gone. A reference the map carries is
+// redirected, and a reference it does not carry is a site all the same,
+// so the pass reports it rather than passing over a reference into a
+// destination that resolves nowhere.
 //
 // A link whose destination is not a tracked markdown document of the
 // tree is not a site: an absolute URL and a link into a file the
@@ -75,7 +88,8 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 		if !tree.carries(file) {
 			continue
 		}
-		if _, ok := moves.anchor(anchor); !ok {
+		_, mapped := moves.anchor(anchor)
+		if !mapped && tree.declaresAnchor(file, anchor) {
 			continue
 		}
 		out = append(out, site{
@@ -86,11 +100,13 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 			anchor:   anchor,
 			file:     file,
 			samePage: destination == "",
+			mapped:   mapped,
 		})
 	}
 	for _, m := range bareCitationExpr.FindAllStringSubmatchIndex(text, -1) {
 		number := text[m[2]:m[3]]
-		if _, ok := moves.section(number); !ok {
+		_, mapped := moves.section(number)
+		if !mapped && tree.declaresSection(number) {
 			continue
 		}
 		out = append(out, site{
@@ -99,6 +115,7 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 			end:     m[1],
 			line:    lineOf(text, m[0]),
 			section: number,
+			mapped:  mapped,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].start < out[j].start })
@@ -127,8 +144,8 @@ func linkTarget(citing string, s site, successor Target) string {
 // relative returns the path from the citing file's directory to the
 // target file.
 func relative(citing, target string) string {
-	from := strings.Split(path.Dir(citing), "/")
-	to := strings.Split(path.Dir(target), "/")
+	from := directorySegments(citing)
+	to := directorySegments(target)
 	shared := 0
 	for shared < len(from) && shared < len(to) && from[shared] == to[shared] {
 		shared++
@@ -140,6 +157,19 @@ func relative(citing, target string) string {
 	segments = append(segments, to[shared:]...)
 	segments = append(segments, path.Base(target))
 	return path.Join(segments...)
+}
+
+// directorySegments returns the directory of a repo-relative path as its
+// segments. A file at the root of the repository sits in no directory
+// and yields none, so a link written from one climbs out of nothing: the
+// path from a root-level carrier to spec/28_communication-channels.md is
+// that path itself.
+func directorySegments(target string) []string {
+	dir := path.Dir(target)
+	if dir == "." || dir == "" {
+		return nil
+	}
+	return strings.Split(dir, "/")
 }
 
 // edit is one rewrite in a file, given as a byte span of the source and
