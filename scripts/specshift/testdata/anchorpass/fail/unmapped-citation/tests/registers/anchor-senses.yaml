@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT
+#
+# The register resolves both occurrences of the sibling carrier and
+# records none of the three citations the other carrier holds, each of
+# which names a section no specification file declares any more. The run
+# stops over all three with every carrier left byte-identical, including
+# the sibling it would otherwise have rewritten.
+kind: anchor-senses
+version: 1
+entries:
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary
