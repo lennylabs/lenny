@@ -190,17 +190,29 @@ func (h *headings) lookup(t Target) (citation.Heading, bool) {
 // citationFor returns the text a bare section citation of the target is
 // rewritten to.
 //
-// A numbered heading is cited by its section number, which is the anchor
-// citation form the migration establishes. A heading that declares no
-// section, such as the message-format heading a carve-out keeps in place
-// or the level-one title a documentation page opens with, has no number
-// to cite, so it is cited by the file and anchor that address it.
+// A numbered heading of the specification is cited by its section
+// number, which is the anchor citation form the migration establishes.
+// Every other heading is cited by the file and anchor that address it.
+//
+// The §-form is held to a specification file for the reason the section
+// half of the index is: a §X.Y token names a section of the
+// specification, so writing it against a heading a documentation or a
+// testing page numbers the same way would land a citation of a section
+// no specification file declares. Nothing over the anchor classes would
+// report it, because the fragment-link gate reads links alone and the
+// citation resolver matches the retired line-citation form alone, and a
+// later run of this pass would read the citation it wrote as a site of a
+// retired section.
+//
+// A heading that declares no section, such as the message-format heading
+// a carve-out keeps in place or the level-one title a documentation page
+// opens with, has no number to cite either.
 func (h *headings) citationFor(t Target) (string, error) {
 	heading, ok := h.lookup(t)
 	if !ok {
 		return "", fmt.Errorf("no heading of the tree is addressed by %s", t)
 	}
-	if heading.Number != "" && heading.Level >= citation.SectionHeadingLevel {
+	if citation.IsSpecFile(t.File) && heading.Number != "" && heading.Level >= citation.SectionHeadingLevel {
 		return "§" + heading.Number, nil
 	}
 	return t.String(), nil

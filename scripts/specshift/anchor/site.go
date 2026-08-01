@@ -44,9 +44,8 @@ type site struct {
 	// mapped records that the anchor-move map carries the redirect for
 	// the retired section a bare citation names. A citation the map does
 	// not carry names a section the specification no longer declares and
-	// for which no successor was recorded, which the pass reports unless
-	// the sense register records the occurrence as citing something other
-	// than a specification section.
+	// for which no successor was recorded, which the pass reports rather
+	// than passing over.
 	mapped bool
 }
 

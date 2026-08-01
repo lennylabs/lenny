@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+#
+# An entry that records an occurrence and names no heading for it, with a
+# field the register does not declare standing where the destination
+# belongs. The register answers what a citation means by naming the
+# heading it means, so the entry resolves nothing and the load refuses
+# it.
+kind: anchor-senses
+version: 1
+entries:
+  - file: docs/operator-guide/security-principles.md
+    occurrence: 1
+    not-a-specification-citation: true

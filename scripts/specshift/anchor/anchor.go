@@ -28,11 +28,8 @@
 // it is while the map's single successor for that anchor names the
 // heading the rest of the material moved to. A token naming a section
 // the specification no longer declares is an occurrence the register has
-// to answer for, and there are three answers. An entry naming a heading
-// redirects the citation there. An entry recording that the occurrence
-// cites no specification section, which is what a regulation clause and
-// a stale pointer at material this migration never moved are, leaves it
-// exactly as it is written. An occurrence with no entry at all aborts
+// to answer for, and there are two answers. An entry naming a heading
+// redirects the citation there. An occurrence with no entry aborts
 // the run naming the file and the line, with the tree left
 // byte-identical, rather than being sent to the map's successor.
 // Substituting the successor there would land a canonical-looking
@@ -154,8 +151,8 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 // carries the successor to write in its place.
 //
 // A citation is decided by the sense register, which is read first
-// because it is what says whether the occurrence cites a specification
-// section at all. An occurrence the register does not record aborts the
+// because what the occurrence means is the question the map cannot
+// answer. An occurrence the register does not record aborts the
 // run, and so does a recorded occurrence whose section the map carries
 // no successor for: in the first case what the citation means was never
 // resolved, and in the second the redirect it needs was never written
@@ -184,17 +181,13 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 			continue
 		}
 		citations++
-		// The register is read before the map, because it is the register
-		// that says whether the token is a specification citation at all.
-		// A section-sign token naming a regulation clause has no successor
-		// in any map, so a run that reported the missing map entry first
-		// could never be completed.
+		// The register is read before the map, because what the citation
+		// means is the question the map cannot answer: an occurrence the
+		// register does not record is unresolved whether or not the map
+		// happens to carry a successor for the section it names.
 		sense, ok := r.senses[target][citations]
 		if !ok {
 			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: unresolvedReason(s, citations)})
-			continue
-		}
-		if !sense.rewrites() {
 			continue
 		}
 		if !s.mapped {
@@ -260,9 +253,6 @@ func (r *Rewriter) checkRegisters(ctx context.Context) error {
 	for _, target := range sortedKeys(senses) {
 		for _, occurrence := range sortedOccurrences(senses[target]) {
 			sense := senses[target][occurrence]
-			if !sense.rewrites() {
-				continue
-			}
 			if _, ok := tree.lookup(sense.target()); !ok {
 				missing = append(missing, fmt.Sprintf("%s: %s occurrence %d cites %s",
 					senseRegisterPath, target, occurrence, sense.Destination))

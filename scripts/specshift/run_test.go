@@ -5673,68 +5673,49 @@ func TestAnchorPassReportsARetiredSectionANonSpecificationHeadingNumbers(t *test
 	}
 }
 
-// TestAnchorPassLeavesAnOccurrenceRecordedAsCitingNoSpecificationSection
-// pins the register's third answer. The matcher reads a section-sign
-// token, and the tree carries such tokens that name something else: the
-// clause number of a regulation a compliance page quotes has no
-// specification section behind it and no successor in any map. An entry
-// recording the occurrence as citing no specification section leaves it
-// exactly as it is written.
+// TestAnchorPassCitesANonSpecificationDestinationByItsFileAndAnchor pins
+// the spelling a redirect is written in when the heading it names is not
+// a specification heading. A documentation page numbers a heading of its
+// own, the sense register records an occurrence as meaning that heading,
+// and the citation is rewritten to the file and anchor that address it.
 //
-// Without that answer the token would stop every run, because the abort
-// over a token the map carries no successor for cannot be cleared by
-// adding a map entry: there is no heading to name.
+// Writing the §-form there would compose a citation of a section no
+// specification file declares, and nothing over the anchor classes reads
+// it: the fragment-link gate reads links alone, the citation resolver
+// matches the retired line-citation form alone, and a later run of this
+// pass would read the citation as a site of a retired section.
 //
 // spec: §28.1 (N8, the citation rule: a citation names the heading that
 // defines the material it cites)
-func TestAnchorPassLeavesAnOccurrenceRecordedAsCitingNoSpecificationSection(t *testing.T) {
+func TestAnchorPassCitesANonSpecificationDestinationByItsFileAndAnchor(t *testing.T) {
 	t.Parallel()
-	const carrier = "docs/operator-guide/security-principles.md"
-	root := anchorTree(t, "foreign")
-	before := treeSnapshot(t, root)
-	applied := applyAnchorPass(t, root, "tree.json")
-	after := treeSnapshot(t, root)
-	if before[carrier] == "" {
-		t.Fatalf("the fixture tree carries no %s", carrier)
-	}
-	if after[carrier] != before[carrier] {
-		t.Errorf("the recorded clause number was rewritten:\n%s", after[carrier])
-	}
-	if membership(applied.Paths())[carrier] {
-		t.Errorf("the applied diff names %s", carrier)
-	}
-	assertRedirected(t, root, "spec/15_external-api-surface.md")
+	root := anchorTree(t, "non-specification-destination")
+	applyAnchorPass(t, root, "tree.json")
+	assertRedirected(t, root, "pkg/carrier/framing.go")
 }
 
-// TestAnchorPassAbortsAtASectionSignTokenTheSenseRegisterDoesNotRecord
-// pins that the escape above is a recorded judgement rather than a
-// default. The same clause number with no entry in the register stops
-// the run, names the file and the line, and leaves the tree
-// byte-identical, so a token whose meaning nobody resolved is reported
-// rather than passed over.
+// TestAnchorPassRefusesASenseEntryThatNamesNoDestination pins that every
+// occurrence the register records names the heading it means. An entry
+// that records an occurrence without naming a heading resolves nothing,
+// so it fails the load rather than standing as a recorded answer that
+// leaves the occurrence as it is written, and the tree is byte-identical
+// after the failure.
 //
 // spec: §28.1 (N8, the citation rule: a citation whose destination is
-// unresolved is reported rather than redirected against a guess)
-func TestAnchorPassAbortsAtASectionSignTokenTheSenseRegisterDoesNotRecord(t *testing.T) {
+// unresolved is reported rather than left naming a heading that is gone)
+func TestAnchorPassRefusesASenseEntryThatNamesNoDestination(t *testing.T) {
 	t.Parallel()
-	root := anchorTree(t, "fail/foreign-unregistered")
+	root := anchorTree(t, "fail/sense-no-destination")
 	before := treeSnapshot(t, root)
 	_, err := applyAnchorPassErr(t, root, "tree.json")
 	if err == nil {
-		t.Fatal("the anchor pass returned no error at a section-sign token the sense register does not record")
+		t.Fatal("the anchor pass ran with a sense entry that names no destination")
 	}
-	abort, ok := pass.AsAbort(err)
-	if !ok {
-		t.Fatalf("the failure is not a fail-closed abort: %v", err)
-	}
-	if abort.Path != "docs/operator-guide/security-principles.md" || abort.Line != 3 {
-		t.Errorf("the abort names %s line %d, want docs/operator-guide/security-principles.md line 3", abort.Path, abort.Line)
-	}
-	if !strings.Contains(abort.Reason, "anchor-senses.yaml") {
-		t.Errorf("the abort does not name the sense register: %v", abort)
+	if !strings.Contains(err.Error(), "<path>#<anchor>") {
+		t.Errorf("the failure does not name the destination defect: %v", err)
 	}
 	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
-		t.Error("the aborted run wrote to the tree")
+		t.Error("the failed run wrote to the tree")
 	}
 }
 
@@ -5946,7 +5927,6 @@ func TestAnchorPassRejectsAMissingOrMalformedSenseRegister(t *testing.T) {
 		{"an entry naming no file", "fail/sense-no-file", "carries no file"},
 		{"an entry numbered from zero", "fail/sense-bad-occurrence", "numbered from one"},
 		{"an entry whose destination names no anchor", "fail/sense-bad-destination", "<path>#<anchor>"},
-		{"an entry that both names a destination and cites no section", "fail/sense-foreign-with-destination", "stated twice"},
 		{"an occurrence declared twice", "fail/sense-duplicate", "is declared twice"},
 	} {
 		t.Run(tc.defect, func(t *testing.T) {

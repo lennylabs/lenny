@@ -28,8 +28,7 @@ const (
 
 // Sense is what one bare citation means: the carrier, the 1-based
 // position of the citation among the retired-section citations that file
-// carries in source order, and either the heading it cites or the record
-// that it cites no specification section at all.
+// carries in source order, and the heading it cites.
 //
 // The key is the position rather than the citation's text, because a
 // file carries the same retired section number at several sites whose
@@ -38,28 +37,12 @@ type Sense struct {
 	File       string `yaml:"file"`
 	Occurrence int    `yaml:"occurrence"`
 	// Destination is the heading the occurrence cites, written in the
-	// `<path>#<anchor>` fragment-link spelling.
+	// `<path>#<anchor>` fragment-link spelling. Every recorded
+	// occurrence names one: the register answers what a citation means,
+	// and an entry that records an occurrence without naming a heading
+	// resolves nothing.
 	Destination string `yaml:"destination"`
-	// Foreign records that the occurrence is not a citation of a
-	// specification section, so the pass leaves it exactly as it is
-	// written.
-	//
-	// The matcher reads a section-sign token, and the tree carries such
-	// tokens that name something else: a regulation clause a compliance
-	// document cites, and a stale pointer at a specification section that
-	// no longer exists and whose material this migration did not move.
-	// Neither has a successor, and inventing one would be a false
-	// redirect, so the escape is a reviewer's recorded judgement rather
-	// than a rule the pass derives. Without it the run could not be
-	// completed at all: every such token would abort it with no register
-	// able to clear it.
-	Foreign bool `yaml:"not-a-specification-citation"`
 }
-
-// rewrites reports whether the occurrence is redirected. An occurrence
-// recorded as citing something other than a specification section is
-// left as it is written.
-func (s Sense) rewrites() bool { return !s.Foreign }
 
 // target returns the destination as a heading reference.
 func (s Sense) target() Target {
@@ -129,12 +112,6 @@ func validateSense(i int, s Sense) error {
 		return fmt.Errorf("%s for %s carries occurrence %d, and occurrences are numbered from one", where, s.File, s.Occurrence)
 	}
 	where = fmt.Sprintf("anchor sense register %s: %s occurrence %d", senseRegisterPath, s.File, s.Occurrence)
-	if s.Foreign {
-		if strings.TrimSpace(s.Destination) != "" {
-			return fmt.Errorf("%s is recorded as citing no specification section and carries the destination %q, so what it means is stated twice", where, s.Destination)
-		}
-		return nil
-	}
 	file, anchor, found := strings.Cut(s.Destination, "#")
 	if !found || strings.TrimSpace(file) == "" || strings.TrimSpace(anchor) == "" {
 		return fmt.Errorf("%s carries the destination %q, and a destination names a file and an anchor as <path>#<anchor>", where, s.Destination)
