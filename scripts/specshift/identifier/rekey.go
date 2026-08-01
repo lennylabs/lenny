@@ -17,12 +17,15 @@ import (
 // renames.
 //
 // A key is a whole scalar: the path a citation baseline is keyed by, the
-// glob key of the change graph, the spec file of a spec-map section, and
-// each member of the arrays that section carries, the `schemas` array
-// among them, which no check existence-checks and which would therefore
-// go stale silently. A scalar that merely mentions the path inside a
-// wider value is not a key, and is left for the stale-key check to
-// report rather than edited by a substring rule that would rewrite prose.
+// path a skip-reason baseline files a call site under, the glob key of
+// the change graph, the spec file of a spec-map section, and each member
+// of the arrays that section carries, the `schemas` array among them,
+// which no check existence-checks and which would therefore go stale
+// silently. A residual register's member is a key too, and it is written
+// as the head of a block scalar rather than as a whole scalar, so it has
+// its own rule. A scalar that merely mentions the path inside a wider
+// value is not a key, and is left for the stale-key check to report
+// rather than edited by a substring rule that would rewrite prose.
 //
 // A symbol reference is written `<path>::<symbol>`, keyed by symbol
 // rather than by path, so it is moved by the token rename the
@@ -96,9 +99,31 @@ func scalarExprs(target, path string) []*regexp.Regexp {
 	case ".yaml", ".yml":
 		return []*regexp.Regexp{
 			regexp.MustCompile(`(?m)((?:^|[ \t])(?:-[ \t]+)?(?:[A-Za-z0-9_.-]+:[ \t]+)?['"]?)` + quoted + `(['"]?[ \t]*$)`),
+			memberExpr(quoted),
 		}
 	}
 	return nil
+}
+
+// memberExpr matches one path written at the head of a residual
+// register's member, which is the block scalar a residual entry opens
+// with.
+//
+// A residual member is the text the class's predicate read, so a member
+// of a path-keyed class is a tracked path, either alone or followed by
+// the call site or the line the predicate reported it at. The path is the
+// key the entry is filed under, and a run that renames the file has to
+// move it: the residual gate never adds an entry, so a member left under
+// the old path fails as an entry whose member the predicate no longer
+// selects while the same member reappears under the new path as a
+// residual with no entry, and neither failure has a permitted route back
+// to green.
+//
+// The match is anchored to the first line of the block scalar so the
+// rewrite reaches a key and leaves the prose of a reason to the stale-key
+// check, which reports it for hand correction rather than editing it.
+func memberExpr(quoted string) *regexp.Regexp {
+	return regexp.MustCompile(`(?m)(^[ \t]*-[ \t]+member:[ \t]*\|-?[ \t]*\n[ \t]+)` + quoted + `([ \t:]|$)`)
 }
 
 // referenceExpr matches one `<path>::<symbol>` reference, held to the

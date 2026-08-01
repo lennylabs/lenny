@@ -523,6 +523,46 @@ func TestProducerOutputDisjunctSelectsACopyAndSparesItsAuthoredNeighbour(t *test
 	}
 }
 
+// TestEveryTestInfrastructureRegisterIsRekeyedByARename pins the rekey
+// domain over the committed tree. Every register under tests/registers
+// is keyed by a tracked path or carries one at the head of a member, and
+// each is rewritten downward and never widened: a key the renaming run
+// leaves under the old path drops the entry, the member reappears under
+// the new path with no entry, and the gate that owns the register fails
+// with no permitted route back to green. An enumeration of registers
+// held in the rekey domain would omit each register added after it was
+// written, so the domain is derived and this case measures it against
+// the tree.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func TestEveryTestInfrastructureRegisterIsRekeyedByARename(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	all, err := scope.GitLister(root)(context.Background())
+	if err != nil {
+		t.Fatalf("list the tracked tree: %v", err)
+	}
+	registers := 0
+	for _, target := range all {
+		if !strings.HasPrefix(target, "tests/registers/") || !strings.HasSuffix(target, ".yaml") {
+			continue
+		}
+		registers++
+		if !scope.KeyWritable(target) {
+			t.Errorf("%s is a test-infrastructure register that a rename does not rekey", target)
+		}
+	}
+	if registers == 0 {
+		t.Fatal("the tracked tree carries no test-infrastructure register, so the case measured nothing")
+	}
+	for _, m := range []string{"tests/change-graph.json", "tests/spec-map.json"} {
+		if !scope.KeyWritable(m) {
+			t.Errorf("%s is keyed by tracked path and a rename does not rekey it", m)
+		}
+	}
+}
+
 // TestEveryReadableTrackedPathIsWritableBySomePass pins the property the
 // per-file generated-artifact rule exists to hold over the committed
 // tree: a file the read domain admits, and which therefore feeds the
@@ -859,9 +899,9 @@ func TestKeyWriteDomainFailsWhenTheRekeyChannelSelectsNoRegister(t *testing.T) {
 	if err == nil {
 		t.Fatal("KeyWriteDomain over a tree carrying no path-keyed register returned no error")
 	}
-	for _, reg := range scope.PathKeyedRegisters() {
+	for _, reg := range scope.PathKeyedRegisterRule() {
 		if !strings.Contains(err.Error(), reg) {
-			t.Errorf("the error does not name %s: %v", reg, err)
+			t.Errorf("the error does not state %s: %v", reg, err)
 		}
 	}
 	if !strings.Contains(err.Error(), string(scope.Identifier)) {
@@ -6256,6 +6296,24 @@ func idRewriter(t *testing.T, root, register string) *identifier.Rewriter {
 	return r
 }
 
+// keyWritableIn returns the path-keyed registers the tree at root
+// carries, sorted, as the rekey channel derives them.
+func keyWritableIn(t *testing.T, root string) []string {
+	t.Helper()
+	all, err := scope.DirLister(root)(context.Background())
+	if err != nil {
+		t.Fatalf("list the tree at %s: %v", root, err)
+	}
+	var keyed []string
+	for _, target := range all {
+		if scope.KeyWritable(target) {
+			keyed = append(keyed, target)
+		}
+	}
+	sort.Strings(keyed)
+	return keyed
+}
+
 // applyIDPass runs the identifier pass over the tree at root and returns
 // the applied diff.
 func applyIDPass(t *testing.T, root, register string) pass.Diff {
@@ -6678,7 +6736,28 @@ func TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates(t *testing.T
 	diff := applyIDPass(t, root, "tree.yaml")
 	after := treeSnapshot(t, root)
 	inDiff := membership(diff.Paths())
-	for _, register := range scope.PathKeyedRegisters() {
+	// The registers are read out of the tree rather than named, so a
+	// register the tree gains joins the case by construction, as it joins
+	// the rekey domain by construction. The skip-reason baseline and the
+	// residual register beside it are keyed by path as much as the
+	// citation baselines are: a member left under the moved file's old
+	// path fails a gate that never adds an entry, so it has no route back
+	// to green.
+	registers := keyWritableIn(t, root)
+	inDomain := membership(registers)
+	for _, want := range []string{
+		"tests/change-graph.json",
+		"tests/registers/line-citation-resolution.yaml",
+		"tests/registers/line-citations.yaml",
+		"tests/registers/residual-skip-reasons.yaml",
+		"tests/registers/skip-reasons.yaml",
+		"tests/spec-map.json",
+	} {
+		if !inDomain[want] {
+			t.Fatalf("the rekey domain over the fixture tree omits %s", want)
+		}
+	}
+	for _, register := range registers {
 		if before[register] == "" {
 			t.Fatalf("the fixture tree carries no %s", register)
 		}

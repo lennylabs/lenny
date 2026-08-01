@@ -290,32 +290,55 @@ var planningExcludedClasses = map[Class]bool{
 	ClassIdentifier:     true,
 }
 
-// pathKeyedRegisters are the test-infrastructure registers keyed by file
-// path, which a run that renames a file invalidates.
-//
-// The first two are outside every pass's site-rewrite domain, because a
-// citation gate cannot read its own baseline as tree content. They
-// remain subject to the key rewrite: the identifier pass rewrites the
-// key of any file it renames in the same run, or the ratchet fires on a
-// rename that changed no citation and every baselined non-resolving
-// citation under the old path reappears as a resolver failure. The other
-// two are ordinary domain members and take the key rewrite alongside
-// their site rewrite.
-var pathKeyedRegisters = []string{
-	"tests/registers/line-citations.yaml",
-	"tests/registers/line-citation-resolution.yaml",
+// registerDir holds the test-infrastructure registers, and
+// registerFileExt is the extension each of them carries. Every register
+// under it is keyed by a tracked path or carries one inside a member,
+// and a run that renames a file invalidates those keys.
+const (
+	registerDir     = "tests/registers/"
+	registerFileExt = ".yaml"
+)
+
+// mapRegisters are the path-keyed test-infrastructure registers that sit
+// outside the register directory: the tier selection map and the
+// specification map, both keyed by tracked path.
+var mapRegisters = []string{
 	"tests/change-graph.json",
 	"tests/spec-map.json",
 }
 
-// PathKeyedRegisters returns the registers a rename must rekey.
-func PathKeyedRegisters() []string { return append([]string(nil), pathKeyedRegisters...) }
+// pathKeyedRegisterRule states the membership rule in the form an error
+// message names it, so a message reports the rule rather than a snapshot
+// of the tree.
+var pathKeyedRegisterRule = append([]string{registerDir + "*" + registerFileExt}, mapRegisters...)
 
-// KeyWritable reports whether the path is one of them. Membership is
-// independent of the site-rewrite domain: a register outside that domain
-// still takes the key rewrite.
+// PathKeyedRegisterRule returns that statement of the rule.
+func PathKeyedRegisterRule() []string { return append([]string(nil), pathKeyedRegisterRule...) }
+
+// KeyWritable reports whether a tracked path is a path-keyed
+// test-infrastructure register, which the run that renames a file rekeys.
+//
+// Membership is derived from where a register sits rather than from an
+// enumeration of registers, so a register added later joins the rekey
+// domain by construction. A hand-written enumeration leaves a register
+// added after it was written unrekeyed: the run renames a file the
+// register is keyed by, the old key silently survives, and the gate that
+// owns the register fails on the new path with no permitted route back
+// to green, because every register is rewritten downward and never
+// widened.
+//
+// Membership is also independent of the site-rewrite domain. The two
+// citation baselines are outside that domain, because a citation gate
+// cannot read its own baseline as tree content, and they still take the
+// key rewrite: without it the ratchet fires on a rename that changed no
+// citation and every baselined non-resolving citation under the old path
+// reappears as a resolver failure. Every other register is an ordinary
+// domain member and takes the key rewrite alongside its site rewrite.
 func KeyWritable(target string) bool {
-	for _, r := range pathKeyedRegisters {
+	if strings.HasPrefix(target, registerDir) && strings.HasSuffix(target, registerFileExt) {
+		return true
+	}
+	for _, r := range mapRegisters {
 		if target == r {
 			return true
 		}
@@ -766,7 +789,7 @@ func KeyWriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) (
 	if len(all) == 0 {
 		return nil, fmt.Errorf("list tracked tree: no tracked path found")
 	}
-	domain := make([]string, 0, len(pathKeyedRegisters))
+	domain := make([]string, 0, len(pathKeyedRegisterRule))
 	for _, target := range all {
 		if !KeyWritable(target) {
 			continue
@@ -780,8 +803,8 @@ func KeyWriteDomain(ctx context.Context, list Lister, p Pass, read FileReader) (
 		}
 	}
 	if len(domain) == 0 {
-		return nil, fmt.Errorf("%s pass key-write domain over %d tracked path(s): none of %s is outside the site-rewrite domain",
-			p, len(all), strings.Join(pathKeyedRegisters, ", "))
+		return nil, fmt.Errorf("%s pass key-write domain over %d tracked path(s): no path-keyed register (%s) is outside the site-rewrite domain",
+			p, len(all), strings.Join(pathKeyedRegisterRule, ", "))
 	}
 	sort.Strings(domain)
 	return domain, nil
