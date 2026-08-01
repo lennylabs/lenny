@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -287,6 +288,32 @@ func TestHasNotImplementedSkipAfter(t *testing.T) {
 		if got != c.want {
 			t.Errorf("%s: got %v; want %v\nbody: %s", c.name, got, c.want, c.body)
 		}
+	}
+}
+
+// TestScaffoldMarkerReaderAcceptsEveryPublishedSkipCategory holds the
+// scaffold-marker reader to the category enumeration in
+// cmd/lenny-test/skipreason, which the tier-0 skip-reason classifier
+// reads as well. A category widened or renamed in one reader alone
+// would let the classifier and this reader disagree about which skip
+// reasons §17.9 allows.
+func TestScaffoldMarkerReaderAcceptsEveryPublishedSkipCategory(t *testing.T) {
+	for _, category := range skipreason.Categories {
+		for _, body := range []string{
+			`t.Skip("` + category + ` the reason continues here")`,
+			`t.Skipf("` + category + ` %v", err)`,
+		} {
+			lines := []string{"func TestX(t *testing.T) {", body, "}"}
+			if !hasNotImplementedSkipAfter(lines, 0) {
+				t.Errorf("the reader rejects the published category %q\nbody: %s", category, body)
+			}
+		}
+	}
+	// A reason opening with no published category is not a scaffold
+	// marker, so the reader does not exempt it from the annotations.
+	lines := []string{"func TestX(t *testing.T) {", `t.Skip("docker is not running")`, "}"}
+	if hasNotImplementedSkipAfter(lines, 0) {
+		t.Errorf("the reader accepts a reason that opens with no published category")
 	}
 }
 

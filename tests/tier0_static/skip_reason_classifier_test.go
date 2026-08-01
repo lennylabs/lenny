@@ -17,6 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -54,22 +55,6 @@ const (
 	skipRegisterKind    = "skip-reason-baseline"
 	skipRegisterVersion = 1
 )
-
-// skipReasonCategories are the reason prefixes a string-literal skip
-// reason may open with. They are the categories the scaffold-marker
-// reader in cmd/lenny-test enumerates for TESTING.md §17.9, restated
-// here because that reader lives in a main package no test can import.
-var skipReasonCategories = []string{
-	"not implemented:",
-	"blocked:",
-	"phase-gated:",
-	"not-yet-applicable:",
-	"not yet applicable:",
-	"flaky-time:",
-	"flaky-network:",
-	"flaky-ordering:",
-	"quarantined:",
-}
 
 // skipDomainPrefixes are the trees the classifier reads. The shell block
 // it replaces read the test tree and the library tree, so the command
@@ -223,9 +208,10 @@ func newSkipClassifierOver(list scope.Lister, read scope.FileReader, write func(
 // malformed register are all states in which a report of no failure
 // would certify content the run never classified.
 //
-// The register is rewritten downward in the same run, so a rewritten
-// reason cannot return under the entry it used to hold. The rewrite
-// never adds an entry, so a new site fails the run.
+// A run that reports no failure rewrites the register downward in the
+// same run, so a rewritten reason cannot return under the entry it used
+// to hold. The rewrite never adds an entry, so a new site fails the
+// run, and a run that fails writes nothing at all.
 func (c *skipClassifier) Run(ctx context.Context) (skipReport, error) {
 	var rep skipReport
 	if c.List == nil || c.Read == nil {
@@ -253,7 +239,11 @@ func (c *skipClassifier) Run(ctx context.Context) (skipReport, error) {
 	rep.Carried = len(carried)
 
 	kept := c.compare(reported, carried, &rep)
-	if len(rep.Removed) > 0 {
+	// The rewrite lands on a clean run alone. A run that reports a
+	// failure leaves the register byte-identical, so the gate measures
+	// the next run against the same baseline, reports the same site,
+	// and reverting the edit that failed it restores green.
+	if len(rep.Failures) == 0 && len(rep.Removed) > 0 {
 		if err := writeSkipRegister(c.Write, c.Register, kept); err != nil {
 			return rep, fmt.Errorf("skip-reason classifier: %w", err)
 		}
@@ -322,10 +312,10 @@ func (c *skipClassifier) scan(ctx context.Context, domain []string) (int, []skip
 // compare measures each reported site against the register, fills in the
 // report, and returns the entries the rewritten register holds.
 //
-// A site whose entry no longer matches keeps neither entry: the run
-// removes the stale one and fails the site, so the reason cannot return
-// to what the register held. A site with no entry is a failure and adds
-// nothing.
+// A site whose entry no longer matches is failed against the entry the
+// register holds, and a site with no entry is failed as one the run
+// would have to add. Neither adds anything. Both leave the register
+// untouched, because Run writes only when the run reports no failure.
 func (c *skipClassifier) compare(reported []skipSite, carried map[string]skipSite, rep *skipReport) []skipSite {
 	kept := make([]skipSite, 0, len(carried))
 	matched := map[string]bool{}
@@ -336,8 +326,6 @@ func (c *skipClassifier) compare(reported []skipSite, carried map[string]skipSit
 			continue
 		}
 		if !sameSkipReason(entry, site) {
-			// The stale entry is dropped as well as failed, so the
-			// reason it held cannot return under it.
 			registered := entry
 			rep.Failures = append(rep.Failures, skipFailure{Site: site, Registered: &registered})
 			continue
@@ -537,14 +525,12 @@ func constantStringExpr(expr ast.Expr) (string, bool) {
 }
 
 // openedWithSkipCategory reports whether a reason opens with one of the
-// categories.
+// categories. The categories come from cmd/lenny-test/skipreason, which
+// the scaffold-marker reader in cmd/lenny-test reads as well, so one
+// convention has one enumeration and widening a category cannot land in
+// one reader alone.
 func openedWithSkipCategory(reason string) bool {
-	for _, category := range skipReasonCategories {
-		if strings.HasPrefix(reason, category) {
-			return true
-		}
-	}
-	return false
+	return skipreason.OpenedWithCategory(reason)
 }
 
 // sortedSkipKeys returns the register's keys in a stable order.
@@ -686,11 +672,13 @@ const skipRegisterHeader = `# SPDX-License-Identifier: MIT
 # it, and its ordinal among that function's skip call sites, because the
 # line a call sits on moves with any edit above it.
 #
-# The classifier rewrites this file downward: an entry whose reason gains
-# a category, whose reason changes, or whose site leaves the tree is
-# dropped in the same run, and no run adds one, so a site that is not
-# here fails tier 0 rather than being absorbed. When every entry has been
-# rewritten the file is empty and the gate is a flat prohibition.
+# The classifier rewrites this file downward on a run that reports no
+# failure: an entry whose reason gains a category or whose site left the
+# tree is dropped in the same run, and no run adds one, so a site that is
+# not here fails tier 0 rather than being absorbed. A run that fails
+# leaves the file byte-identical, so reverting the edit that failed it
+# restores green. When every entry has been rewritten the file is empty
+# and the gate is a flat prohibition.
 `
 
 // skipTree is a fixture tree the classifier runs over. It holds
@@ -854,7 +842,7 @@ func TestSkipReasonClassifierCertifiesTheTree(t *testing.T) {
 
 func TestSkipReasonClassifierAcceptsEveryCategoryInBothCallForms(t *testing.T) {
 	t.Parallel()
-	for _, category := range skipReasonCategories {
+	for _, category := range skipreason.Categories {
 		for _, call := range []string{skipCallPlain, skipCallFormatted} {
 			t.Run(category+"/"+call, func(t *testing.T) {
 				t.Parallel()
@@ -1101,13 +1089,35 @@ func TestSkipReasonClassifierFailsOnAReasonThatChangedAtARegisteredSite(t *testi
 	if got.Absent || got.Registered == nil || *got.Registered.Reason != "docker is not running" {
 		t.Errorf("the failure reads %+v, want the site measured against the reason the register carries", got)
 	}
-	// The entry is dropped in the same run, so the reason the register
-	// held cannot return under it.
-	if len(rep.Removed) != 1 {
-		t.Errorf("the run removed %d entr(ies), want the stale one", len(rep.Removed))
+	// A failing run writes nothing, so the entry it measured against
+	// survives. A run that rewrote the register while red would report a
+	// different failure on the next run over the same tree and would
+	// leave a tracked file modified by a gate that failed.
+	before := tr.registerText()
+	if !strings.Contains(before, "docker is not running") {
+		t.Fatalf("the failing run dropped the entry it measured the site against:\n%s", before)
 	}
-	if body := tr.registerText(); strings.Contains(body, "docker is not running") {
-		t.Errorf("the register still carries the reason the site no longer states:\n%s", body)
+
+	// The same tree fails the same way again, naming the same entry.
+	again := tr.runOK()
+	if len(again.Failures) != 1 {
+		t.Fatalf("the second run over the same tree reported %d failure(s), want the same one: %s",
+			len(again.Failures), strings.Join(skipFailureTexts(again), "; "))
+	}
+	if repeated := again.Failures[0]; repeated.Absent || repeated.Registered == nil {
+		t.Errorf("the second run reads %+v, want the same failure the first run reported", repeated)
+	}
+	if after := tr.registerText(); after != before {
+		t.Errorf("a failing run rewrote the register:\nbefore:\n%s\nafter:\n%s", before, after)
+	}
+
+	// Reverting the edit that failed the run restores green, because the
+	// baseline the run measured against is still the one it landed with.
+	tr.carrier("tests/carrier/carrier_test.go", `t.Skip("docker is not running")`)
+	reverted := tr.runOK()
+	if len(reverted.Failures) != 0 {
+		t.Errorf("reverting the reason left %s failing: %s",
+			skipRegisterPath, strings.Join(skipFailureTexts(reverted), "; "))
 	}
 }
 
@@ -1131,6 +1141,42 @@ func TestSkipReasonClassifierFailsOnASiteTheRegisterDoesNotCarry(t *testing.T) {
 	}
 	if body := tr.registerText(); strings.Contains(body, "docker is not running") {
 		t.Errorf("the run added the site to the register rather than failing it:\n%s", body)
+	}
+}
+
+func TestSkipReasonClassifierLeavesTheRegisterUntouchedOnAFailingRun(t *testing.T) {
+	t.Parallel()
+	tr := newSkipTree(t)
+	tr.file("tests/carrier/carrier_test.go", skipCarrierSource(
+		skipCarrierFunc{Name: "TestRewritten", Statements: []string{`t.Skip("docker is not running")`}},
+		skipCarrierFunc{Name: "TestOther", Statements: []string{`t.Skip("podman is not running")`}},
+	))
+	held := skipSite{
+		Path:     "tests/carrier/carrier_test.go",
+		Function: "TestRewritten",
+		Site:     1,
+		Call:     skipCallPlain,
+		Reason:   literalSkipReason("docker is not running"),
+	}
+	tr.register(held)
+	seeded := tr.registerText()
+
+	// One entry would be dropped, because its reason gains a category,
+	// and one site fails, because the register does not carry it. The
+	// run writes nothing: a gate that modified a tracked file on the run
+	// it failed would leave the tree dirty and would measure the next
+	// run against a baseline no landed edit produced.
+	tr.file("tests/carrier/carrier_test.go", skipCarrierSource(
+		skipCarrierFunc{Name: "TestRewritten", Statements: []string{`t.Skip("blocked: no docker daemon on the host")`}},
+		skipCarrierFunc{Name: "TestOther", Statements: []string{`t.Skip("podman is not running")`}},
+	))
+	rep := tr.runOK()
+	if len(rep.Failures) != 1 {
+		t.Fatalf("reported %d failure(s), want the site the register does not carry: %s",
+			len(rep.Failures), strings.Join(skipFailureTexts(rep), "; "))
+	}
+	if body := tr.registerText(); body != seeded {
+		t.Errorf("the failing run rewrote the register:\nbefore:\n%s\nafter:\n%s", seeded, body)
 	}
 }
 

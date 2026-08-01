@@ -9,11 +9,13 @@
 # it, and its ordinal among that function's skip call sites, because the
 # line a call sits on moves with any edit above it.
 #
-# The classifier rewrites this file downward: an entry whose reason gains
-# a category, whose reason changes, or whose site leaves the tree is
-# dropped in the same run, and no run adds one, so a site that is not
-# here fails tier 0 rather than being absorbed. When every entry has been
-# rewritten the file is empty and the gate is a flat prohibition.
+# The classifier rewrites this file downward on a run that reports no
+# failure: an entry whose reason gains a category or whose site left the
+# tree is dropped in the same run, and no run adds one, so a site that is
+# not here fails tier 0 rather than being absorbed. A run that fails
+# leaves the file byte-identical, so reverting the edit that failed it
+# restores green. When every entry has been rewritten the file is empty
+# and the gate is a flat prohibition.
 kind: skip-reason-baseline
 version: 1
 sites:

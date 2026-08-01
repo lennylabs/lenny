@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 )
 
 // runValidateMaps validates that tests/spec-map.json and tests/change-graph.json
@@ -1252,18 +1254,13 @@ func hasNotImplementedSkipAfter(lines []string, idx int) bool {
 	if end >= len(lines) {
 		end = len(lines) - 1
 	}
-	// Both t.Skip(...) and t.Skipf(...) are acceptable. The prefix
-	// list names every reason category §17.9 allows on a scaffold.
-	prefixes := []string{
-		"\"not implemented:",
-		"\"blocked:",
-		"\"phase-gated:",
-		"\"not-yet-applicable:",
-		"\"not yet applicable:",
-		"\"flaky-time:",
-		"\"flaky-network:",
-		"\"flaky-ordering:",
-		"\"quarantined:",
+	// Both t.Skip(...) and t.Skipf(...) are acceptable. The reason
+	// categories §17.9 allows come from cmd/lenny-test/skipreason,
+	// which the tier-0 skip-reason classifier reads as well, so the
+	// two readers of the convention cannot enumerate different sets.
+	prefixes := make([]string, 0, len(skipreason.Categories))
+	for _, category := range skipreason.Categories {
+		prefixes = append(prefixes, "\""+category)
 	}
 	for i := idx; i <= end; i++ {
 		line := lines[i]
