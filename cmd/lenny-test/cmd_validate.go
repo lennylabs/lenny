@@ -15,6 +15,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
 	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 )
 
@@ -333,15 +334,6 @@ func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult 
 // baseline validateChangeGraphCompleteness reads and rewrites.
 const changeGraphCoverageBaseline = "tests/registers/change-graph-coverage.yaml"
 
-// changeGraphSourceTrees and changeGraphSourceExts define the tracked
-// source domain of the completeness check. See
-// validateChangeGraphCompleteness for what the domain means and why it
-// is drawn here.
-var (
-	changeGraphSourceTrees = []string{"cmd", "pkg", "scripts", "tests"}
-	changeGraphSourceExts  = []string{".go", ".sh"}
-)
-
 // validateChangeGraphCompleteness is the reverse predicate of
 // validateChangeGraphFileExistence. That check walks the glob keys of
 // tests/change-graph.json and fails a key that resolves to nothing on
@@ -459,56 +451,23 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 	return newResult(name, true, detail)
 }
 
-// readChangeGraphGlobKeys returns the glob keys of the change graph with
-// any trailing `/...` (Go-style recursive) or `/` (directory hint)
-// stripped, so a key can be matched as a directory prefix. Both
-// spellings name the directory, the same reading
-// validateChangeGraphFileExistence applies when it probes a key on disk
-// and the one tests/change-graph-pending.txt documents to authors.
+// readChangeGraphGlobKeys returns the glob keys of the change graph,
+// read through the shared statement of that reading in
+// cmd/lenny-test/changegraph, so the completeness check, the
+// `--changed` selector, and the tier-0 residual scan resolve a key the
+// same way.
 func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read change graph: %w", err)
-	}
-	var doc struct {
-		Globs map[string]any `json:"globs"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse change graph %s: %w", path, err)
-	}
-	if doc.Globs == nil {
-		return nil, fmt.Errorf("change graph %s: carries no globs block", path)
-	}
-	keys := make(map[string]bool, len(doc.Globs))
-	for key := range doc.Globs {
-		keys[changeGraphGlobPrefix(key)] = true
-	}
-	return keys, nil
+	return changegraph.ReadGlobKeys(path)
 }
 
 // changeGraphGlobPrefix normalizes a change-graph glob key to the path
-// prefix it names, stripping a trailing `/...` (Go-style recursive) or
-// `/` (directory hint). It is the one reading of a key the tree has:
-// the completeness check below treats the result as coverage, and
-// tiersForChangedPath resolves a changed path against the same result.
-// The two must agree, because a key this function accepted as coverage
-// while the selector matched nothing would certify a path for which
-// `--changed` selects no tiers, which is the fail-open outcome the
-// completeness check exists to prevent.
-func changeGraphGlobPrefix(key string) string {
-	key = strings.TrimSuffix(key, "/...")
-	return strings.TrimSuffix(key, "/")
-}
+// prefix it names, read from the same shared statement.
+func changeGraphGlobPrefix(key string) string { return changegraph.GlobPrefix(key) }
 
 // coveredByChangeGraphGlob reports whether a glob key names the path or
 // one of its ancestor directories.
-func coveredByChangeGraphGlob(path string, keys map[string]bool) bool {
-	for probe := path; probe != "." && probe != "/"; probe = filepath.Dir(probe) {
-		if keys[probe] {
-			return true
-		}
-	}
-	return false
+func coveredByChangeGraphGlob(p string, keys map[string]bool) bool {
+	return changegraph.CoveredByGlob(p, keys)
 }
 
 // matchingCoveragePrefix returns the baseline prefix that covers the
@@ -646,14 +605,14 @@ func writeChangeGraphCoverageBaseline(path string, prefixes []string) error {
 // added clone) yields nothing while its directory stats fine, and the
 // rewrite would then drop every baseline prefix beneath it.
 func trackedSourcePaths(root string) ([]string, error) {
-	for _, tree := range changeGraphSourceTrees {
+	for _, tree := range changegraph.SourceTrees() {
 		if _, err := os.Stat(filepath.Join(root, tree)); err != nil {
 			return nil, fmt.Errorf(
 				"change-graph completeness: source tree %s/ is absent or unreadable: %w", tree, err,
 			)
 		}
 	}
-	tracked, err := gitTrackedPaths(root, changeGraphSourceTrees)
+	tracked, err := gitTrackedPaths(root, changegraph.SourceTrees())
 	if err != nil {
 		return nil, err
 	}
@@ -668,7 +627,7 @@ func trackedSourcePaths(root string) ([]string, error) {
 			perTree[p[:i]]++
 		}
 	}
-	for _, tree := range changeGraphSourceTrees {
+	for _, tree := range changegraph.SourceTrees() {
 		if perTree[tree] == 0 {
 			return nil, fmt.Errorf(
 				"change-graph completeness: source tree %s/ contributed no tracked source path; "+
@@ -707,18 +666,8 @@ func gitTrackedPaths(root string, trees []string) ([]string, error) {
 }
 
 // isTrackedSourceFile reports whether a file name is in the tracked
-// source domain: a source extension, and not a test file.
-func isTrackedSourceFile(name string) bool {
-	if strings.HasSuffix(name, "_test.go") {
-		return false
-	}
-	for _, ext := range changeGraphSourceExts {
-		if strings.HasSuffix(name, ext) {
-			return true
-		}
-	}
-	return false
-}
+// source domain, read from the shared statement of that domain.
+func isTrackedSourceFile(name string) bool { return changegraph.IsSourceFile(name) }
 
 // validateTestFilesMapped walks tests/tier{2..10}_*/ for _test.go
 // files and confirms each is referenced from at least one section's

@@ -78,15 +78,13 @@ func (p Pass) Valid() bool {
 // report each copy under the register's own path and seeding an entry
 // for that copy would not converge.
 //
-// The two citation residual registers are excluded for the same reason,
-// and for one further reason of their own. A residual member is recorded
-// as one line, while the occurrence it was read from may have been
-// wrapped across two comment lines, and the citation grammar reads
-// several spellings unwrapped that it cannot read across a wrap. A
-// wrapped occurrence recorded here therefore stands as a citation the
-// ratchet counts and the resolver reports, under a path whose only route
-// to a zero count would be a rewrite of the member the register is keyed
-// by.
+// A residual register is absent from this list. The exclusion that keeps
+// a class from reading a register as tree content is per class and lives
+// in classRegisters below, and a residual register is an ordinary member
+// of the shared read domain: the naming lint, the identifier-resolution
+// gate, the citation resolver, and the ratchet all read the member and
+// reason text a register carries, and every pass may write it. A
+// register listed here would be read by no gate and written by no pass.
 var readExcludedFiles = []string{
 	"BUILD-GAPS.md",
 	"TEST-GAPS.md",
@@ -94,8 +92,6 @@ var readExcludedFiles = []string{
 	"gateway-runtime-comms-remediation.md",
 	"tests/registers/line-citations.yaml",
 	"tests/registers/line-citation-resolution.yaml",
-	ClassLineCitations.ResidualRegister(),
-	ClassLineCitationResolution.ResidualRegister(),
 }
 
 // readExcludedPrefix is the staged-proposal tree, excluded for the same

@@ -5,6 +5,7 @@ package citation
 import (
 	"regexp"
 	"strconv"
+	"strings"
 )
 
 // Broad is one occurrence of the deliberately broad citation predicate: a
@@ -27,6 +28,14 @@ type Broad struct {
 	// citation wrapped across two comment lines reads as one line of text. It
 	// is what a residual register keyed by member text carries.
 	Text string
+	// Lines is the occurrence split at each continuation the join consumed,
+	// in source order, so an occurrence written on one line is one element.
+	// A caller that records an occurrence in a tracked file writes the
+	// elements on separate lines and joins them back with a space to recover
+	// Text. Recording a wrapped occurrence on one line instead would present
+	// the citation form with a spelling the wrap kept it from reading, under
+	// the path of the file the record was written into.
+	Lines []string
 	// Raw is the occurrence exactly as it appears in the source.
 	Raw string
 	// Offset is the byte offset of Raw in the source, End is the offset just
@@ -105,6 +114,7 @@ func FindBroad(content string) []Broad {
 		offset := offsets[start]
 		b := Broad{
 			Text:   render(joined[start:end]),
+			Lines:  strings.Split(joined[start:end], string(JoinByte)),
 			Raw:    content[offset:offsets[end]],
 			Offset: offset,
 			End:    offsets[end],

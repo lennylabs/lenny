@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
 	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
@@ -460,7 +461,7 @@ func changeGraphCompletenessBareRoot(t *testing.T, sources, globs, prefixes []st
 	if out, err := initCmd.CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	for _, tree := range changeGraphSourceTrees {
+	for _, tree := range changegraph.SourceTrees() {
 		if err := os.MkdirAll(filepath.Join(root, tree), 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", tree, err)
 		}

@@ -17,6 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
 	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
@@ -85,8 +86,16 @@ const (
 // residualEntry is one triage decision, and one entry of a register.
 type residualEntry struct {
 	// Member is the member as the class's predicate reads it: the text of
-	// a citation, a tracked path, or a call site's key. It is what the
-	// register is keyed by.
+	// a citation, a tracked path, or a call site's key.
+	//
+	// It is stored with the continuation join of the occurrence it was
+	// read from preserved, so a member read across two comment lines is
+	// written across two lines here. A wrapped citation folded onto one
+	// line would be a citation the form reads, under this file's own
+	// path, and this file is an ordinary member of the read domain the
+	// citation resolver and the ratchet share. The key the register is
+	// keyed by is the stored text with those line breaks joined back into
+	// spaces, which residualMemberKey returns.
 	Member string `yaml:"member"`
 	// Class names the class the entry belongs to. It repeats the class
 	// the register is read for, so an entry cannot be moved between
@@ -100,7 +109,17 @@ type residualEntry struct {
 
 // String renders the entry for a report.
 func (e residualEntry) String() string {
-	return fmt.Sprintf("%s (%s, %s)", e.Member, e.Class, e.Disposition)
+	return fmt.Sprintf("%s (%s, %s)", residualMemberKey(e.Member), e.Class, e.Disposition)
+}
+
+// residualMemberKey returns the key a stored member text is held under,
+// which is that text with every preserved continuation join folded back
+// into the space it stands for. A member is keyed by the text the
+// class's predicate reads rather than by the spelling the register
+// stores, so the same occurrence read wrapped in one carrier and
+// unwrapped in another is one member.
+func residualMemberKey(stored string) string {
+	return strings.ReplaceAll(stored, "\n", " ")
 }
 
 // residualMember is one member the class's broad predicate selected,
@@ -108,6 +127,8 @@ func (e residualEntry) String() string {
 // outside the key: the same citation text is written in several files,
 // and keying on the site would make an entry for one of them.
 type residualMember struct {
+	// Member is the member's stored text, with any continuation join
+	// preserved as a line break, as residualEntry.Member holds it.
 	Member string
 	Site   string
 }
@@ -135,13 +156,15 @@ func (f residualFailure) String() string {
 	switch {
 	case f.Unclassified != nil:
 		return fmt.Sprintf("%s: %s at %s appears in neither the enumeration nor %s",
-			f.Class, f.Unclassified.Member, f.Unclassified.Site, residualRegisterPath(f.Class))
+			f.Class, residualMemberKey(f.Unclassified.Member), f.Unclassified.Site,
+			residualRegisterPath(f.Class))
 	case f.StaleExcluded != nil:
 		return fmt.Sprintf("%s: %s carries an exclusion for %q, which the class's predicate no longer selects",
-			f.Class, residualRegisterPath(f.Class), f.StaleExcluded.Member)
+			f.Class, residualRegisterPath(f.Class), residualMemberKey(f.StaleExcluded.Member))
 	case f.StaleInClass != nil:
 		return fmt.Sprintf("%s: %s carries an in-class entry for %q, which the class's predicate no longer selects, "+
-			"and the run did not remove it", f.Class, residualRegisterPath(f.Class), f.StaleInClass.Member)
+			"and the run did not remove it", f.Class, residualRegisterPath(f.Class),
+			residualMemberKey(f.StaleInClass.Member))
 	}
 	return fmt.Sprintf("%s: an empty failure", f.Class)
 }
@@ -316,10 +339,10 @@ func (g *residualGate) compare(c residualClass, members []residualMember,
 ) []residualEntry {
 	selected := make(map[string]bool, len(members))
 	for _, m := range members {
-		selected[m.Member] = true
+		selected[residualMemberKey(m.Member)] = true
 	}
 	for _, m := range members {
-		if _, ok := carried[m.Member]; !ok {
+		if _, ok := carried[residualMemberKey(m.Member)]; !ok {
 			held := m
 			rep.Failures = append(rep.Failures, residualFailure{Class: c.Name, Unclassified: &held})
 		}
@@ -370,6 +393,13 @@ func (g *residualGate) compare(c residualClass, members []residualMember,
 // the same string. Keying on the text is also what makes the seeding
 // converge, because the copy a register holds of a member's text is the
 // member already recorded.
+//
+// The text is recorded with the occurrence's continuation join
+// preserved, so a citation read across two comment lines is stored
+// across two lines. A residual register is an ordinary member of the
+// shared read domain, and a wrapped occurrence folded onto one line
+// would stand there as a citation the form reads, which the ratchet
+// counts and the resolver reports under the register's own path.
 func residualCitationMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
 	seen := map[string]residualMember{}
 	for _, target := range domain {
@@ -390,7 +420,7 @@ func residualCitationMembers(ctx context.Context, g *residualGate, domain []stri
 				continue
 			}
 			seen[b.Text] = residualMember{
-				Member: b.Text,
+				Member: strings.Join(b.Lines, "\n"),
 				Site:   fmt.Sprintf("%s:%d", target, b.Line),
 			}
 		}
@@ -455,40 +485,38 @@ func residualGeneratedMembers(ctx context.Context, g *residualGate, domain []str
 	return sortedResidualMembers(seen), nil
 }
 
-// changeGraphPath is the graph whose glob keys drive test selection.
-const changeGraphPath = "tests/change-graph.json"
-
-// residualSourceExts is the extension set the change-graph coverage
-// class's broad predicate ranges over. It is every extension a tracked
-// source file in this tree is written with, rather than the two the
-// completeness check governs, because a source file in a language the
-// check does not read is exactly the tail an enumeration misses.
-var residualSourceExts = []string{
-	".go", ".sh", ".bash", ".js", ".mjs", ".ts", ".tsx", ".py", ".rb", ".rs", ".java",
+// residualDataExts is the documented denylist the change-graph coverage
+// class's broad predicate subtracts: the extensions whose content is
+// data, configuration, or documentation rather than a language this tree
+// builds, renders, or executes from. A path with no extension carries no
+// language either, and in this tree names a dotfile, a license, a
+// container or make recipe, or a fuzz corpus entry.
+//
+// The predicate is stated as a denylist because an allowlist of source
+// extensions is another enumeration wearing a regular expression: a
+// language added to the tree later drops out of the class silently,
+// which is the tail the residual exists to catch. A file in a language
+// this list does not name is a member and is triaged in the register,
+// and widening this list is the predicate narrowing the gate does not
+// accept as a route to green.
+var residualDataExts = []string{
+	"", ".md", ".txt", ".yaml", ".yml", ".json", ".toml", ".cfg", ".xml", ".mod", ".sum",
 }
 
-// changeGraphCheckTrees and changeGraphCheckExts are the tree and
-// extension narrowing the change-graph completeness check applies. Every
-// path inside that narrowing is enumerated, because the check itself
-// fails a path there that no glob key and no coverage prefix covers, so
-// the residual is what the narrowing leaves out.
-var (
-	changeGraphCheckTrees = []string{"cmd/", "pkg/", "scripts/", "tests/"}
-	changeGraphCheckExts  = []string{".go", ".sh"}
-)
-
 // residualChangeGraphMembers selects the members of the change-graph
-// coverage class. The predicate is any tracked source file that no glob
-// key in the change graph covers, over every tree and every source
-// language rather than the four trees and two extensions the
-// completeness check reads. A test file is outside the predicate for the
-// reason the check states: a test is a target of the graph rather than a
-// source of it.
+// coverage class. The predicate is any tracked file that no glob key in
+// the change graph covers, over every tree and every language, less the
+// documented data and documentation extensions. A test file is outside
+// the predicate for the reason the completeness check states: a test is
+// a target of the graph rather than a source of it.
 //
 // The enumeration it subtracts is the completeness check's own domain,
 // which the check holds to a glob key or to its coverage baseline on
-// every run of validate-maps. What is left is the source file the
-// check's narrowing never reaches, whose route out is the same glob key.
+// every run of validate-maps. That domain is read from
+// cmd/lenny-test/changegraph, which the check reads as well, so a tree
+// or an extension that moves moves for both at once and no path is left
+// governed by neither. What remains is the source file the check's
+// narrowing never reaches, whose route out is the same glob key.
 func residualChangeGraphMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
 	globs, err := readResidualChangeGraphGlobs(g.Read)
 	if err != nil {
@@ -499,10 +527,10 @@ func residualChangeGraphMembers(ctx context.Context, g *residualGate, domain []s
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		if !residualSourceFile(target) || inChangeGraphCheckDomain(target) {
+		if !residualSourceFile(target) || changegraph.InCheckDomain(target) {
 			continue
 		}
-		if coveredByResidualGlob(target, globs) {
+		if changegraph.CoveredByGlob(target, globs) {
 			continue
 		}
 		seen[target] = residualMember{Member: target, Site: target}
@@ -510,87 +538,36 @@ func residualChangeGraphMembers(ctx context.Context, g *residualGate, domain []s
 	return sortedResidualMembers(seen), nil
 }
 
-// residualSourceFile reports whether a tracked path is a source file the
-// broad predicate ranges over. A test file is excluded whatever its
-// tree, because the graph selects tests rather than being keyed by them.
+// residualSourceFile reports whether a tracked path is one the broad
+// predicate ranges over: anything but a test file and anything but the
+// data and documentation extensions residualDataExts names.
 func residualSourceFile(target string) bool {
 	if strings.HasSuffix(target, "_test.go") {
 		return false
 	}
 	ext := strings.ToLower(filepath.Ext(target))
-	for _, known := range residualSourceExts {
-		if ext == known {
-			return true
+	for _, denied := range residualDataExts {
+		if ext == denied {
+			return false
 		}
 	}
-	return false
+	return true
 }
 
-// inChangeGraphCheckDomain reports whether the completeness check
-// already governs the path.
-func inChangeGraphCheckDomain(target string) bool {
-	ext := strings.ToLower(filepath.Ext(target))
-	inExt := false
-	for _, known := range changeGraphCheckExts {
-		if ext == known {
-			inExt = true
-		}
-	}
-	if !inExt {
-		return false
-	}
-	for _, tree := range changeGraphCheckTrees {
-		if strings.HasPrefix(target, tree) {
-			return true
-		}
-	}
-	return false
-}
-
-// readResidualChangeGraphGlobs returns the graph's glob keys as
-// directory prefixes, with any trailing recursive or directory marker
-// stripped, which is the reading the change-graph checks in
-// cmd/lenny-test apply. The graph is read here rather than through those
-// checks because they sit in a main package, which a test cannot import.
+// readResidualChangeGraphGlobs returns the change graph's glob keys,
+// read through the reading in cmd/lenny-test/changegraph that the
+// completeness check and the `--changed` selector read, so a key means
+// the same thing to all three.
 //
 // A missing or malformed graph is an error rather than an empty key set:
 // a load that degraded to carrying nothing would report every source
 // file in the tree as a residual.
 func readResidualChangeGraphGlobs(read scope.FileReader) (map[string]bool, error) {
-	data, err := read(changeGraphPath)
+	data, err := read(changegraph.RelPath)
 	if err != nil {
-		return nil, fmt.Errorf("read the change graph %s: %w", changeGraphPath, err)
+		return nil, fmt.Errorf("read the change graph %s: %w", changegraph.RelPath, err)
 	}
-	var doc struct {
-		Globs map[string]json.RawMessage `json:"globs"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse the change graph %s: %w", changeGraphPath, err)
-	}
-	if doc.Globs == nil {
-		return nil, fmt.Errorf("change graph %s: carries no globs block", changeGraphPath)
-	}
-	keys := make(map[string]bool, len(doc.Globs))
-	for key := range doc.Globs {
-		key = strings.TrimSuffix(key, "/...")
-		key = strings.TrimSuffix(key, "/")
-		keys[key] = true
-	}
-	return keys, nil
-}
-
-// coveredByResidualGlob reports whether a glob key names the path or an
-// ancestor directory of it.
-func coveredByResidualGlob(target string, globs map[string]bool) bool {
-	if globs[target] {
-		return true
-	}
-	for dir := filepath.ToSlash(filepath.Dir(target)); dir != "." && dir != "/"; dir = filepath.ToSlash(filepath.Dir(dir)) {
-		if globs[dir] {
-			return true
-		}
-	}
-	return false
+	return changegraph.ParseGlobKeys(changegraph.RelPath, data)
 }
 
 // residualSkipMembers selects the members of the skip-reason class. The
@@ -723,7 +700,9 @@ func sortedResidualMembers(seen map[string]residualMember) []residualMember {
 	for _, m := range seen {
 		out = append(out, m)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Member < out[j].Member })
+	sort.Slice(out, func(i, j int) bool {
+		return residualMemberKey(out[i].Member) < residualMemberKey(out[j].Member)
+	})
 	return out
 }
 
@@ -779,11 +758,12 @@ func loadResidualRegister(read scope.FileReader, c scope.Class) (map[string]resi
 		if err := validResidualEntry(path, c, entry); err != nil {
 			return nil, nil, err
 		}
-		if _, ok := carried[entry.Member]; ok {
-			return nil, nil, fmt.Errorf("residual register %s: member %q is declared twice", path, entry.Member)
+		key := residualMemberKey(entry.Member)
+		if _, ok := carried[key]; ok {
+			return nil, nil, fmt.Errorf("residual register %s: member %q is declared twice", path, key)
 		}
-		carried[entry.Member] = entry
-		order = append(order, entry.Member)
+		carried[key] = entry
+		order = append(order, key)
 	}
 	return carried, order, nil
 }
@@ -796,9 +776,8 @@ func validResidualEntry(path string, c scope.Class, entry residualEntry) error {
 	if strings.TrimSpace(entry.Member) == "" {
 		return fmt.Errorf("residual register %s: carries an entry with no member", path)
 	}
-	if strings.ContainsAny(entry.Member, "\n\r") {
-		return fmt.Errorf("residual register %s: member %q carries a line break, and a member is one line",
-			path, entry.Member)
+	if err := validResidualMemberText(path, entry.Member); err != nil {
+		return err
 	}
 	if entry.Class != string(c) {
 		return fmt.Errorf("residual register %s: member %q declares class %q, and the register is read for class %q",
@@ -814,6 +793,29 @@ func validResidualEntry(path string, c scope.Class, entry residualEntry) error {
 	if strings.ContainsAny(entry.Reason, "\n\r") {
 		return fmt.Errorf("residual register %s: member %q carries a reason with a line break, and a reason is one line",
 			path, entry.Member)
+	}
+	return nil
+}
+
+// validResidualMemberText holds a stored member text to the spelling the
+// register writes. A line break stands for a continuation the class's
+// predicate joined, so each line carries content and neither opens nor
+// closes on whitespace: a blank or indented line would not survive the
+// block scalar it is written in, and the member the next run reads back
+// would differ from the one recorded.
+func validResidualMemberText(path, member string) error {
+	if strings.Contains(member, "\r") {
+		return fmt.Errorf("residual register %s: member %q carries a carriage return", path, member)
+	}
+	for _, line := range strings.Split(member, "\n") {
+		if strings.TrimSpace(line) == "" {
+			return fmt.Errorf("residual register %s: member %q carries an empty line",
+				path, residualMemberKey(member))
+		}
+		if line != strings.TrimSpace(line) {
+			return fmt.Errorf("residual register %s: member %q carries a line opening or closing on whitespace",
+				path, residualMemberKey(member))
+		}
 	}
 	return nil
 }
@@ -837,7 +839,9 @@ func writeResidualRegister(write func(string, []byte) error, c scope.Class, entr
 		return fmt.Errorf("rewrite residual register %s: no writer is configured", path)
 	}
 	sorted := append([]residualEntry(nil), entries...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Member < sorted[j].Member })
+	sort.Slice(sorted, func(i, j int) bool {
+		return residualMemberKey(sorted[i].Member) < residualMemberKey(sorted[j].Member)
+	})
 	var b strings.Builder
 	b.WriteString(residualRegisterHeader(c))
 	fmt.Fprintf(&b, "kind: %s\nversion: %d\nclass: %s\n", residualRegisterKind, residualRegisterVersion, c)
@@ -854,18 +858,31 @@ func writeResidualRegister(write func(string, []byte) error, c scope.Class, entr
 		if err := validResidualEntry(path, c, entry); err != nil {
 			return fmt.Errorf("rewrite residual register %s: %w", path, err)
 		}
-		if i > 0 && sorted[i-1].Member == entry.Member {
-			return fmt.Errorf("rewrite residual register %s: member %q is written twice", path, entry.Member)
+		if i > 0 && residualMemberKey(sorted[i-1].Member) == residualMemberKey(entry.Member) {
+			return fmt.Errorf("rewrite residual register %s: member %q is written twice",
+				path, residualMemberKey(entry.Member))
 		}
-		b.WriteString("  - member: |-\n      " + entry.Member + "\n")
+		b.WriteString("  - member: |-\n" + residualBlockScalar(entry.Member))
 		b.WriteString("    class: " + entry.Class + "\n")
 		b.WriteString("    disposition: " + entry.Disposition + "\n")
-		b.WriteString("    reason: |-\n      " + entry.Reason + "\n")
+		b.WriteString("    reason: |-\n" + residualBlockScalar(entry.Reason))
 	}
 	if err := write(path, []byte(b.String())); err != nil {
 		return fmt.Errorf("rewrite residual register %s: %w", path, err)
 	}
 	return nil
+}
+
+// residualBlockScalar renders a value as the body of a literal block
+// scalar, one indented line per line of the value. A member written
+// across two lines keeps the continuation join the occurrence carried,
+// so the stored copy is not a citation the form reads.
+func residualBlockScalar(value string) string {
+	var b strings.Builder
+	for _, line := range strings.Split(value, "\n") {
+		b.WriteString("      " + line + "\n")
+	}
+	return b.String()
 }
 
 // residualRegisterHeader explains the file to a reader who opens it
@@ -971,7 +988,7 @@ func (tr *residualTree) changeGraph(keys ...string) {
 	if err != nil {
 		tr.t.Fatalf("encode the fixture change graph: %v", err)
 	}
-	tr.file(changeGraphPath, string(body))
+	tr.file(changegraph.RelPath, string(body))
 }
 
 // run drives one class over the fixture tree.
@@ -1510,6 +1527,95 @@ func TestResidualGateReadsNoExcludedFile(t *testing.T) {
 	}
 }
 
+func TestResidualGateStoresAWrappedCitationWithItsContinuationJoin(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	tr.file(residualCitationCarrier, residualFixtureText(t, "citation-wrapped.go.txt"))
+	c := residualClassByName(t, scope.ClassLineCitations)
+
+	rep := tr.runOK(c)
+	if len(rep.Failures) != 1 || rep.Failures[0].Unclassified == nil {
+		t.Fatalf("a wrapped citation was reported as %v, want the one unclassified member",
+			residualFailureTexts(rep))
+	}
+	member := rep.Failures[0].Unclassified.Member
+	if !strings.Contains(member, "\n") {
+		t.Fatalf("the member %q carries no line break, so the wrap it was read across is lost", member)
+	}
+	// The case pins nothing unless the folded spelling is one the
+	// citation form reads. The wrap is what keeps the occurrence out of
+	// the enumeration, and folding it back is what would make the stored
+	// copy a citation of its own.
+	folded := residualMemberKey(member)
+	if len(citation.FindIn(residualCitationCarrier, folded)) == 0 {
+		t.Fatalf("the folded member %q is read by no citation form", folded)
+	}
+
+	tr.register(scope.ClassLineCitations, inClassEntry(scope.ClassLineCitations, member))
+	body := tr.registerText(scope.ClassLineCitations)
+	if !strings.Contains(body, "      §17.2 \"canonical\n      enumeration\" (line 40\n") {
+		t.Errorf("the register does not carry the member across two lines:\n%s", body)
+	}
+	register := residualRegisterPath(scope.ClassLineCitations)
+	if read := citation.FindIn(register, body); len(read) > 0 {
+		t.Errorf("the stored member stands as the citation %q, which the ratchet counts and the resolver reports under %s",
+			read[0].Raw, register)
+	}
+	// The stored spelling reads back as the same member, so the entry
+	// holds the site rather than being reported again beside it.
+	again := tr.runOK(c)
+	if len(again.Failures) > 0 || again.Held != 1 {
+		t.Errorf("the run after the entry landed held %d entr(ies) and reported:\n  %s",
+			again.Held, strings.Join(residualFailureTexts(again), "\n  "))
+	}
+}
+
+func TestResidualGateSelectsEverySourceLanguageOutsideTheCompletenessCheck(t *testing.T) {
+	t.Parallel()
+	tr := newResidualTree(t)
+	// Each of these is a tracked source file in a language the
+	// completeness check does not read, under a tree it does not walk,
+	// covered by no glob key. A predicate written as a list of source
+	// extensions carries the languages the tree happened to hold when it
+	// was written and drops every one added later.
+	members := []string{
+		"deploy/terraform/cloud/aws/main.tf",
+		"dist/scaffold/go.Makefile.tmpl",
+		"dist/tool.rb",
+		"dist/web/app.css",
+		"dist/web/index.html",
+		"schemas/service.proto",
+	}
+	for _, target := range members {
+		tr.file(target, "a source file\n")
+	}
+	// Data, configuration, and documentation carry no language a tier is
+	// selected from, and the denylist subtracts them.
+	for _, target := range []string{
+		"docs/guide.md", "deploy/values.yaml", "deploy/values.yml", "compose/config.json",
+		"hack/boilerplate.txt", "dist/config.toml", "dist/policy.xml", "dist/plugin.cfg",
+		"dist/go.mod", "dist/go.sum", "dist/Dockerfile",
+	} {
+		tr.file(target, "data\n")
+	}
+	// The completeness check governs a source file under its own trees,
+	// so the residual subtracts it whether or not a glob key covers it.
+	tr.file("cmd/tool/main.go", "package main\n")
+	tr.file("scripts/build.sh", "echo build\n")
+	// A test file is a target of the graph rather than a source of it.
+	tr.file("dist/tool_test.go", "package dist\n")
+	// A glob key covers the fixture tree's own package.
+	tr.file("pkg/carrier/carrier.go", "package carrier\n")
+	c := residualClassByName(t, scope.ClassChangeGraphCoverage)
+
+	rep := tr.runOK(c)
+	named := residualNames(rep)
+	sort.Strings(named)
+	if strings.Join(named, "\n") != strings.Join(members, "\n") {
+		t.Errorf("the scan reported\n  %s\nwant\n  %s", strings.Join(named, "\n  "), strings.Join(members, "\n  "))
+	}
+}
+
 func TestResidualGateFailsOnAMalformedOrMissingRegister(t *testing.T) {
 	t.Parallel()
 	fixture := residualFixtures(t)[0]
@@ -1546,9 +1652,9 @@ func TestResidualGateFailsOnAScanThatSelectedNoFile(t *testing.T) {
 	t.Parallel()
 	// The tree is not empty and holds one register, which the class
 	// cannot read as tree content, so the class's own scan selects
-	// nothing. Both exclusions that reach that state are covered: the
-	// shared read exclusion, which holds the citation classes' registers,
-	// and the per-class register exclusion.
+	// nothing. Both a citation class and the skip-reason class are
+	// covered, because the exclusion that empties the scan is the
+	// per-class register exclusion in either case.
 	for _, name := range []scope.Class{scope.ClassLineCitations, scope.ClassSkipReason} {
 		t.Run(string(name), func(t *testing.T) {
 			t.Parallel()

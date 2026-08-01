@@ -66,7 +66,8 @@ entries:
     reason: |-
       a citation of the retired line form the resolver never reads, because the enumerated citation grammar does not read it
   - member: |-
-      §15.1 (tenant-admin gate, line 823
+      §15.1 (tenant-admin gate, line
+      823
     class: line-citation-resolution
     disposition: in-class
     reason: |-
@@ -132,7 +133,8 @@ entries:
     reason: |-
       a citation of the retired line form the resolver never reads, because the enumerated citation grammar does not read it
   - member: |-
-      §17.2 "canonical enumeration" (line 40
+      §17.2 "canonical
+      enumeration" (line 40
     class: line-citation-resolution
     disposition: in-class
     reason: |-
@@ -144,7 +146,8 @@ entries:
     reason: |-
       a citation of the retired line form the resolver never reads, because the enumerated citation grammar does not read it
   - member: |-
-      §25.1 (scope enforcement point 1, line 94
+      §25.1 (scope
+      enforcement point 1, line 94
     class: line-citation-resolution
     disposition: in-class
     reason: |-
@@ -204,7 +207,8 @@ entries:
     reason: |-
       a citation of the retired line form the resolver never reads, because the enumerated citation grammar does not read it
   - member: |-
-      §25.9 since/until bounds with the line 3708
+      §25.9 since/until bounds with the line
+      3708
     class: line-citation-resolution
     disposition: in-class
     reason: |-
@@ -240,7 +244,8 @@ entries:
     reason: |-
       a citation of the retired line form the resolver never reads, because the enumerated citation grammar does not read it
   - member: |-
-      §5.2 (recycle lifecycle, line 449
+      §5.2 (recycle
+      lifecycle, line 449
     class: line-citation-resolution
     disposition: in-class
     reason: |-
@@ -270,7 +275,8 @@ entries:
     reason: |-
       a citation of the retired line form the resolver never reads, because the enumerated citation grammar does not read it
   - member: |-
-      §7.2 (table line 123
+      §7.2
+      (table line 123
     class: line-citation-resolution
     disposition: in-class
     reason: |-

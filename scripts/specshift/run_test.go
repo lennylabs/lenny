@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -7269,29 +7270,57 @@ func TestMarkerDeclaredAnswersNotGeneratedForAProducerOutput(t *testing.T) {
 	}
 }
 
-// TestCitationResidualRegistersAreOutsideTheSharedReadDomain pins that
-// no gate reads a citation-class residual register as tree content.
+// TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain pins
+// that the exclusion which keeps a class from reading a register as tree
+// content is per class rather than shared.
 //
-// A residual member is recorded as one line, and the occurrence it was
-// read from may have been wrapped across two comment lines. The grammar
-// reads several spellings unwrapped that it cannot read across a wrap,
-// so a member recorded here would stand as a live citation: the ratchet
-// would count it under the register's own path, the resolver would
-// report it, and the only route to a zero count would be a rewrite of
-// the member the register is keyed by.
-func TestCitationResidualRegistersAreOutsideTheSharedReadDomain(t *testing.T) {
+// A residual register carries the text of every member it triages and a
+// reason for each, and the naming lint, the identifier-resolution gate,
+// the citation resolver, and the ratchet all read it as tree content. A
+// register named in the shared read exclusion would be read by none of
+// them and, through the write domain that exclusion also governs,
+// written by no pass, so a reserved phrase, a retired identifier
+// spelling, or a citation written there would have no route out. The
+// class's own scan still excludes its own register, because a scan that
+// read it would report the copy it holds of each member.
+func TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain(t *testing.T) {
 	t.Parallel()
-	for _, c := range []scope.Class{scope.ClassLineCitations, scope.ClassLineCitationResolution} {
+	read := func(string) ([]byte, error) { return []byte("kind: residual-register\nversion: 1\n"), nil }
+	for _, c := range scope.Classes() {
 		register := c.ResidualRegister()
-		if scope.Readable(register) {
-			t.Errorf("the shared read domain admits %s, so a gate reads a member as a citation of its own", register)
+		if !scope.Readable(register) {
+			t.Errorf("the shared read domain excludes %s, so no gate reads the members it triages", register)
 		}
-		// The sibling registers of the classes whose members carry no
-		// citation text stay inside the domain, so the exclusion is the
-		// narrow one the copy argument supports.
-		if !scope.Readable(scope.ClassSkipReason.ResidualRegister()) {
-			t.Errorf("the shared read domain excludes %s, which carries no text a gate reads",
-				scope.ClassSkipReason.ResidualRegister())
+		writable, err := scope.Writable(scope.Line, register, read)
+		if err != nil {
+			t.Fatalf("read the write domain for %s: %v", register, err)
+		}
+		if !writable {
+			t.Errorf("no pass may write %s, so a site recorded there has no route out", register)
+		}
+		own, err := scope.ReadableForClass(c, register)
+		if err != nil {
+			t.Fatalf("read the %s class domain: %v", c, err)
+		}
+		if own {
+			t.Errorf("the %s class reads its own register %s as tree content, so its seeding does not converge",
+				c, register)
+		}
+		// A sibling class reads it as ordinary tree content. That is what
+		// makes the per-class exclusion narrow enough to leave every member
+		// recorded somewhere: a member found in another class's register is
+		// recorded in this class's own, whose text this class does not read.
+		for _, other := range scope.Classes() {
+			if other == c || slices.Contains(other.Registers(), register) {
+				continue
+			}
+			sibling, err := scope.ReadableForClass(other, register)
+			if err != nil {
+				t.Fatalf("read the %s class domain: %v", other, err)
+			}
+			if !sibling {
+				t.Errorf("the %s class does not read %s, and it is not one of its own registers", other, register)
+			}
 		}
 	}
 }

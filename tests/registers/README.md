@@ -108,12 +108,21 @@ A residual register declares `kind: residual-register`, `version: 1`,
 and the class it records, and the gate refuses a register whose declared
 class is not the one it is read for. Each entry is written as a literal
 block scalar, so a member is a verbatim copy of the text its class's
-predicate reads and no escape or line wrap stands between the two. The
-two line-citation classes' registers sit outside the read domain the
-gates share, because a member recorded on one line may have been read
-from a citation wrapped across two comment lines, and a gate reading the
-register would count that member as a live citation under the register's
-own path.
+predicate reads and no escape stands between the two. A member read
+across a wrap keeps that wrap: the block scalar carries one line per
+line of the occurrence, and the member the gate is keyed by is those
+lines joined with a space. A citation wrapped across two comment lines
+and stored on one line would stand as a live citation under the
+register's own path, which the ratchet counts and the resolver reports.
+
+A residual register is an ordinary member of the read domain the gates
+and the passes share, so the naming lint, the identifier-resolution
+gate, the citation resolver, and the ratchet all read the member and
+reason text it carries and every pass may write it. The exclusion that
+keeps a class from reading a register as tree content is per class: a
+class reads neither its own residual register, whose copy of each member
+it would report again, nor the pass or baseline register its own gate
+consumes.
 
 ## Baselines and sense maps
 
