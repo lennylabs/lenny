@@ -4,49 +4,45 @@
 // reference into a retired section anchor to the heading the material
 // moved to.
 //
-// Two site classes are rewritten. The tree scopes both, and each is
-// resolved by its own register.
+// Two site classes are rewritten. The anchor-move map scopes both, and
+// each is resolved by its own register.
 //
-// One rule scopes both classes: a reference into a heading the document
-// it addresses no longer declares is inside the pass, whether it is
-// written as a fragment link or as a bare §X.Y citation. What the
-// registers decide is how such a reference is resolved rather than
-// whether it is read. A reference the anchor-move map carries no entry
-// for aborts the run before any write, naming the file and the line,
-// because the pass has no successor for it and a run that passed over it
-// would exit zero over a tree that still points at a heading nothing
-// declares, after which the change that empties the map destroys the
-// record of what the run should have done.
-//
-// The map states which sections it retires rather than leaving them to
-// be read out of each anchor's spelling, so a citation of a section the
-// map does carry is resolved rather than aborted when the anchor was
-// declared by an explicit kramdown attribute instead of derived from a
-// numbered heading.
+// One rule scopes both classes: the pass owns the references this
+// migration retires, which are the references naming an anchor the map
+// carries, whether written as a fragment link or as a bare §X.Y
+// citation. A reference the map names no anchor for is left where it
+// stands. That covers a link that was already broken before the run,
+// which the fragment-link gate reports and a hand correction repairs,
+// and a §X.Y token naming a section of a testing or a documentation
+// document that numbers its own headings, which this migration never
+// touches. Reading either as a site would abort a fail-closed pass at a
+// reference no register is ever seeded for.
 //
 // An intra-repo markdown fragment link is decided by the anchor-move
 // map alone, because the link names the retired anchor and the map
 // carries one successor per anchor. Both forms of that link are inside
 // the pass, the file-qualified `[...](NN_file.md#anchor)` form and the
 // same-page `[...](#anchor)` form, which is the majority form inside a
-// specification file. A link is rewritten when the document it addresses
-// no longer declares its anchor and the map names that anchor. A link
-// into an anchor that document still declares is left as it stands, and
-// so is a link whose destination is not a tracked markdown document of
-// the tree, which covers an absolute URL the fragment-link gate does not
-// read either.
+// specification file. A link is rewritten when the map names its anchor
+// and the document it addresses no longer declares it. A link into an
+// anchor that document still declares is left as it stands, and so is a
+// link whose destination is not a tracked markdown document of the tree,
+// which covers an absolute URL the fragment-link gate does not read
+// either.
 //
 // A bare section citation of the §X.Y form, in a comment or in prose
-// alike, is in the class when no specification file declares the section
-// it names, and what the occurrence means is decided by the sense
-// register. The map cannot decide that: a reduction carves material out
-// of the section it moves, so a citation of the carved-out material
-// means a heading that stays where it is while the map's single
-// successor for that anchor names the heading the rest of the material
-// moved to. Inside the class there are two answers. An entry naming a heading redirects the
-// citation there. An occurrence with no entry aborts the run naming the
-// file and the line, with the tree left byte-identical, rather than
-// being sent to the map's successor.
+// alike, is in the class when the map retires an anchor of the section
+// it names, which the anchor's own leading digits spell, and no
+// specification file declares that section any more. What the occurrence
+// means is decided by the sense register. The map cannot decide that: a
+// reduction carves material out of the section it moves, so a citation
+// of the carved-out material means a heading that stays where it is
+// while the map's single successor for that anchor names the heading the
+// rest of the material moved to. Inside the class there are two answers.
+// An entry naming a heading redirects the citation there. An occurrence
+// with no entry aborts the run naming the file and the line, with the
+// tree left byte-identical, rather than being sent to the map's
+// successor.
 // Substituting the successor there would land a canonical-looking
 // pointer at a heading that does not define the cited material, and no
 // gate over the anchor classes reads meaning: the fragment-link gate
@@ -146,7 +142,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 		return nil, err
 	}
 	text := string(content)
-	sites := findSites(target, text, r.tree)
+	sites := findSites(target, text, r.tree, r.moves)
 	if len(sites) == 0 {
 		return content, nil
 	}
@@ -172,12 +168,6 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 // registers is the change that destroys the record of what the run
 // should have done.
 //
-// A site of either class that the map carries no entry for aborts the
-// run for the same reason. The reference names a heading that is gone,
-// the pass has no successor for it, and a run that passed over it would
-// report a completed migration over a tree that still points at a
-// heading nothing declares.
-//
 // Every unresolved site is collected before the plan fails, so one run
 // names the whole hand-correction population rather than its first
 // member. Nothing is written until the plan succeeds, so reporting them
@@ -195,21 +185,16 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	for _, s := range sites {
 		switch s.kind {
 		case linkSite:
-			move, mapped := r.moves.anchor(s.anchor)
-			if !mapped {
-				aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: unmappedLinkReason(s, r.moves.path)})
-				continue
-			}
+			// The map named the anchor, which is what made the link a
+			// site, so the successor is present.
+			move, _ := r.moves.anchor(s.anchor)
 			edits = append(edits, edit{start: s.start, end: s.end, text: linkTarget(target, s, move.Successor)})
 			continue
 		}
 		citations++
-		if !r.moves.retiresSection(s.section) {
-			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: unmappedCitationReason(s, r.moves.path)})
-			continue
-		}
 		// The register is the only answer for this class: the map is
-		// keyed by retired anchor, which carries no section number, and
+		// keyed by retired anchor, which states which sections the
+		// reduction retired but not what each citation of one means, and
 		// a reduction carves material out of the anchor it moves, so an
 		// occurrence the register does not record is unresolved.
 		sense, ok := r.senses[target][citations]
@@ -227,22 +212,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 		return nil, err
 	}
 	return edits, nil
-}
-
-// unmappedLinkReason states why a link into an anchor the addressed
-// document no longer declares, and the anchor-move map carries no entry
-// for, stops the run.
-func unmappedLinkReason(s site, mapPath string) string {
-	return fmt.Sprintf("a link into %q, an anchor %s no longer declares, has no entry in %s, so the pass has no successor for it",
-		s.anchor, s.file, mapPath)
-}
-
-// unmappedCitationReason states why a citation of a section the
-// specification no longer declares, and the anchor-move map carries no
-// entry for, stops the run.
-func unmappedCitationReason(s site, mapPath string) string {
-	return fmt.Sprintf("a citation naming §%s, a section no specification file declares, has no entry in %s, so the pass has no successor for it",
-		s.section, mapPath)
 }
 
 // unresolvedReason states why a citation the sense register does not
