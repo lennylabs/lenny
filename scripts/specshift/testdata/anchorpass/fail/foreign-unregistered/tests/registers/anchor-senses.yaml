@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: MIT
 #
-# A well-formed register, so a run over this tree stops at the link
-# whose anchor the map records no successor for.
+# A well-formed register that records nothing for the clause number the
+# compliance page quotes, so the run stops at it.
 kind: anchor-senses
 version: 1
 entries:

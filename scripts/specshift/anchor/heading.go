@@ -15,8 +15,8 @@ import (
 
 // headings indexes every anchor the markdown documents of the tree
 // declare, per file, together with the section number of the heading
-// each anchor addresses, and the set of section numbers the tree's
-// headings declare.
+// each anchor addresses, and the set of section numbers the
+// specification declares.
 //
 // The index is what holds a redirect to a heading that exists. A
 // successor anchor nothing declares would send every inbound reference
@@ -25,15 +25,21 @@ import (
 // after.
 //
 // The index is also what tells a surviving destination from a retired
-// one at a reference the anchor-move map does not carry. A link into an
-// anchor the tree still declares and a citation of a section a heading
-// still declares are references the reduction left alone, and both
-// stand. A reference the tree declares nowhere names material that
-// moved with no redirect recorded for it, which the pass reports rather
-// than passing over.
+// one. A link into an anchor its own document still declares and a
+// citation of a section the specification still declares are references
+// the reduction left alone, and both stand.
+//
+// The anchor half of the index covers every markdown document of the
+// class read domain, because a fragment link addresses a heading in the
+// document it names, whichever document that is. The section half
+// covers the specification alone, because a §X.Y citation names a
+// section of the specification: a heading numbered the same way in a
+// testing document or a documentation page declares no specification
+// section, and folding it in would report a retired section as alive and
+// pass over every citation of it.
 type headings struct {
 	byFile map[string]map[string]citation.Heading
-	// sections holds every section number a heading of the tree declares.
+	// sections holds every section number the specification declares.
 	sections map[string]bool
 }
 
@@ -80,6 +86,9 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 		}
 		anchors, numbers := index(string(content))
 		h.byFile[target] = anchors
+		if !citation.IsSpecFile(target) {
+			continue
+		}
 		for _, number := range numbers {
 			h.sections[number] = true
 		}
@@ -94,6 +103,13 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 // heading it addresses, and the section numbers its headings declare.
 // The first claim on an anchor keeps it, which is how a renderer that
 // suffixes a repeated slug addresses the first of them.
+//
+// The walk admits every heading level a renderer derives an anchor
+// from, so the level-one title a documentation page opens with is
+// addressable here. Reading only the levels a section is computed from
+// would leave a link into such a title, and a redirect whose successor
+// is one, resolving against no heading at all. A level-one title still
+// declares no section, so it contributes no section number.
 //
 // A heading is addressable by the slug of its text, and by the explicit
 // anchor a kramdown attribute declares for it. The attribute is written
@@ -110,9 +126,9 @@ func index(content string) (map[string]citation.Heading, []string) {
 		out[a] = h
 	}
 	headingAt := map[int]citation.Heading{}
-	for _, h := range citation.Headings(content) {
+	for _, h := range citation.AllHeadings(content) {
 		headingAt[h.Line] = h
-		if h.Number != "" {
+		if h.Number != "" && h.Level >= citation.SectionHeadingLevel {
 			numbers = append(numbers, h.Number)
 		}
 	}
@@ -160,15 +176,15 @@ func (h *headings) lookup(t Target) (citation.Heading, bool) {
 //
 // A numbered heading is cited by its section number, which is the anchor
 // citation form the migration establishes. A heading that declares no
-// number, such as the message-format heading a carve-out keeps in place,
-// has no number to cite, so it is cited by the file and anchor that
-// address it.
+// section, such as the message-format heading a carve-out keeps in place
+// or the level-one title a documentation page opens with, has no number
+// to cite, so it is cited by the file and anchor that address it.
 func (h *headings) citationFor(t Target) (string, error) {
 	heading, ok := h.lookup(t)
 	if !ok {
 		return "", fmt.Errorf("no heading of the tree is addressed by %s", t)
 	}
-	if heading.Number != "" {
+	if heading.Number != "" && heading.Level >= citation.SectionHeadingLevel {
 		return "§" + heading.Number, nil
 	}
 	return t.String(), nil
@@ -188,9 +204,9 @@ func (h *headings) declaresAnchor(target, anchor string) bool {
 	return ok
 }
 
-// declaresSection reports whether a heading of the tree still declares
-// the section number, which is what separates a citation the reduction
-// left alone from a citation of a section that was retired.
+// declaresSection reports whether the specification still declares the
+// section number, which is what separates a citation the reduction left
+// alone from a citation of a section that was retired.
 func (h *headings) declaresSection(number string) bool {
 	return h.sections[number]
 }

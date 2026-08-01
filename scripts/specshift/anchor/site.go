@@ -42,9 +42,11 @@ type site struct {
 	// so a redirect that stays on the page keeps that form.
 	samePage bool
 	// mapped records that the anchor-move map carries the redirect for
-	// what the site names. A site the map does not carry names a
-	// destination no heading of the tree declares, which the pass reports
-	// rather than leaving in place.
+	// the retired section a bare citation names. A citation the map does
+	// not carry names a section the specification no longer declares and
+	// for which no successor was recorded, which the pass reports unless
+	// the sense register records the occurrence as citing something other
+	// than a specification section.
 	mapped bool
 }
 
@@ -61,19 +63,28 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // findSites returns every reference one file carries that names a
 // retired anchor or a retired section, in source order.
 //
-// The heading index decides what is retired, rather than the
-// anchor-move map: a reference whose destination the tree still declares
-// is one the reduction left alone and stands, and every other reference
-// names a destination that is gone. A reference the map carries is
-// redirected, and a reference it does not carry is a site all the same,
-// so the pass reports it rather than passing over a reference into a
-// destination that resolves nowhere.
+// A fragment link is in the class when the anchor-move map records its
+// anchor as retired and the document it addresses no longer declares
+// that anchor. Both halves are required. The map is what states which
+// anchors this migration retired, so a link into an anchor the map does
+// not name is outside the class, including a link into a heading that
+// was already broken before the migration, which is not this pass's to
+// invent a successor for. The heading index then keeps a link into an
+// anchor its own document still declares, which is a link the reduction
+// left alone.
 //
 // A link whose destination is not a tracked markdown document of the
 // tree is not a site: an absolute URL and a link into a file the
 // repository does not carry are both outside the population the
 // fragment-link gate reads, and rewriting one would edit a reference the
 // pass cannot check.
+//
+// A bare section citation is in the class when the specification no
+// longer declares the section it names. The map cannot decide that half:
+// a citation of a section the map records is one this migration retired,
+// and a citation of a section that is gone with no map entry is one the
+// pass reports rather than passing over. Which of the two it is decides
+// only which failure the plan reports, so both are sites here.
 func findSites(target, text string, moves *moveMap, tree *headings) []site {
 	var out []site
 	for _, m := range fragmentLinkExpr.FindAllStringSubmatchIndex(text, -1) {
@@ -88,8 +99,7 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 		if !tree.carries(file) {
 			continue
 		}
-		_, mapped := moves.anchor(anchor)
-		if !mapped && tree.declaresAnchor(file, anchor) {
+		if _, mapped := moves.anchor(anchor); !mapped || tree.declaresAnchor(file, anchor) {
 			continue
 		}
 		out = append(out, site{
@@ -100,15 +110,15 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 			anchor:   anchor,
 			file:     file,
 			samePage: destination == "",
-			mapped:   mapped,
+			mapped:   true,
 		})
 	}
 	for _, m := range bareCitationExpr.FindAllStringSubmatchIndex(text, -1) {
 		number := text[m[2]:m[3]]
-		_, mapped := moves.section(number)
-		if !mapped && tree.declaresSection(number) {
+		if tree.declaresSection(number) {
 			continue
 		}
+		_, mapped := moves.section(number)
 		out = append(out, site{
 			kind:    citationSite,
 			start:   m[0],

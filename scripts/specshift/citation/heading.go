@@ -21,13 +21,43 @@ type Heading struct {
 	Line   int
 }
 
-// Headings returns every heading of one markdown document, in source
-// order.
+// SectionHeadingLevel is the shallowest heading level that declares a
+// section. A level-one heading is the title of a page, so a number in
+// its text names the file rather than a section of the specification,
+// and a consumer that computes sections from AllHeadings filters on this
+// level.
+const SectionHeadingLevel = 2
+
+// Headings returns every heading of one markdown document a section's
+// range is computed from, in source order.
 //
 // A line inside a fenced code block is example text rather than a
-// heading, and the walk reads the levels headingExpr admits, so a
+// heading, and the walk drops the levels below SectionHeadingLevel, so a
 // level-one title declares no section and carries no heading here.
 func Headings(content string) []Heading {
+	var out []Heading
+	for _, h := range AllHeadings(content) {
+		if h.Level < SectionHeadingLevel {
+			continue
+		}
+		out = append(out, h)
+	}
+	return out
+}
+
+// AllHeadings returns every heading of one markdown document at every
+// level a renderer derives an anchor from, which begins at the level-one
+// page title, in source order.
+//
+// The anchor pass reads this walk rather than Headings, because the
+// anchor space covers every heading a link can address, including the
+// level-one title a documentation page opens with. A level-one heading
+// still declares no section: its Number field carries the number its
+// text opens with, and a consumer computing sections drops it by level.
+//
+// A line inside a fenced code block is example text rather than a
+// heading.
+func AllHeadings(content string) []Heading {
 	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
 	var out []Heading
 	fenced := false
@@ -39,7 +69,7 @@ func Headings(content string) []Heading {
 		if fenced {
 			continue
 		}
-		m := headingExpr.FindStringSubmatch(line)
+		m := anyHeadingExpr.FindStringSubmatch(line)
 		if m == nil {
 			continue
 		}

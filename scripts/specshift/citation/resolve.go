@@ -81,21 +81,23 @@ func (f Failure) String() string {
 
 // Resolver answers whether a citation still points inside the section it names.
 // It holds the range of every numbered section under spec/, computed from the
-// headings headingExpr reads.
+// headings Headings reads.
 type Resolver struct {
 	byNumber map[string]Section
 	byFile   map[string][]Section
 }
 
-// headingExpr matches the headings a section's range is computed from, which
-// are the `##` through `######` headings under spec/. That predicate is shared
-// by the resolver, the per-file ratchet, and every population the migration
-// measures, so a heading level admitted here that the measurements do not admit
+// anyHeadingExpr matches every markdown heading, at every level a renderer
+// derives an anchor from. Headings drops the levels below SectionHeadingLevel,
+// so a section's range is computed from the `##` through `######` headings
+// under spec/ alone. That narrower predicate is shared by the resolver, the
+// per-file ratchet, and every population the migration measures, so a heading
+// level counted as declaring a section here that the measurements do not admit
 // would resolve citations the seeded baselines count as non-resolving. A
 // level-one title declares no section: a citation naming a number only a
 // level-one heading carries is reported as an unknown section, and a line under
 // such a title falls in no section.
-var headingExpr = regexp.MustCompile(`^(#{2,6})[ \t]+(.*)$`)
+var anyHeadingExpr = regexp.MustCompile(`^(#{1,6})[ \t]+(.*)$`)
 
 // fenceExpr matches the opening or closing line of a fenced code block. A line
 // opening with hashes inside a fence is a comment in an example rather than a
@@ -129,7 +131,7 @@ func NewResolver(ctx context.Context, list scope.Lister, read scope.FileReader) 
 	r := &Resolver{byNumber: map[string]Section{}, byFile: map[string][]Section{}}
 	files := 0
 	for _, path := range paths {
-		if !isSpecFile(path) {
+		if !IsSpecFile(path) {
 			continue
 		}
 		if err := ctx.Err(); err != nil {
@@ -158,8 +160,12 @@ func NewResolver(ctx context.Context, list scope.Lister, read scope.FileReader) 
 	return r, nil
 }
 
-// isSpecFile reports whether a tracked path is a specification file.
-func isSpecFile(path string) bool {
+// IsSpecFile reports whether a tracked path is a specification file, which is
+// the document set a §X.Y section citation names. The anchor pass reads the same
+// predicate, so a section number is judged live or retired against the
+// specification's own index rather than against a heading some other tracked
+// document happens to number the same way.
+func IsSpecFile(path string) bool {
 	return strings.HasPrefix(path, specPrefix) && strings.HasSuffix(path, ".md")
 }
 
@@ -169,7 +175,7 @@ func isSpecFile(path string) bool {
 // closes deeper headings without declaring a section, which is how an
 // unnumbered sub-heading inside a numbered section is read.
 //
-// The walk reads the headings headingExpr admits, which begin at level two, so
+// The walk reads the headings Headings admits, which begin at level two, so
 // a numbered level-one title declares no section. A file that states its number
 // only at level one therefore carries no section of that number: a citation
 // naming it is reported as an unknown section, and a line under the title falls

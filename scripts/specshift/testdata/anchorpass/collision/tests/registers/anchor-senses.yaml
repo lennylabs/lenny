@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+#
+# The citation of the retired section names the framing, which moved with
+# the channel.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/collide.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary
