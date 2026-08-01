@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
 #
-# The register answers the occurrence on its own. The anchor-move map
-# names no anchor of the retired section this carrier cites, which is
-# the ordinary case: the map is keyed by retired anchor and carries no
-# section number at all.
+# The register records one occurrence for this carrier, and it is the
+# citation of the section the anchor-move map retires an anchor of. The
+# citation of the section the map retires no anchor of stands outside the
+# class, so it takes no occurrence number and no entry answers for it.
 kind: anchor-senses
 version: 1
 entries:

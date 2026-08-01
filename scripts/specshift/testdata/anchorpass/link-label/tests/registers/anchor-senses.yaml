@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The one occurrence this carrier takes is the prose citation. The
+# retired section number written as the link's label is corrected in the
+# change that makes the reduction, so it takes no occurrence number here.
+kind: anchor-senses
+version: 1
+entries:
+  - file: docs/reference/label.md
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format

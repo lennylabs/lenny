@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -35,11 +36,12 @@ func (t Target) String() string { return t.File + "#" + t.Anchor }
 // to. Those two are the whole entry, which is what the change that
 // seeds the map writes.
 //
-// The map decides the link class alone, because a link names the
-// retired anchor. It decides nothing about a bare section citation: the
-// citation names a number the anchor does not carry, and a reduction
-// carves material out of the anchor it moves, so the per-occurrence
-// sense register answers that class instead.
+// The map decides the link class on its own, because a link names the
+// retired anchor. It scopes the bare-citation class without deciding it:
+// the anchor of a numbered heading opens with the section's digits, so
+// the map states which sections were retired, while a reduction carves
+// material out of the anchor it moves, so the per-occurrence sense
+// register answers what each citation inside that class means.
 type Move struct {
 	Anchor    string `json:"anchor"`
 	Successor Target `json:"successor"`
@@ -58,11 +60,27 @@ type mapDocument struct {
 }
 
 // moveMap is the loaded map, indexed by the retired anchor, which is
-// what the one site class it drives names: a markdown fragment link.
+// what a markdown fragment link names, and by the digits of the section
+// each retired anchor addressed, which is what a bare §X.Y citation
+// names.
 type moveMap struct {
 	path     string
 	byAnchor map[string]Move
+	// sections holds the digits of every section number the map retires
+	// an anchor of, as a citation of that number spells it with its dots
+	// removed. The anchor a renderer derives from a numbered heading
+	// opens with those digits, so the map states which sections this
+	// migration retired as well as which anchors, and the citation class
+	// is scoped by it the way the link class is scoped by the anchor.
+	sections map[string]bool
 }
+
+// anchorSectionExpr reads the leading digits of an anchor derived from a
+// numbered heading, which are the section's number with its dots
+// removed. An anchor that opens with no such run, which is the anchor of
+// an unnumbered heading, addresses no section number and contributes
+// none.
+var anchorSectionExpr = regexp.MustCompile(`^(\d+)(?:-|$)`)
 
 // loadMoves reads and validates the anchor-move map.
 //
@@ -93,7 +111,7 @@ func loadMoves(path string) (*moveMap, error) {
 	if len(*doc.Moves) == 0 {
 		return nil, fmt.Errorf("anchor-move map %s: carries no move", path)
 	}
-	m := &moveMap{path: path, byAnchor: map[string]Move{}}
+	m := &moveMap{path: path, byAnchor: map[string]Move{}, sections: map[string]bool{}}
 	for i, move := range *doc.Moves {
 		if err := validateMove(path, i, move); err != nil {
 			return nil, err
@@ -102,6 +120,9 @@ func loadMoves(path string) (*moveMap, error) {
 			return nil, fmt.Errorf("anchor-move map %s: anchor %q is declared twice", path, move.Anchor)
 		}
 		m.byAnchor[move.Anchor] = move
+		if digits := anchorSectionExpr.FindStringSubmatch(move.Anchor); digits != nil {
+			m.sections[digits[1]] = true
+		}
 	}
 	return m, nil
 }
@@ -128,6 +149,15 @@ func validateMove(path string, i int, m Move) error {
 func (m *moveMap) anchor(a string) (Move, bool) {
 	move, ok := m.byAnchor[a]
 	return move, ok
+}
+
+// retiresSection reports whether the map retires an anchor of the
+// section a citation names, which is what puts a bare §X.Y citation
+// inside the class the sense register resolves. A number the map retires
+// no anchor of names a section this migration did not move, so the pass
+// leaves every citation of it as it stands.
+func (m *moveMap) retiresSection(number string) bool {
+	return m.sections[strings.ReplaceAll(number, ".", "")]
 }
 
 // successors returns every successor the map names, in the order the

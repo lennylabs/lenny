@@ -9,22 +9,29 @@ import (
 	"strings"
 )
 
-// siteKind names which of the two reference forms a site carries. The
-// forms are driven by different registers: a link names the retired
-// anchor, which the map decides on its own, and a bare citation names a
-// retired section number the map does not carry at all, whose
-// destination the sense register answers per occurrence because a
-// reduction carves material out of the anchor it moves.
+// siteKind names which of the reference forms a site carries. Both
+// classes are scoped to the anchors the map records as retired, and each
+// is resolved by its own register: a link names the retired anchor,
+// which the map decides on its own, and a bare citation names the
+// section that anchor addressed, whose destination the sense register
+// answers per occurrence because a reduction carves material out of the
+// anchor it moves.
 type siteKind string
 
 const (
 	// linkSite is an intra-repo markdown fragment link, in the
 	// file-qualified `[...](NN_file.md#anchor)` form or the same-page
-	// `[...](#anchor)` form.
+	// `[...](#anchor)` form, into an anchor the map retires.
 	linkSite siteKind = "link"
 	// citationSite is a bare section citation of the §X.Y form, in a
-	// comment or in prose.
+	// comment or in prose, naming a section the map retires an anchor
+	// of.
 	citationSite siteKind = "citation"
+	// unmappedLinkSite is an intra-repo markdown fragment link into an
+	// anchor its target document no longer declares and the map carries
+	// no entry for. There is no successor to write, so the site stops
+	// the run rather than standing as a reference the pass passed over.
+	unmappedLinkSite siteKind = "unmapped-link"
 )
 
 // site is one reference the pass reads: the byte span it replaces, the
@@ -54,18 +61,18 @@ var fragmentLinkExpr = regexp.MustCompile(`\]\(([^)\s#]*)#([A-Za-z0-9._-]+)\)`)
 // that subsection rather than as naming its parent.
 var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 
-// findSites returns every reference one file carries that names a
-// retired anchor or a retired section, in source order.
+// findSites returns every reference one file carries that names an
+// anchor the map retires or the section such an anchor addressed, in
+// source order.
 //
-// A fragment link is in the class when the anchor-move map records its
-// anchor as retired and the document it addresses no longer declares
-// that anchor. Both halves are required. The map is what states which
-// anchors this migration retired, so a link into an anchor the map does
-// not name is outside the class, including a link into a heading that
-// was already broken before the migration, which is not this pass's to
-// invent a successor for. The heading index then keeps a link into an
-// anchor its own document still declares, which is a link the reduction
-// left alone.
+// A fragment link addresses a heading of a document the tree carries. A
+// link into an anchor its target document still declares is a link the
+// reduction left alone and stands. A link into an anchor that document
+// no longer declares is a redirect when the map names the anchor, and is
+// an unresolved reference when the map does not, which stops the run:
+// the pass has no successor to write there, and passing over it would
+// leave a reference into a retired anchor behind while the run reported
+// the zero work of a completed migration.
 //
 // A link whose destination is not a tracked markdown document of the
 // tree is not a site: an absolute URL and a link into a file the
@@ -73,16 +80,28 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // fragment-link gate reads, and rewriting one would edit a reference the
 // pass cannot check.
 //
-// A bare section citation is in the class when the specification no
-// longer declares the section it names. The map decides nothing here: it
-// is keyed by retired anchor, and the anchor is a slug of the heading
-// text rather than the number a citation carries. What such an
-// occurrence means is answered by the sense register, one occurrence at
-// a time, and an occurrence the register does not answer for stops the
-// run.
+// A bare section citation is in the class when the map retires an anchor
+// of the section it names and the specification no longer declares that
+// section. The map scopes this class as it scopes the link class, so a
+// citation of a number the specification does not declare and this
+// migration did not retire is left as it stands: it predates the
+// migration, no sub-step records what it means, and this pass has no
+// successor for it. Within the class, what an occurrence means is
+// answered by the sense register one occurrence at a time, because a
+// reduction carves material out of the anchor it moves, and an
+// occurrence the register does not answer for stops the run.
+//
+// A citation written inside a markdown fragment link is not read as a
+// bare citation. The pass performs a target-only redirect, and a label
+// that names the retiring subsection is corrected by hand in the change
+// that makes the reduction, so reading the label here would both rewrite
+// a site the pass does not own and shift the occurrence numbering the
+// sense register is keyed by.
 func findSites(target, text string, moves *moveMap, tree *headings) []site {
 	var out []site
+	var links []span
 	for _, m := range fragmentLinkExpr.FindAllStringSubmatchIndex(text, -1) {
+		links = append(links, span{start: labelStart(text, m[0]), end: m[1]})
 		destination, anchor := text[m[2]:m[3]], text[m[4]:m[5]]
 		if strings.Contains(destination, "://") {
 			continue
@@ -91,14 +110,15 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 		if destination != "" {
 			file = path.Join(path.Dir(target), destination)
 		}
-		if !tree.carries(file) {
+		if !tree.carries(file) || tree.declaresAnchor(file, anchor) {
 			continue
 		}
-		if _, mapped := moves.anchor(anchor); !mapped || tree.declaresAnchor(file, anchor) {
-			continue
+		kind := linkSite
+		if _, mapped := moves.anchor(anchor); !mapped {
+			kind = unmappedLinkSite
 		}
 		out = append(out, site{
-			kind:     linkSite,
+			kind:     kind,
 			start:    m[2],
 			end:      m[5],
 			line:     lineOf(text, m[2]),
@@ -109,7 +129,10 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 	}
 	for _, m := range bareCitationExpr.FindAllStringSubmatchIndex(text, -1) {
 		number := text[m[2]:m[3]]
-		if tree.declaresSection(number) {
+		if tree.declaresSection(number) || !moves.retiresSection(number) {
+			continue
+		}
+		if covers(links, m[0]) {
 			continue
 		}
 		out = append(out, site{
@@ -122,6 +145,39 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].start < out[j].start })
 	return out
+}
+
+// span is a half-open byte range of one file's text.
+type span struct {
+	start int
+	end   int
+}
+
+// covers reports whether any span contains the offset.
+func covers(spans []span, offset int) bool {
+	for _, s := range spans {
+		if offset >= s.start && offset < s.end {
+			return true
+		}
+	}
+	return false
+}
+
+// labelStart returns the offset a markdown link begins at, given the
+// offset of the `]` that closes its label. The label is the text between
+// the brackets on that line, so the search stops at the line start,
+// which leaves a destination written with no label spanning its
+// destination alone.
+func labelStart(text string, closing int) int {
+	for at := closing - 1; at >= 0; at-- {
+		switch text[at] {
+		case '[':
+			return at
+		case '\n':
+			return closing
+		}
+	}
+	return closing
 }
 
 // lineOf returns the 1-based line the offset sits on.
