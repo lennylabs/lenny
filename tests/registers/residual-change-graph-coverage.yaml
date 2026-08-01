@@ -1,0 +1,241 @@
+# SPDX-License-Identifier: MIT
+#
+# Residual register for the change-graph-coverage class.
+#
+# Each entry is a member of the class that the enumeration the migration
+# works from does not carry. An in-class entry belongs to the class, and
+# its route out is the class's own pass or remediation. An excluded entry
+# never belonged to the class, and it is permanent.
+#
+# The residual gate in tests/tier0_static fails tier 0 on a member that
+# matches the class's broad predicate and appears in neither the
+# enumeration nor this file, so a member no enumeration anticipated is
+# triaged here rather than absorbed. The gate removes an in-class entry
+# whose member has left the class in the same run, and it never adds an
+# entry.
+kind: residual-register
+version: 1
+class: change-graph-coverage
+entries:
+  - member: |-
+      .claude/workflows/build-gaps-spec-unblock.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/change-proposal.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/close-test-gaps.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/implement-proposal-build.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      .claude/workflows/implement-proposal.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      an agent workflow driver, which no test tier is selected from
+  - member: |-
+      close-build-gaps.sh
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a build-loop driver at the tree root, which no test tier is selected from
+  - member: |-
+      compose/smoke-test.sh
+    class: change-graph-coverage
+    disposition: in-class
+    reason: |-
+      a script of the compose stack that no glob key covers; it leaves the class when the compose tree gains a key
+  - member: |-
+      dist/brew/lenny-ctl.rb
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a packaging formula, which no test tier is selected from
+  - member: |-
+      dist/brew/lenny.rb
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a packaging formula, which no test tier is selected from
+  - member: |-
+      pkg/gateway/mcpfabric/playground/ui/app.js
+    class: change-graph-coverage
+    disposition: in-class
+    reason: |-
+      a browser asset of the playground that no glob key covers; it leaves the class when the playground gains a key covering its assets
+  - member: |-
+      schemas/embed.go
+    class: change-graph-coverage
+    disposition: in-class
+    reason: |-
+      a Go source under the schema tree that no glob key covers; it leaves the class when that tree gains a key
+  - member: |-
+      scripts/reconcile-test-gaps.py
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a maintenance script over the test-gap audit record, which no test tier is selected from
+  - member: |-
+      tests/tier12_load_cloud/scenarios/cstateless_burst/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/cstateless_dispatch/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/cworkspace_fanout_mcp/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/cworkspace_slot_claim/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/session_delegation_fanout/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/session_delegation_fanout_mcp/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/session_pod_claim/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/session_streaming_throughput/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/startup_latency/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/task_scrub_latency/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier12_load_cloud/scenarios/task_throughput/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/audit_lock/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/checkpoint_duration/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/credential_lifecycle/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/credential_rotation_under_load/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/delegation_fanout/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/delegation_fanout_mcp/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/experiment_load/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/gateway_capacity_calibration/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/pod_claim_latency/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/post_hardening_slo/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/postgres_write_burst/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/session_throughput/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/streaming_reconnect/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection
+  - member: |-
+      tests/tier7b_load_kind/scenarios/streaming_throughput/main.js
+    class: change-graph-coverage
+    disposition: excluded
+    reason: |-
+      a load scenario the load tiers execute by tier rather than by change selection

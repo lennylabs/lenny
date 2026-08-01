@@ -203,6 +203,25 @@ func Generated(target string, read FileReader) (Disjunct, error) {
 	if output {
 		return ProducerOutput, nil
 	}
+	return MarkerDeclared(target, read)
+}
+
+// MarkerDeclared applies the two marker disjuncts of the
+// generated-artifact rule alone and reports which one selected the file:
+// a generation marker in the file header, or a generation declaration in
+// top-level document metadata for a format that carries no comment
+// syntax. It answers NotGenerated for a file that declares nothing,
+// whether or not a producer names it.
+//
+// It is exported for the residual scan of the generated-artifact class,
+// whose enumeration is the marker: a file that declares itself generated
+// needs no triage, so what the scan reports is the file a producer names
+// with no declaration of its own. A scan that re-derived the marker
+// would drift from the rule the passes apply.
+//
+// It fails rather than answering when the file cannot be read, so a
+// caller never treats an unreadable file as an ordinary carrier.
+func MarkerDeclared(target string, read FileReader) (Disjunct, error) {
 	if read == nil {
 		return NotGenerated, fmt.Errorf("generated-artifact rule for %s: no file reader", target)
 	}

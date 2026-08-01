@@ -104,6 +104,17 @@ date on which it becomes wrong nor an open item a blocker could name,
 and the expiry and blocker rules would fail every such entry. The
 residual gate validates those files against that schema.
 
+A residual register declares `kind: residual-register`, `version: 1`,
+and the class it records, and the gate refuses a register whose declared
+class is not the one it is read for. Each entry is written as a literal
+block scalar, so a member is a verbatim copy of the text its class's
+predicate reads and no escape or line wrap stands between the two. The
+two line-citation classes' registers sit outside the read domain the
+gates share, because a member recorded on one line may have been read
+from a citation wrapped across two comment lines, and a gate reading the
+register would count that member as a live citation under the register's
+own path.
+
 ## Baselines and sense maps
 
 A baseline is keyed for the rewrite it drives. The per-file

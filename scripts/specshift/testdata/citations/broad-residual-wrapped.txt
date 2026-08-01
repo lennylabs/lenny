@@ -1,0 +1,2 @@
+// A note about §4.6 (the rule,
+// line 12 of the section.

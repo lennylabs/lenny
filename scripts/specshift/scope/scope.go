@@ -77,6 +77,16 @@ func (p Pass) Valid() bool {
 // copy of the text of every citation it carries, so reading it would
 // report each copy under the register's own path and seeding an entry
 // for that copy would not converge.
+//
+// The two citation residual registers are excluded for the same reason,
+// and for one further reason of their own. A residual member is recorded
+// as one line, while the occurrence it was read from may have been
+// wrapped across two comment lines, and the citation grammar reads
+// several spellings unwrapped that it cannot read across a wrap. A
+// wrapped occurrence recorded here therefore stands as a citation the
+// ratchet counts and the resolver reports, under a path whose only route
+// to a zero count would be a rewrite of the member the register is keyed
+// by.
 var readExcludedFiles = []string{
 	"BUILD-GAPS.md",
 	"TEST-GAPS.md",
@@ -84,6 +94,8 @@ var readExcludedFiles = []string{
 	"gateway-runtime-comms-remediation.md",
 	"tests/registers/line-citations.yaml",
 	"tests/registers/line-citation-resolution.yaml",
+	ClassLineCitations.ResidualRegister(),
+	ClassLineCitationResolution.ResidualRegister(),
 }
 
 // readExcludedPrefix is the staged-proposal tree, excluded for the same
@@ -161,39 +173,59 @@ const (
 // that has not landed selects nothing.
 var classRegisters = map[Class][]string{
 	ClassReservedPhrase: {
-		"tests/registers/residual-reserved-phrases.yaml",
+		ClassReservedPhrase.ResidualRegister(),
 		"tests/registers/reserved-phrase-senses.yaml",
 	},
 	ClassIdentifier: {
-		"tests/registers/residual-identifiers.yaml",
+		ClassIdentifier.ResidualRegister(),
 		"tests/registers/identifier-senses.yaml",
 	},
 	ClassAnchor: {
-		"tests/registers/residual-anchors.yaml",
+		ClassAnchor.ResidualRegister(),
 		"tests/registers/anchor-senses.yaml",
 	},
 	ClassLineCitations: {
-		"tests/registers/residual-line-citations.yaml",
+		ClassLineCitations.ResidualRegister(),
 		"tests/registers/line-citations.yaml",
 	},
 	ClassLineCitationResolution: {
-		"tests/registers/residual-line-citation-resolution.yaml",
+		ClassLineCitationResolution.ResidualRegister(),
 		"tests/registers/line-citation-resolution.yaml",
 	},
 	// The generated-artifact class is driven by the per-file rule in
 	// this package rather than by a register, so it excludes its
 	// residual register alone.
 	ClassGeneratedArtifact: {
-		"tests/registers/residual-generated-artifacts.yaml",
+		ClassGeneratedArtifact.ResidualRegister(),
 	},
 	ClassChangeGraphCoverage: {
-		"tests/registers/residual-change-graph-coverage.yaml",
+		ClassChangeGraphCoverage.ResidualRegister(),
 		"tests/registers/change-graph-coverage.yaml",
 	},
 	ClassSkipReason: {
-		"tests/registers/residual-skip-reasons.yaml",
+		ClassSkipReason.ResidualRegister(),
 		"tests/registers/skip-reasons.yaml",
 	},
+}
+
+// residualRegisterDir and residualRegisterPrefix compose the path of a
+// class's residual register. The convention is stated once here, so the
+// gate that reads a register and the exclusion that keeps the class from
+// reading it as tree content name the same file.
+const (
+	residualRegisterDir    = "tests/registers/"
+	residualRegisterPrefix = "residual-"
+)
+
+// ResidualRegister returns the repo-relative path of the class's
+// residual register, which records the members of the class the
+// enumeration does not carry.
+//
+// The register need not exist yet. Each one is seeded by the sub-step
+// that builds the class's residual check, and an exclusion for a
+// register that has not landed selects nothing.
+func (c Class) ResidualRegister() string {
+	return residualRegisterDir + residualRegisterPrefix + string(c) + ".yaml"
 }
 
 // Classes returns every class name in a stable order.

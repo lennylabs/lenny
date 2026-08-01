@@ -7111,3 +7111,187 @@ func TestIdentifierPassRejectsEveryNamingTableRowDefect(t *testing.T) {
 		})
 	}
 }
+
+// The broad citation predicate is what the residual scan of the two
+// line-citation classes ranges over. It is wider than the form the
+// grammar reads on purpose: a spelling the form misses is still selected
+// and reported for triage rather than passing unread. These cases pin
+// both halves of that relation, because the residual is the difference
+// between the two and a predicate narrower than the form would make the
+// difference empty for the wrong reason.
+
+// TestBroadPredicateSelectsEveryCitationTheFormReads pins that the
+// predicate covers the form, so subtracting the citations the form read
+// leaves only the spellings it missed.
+func TestBroadPredicateSelectsEveryCitationTheFormReads(t *testing.T) {
+	t.Parallel()
+	// Each spelling is held in a fixture rather than in this source, so
+	// the tooling's own file does not carry the form its gates report.
+	for _, name := range []string{
+		"broad-enumerated-keyword.txt",
+		"broad-enumerated-plural.txt",
+		"broad-enumerated-list.txt",
+		"broad-enumerated-colon.txt",
+		"broad-enumerated-path.txt",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			content := citationFixture(t, name)
+			read := citation.Find(content)
+			if len(read) != 1 {
+				t.Fatalf("the citation form read %d occurrence(s) of %s, want one", len(read), name)
+			}
+			broad := citation.FindBroad(content)
+			if len(broad) != 1 {
+				t.Fatalf("the broad predicate selected %d occurrence(s) of %s, want one", len(broad), name)
+			}
+			// The two matchers bound a citation differently, so the
+			// relation asserted is overlap rather than equality.
+			if broad[0].Offset >= read[0].Offset+len(read[0].Raw) || read[0].Offset >= broad[0].End {
+				t.Errorf("the broad occurrence at [%d,%d) does not overlap the citation at [%d,%d)",
+					broad[0].Offset, broad[0].End, read[0].Offset, read[0].Offset+len(read[0].Raw))
+			}
+		})
+	}
+}
+
+// TestBroadPredicateSelectsASpellingTheFormDoesNotRead pins the residual
+// itself: an occurrence the grammar's separators, keyword position, and
+// keyword case leave unread is still selected, and it is reported with
+// the text a register is keyed by. Each spelling and each expectation is
+// held in a fixture for the reason fixtureCitations states.
+func TestBroadPredicateSelectsASpellingTheFormDoesNotRead(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, fixture string }{
+		{"prose between the reference and the keyword", "broad-residual-prose.txt"},
+		{"a keyword written in another case", "broad-residual-case.txt"},
+		{"a comma between the reference and the keyword", "broad-residual-comma.txt"},
+		{"a member list inside a parenthesis of the carrier", "broad-residual-paren.txt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			content := citationFixture(t, tc.fixture)
+			if read := citation.Find(content); len(read) != 0 {
+				t.Fatalf("the citation form read %q, so it is no residual", read[0].Text)
+			}
+			broad := citation.FindBroad(content)
+			if len(broad) != 1 {
+				t.Fatalf("the broad predicate selected %d occurrence(s) of %s, want one", len(broad), tc.fixture)
+			}
+			if want := wantCitation(t, tc.fixture); broad[0].Text != want {
+				t.Errorf("the occurrence reads %q, want %q", broad[0].Text, want)
+			}
+		})
+	}
+}
+
+// TestBroadPredicateReadsAWrappedOccurrenceAsOneLine pins the adjacency
+// rule: the continuation join is tolerated, so a citation wrapped across
+// two comment lines is one occurrence whose text reads as one line. A
+// line-oriented scan would see a reference with no line-number token on
+// the first line and a token with no reference on the second, and report
+// neither.
+func TestBroadPredicateReadsAWrappedOccurrenceAsOneLine(t *testing.T) {
+	t.Parallel()
+	const fixture = "broad-residual-wrapped.txt"
+	broad := citation.FindBroad(citationFixture(t, fixture))
+	if len(broad) != 1 {
+		t.Fatalf("the broad predicate selected %d occurrence(s) across the wrap, want one", len(broad))
+	}
+	if want := wantCitation(t, fixture); broad[0].Text != want {
+		t.Errorf("the wrapped occurrence reads %q, want %q", broad[0].Text, want)
+	}
+	if !strings.Contains(broad[0].Raw, "\n") {
+		t.Errorf("the raw span %q does not carry the wrap it was read across", broad[0].Raw)
+	}
+}
+
+// TestBroadPredicateRejectsAReferenceTakenOutOfALongerWord pins the left
+// boundary: a file-name spelling cut out of a longer digit run names no
+// section, so the predicate does not report the prose that carries it.
+func TestBroadPredicateRejectsAReferenceTakenOutOfALongerWord(t *testing.T) {
+	t.Parallel()
+	for _, content := range []string{
+		"// build 2004_release.md line 12 of the log\n",
+		"// a note with no line-number token about §4.6 of the section\n",
+		"// §4.6 states the rule, and 12 unrelated sentences follow it in the same paragraph of prose\n",
+	} {
+		t.Run(content, func(t *testing.T) {
+			t.Parallel()
+			if broad := citation.FindBroad(content); len(broad) != 0 {
+				t.Errorf("the broad predicate selected %q", broad[0].Text)
+			}
+		})
+	}
+}
+
+// TestMarkerDeclaredAnswersNotGeneratedForAProducerOutput pins the
+// enumeration of the generated-artifact class: the marker disjuncts
+// alone answer for a file, so a producer output that declares nothing is
+// what the residual scan reports and a file that declares itself
+// generated is not.
+func TestMarkerDeclaredAnswersNotGeneratedForAProducerOutput(t *testing.T) {
+	t.Parallel()
+	const target = "charts/lenny/crds/lenny.dev_widgets.yaml"
+	for _, tc := range []struct {
+		name    string
+		content string
+		marker  scope.Disjunct
+	}{
+		{"a manifest with no marker", "apiVersion: apiextensions.k8s.io/v1\n", scope.NotGenerated},
+		{"a manifest declaring itself generated", "# Code generated by controller-gen. DO NOT EDIT.\napiVersion: v1\n", scope.HeaderMarker},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			read := func(p string) ([]byte, error) {
+				if p != target {
+					return nil, fs.ErrNotExist
+				}
+				return []byte(tc.content), nil
+			}
+			// The whole rule selects the file either way, because a
+			// producer names it.
+			disjunct, err := scope.Generated(target, read)
+			if err != nil {
+				t.Fatalf("apply the generated-artifact rule: %v", err)
+			}
+			if disjunct != scope.ProducerOutput {
+				t.Fatalf("the rule answered %q, want the producer disjunct", disjunct)
+			}
+			marker, err := scope.MarkerDeclared(target, read)
+			if err != nil {
+				t.Fatalf("read the generation marker: %v", err)
+			}
+			if marker != tc.marker {
+				t.Errorf("the marker disjuncts answered %q, want %q", marker, tc.marker)
+			}
+		})
+	}
+}
+
+// TestCitationResidualRegistersAreOutsideTheSharedReadDomain pins that
+// no gate reads a citation-class residual register as tree content.
+//
+// A residual member is recorded as one line, and the occurrence it was
+// read from may have been wrapped across two comment lines. The grammar
+// reads several spellings unwrapped that it cannot read across a wrap,
+// so a member recorded here would stand as a live citation: the ratchet
+// would count it under the register's own path, the resolver would
+// report it, and the only route to a zero count would be a rewrite of
+// the member the register is keyed by.
+func TestCitationResidualRegistersAreOutsideTheSharedReadDomain(t *testing.T) {
+	t.Parallel()
+	for _, c := range []scope.Class{scope.ClassLineCitations, scope.ClassLineCitationResolution} {
+		register := c.ResidualRegister()
+		if scope.Readable(register) {
+			t.Errorf("the shared read domain admits %s, so a gate reads a member as a citation of its own", register)
+		}
+		// The sibling registers of the classes whose members carry no
+		// citation text stay inside the domain, so the exclusion is the
+		// narrow one the copy argument supports.
+		if !scope.Readable(scope.ClassSkipReason.ResidualRegister()) {
+			t.Errorf("the shared read domain excludes %s, which carries no text a gate reads",
+				scope.ClassSkipReason.ResidualRegister())
+		}
+	}
+}
