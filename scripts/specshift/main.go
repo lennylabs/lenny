@@ -43,6 +43,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/lennylabs/lenny/scripts/specshift/anchor"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/pass"
@@ -76,8 +77,9 @@ type options struct {
 // identifier space those files declare.
 func builtPasses(root string) map[scope.Pass]pass.Rewriter {
 	return map[scope.Pass]pass.Rewriter{
-		scope.Name: name.New(scope.GitLister(root), scope.DirReader(root)),
-		scope.Line: line.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Name:   name.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Anchor: anchor.New(scope.GitLister(root), scope.DirReader(root)),
+		scope.Line:   line.New(scope.GitLister(root), scope.DirReader(root)),
 	}
 }
 

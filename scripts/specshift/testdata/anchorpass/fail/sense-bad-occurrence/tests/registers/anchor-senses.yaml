@@ -1,0 +1,6 @@
+kind: anchor-senses
+version: 1
+entries:
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 0
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

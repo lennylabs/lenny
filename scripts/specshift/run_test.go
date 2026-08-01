@@ -18,6 +18,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/lennylabs/lenny/scripts/specshift/anchor"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/scripts/specshift/line"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
@@ -5356,5 +5357,393 @@ func TestNamePassFailsAPinnedLiteralEntryNoLiteralClaims(t *testing.T) {
 				t.Error("the failed run wrote to the tree")
 			}
 		})
+	}
+}
+
+// The anchor pass cases run over their own fixture tree, held under
+// testdata/anchorpass/ for the reason the citation fixtures under
+// testdata/citations/ are: testdata/ is outside the read domain of every
+// pass and every gate, so no gate reports this package's own input.
+const fixtureAnchorPass = "testdata/anchorpass"
+
+// anchorTree assembles the tree one anchor pass case runs over, which is
+// the shared specification fixture plus the case's own carriers.
+func anchorTree(t *testing.T, carriers string) string {
+	t.Helper()
+	root := t.TempDir()
+	copyTreeInto(t, filepath.Join(fixtureAnchorPass, "spec"), root)
+	copyTreeInto(t, filepath.Join(fixtureAnchorPass, carriers), root)
+	return root
+}
+
+// anchorRewriter returns the anchor pass over the tree at root, driven
+// by the named anchor-move map fixture.
+func anchorRewriter(t *testing.T, root, moves string) *anchor.Rewriter {
+	t.Helper()
+	r := anchor.New(scope.DirLister(root), scope.DirReader(root))
+	if err := r.LoadRegister(filepath.Join(fixtureAnchorPass, "maps", moves)); err != nil {
+		t.Fatalf("load the anchor-move map %s: %v", moves, err)
+	}
+	return r
+}
+
+// applyAnchorPass runs the anchor pass over the tree at root and returns
+// the applied diff.
+func applyAnchorPass(t *testing.T, root, moves string) pass.Diff {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	diff, err := h.Apply(context.Background(), anchorRewriter(t, root, moves))
+	if err != nil {
+		t.Fatalf("apply the anchor pass: %v", err)
+	}
+	return diff
+}
+
+// planAnchorPass runs the anchor pass over the tree at root without
+// writing, and returns the error a fail-closed case expects.
+func planAnchorPass(t *testing.T, root, moves string) (pass.Diff, error) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	return h.Plan(context.Background(), anchorRewriter(t, root, moves))
+}
+
+// applyAnchorPassErr runs the anchor pass through the writing path and
+// returns the error a fail-closed case expects. The harness has a
+// writer, so a run that raised its failure after a write rather than
+// before one would leave the tree changed.
+func applyAnchorPassErr(t *testing.T, root, moves string) (pass.Diff, error) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	return h.Apply(context.Background(), anchorRewriter(t, root, moves))
+}
+
+// assertRedirected compares one rewritten carrier against the expected
+// content held beside the fixture tree.
+func assertRedirected(t *testing.T, root, target string) {
+	t.Helper()
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+	want := readFixtureFile(t, filepath.Join(fixtureAnchorPass, "want", target))
+	if after != want {
+		t.Fatalf("%s after the anchor pass is\n%s\nwant\n%s", target, after, want)
+	}
+}
+
+// TestAnchorPassRedirectsAFileQualifiedLinkAndLeavesASurvivingOneUntouched
+// pins the map-decidable link class. A file-qualified link into a
+// retired anchor is rewritten to the successor the map names, written as
+// the path from the citing page, while a link into a surviving anchor,
+// a link into a file the repository does not track, and an absolute URL
+// the fragment-link gate does not read are each left as they stand.
+//
+// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
+// names the heading the material moved to)
+func TestAnchorPassRedirectsAFileQualifiedLinkAndLeavesASurvivingOneUntouched(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	for _, target := range []string{
+		"spec/07_session-lifecycle.md",
+		"docs/reference/adapter-contract.md",
+	} {
+		t.Run(target, func(t *testing.T) {
+			assertRedirected(t, root, target)
+		})
+	}
+}
+
+// TestAnchorPassRedirectsASamePageLinkAndLeavesASurvivingOneUntouched
+// pins the same-page form of the same class, which is the majority form
+// inside a specification file. The link whose successor sits on another
+// page takes the file-qualified form of that successor, the link whose
+// successor stays on the page keeps the same-page form, and the link
+// into the surviving anchor beside them is left as it stands.
+//
+// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
+// names the heading the material moved to)
+func TestAnchorPassRedirectsASamePageLinkAndLeavesASurvivingOneUntouched(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	assertRedirected(t, root, "spec/15_external-api-surface.md")
+}
+
+// TestAnchorPassResolvesACitationOfCarvedOutMaterialToTheSurvivingHeading
+// pins the class the map alone cannot decide. Two bare citations of the
+// same retired section stand in one carrier: the first names material
+// the carve-out keeps where it is and resolves to the surviving heading,
+// and the second names material that moved and resolves to the section
+// the map's successor declares. Sending the first to the map's single
+// successor would land a canonical-looking pointer at a card that does
+// not define the envelope it cites.
+//
+// spec: §28.1 (N8, the citation rule: a citation names the heading that
+// defines the material it cites)
+func TestAnchorPassResolvesACitationOfCarvedOutMaterialToTheSurvivingHeading(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
+}
+
+// TestAnchorPassAbortsAtACitationTheSenseRegisterDoesNotRecord pins the
+// fail-closed rule the citation class rests on. An occurrence the sense
+// register does not carry aborts the run non-zero, names the file and
+// the line, and leaves every carrier byte-identical, including the
+// carrier whose own occurrences the register does resolve. Substituting
+// the map's single successor there would read as resolved to every gate
+// over the anchor classes while naming a heading that does not define
+// the cited material.
+//
+// The run goes through the writing path, so the byte-identity assertion
+// covers a run that had a writer and a resolvable sibling carrier it
+// would otherwise have rewritten.
+//
+// spec: §28.1 (N8, the citation rule: a citation whose destination is
+// unresolved is reported rather than redirected against a guess)
+func TestAnchorPassAbortsAtACitationTheSenseRegisterDoesNotRecord(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fail/unregistered")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass returned no error at a citation the sense register does not record")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/unregistered.go" || abort.Line != 7 {
+		t.Errorf("the abort names %s line %d, want pkg/carrier/unregistered.go line 7", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "anchor-senses.yaml") {
+		t.Errorf("the abort does not name the sense register: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
+	}
+}
+
+// TestAnchorPassFailsAMoveWhoseSuccessorHeadingDoesNotExist pins that
+// every redirect is held to a heading of the tree before any file is
+// written. A successor nothing declares would send every inbound
+// reference to a page position that does not resolve, and the rewritten
+// reference reads as resolved to a reader of the diff.
+//
+// spec: §28.1 (N8, the citation rule: a redirect names a heading the
+// tree declares)
+func TestAnchorPassFailsAMoveWhoseSuccessorHeadingDoesNotExist(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "successor-missing.json")
+	if err == nil {
+		t.Fatal("the anchor pass ran with a successor heading no document declares")
+	}
+	if !strings.Contains(err.Error(), "2859-ch-nothing-declares-this") {
+		t.Errorf("the failure does not name the successor: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestAnchorPassFailsASenseDestinationNoHeadingDeclares pins the same
+// check over the second register. A destination is resolved against the
+// headings of the tree before any file is written, so a typo in an entry
+// fails the run rather than landing at a site as a pointer to a heading
+// that exists nowhere.
+//
+// spec: §28.1 (N8, the citation rule: a redirect names a heading the
+// tree declares)
+func TestAnchorPassFailsASenseDestinationNoHeadingDeclares(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "fail/undeclared-destination")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass ran with a destination no heading declares")
+	}
+	if !strings.Contains(err.Error(), "messageenvelope-that-nothing-declares") {
+		t.Errorf("the failure does not name the destination: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
+}
+
+// TestAnchorPassRejectsAMissingOrMalformedAnchorMoveMap pins that the
+// map is validated before the run rather than loaded as an empty one. A
+// map that carried nothing would rewrite no site while the run exited
+// zero, which reads as a completed migration, and the change that
+// empties the map is the change that would destroy the record of what
+// the run should have done.
+//
+// spec: §28.1 (N8, the citation rule: the redirect is driven by the map
+// the change ships)
+func TestAnchorPassRejectsAMissingOrMalformedAnchorMoveMap(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		defect string
+		file   string
+		names  string
+	}{
+		{"a map that is not in the tree", "absent.json", "read the anchor-move map"},
+		{"a map that does not parse", "malformed.json", "parse the anchor-move map"},
+		{"a map declaring another kind", "wrong-kind.json", "expected kind"},
+		{"a map declaring another version", "wrong-version.json", "expected version"},
+		{"a map with no moves block", "no-moves-block.json", "carries no moves block"},
+		{"a map with no move", "empty-moves.json", "carries no move"},
+		{"a move naming no retired anchor", "invalid-no-anchor.json", "names no retired anchor"},
+		{"a move naming no successor file", "invalid-no-successor-file.json", "names no successor file"},
+		{"a move naming no successor anchor", "invalid-no-successor-anchor.json", "names no successor anchor"},
+		{"a move whose section is not a section number", "invalid-section.json", "not a dotted section number"},
+		{"an anchor declared twice", "invalid-duplicate-anchor.json", "is declared twice"},
+		{"a section with two successors", "invalid-duplicate-section.json", "two successors"},
+	} {
+		t.Run(tc.defect, func(t *testing.T) {
+			t.Parallel()
+			root := anchorTree(t, "tree")
+			r := anchor.New(scope.DirLister(root), scope.DirReader(root))
+			err := r.LoadRegister(filepath.Join(fixtureAnchorPass, "maps", tc.file))
+			if err == nil {
+				t.Fatalf("the anchor pass loaded %s", tc.defect)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name the defect %q: %v", tc.names, err)
+			}
+		})
+	}
+}
+
+// TestAnchorPassRejectsAMissingOrMalformedSenseRegister pins the same
+// rule over the register the tree carries. A register that loaded as
+// carrying nothing would abort the run at the first bare citation of the
+// tree, reporting a register that had not been seeded while one had
+// been.
+//
+// spec: §28.1 (N8, the citation rule: the redirect is driven by the
+// register the change ships)
+func TestAnchorPassRejectsAMissingOrMalformedSenseRegister(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		defect   string
+		carriers string
+		names    string
+	}{
+		{"a register that is not in the tree", "fail/sense-missing", "read the anchor sense register"},
+		{"a register that does not parse", "fail/sense-malformed", "parse the anchor sense register"},
+		{"a register declaring another kind", "fail/sense-wrong-kind", "expected kind"},
+		{"a register declaring another version", "fail/sense-wrong-version", "expected version"},
+		{"a register with no entries block", "fail/sense-no-entries-block", "carries no entries block"},
+		{"a register with no entry", "fail/sense-empty-entries", "carries no entry"},
+		{"an entry naming no file", "fail/sense-no-file", "carries no file"},
+		{"an entry numbered from zero", "fail/sense-bad-occurrence", "numbered from one"},
+		{"an entry whose destination names no anchor", "fail/sense-bad-destination", "<path>#<anchor>"},
+		{"an occurrence declared twice", "fail/sense-duplicate", "is declared twice"},
+	} {
+		t.Run(tc.defect, func(t *testing.T) {
+			t.Parallel()
+			root := anchorTree(t, tc.carriers)
+			before := treeSnapshot(t, root)
+			_, err := applyAnchorPassErr(t, root, "tree.json")
+			if err == nil {
+				t.Fatalf("the anchor pass ran with %s", tc.defect)
+			}
+			if !strings.Contains(err.Error(), tc.names) {
+				t.Errorf("the failure does not name the defect %q: %v", tc.names, err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}
+
+// TestAnchorPassLeavesEveryWriteExcludedCarrierByteIdentical pins the
+// write exclusion. A reference into a retired anchor in the staged
+// proposal tree, in either historical audit record, and in either root
+// planning document is left exactly as it was written and appears in
+// neither the dry-run output nor the applied diff, while an equivalent
+// reference in an ordinary carrier in the same run is redirected.
+//
+// spec: §28.1 (N8, the citation rule: the excluded records are outside
+// the writable population)
+func TestAnchorPassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	excluded := []string{
+		"proposals/0001_example.md",
+		"BUILD-GAPS.md",
+		"TEST-GAPS.md",
+		"gateway-runtime-comms.md",
+		"gateway-runtime-comms-remediation.md",
+	}
+	before := treeSnapshot(t, root)
+	planned, err := planAnchorPass(t, root, "tree.json")
+	if err != nil {
+		t.Fatalf("plan the anchor pass: %v", err)
+	}
+	applied := applyAnchorPass(t, root, "tree.json")
+	after := treeSnapshot(t, root)
+	inPlan, inApplied := membership(planned.Paths()), membership(applied.Paths())
+	for _, target := range excluded {
+		if before[target] == "" {
+			t.Fatalf("the fixture tree carries no %s", target)
+		}
+		if after[target] != before[target] {
+			t.Errorf("%s was rewritten:\n%s", target, after[target])
+		}
+		if inPlan[target] {
+			t.Errorf("the dry-run output names the excluded %s", target)
+		}
+		if inApplied[target] {
+			t.Errorf("the applied diff names the excluded %s", target)
+		}
+	}
+	assertRedirected(t, root, "spec/07_session-lifecycle.md")
+}
+
+// TestAnchorPassDryRunOutputEqualsTheAppliedDiff pins the entry
+// criterion for applying the pass: what the dry run reports is what the
+// apply writes, so a reviewer reads the whole redirect before any file
+// moves.
+//
+// spec: §28.1 (N8, the citation rule: the redirect is reviewed before it
+// is applied)
+func TestAnchorPassDryRunOutputEqualsTheAppliedDiff(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	before := treeSnapshot(t, root)
+	planned, err := planAnchorPass(t, root, "tree.json")
+	if err != nil {
+		t.Fatalf("plan the anchor pass: %v", err)
+	}
+	if len(planned.Files) == 0 {
+		t.Fatal("the dry run reports no work over the fixture tree")
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the dry run wrote to the tree")
+	}
+	applied := applyAnchorPass(t, root, "tree.json")
+	if !planned.Equal(applied) {
+		t.Fatalf("the applied diff differs from the dry run: %v vs %v", planned.Paths(), applied.Paths())
+	}
+}
+
+// TestTheDriverCarriesTheAnchorPass pins that the pass the driver runs
+// is the built one, so a run of the engine over a checkout redirects
+// references rather than reporting a pass that is not built.
+//
+// spec: §28.1 (N8, the citation rule: the redirect is performed by the
+// committed tooling)
+func TestTheDriverCarriesTheAnchorPass(t *testing.T) {
+	t.Parallel()
+	built := builtPasses(repoRoot(t))
+	r, ok := built[scope.Anchor]
+	if !ok {
+		t.Fatal("the driver carries no anchor pass")
+	}
+	if r.Pass() != scope.Anchor {
+		t.Errorf("the built pass names the %s write domain", r.Pass())
 	}
 }

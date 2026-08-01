@@ -176,44 +176,20 @@ func isSpecFile(path string) bool {
 // in no section of the file.
 func parseSections(path, content string) []Section {
 	lines := strings.Split(strings.TrimSuffix(content, "\n"), "\n")
-	type heading struct {
-		level  int
-		number string
-		start  int
-	}
-	var headings []heading
-	fenced := false
-	for i, line := range lines {
-		if fenceExpr.MatchString(line) {
-			fenced = !fenced
-			continue
-		}
-		if fenced {
-			continue
-		}
-		m := headingExpr.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		h := heading{level: len(m[1]), start: i + 1}
-		if n := numberExpr.FindStringSubmatch(strings.TrimSpace(m[2])); n != nil {
-			h.number = n[1]
-		}
-		headings = append(headings, h)
-	}
+	headings := Headings(content)
 	var out []Section
 	for i, h := range headings {
-		if h.number == "" {
+		if h.Number == "" {
 			continue
 		}
 		end := len(lines)
 		for _, next := range headings[i+1:] {
-			if next.level <= h.level {
-				end = next.start - 1
+			if next.Level <= h.Level {
+				end = next.Line - 1
 				break
 			}
 		}
-		out = append(out, Section{Number: h.number, File: path, Level: h.level, Start: h.start, End: end})
+		out = append(out, Section{Number: h.Number, File: path, Level: h.Level, Start: h.Line, End: end})
 	}
 	return out
 }

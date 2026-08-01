@@ -1,0 +1,6 @@
+kind: anchor-senses
+version: 1
+entries:
+  - file: "  "
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

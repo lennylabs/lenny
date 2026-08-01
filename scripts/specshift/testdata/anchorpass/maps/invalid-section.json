@@ -1,0 +1,7 @@
+{
+  "kind": "spec-anchor-moves",
+  "version": 1,
+  "moves": [
+    {"anchor": "1541-adapterbinary-protocol", "section": "fifteen-four-one", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2851-ch-adapterbinary"}}
+  ]
+}
