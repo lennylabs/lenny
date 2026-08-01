@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # Every site of the fixture tree but the command-line file argument in
 # spec/17, whose sense the register leaves unrecorded.
 kind: identifier-senses

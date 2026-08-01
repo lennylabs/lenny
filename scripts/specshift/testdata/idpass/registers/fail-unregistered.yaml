@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # The sibling carrier's site is resolved and the other file's is not, so
 # a run over the pair leaves both byte-identical.
 kind: identifier-senses

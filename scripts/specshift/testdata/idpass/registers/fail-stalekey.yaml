@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # The carrier moves, and the spec map names its old path inside a note
 # the key rewrite cannot move.
 kind: identifier-senses

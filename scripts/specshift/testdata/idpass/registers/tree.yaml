@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: MIT
 # The senses of the fixture tree, one entry per occurrence of a retired
 # spelling the pass cannot prove is the channel.
 kind: identifier-senses
