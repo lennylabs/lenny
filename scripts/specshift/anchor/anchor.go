@@ -4,34 +4,32 @@
 // reference into a retired section anchor to the heading the material
 // moved to.
 //
-// Two site classes are rewritten. The tree scopes both, and each is
-// resolved by its own register.
+// Two site classes are rewritten. The anchor-move map scopes both, and
+// each is resolved by its own register.
 //
-// One rule scopes both classes: a reference whose destination the tree
-// still declares is a reference the reduction left alone and stands, and
-// every other reference names a destination that is gone and is a site,
-// whether written as a fragment link or as a bare §X.Y citation. A site
-// no register resolves aborts the run, naming the file and the line,
-// with the tree left byte-identical. Scoping the classes by the
-// registers instead would leave a reference into a heading that is gone
-// unrewritten and unreported with the run exiting zero, which is the
-// silent no-op the pass's own abort exists to prevent.
+// One rule scopes both classes: a reference into an anchor the map
+// retires is a site, whether it is written as a fragment link or as a
+// bare §X.Y citation of the section that anchor addressed, and every
+// other reference names a heading this reduction leaves alone and
+// stands as written. A reference that resolves nowhere for a reason
+// this reduction did not create belongs to the hand-authored class the
+// fragment-link gate and the anchor class's residual check own, so
+// scoping the pass by the tree instead would stop every run over a
+// population no map entry redirects.
 //
-// An intra-repo markdown fragment link is resolved by the anchor-move
-// map, because the link names the retired anchor and the map carries one
+// An intra-repo markdown fragment link is resolved by the map itself,
+// because the link names the retired anchor and the map carries one
 // successor per anchor. Both forms of that link are inside the pass, the
 // file-qualified `[...](NN_file.md#anchor)` form and the same-page
 // `[...](#anchor)` form, which is the majority form inside a
-// specification file. A link into an anchor the document it addresses no
-// longer declares is rewritten to the successor the map names, and
-// aborts the run when the map names none. A link into an anchor that
-// document still declares is left as it stands, and so is a link whose
-// destination is not a tracked markdown document of the tree, which
-// covers an absolute URL the fragment-link gate does not read either.
+// specification file. A link whose destination is not a tracked markdown
+// document of the tree is left alone, which covers an absolute URL the
+// fragment-link gate does not read either.
 //
 // A bare section citation of the §X.Y form, in a comment or in prose
-// alike, is in the class when no specification file declares the section
-// it names any more. What the occurrence means is decided by the sense
+// alike, is in the class when the map retires the anchor of the section
+// it names, which the map states by keying each entry with the slug of
+// the retired heading. What the occurrence means is decided by the sense
 // register. The map cannot decide that: a reduction
 // carves material out of the section it moves, so a citation
 // of the carved-out material means a heading that stays where it is
@@ -46,12 +44,6 @@
 // gate over the anchor classes reads meaning: the fragment-link gate
 // reads links alone, and the citation resolver and the per-file ratchet
 // match the retired line-citation form alone.
-//
-// A section number is judged live or retired against the specification's
-// own headings. A heading numbered the same way in a testing document or
-// a documentation page declares no specification section, so folding it
-// in would report a retired section as alive and pass silently over
-// every citation of it.
 //
 // A redirect is held to a heading that exists. Every successor the map
 // names and every destination the sense register names is resolved
@@ -140,7 +132,7 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 		return nil, err
 	}
 	text := string(content)
-	sites := findSites(target, text, r.tree)
+	sites := findSites(target, text, r.tree, r.moves)
 	if len(sites) == 0 {
 		return content, nil
 	}
@@ -154,19 +146,16 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 // plan resolves every site of one file against the register that decides
 // its class.
 //
-// A link is resolved by the map, which carries the successor to write in
-// place of the retired anchor the link names. A link into an anchor no
-// document of the tree declares and the map carries no entry for aborts
-// the run: the heading the reference means was never resolved, and the
-// reference resolves nowhere as it stands.
+// A link carries the successor the map named when the link was read as a
+// site, because the map is what put it in the population.
 //
 // A citation is resolved by the sense register, because what the
 // occurrence means is the question the map cannot answer. An occurrence
-// the register does not record aborts the run for the same reason.
-// Passing over either would leave a reference into a heading that is
-// gone while the run exited zero, which reads as the completed migration
-// it is not, and the change that empties the registers is the change
-// that destroys the record of what the run should have done.
+// the register does not record aborts the run. Passing over it would
+// leave a citation of a retired anchor standing while the run exited
+// zero, which reads as the completed migration it is not, and the change
+// that empties the registers is the change that destroys the record of
+// what the run should have done.
 //
 // Every unresolved site is collected before the plan fails, so one run
 // names the whole hand-correction population rather than its first
@@ -183,14 +172,8 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	var aborts []*pass.Abort
 	citations := 0
 	for _, s := range sites {
-		switch s.kind {
-		case linkSite:
-			move, ok := r.moves.anchor(s.anchor)
-			if !ok {
-				aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: unmappedLinkReason(s, r.moves.path)})
-				continue
-			}
-			edits = append(edits, edit{start: s.start, end: s.end, text: linkTarget(target, s, move.Successor)})
+		if s.kind == linkSite {
+			edits = append(edits, edit{start: s.start, end: s.end, text: linkTarget(target, s, s.successor)})
 			continue
 		}
 		citations++
@@ -214,14 +197,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 		return nil, err
 	}
 	return edits, nil
-}
-
-// unmappedLinkReason states why a link into an anchor the tree no longer
-// declares stops the run, naming the destination it fails to resolve and
-// the map that redirects it.
-func unmappedLinkReason(s site, mapPath string) string {
-	return fmt.Sprintf("the link into %s#%s names an anchor that document no longer declares, and %s carries no successor for it",
-		s.file, s.anchor, mapPath)
 }
 
 // unresolvedReason states why a citation the sense register does not

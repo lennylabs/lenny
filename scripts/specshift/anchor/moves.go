@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -58,10 +59,34 @@ type mapDocument struct {
 }
 
 // moveMap is the loaded map, indexed by the retired anchor, which is
-// what a markdown fragment link names.
+// what a markdown fragment link names, and by the section number each
+// retired anchor addressed, which is what a bare §X.Y citation names.
 type moveMap struct {
 	path     string
 	byAnchor map[string]Move
+	// sections holds the section number of every retired anchor whose
+	// slug opens with one.
+	sections map[string]bool
+}
+
+// leadingDigitsExpr reads the digit run a heading slug opens with. A
+// renderer derives the anchor of a numbered heading from its text, so
+// the slug of `#### 15.4.1 Adapter/Binary Protocol` opens with `1541`,
+// which is the section number with its separators dropped.
+var leadingDigitsExpr = regexp.MustCompile(`^[0-9]+`)
+
+// sectionDigits returns the digit run a section number reduces to, which
+// is the number with its separators dropped, so a citation is matched
+// against the retired anchors the map is keyed by.
+func sectionDigits(number string) string { return strings.ReplaceAll(number, ".", "") }
+
+// retiresSection reports whether the map retires the anchor of the
+// section the number names, which is what puts a bare §X.Y citation of
+// it in the pass's population. A number the map does not retire names a
+// section this migration does not move, and the citation of it stands
+// as written.
+func (m *moveMap) retiresSection(number string) bool {
+	return m.sections[sectionDigits(number)]
 }
 
 // loadMoves reads and validates the anchor-move map.
@@ -93,7 +118,7 @@ func loadMoves(path string) (*moveMap, error) {
 	if len(*doc.Moves) == 0 {
 		return nil, fmt.Errorf("anchor-move map %s: carries no move", path)
 	}
-	m := &moveMap{path: path, byAnchor: map[string]Move{}}
+	m := &moveMap{path: path, byAnchor: map[string]Move{}, sections: map[string]bool{}}
 	for i, move := range *doc.Moves {
 		if err := validateMove(path, i, move); err != nil {
 			return nil, err
@@ -102,6 +127,9 @@ func loadMoves(path string) (*moveMap, error) {
 			return nil, fmt.Errorf("anchor-move map %s: anchor %q is declared twice", path, move.Anchor)
 		}
 		m.byAnchor[move.Anchor] = move
+		if digits := leadingDigitsExpr.FindString(move.Anchor); digits != "" {
+			m.sections[digits] = true
+		}
 	}
 	return m, nil
 }

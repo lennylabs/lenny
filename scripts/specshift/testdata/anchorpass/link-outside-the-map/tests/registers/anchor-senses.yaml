@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 #
 # A well-formed register, so what this tree exercises is the link class
-# alone: the link the anchor-move map carries a successor for would be
-# redirected, and the link it carries none for stops the run.
+# alone: the link into the anchor the anchor-move map retires is
+# redirected, and the link into the anchor it does not is left as it is
+# written.
 kind: anchor-senses
 version: 1
 entries:

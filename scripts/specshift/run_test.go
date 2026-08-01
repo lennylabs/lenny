@@ -5539,62 +5539,41 @@ func TestAnchorPassRedirectsALinkFromARootLevelCarrierWithoutLeavingTheRoot(t *t
 	assertRedirected(t, root, "README.md")
 }
 
-// TestAnchorPassAbortsAtACitationOfASectionTheSpecificationNoLongerDeclares
-// pins what scopes the bare-citation class, which is the specification's
-// own headings rather than the registers that resolve a site. One
-// carrier holds three §-form citations no specification heading declares
-// any more, and no entry of the sense register records any of them: a
-// section no heading of the tree declares at all, a section a testing
-// document numbers in its own numbering, and a file-level number a
-// specification file carries in its level-one title alone. The run stops
-// over all three, names each file and line, and leaves every carrier
-// byte-identical, including the sibling carrier whose own occurrences the
-// register does resolve.
+// TestAnchorPassLeavesACitationOfASectionTheMapRetiresNoAnchorFor pins
+// what scopes the bare-citation class, which is the anchors the
+// anchor-move map retires. One carrier holds three §-form citations of
+// sections the map retires no anchor for: a section no heading of the
+// tree declares at all, a section a testing document numbers in its own
+// numbering, and a file-level number a specification file carries in its
+// level-one title. None of the three is a reference into a retired
+// anchor, so the pass leaves all three as they are written, reports no
+// work over the carrier, and runs to completion with no entry of the
+// sense register recording any of them, while the sibling carrier whose
+// citations do name a retired anchor is redirected in the same run.
 //
-// Scoping the class by the anchor-move map instead would make each of
-// the three invisible to the pass: a run over a tree that still cites
-// sections that are gone would rewrite nothing at those sites and exit
-// zero, which reads as the completed migration it is not, and the change
-// that empties the registers would then destroy the record of what the
-// run should have done.
+// Scoping the class by the tree instead would make every §-form token
+// whose number no heading declares at level two or deeper a fail-closed
+// site, which stops the run over a population no map entry redirects and
+// which no register is seeded to carry. A citation that resolves to no
+// section for a reason this reduction did not create belongs to the
+// anchor class's residual check and to hand correction.
 //
-// spec: §28.1 (N8, the citation rule: a citation whose destination is
-// unresolved is reported rather than left naming a heading that is gone)
-func TestAnchorPassAbortsAtACitationOfASectionTheSpecificationNoLongerDeclares(t *testing.T) {
+// spec: §28.1 (N8, the citation rule: the redirect covers the references
+// into the anchors the reduction retires)
+func TestAnchorPassLeavesACitationOfASectionTheMapRetiresNoAnchorFor(t *testing.T) {
 	t.Parallel()
-	root := anchorTree(t, "fail/unmapped-citation")
+	const carrier = "pkg/carrier/flow.go"
+	root := anchorTree(t, "citation-outside-the-map")
 	before := treeSnapshot(t, root)
-	_, err := applyAnchorPassErr(t, root, "tree.json")
-	if err == nil {
-		t.Fatal("the anchor pass returned no error at a citation of a section the specification no longer declares")
+	diff := applyAnchorPass(t, root, "tree.json")
+	if membership(diff.Paths())[carrier] {
+		t.Errorf("the applied diff names %s, whose citations the map retires no anchor for", carrier)
 	}
-	aborts, ok := pass.AllAborts(err)
-	if !ok {
-		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	after := treeSnapshot(t, root)
+	if after[carrier] != before[carrier] {
+		t.Errorf("%s was rewritten:\n%s", carrier, after[carrier])
 	}
-	want := []struct {
-		line    int
-		section string
-	}{
-		{line: 7, section: "15.9.9"},
-		{line: 12, section: "14.13"},
-		{line: 16, section: "25"},
-	}
-	if len(aborts) != len(want) {
-		t.Fatalf("the run reports %d site(s), want %d: %v", len(aborts), len(want), err)
-	}
-	for i, w := range want {
-		got := aborts[i]
-		if got.Path != "pkg/carrier/flow.go" || got.Line != w.line {
-			t.Errorf("site %d names %s line %d, want pkg/carrier/flow.go line %d", i, got.Path, got.Line, w.line)
-		}
-		if !strings.Contains(got.Reason, w.section) || !strings.Contains(got.Reason, "anchor-senses.yaml") {
-			t.Errorf("site %d names neither §%s nor the sense register: %v", i, w.section, got)
-		}
-	}
-	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
-		t.Error("the aborted run wrote to the tree")
-	}
+	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
 }
 
 // TestAnchorPassLeavesACitationWrittenAsALinkLabelToTheHandCorrection
@@ -5618,62 +5597,70 @@ func TestAnchorPassLeavesACitationWrittenAsALinkLabelToTheHandCorrection(t *test
 	assertRedirected(t, root, "docs/reference/label.md")
 }
 
-// TestAnchorPassAbortsAtALinkIntoAnAnchorTheMapCarriesNoSuccessorFor pins
-// what scopes the link class, which is the anchors the documents of the
-// tree declare rather than the anchor-move map. One carrier links into an
-// anchor the map carries a successor for, and another links into an
-// anchor its target document does not declare and the map carries no
-// successor for. The run stops over the second, names the file and the
-// line, and leaves both carriers byte-identical, including the one it
-// would otherwise have redirected.
+// TestAnchorPassLeavesALinkIntoAnAnchorTheMapDoesNotRetire pins what
+// scopes the link class, which is the anchors the anchor-move map
+// retires. One carrier links into an anchor the map retires, and another
+// links into an anchor its target document does not declare and the map
+// does not retire either. The first is redirected in the same run that
+// leaves the second exactly as it was written and reports no work over
+// its carrier.
 //
-// Scoping the class by the map instead would leave the second link
-// pointing at a heading that does not exist while the run exited zero,
-// and the change that empties the map would then destroy the record of
-// what the run should have done.
+// A fragment link that resolves nowhere for a reason this reduction did
+// not create is a hand-corrected class the fragment-link gate reports,
+// so scoping the pass by the tree would stop every run over links no map
+// entry will ever redirect.
 //
-// spec: §28.1 (N8, the citation rule: a reference into a retired anchor
-// names the heading the material moved to)
-func TestAnchorPassAbortsAtALinkIntoAnAnchorTheMapCarriesNoSuccessorFor(t *testing.T) {
+// spec: §28.1 (N8, the citation rule: the redirect covers the references
+// into the anchors the reduction retires)
+func TestAnchorPassLeavesALinkIntoAnAnchorTheMapDoesNotRetire(t *testing.T) {
 	t.Parallel()
-	root := anchorTree(t, "fail/unmapped-link")
+	const unresolved = "docs/reference/flow-control.md"
+	root := anchorTree(t, "link-outside-the-map")
 	before := treeSnapshot(t, root)
-	_, err := applyAnchorPassErr(t, root, "tree.json")
-	if err == nil {
-		t.Fatal("the anchor pass returned no error at a link into an anchor no document declares")
+	diff := applyAnchorPass(t, root, "tree.json")
+	if membership(diff.Paths())[unresolved] {
+		t.Errorf("the applied diff names %s, whose link the map does not retire", unresolved)
 	}
-	abort, ok := pass.AsAbort(err)
-	if !ok {
-		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	after := treeSnapshot(t, root)
+	if after[unresolved] != before[unresolved] {
+		t.Errorf("%s was rewritten:\n%s", unresolved, after[unresolved])
 	}
-	if abort.Path != "docs/reference/flow-control.md" || abort.Line != 4 {
-		t.Errorf("the abort names %s line %d, want docs/reference/flow-control.md line 4", abort.Path, abort.Line)
-	}
-	if !strings.Contains(abort.Reason, "1544-flow-control") || !strings.Contains(abort.Reason, "tree.json") {
-		t.Errorf("the abort names neither the anchor nor the anchor-move map: %v", abort)
-	}
-	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
-		t.Error("the aborted run wrote to the tree")
-	}
+	assertRedirected(t, root, "docs/reference/framing.md")
 }
 
-// TestAnchorPassJudgesASectionRetiredAgainstTheSpecificationAlone pins
-// the document set a bare §X.Y citation is resolved against. A
-// documentation page numbers its own headings, and one of those numbers
-// collides with a section this reduction retired. The section index is
-// built from the specification alone, so the citation is still read as
-// naming the retired section and is redirected to the heading the
-// material moved to.
+// TestAnchorPassCitesALevelOneSpecificationTitleByItsSectionNumber pins
+// the spelling a redirect takes when the heading it names is the
+// level-one title a specification file opens with, which states that
+// file's own section number. The citation keeps the §-form the migration
+// establishes rather than being rewritten into a fragment link, which
+// would move a live citation off the form every other citation of that
+// section is written in.
 //
-// Folding every numbered heading of the tree into one index would make
-// the retired section look alive at that number: the citation would be
+// spec: §28.1 (N8, the citation rule: a citation names the heading that
+// defines the material it cites)
+func TestAnchorPassCitesALevelOneSpecificationTitleByItsSectionNumber(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "level-one-section-destination")
+	applyAnchorPass(t, root, "tree.json")
+	assertRedirected(t, root, "pkg/carrier/audit.go")
+}
+
+// TestAnchorPassJudgesASectionRetiredAgainstTheAnchorMoveMap pins that
+// what retires a section is the anchor-move map rather than any heading
+// of the tree. A documentation page numbers its own headings, and one of
+// those numbers collides with a section this reduction retired. The map
+// carries the retired anchor of that section, so the citation is read as
+// naming it and is redirected to the heading the material moved to.
+//
+// Reading a heading anywhere in the tree as the answer would make the
+// retired section look alive at that number: the citation would be
 // neither rewritten nor reported, the run would exit zero, and the
 // change that empties the anchor-move map would then destroy the record
 // of what the run should have done.
 //
 // spec: §28.1 (N8, the citation rule: a citation names the heading that
 // defines the material it cites)
-func TestAnchorPassJudgesASectionRetiredAgainstTheSpecificationAlone(t *testing.T) {
+func TestAnchorPassJudgesASectionRetiredAgainstTheAnchorMoveMap(t *testing.T) {
 	t.Parallel()
 	root := anchorTree(t, "collision")
 	applyAnchorPass(t, root, "tree.json")
@@ -5681,17 +5668,17 @@ func TestAnchorPassJudgesASectionRetiredAgainstTheSpecificationAlone(t *testing.
 }
 
 // TestAnchorPassReportsARetiredSectionANonSpecificationHeadingNumbers
-// pins the same index rule at the site the sense register does not
-// answer for, which is where reading the wrong document set is silent.
-// The specification no longer declares the cited section, a
-// documentation page numbers a heading of its own the same way, and no
-// entry resolves the occurrence. The run stops, names the file and the
-// line, and leaves the tree byte-identical, including the sibling
-// carrier whose own occurrences the register does resolve.
+// pins the same rule at the site the sense register does not answer for,
+// which is where reading a heading of the tree as the answer is silent.
+// The map retires the anchor of the cited section, a documentation page
+// numbers a heading of its own the same way, and no entry resolves the
+// occurrence. The run stops, names the file and the line, and leaves the
+// tree byte-identical, including the sibling carrier whose own
+// occurrences the register does resolve.
 //
-// An index built from every numbered heading of the tree would answer
-// that the section is alive, pass over the citation, and exit zero, and
-// the change that empties the registers would then destroy the record of
+// Reading the documentation heading as the answer would report the
+// section as alive, pass over the citation, and exit zero, and the
+// change that empties the registers would then destroy the record of
 // what the run should have done.
 //
 // spec: §28.1 (N8, the citation rule: a citation whose destination is

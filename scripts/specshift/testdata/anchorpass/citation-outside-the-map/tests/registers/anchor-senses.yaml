@@ -1,10 +1,11 @@
 # SPDX-License-Identifier: MIT
 #
 # The register resolves both occurrences of the sibling carrier and
-# records none of the three citations the other carrier holds, each of
-# which names a section no specification file declares any more. The run
-# stops over all three with every carrier left byte-identical, including
-# the sibling it would otherwise have rewritten.
+# records none of the three citations the other carrier holds, because
+# none of those three names a section whose anchor the anchor-move map
+# retires. The run redirects the sibling and leaves all three as they are
+# written, rather than requiring an entry for a citation this migration
+# does not touch.
 kind: anchor-senses
 version: 1
 entries:

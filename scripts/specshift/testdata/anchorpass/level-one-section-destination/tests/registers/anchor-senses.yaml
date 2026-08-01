@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: MIT
+#
+# The occurrence means a specification file that states its number in its
+# level-one title and declares no subsection under it, so the redirect is
+# written in the section-citation form the migration establishes.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/audit.go
+    occurrence: 1
+    destination: spec/25_agent-operability.md#25-agent-operability

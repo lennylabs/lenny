@@ -9,24 +9,24 @@ import (
 	"strings"
 )
 
-// siteKind names which of the reference forms a site carries. The tree
-// decides both classes: a reference whose destination the tree still
-// declares is one the reduction left alone, and every other reference
-// names a destination that is gone. Each class is then resolved by its
-// own register, the anchor-move map for a link and the sense register
-// per occurrence for a bare citation, and a site neither register
-// resolves stops the run rather than being passed over.
+// siteKind names which of the reference forms a site carries. The
+// anchor-move map scopes both classes, because the map states which
+// anchors the reduction retires: a link naming a retired anchor and a
+// citation of the section a retired anchor addressed are the references
+// the reduction invalidated, and every other reference names a
+// destination the reduction leaves alone. A link is then resolved by the
+// map itself, and a citation per occurrence by the sense register, whose
+// missing entry stops the run rather than being passed over.
 type siteKind string
 
 const (
 	// linkSite is an intra-repo markdown fragment link, in the
 	// file-qualified `[...](NN_file.md#anchor)` form or the same-page
-	// `[...](#anchor)` form, into an anchor the document it addresses no
-	// longer declares.
+	// `[...](#anchor)` form, into an anchor the anchor-move map retires.
 	linkSite siteKind = "link"
 	// citationSite is a bare section citation of the §X.Y form, in a
-	// comment or in prose, naming a section no specification file
-	// declares any more.
+	// comment or in prose, naming a section whose anchor the anchor-move
+	// map retires.
 	citationSite siteKind = "citation"
 )
 
@@ -45,6 +45,10 @@ type site struct {
 	// samePage records that the link was written in the same-page form,
 	// so a redirect that stays on the page keeps that form.
 	samePage bool
+	// successor is the heading the anchor-move map redirects a link
+	// site to. It is read while the site is found, because the map is
+	// what makes the link a site at all.
+	successor Target
 }
 
 // fragmentLinkExpr matches a markdown link with a fragment. The first
@@ -57,33 +61,30 @@ var fragmentLinkExpr = regexp.MustCompile(`\]\(([^)\s#]*)#([A-Za-z0-9._-]+)\)`)
 // that subsection rather than as naming its parent.
 var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 
-// findSites returns every reference one file carries into a destination
-// the tree no longer declares, in source order.
+// findSites returns every reference one file carries into an anchor the
+// anchor-move map retires, in source order.
 //
-// The tree decides what is retired, rather than the registers. A
-// reference the registers do not carry is a site all the same, so the
-// run reports it and stops: reading the registers as the definition of
-// the population would leave a reference into a heading that is gone
-// unrewritten with the run exiting zero, which reads as the completed
-// migration it is not, and the change that empties the registers is the
-// change that destroys the record of what the run should have done.
+// The map states the population. It enumerates the anchors this
+// reduction retires, so a reference into one of them is a reference the
+// reduction invalidated, and a reference into any other heading is one
+// the reduction leaves alone. Reading the tree as the population
+// instead would pull in every reference that resolves nowhere for
+// reasons this migration did not create, which is the hand-authored
+// class the fragment-link gate and the residual check own, and would
+// stop the run over references no map entry will ever redirect.
 //
-// A fragment link addresses a heading of a document the tree carries. A
-// link naming an anchor that document no longer declares is a site. A
-// link into an anchor it still declares is a link the reduction left
-// alone and stands.
+// A fragment link is a site when the map retires the anchor it names and
+// its destination is a tracked markdown document of the tree, which is
+// the population the fragment-link gate reads. An absolute URL and a
+// link into a file the repository does not carry are outside that
+// population, and rewriting one would edit a reference the pass cannot
+// check.
 //
-// A link whose destination is not a tracked markdown document of the
-// tree is not a site: an absolute URL and a link into a file the
-// repository does not carry are both outside the population the
-// fragment-link gate reads, and rewriting one would edit a reference the
-// pass cannot check.
-//
-// A bare section citation is in the class when no specification file
-// declares the section it names. What an occurrence means is answered by
-// the sense register one occurrence at a time, because a reduction
-// carves material out of the anchor it moves, and an occurrence the
-// register does not answer for stops the run.
+// A bare section citation is a site when the map retires the anchor of
+// the section it names. What an occurrence means is answered by the
+// sense register one occurrence at a time, because a reduction carves
+// material out of the anchor it moves, and an occurrence the register
+// does not answer for stops the run.
 //
 // A citation written inside a markdown fragment link is not read as a
 // bare citation. The pass performs a target-only redirect, and a label
@@ -91,7 +92,7 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // that makes the reduction, so reading the label here would both rewrite
 // a site the pass does not own and shift the occurrence numbering the
 // sense register is keyed by.
-func findSites(target, text string, tree *headings) []site {
+func findSites(target, text string, tree *headings, moves *moveMap) []site {
 	var out []site
 	var links []span
 	for _, m := range fragmentLinkExpr.FindAllStringSubmatchIndex(text, -1) {
@@ -104,22 +105,27 @@ func findSites(target, text string, tree *headings) []site {
 		if destination != "" {
 			file = path.Join(path.Dir(target), destination)
 		}
-		if !tree.carries(file) || tree.declaresAnchor(file, anchor) {
+		if !tree.carries(file) {
+			continue
+		}
+		move, retired := moves.anchor(anchor)
+		if !retired {
 			continue
 		}
 		out = append(out, site{
-			kind:     linkSite,
-			start:    m[2],
-			end:      m[5],
-			line:     lineOf(text, m[2]),
-			anchor:   anchor,
-			file:     file,
-			samePage: destination == "",
+			kind:      linkSite,
+			start:     m[2],
+			end:       m[5],
+			line:      lineOf(text, m[2]),
+			anchor:    anchor,
+			file:      file,
+			samePage:  destination == "",
+			successor: move.Successor,
 		})
 	}
 	for _, m := range bareCitationExpr.FindAllStringSubmatchIndex(text, -1) {
 		number := text[m[2]:m[3]]
-		if tree.declaresSection(number) {
+		if !moves.retiresSection(number) {
 			continue
 		}
 		if covers(links, m[0]) {

@@ -4,8 +4,8 @@ package carrier
 
 // Flow reads the flow-control rules.
 //
-// spec: §15.9.9 (a section no specification file declares any more, and
-// no entry of the sense register records this occurrence)
+// spec: §15.9.9 (a section the anchor-move map retires no anchor for, so
+// this citation is outside the pass's population)
 func Flow() []byte { return nil }
 
 // Tiers names the tier this behavior is exercised at, which a testing
@@ -14,6 +14,6 @@ func Flow() []byte { return nil }
 func Tiers() string { return "the tier the testing document numbers" }
 
 // Audit writes the audit record §25 states, a file-level number a
-// specification file carries in its level-one title alone, so no
-// specification section is declared under it.
+// specification file carries in its level-one title, which this
+// reduction leaves where it stands.
 func Audit() []byte { return nil }
