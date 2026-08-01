@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 #
 # A well-formed register that resolves both occurrences of the sibling
-# carrier, so what this tree exercises is the citation whose section no
-# specification file declares: the run stops at it and the sibling the
-# register does resolve is left byte-identical.
+# carrier and records neither citation of the other carrier, because the
+# anchor-move map retires no anchor for either section those two name.
+# The run redirects the sibling and leaves the other carrier
+# byte-identical.
 kind: anchor-senses
 version: 1
 entries:

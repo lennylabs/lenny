@@ -8,18 +8,16 @@
 // register.
 //
 // One rule scopes both classes. A reference into an anchor the map
-// retires is rewritten, whether it is written as a fragment link or as a
-// bare §X.Y citation of the section that anchor addressed. A reference
-// whose destination the tree still declares names a heading this
-// reduction leaves alone and stands as written. A reference into a
-// destination the tree does not declare and the map carries no successor
-// for is unresolvable, and it stops the run naming the file and the line
-// rather than standing. The map alone cannot scope the fail-closed half:
-// a reference into an anchor the reduction retired that the hand-seeded
-// map omits would be passed over by a run that exited zero, and the
-// change that empties the map would then destroy the record of what the
-// run should have done. The tree decides that case without the map,
-// because the pass indexes every heading of its read domain.
+// retires is a site, whether it is written as a fragment link or as a
+// bare §X.Y citation of the section that anchor addressed, and every
+// other reference stands exactly as it is written. The map is what
+// states which anchors this reduction retires, so a reference the map
+// does not name is one the reduction did not invalidate, whether or not
+// the tree resolves it today. A stale citation and a fragment link that
+// already resolved nowhere are corrected by the residual check over the
+// anchor class, by the fragment-link gate, and by the hand enumeration
+// each of those reports, rather than by this pass, which carries no
+// register entry that could resolve either.
 //
 // An intra-repo markdown fragment link is resolved by the map itself,
 // because the link names the retired anchor and the map carries one
@@ -176,10 +174,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	var aborts []*pass.Abort
 	citations := 0
 	for _, s := range sites {
-		if s.dangling {
-			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: danglingReason(s)})
-			continue
-		}
 		if s.kind == linkSite {
 			edits = append(edits, edit{start: s.start, end: s.end, text: linkTarget(target, s, s.successor)})
 			continue
@@ -205,20 +199,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 		return nil, err
 	}
 	return edits, nil
-}
-
-// danglingReason states why a reference into a destination the tree no
-// longer declares stops the run. The anchor-move map carries no
-// successor for it, so the run has nothing to redirect it to, and
-// leaving it standing would report the zero work of a completed
-// migration over a reference the reduction invalidated.
-func danglingReason(s site) string {
-	if s.kind == linkSite {
-		return fmt.Sprintf("the link into %s#%s names an anchor that document does not declare, and the anchor-move map carries no successor for it",
-			s.file, s.anchor)
-	}
-	return fmt.Sprintf("the citation of §%s names a section no specification file of the tree declares, and the anchor-move map carries no successor for it",
-		s.section)
 }
 
 // unresolvedReason states why a citation the sense register does not

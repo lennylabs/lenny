@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: MIT
 #
 # A well-formed register, so what this tree exercises is the link class
-# alone: the link into an anchor no document declares stops the run,
-# while the sibling link the map does redirect is left byte-identical.
+# alone: the link into an anchor the map retires no reference into is
+# left byte-identical, while the sibling link the map does redirect is
+# rewritten in the same run.
 kind: anchor-senses
 version: 1
 entries:

@@ -31,12 +31,6 @@ import (
 // whichever document that is.
 type headings struct {
 	byFile map[string]map[string]citation.Heading
-	// sections holds every section number the specification files of the
-	// tree declare. It is what decides whether a bare §X.Y citation
-	// names a section that still exists, so a citation of a section the
-	// reduction retired stops the run when the anchor-move map carries
-	// no successor for it.
-	sections map[string]bool
 }
 
 // explicitAnchorExpr reads the kramdown attribute that gives a heading
@@ -64,7 +58,7 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 	if err != nil {
 		return nil, fmt.Errorf("index the headings of the tree: %w", err)
 	}
-	h := &headings{byFile: map[string]map[string]citation.Heading{}, sections: map[string]bool{}}
+	h := &headings{byFile: map[string]map[string]citation.Heading{}}
 	for _, target := range domain {
 		if filepath.Ext(target) != ".md" {
 			continue
@@ -77,19 +71,6 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 			return nil, fmt.Errorf("read %s to index its headings: %w", target, err)
 		}
 		h.byFile[target] = index(string(content))
-		if !citation.IsSpecFile(target) {
-			continue
-		}
-		// A §X.Y token names a section of the specification, so only a
-		// specification file declares one. The section walk drops the
-		// level-one title, which numbers the file rather than a section,
-		// which is the same predicate the citation resolver and the
-		// per-file ratchet read.
-		for _, heading := range citation.Headings(string(content)) {
-			if heading.Number != "" {
-				h.sections[heading.Number] = true
-			}
-		}
 	}
 	if len(h.byFile) == 0 {
 		return nil, fmt.Errorf("index the headings of the tree: no markdown document in the read domain")
@@ -215,19 +196,4 @@ func (h *headings) citationFor(t Target) (string, error) {
 func (h *headings) carries(target string) bool {
 	_, ok := h.byFile[target]
 	return ok
-}
-
-// declaresAnchor reports whether the document declares the anchor, which
-// is what makes a fragment link into it a reference the reduction left
-// alone.
-func (h *headings) declaresAnchor(file, anchor string) bool {
-	_, ok := h.byFile[file][anchor]
-	return ok
-}
-
-// declaresSection reports whether a specification file of the tree
-// declares the section number, which is what makes a bare citation of it
-// a reference the reduction left alone.
-func (h *headings) declaresSection(number string) bool {
-	return h.sections[number]
 }

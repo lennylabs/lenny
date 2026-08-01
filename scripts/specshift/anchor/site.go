@@ -20,27 +20,25 @@ type siteKind string
 const (
 	// linkSite is an intra-repo markdown fragment link, in the
 	// file-qualified `[...](NN_file.md#anchor)` form or the same-page
-	// `[...](#anchor)` form, into an anchor that no longer addresses a
-	// heading of the document it names.
+	// `[...](#anchor)` form, into an anchor the anchor-move map retires.
 	linkSite siteKind = "link"
 	// citationSite is a bare section citation of the §X.Y form, in a
-	// comment or in prose, naming a section the specification no longer
-	// declares.
+	// comment or in prose, naming the section whose anchor the
+	// anchor-move map retires.
 	citationSite siteKind = "citation"
 )
 
 // site is one reference the pass reads: the byte span it replaces, the
 // line it sits on, and what it names.
 type site struct {
-	kind    siteKind
-	start   int
-	end     int
-	line    int
-	anchor  string
+	kind  siteKind
+	start int
+	end   int
+	line  int
+	// section is the dotted number a bare citation names, which the
+	// abort reports when the sense register does not record the
+	// occurrence.
 	section string
-	// file is the document a link's fragment resolves against, which is
-	// the citing page for the same-page form.
-	file string
 	// samePage records that the link was written in the same-page form,
 	// so a redirect that stays on the page keeps that form.
 	samePage bool
@@ -48,11 +46,6 @@ type site struct {
 	// site to. It is read while the site is found, because the map is
 	// what carries the redirect.
 	successor Target
-	// dangling records a reference whose destination the tree no longer
-	// declares and the anchor-move map carries no successor for. The
-	// site is unresolvable rather than rewritable, so it stops the run
-	// naming the file and the line.
-	dangling bool
 }
 
 // linkExpr matches a markdown link, with the fragment its destination
@@ -79,28 +72,29 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // findSites returns every reference one file carries that the reduction
 // invalidated, in source order.
 //
-// Two sources decide a reference. The anchor-move map carries the
-// successor of each retired anchor, so a reference the map answers for
-// is rewritten. The tree decides the rest: a reference whose destination
-// the tree still declares stands as written, and a reference into a
-// destination the tree does not declare and the map carries no successor
-// for is unresolvable, so it stops the run rather than being passed
-// over. Deciding the population by the map alone would leave a reference
-// into an anchor the reduction retired but the map omits standing while
-// the run exited zero, which is the record-destroying no-op the
-// registers exist to prevent.
+// The anchor-move map decides the population of both classes. The map
+// states which anchors the reduction retires, so a reference into one of
+// them is a site and every other reference stands exactly as it is
+// written. A reference whose destination the tree does not declare, but
+// whose anchor the map does not retire either, is a reference this
+// migration did not invalidate: it is a stale citation or a broken link
+// the tree carried before the run, whose corrections are the residual
+// check over the anchor class, the fragment-link gate, and the hand
+// enumeration each of those reports. Judging the population against the
+// tree instead would put every such reference inside this pass, where no
+// register entry can resolve one, and the pass could not be run over the
+// tree at all until each was hand-corrected.
 //
 // A fragment link is read when its destination is a tracked markdown
 // document of the tree, which is the population the fragment-link gate
 // reads. An absolute URL and a link into a file the repository does not
-// carry are outside that population, and rewriting or reporting one
-// would judge a reference the pass cannot check.
+// carry are outside that population, and rewriting one would judge a
+// reference the pass cannot check.
 //
-// A bare section citation is read against the sections the specification
-// declares. What an occurrence the map retires means is answered by the
-// sense register one occurrence at a time, because a reduction carves
-// material out of the anchor it moves, and an occurrence the register
-// does not answer for stops the run.
+// What an occurrence of a citation the map retires means is answered by
+// the sense register one occurrence at a time, because a reduction
+// carves material out of the anchor it moves, and an occurrence the
+// register does not answer for stops the run.
 //
 // A citation written inside a markdown link is not read as a bare
 // citation, whether or not that link's destination carries a fragment.
@@ -128,45 +122,34 @@ func findSites(target, text string, tree *headings, moves *moveMap) []site {
 		if !tree.carries(file) {
 			continue
 		}
-		s := site{
-			kind:     linkSite,
-			start:    m[2],
-			end:      m[5],
-			line:     lineOf(text, m[2]),
-			anchor:   anchor,
-			file:     file,
-			samePage: destination == "",
-		}
-		switch move, retired := moves.anchor(anchor); {
-		case retired:
-			s.successor = move.Successor
-		case tree.declaresAnchor(file, anchor):
+		move, retired := moves.anchor(anchor)
+		if !retired {
 			continue
-		default:
-			s.dangling = true
 		}
-		out = append(out, s)
+		out = append(out, site{
+			kind:      linkSite,
+			start:     m[2],
+			end:       m[5],
+			line:      lineOf(text, m[2]),
+			samePage:  destination == "",
+			successor: move.Successor,
+		})
 	}
 	for _, m := range bareCitationExpr.FindAllStringSubmatchIndex(text, -1) {
 		if covers(links, m[0]) {
 			continue
 		}
 		number := text[m[2]:m[3]]
-		s := site{
+		if !moves.retiresSection(number) {
+			continue
+		}
+		out = append(out, site{
 			kind:    citationSite,
 			start:   m[0],
 			end:     m[1],
 			line:    lineOf(text, m[0]),
 			section: number,
-		}
-		switch {
-		case moves.retiresSection(number):
-		case tree.declaresSection(number):
-			continue
-		default:
-			s.dangling = true
-		}
-		out = append(out, s)
+		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].start < out[j].start })
 	return out
