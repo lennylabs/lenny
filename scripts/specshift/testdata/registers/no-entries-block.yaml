@@ -2,6 +2,6 @@
 #
 # A residual register that declares no entries block. It parses, and it
 # must not load as a register with no residuals.
-kind: specshift-residual-register
+kind: residual-register
 version: 1
 class: generated-artifacts

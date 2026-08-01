@@ -15,11 +15,10 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
 	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/scripts/specshift/register"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -64,63 +63,28 @@ import (
 // further residual and the entry seeded for it would add another copy,
 // which does not converge.
 
-// residualRegisterKind and residualRegisterVersion are what a register
-// declares. The kind is the gate's own rather than the shared
-// exception-register contract's, which is what keeps the shared
-// validator's ratchet rules off these entries.
-const (
-	residualRegisterKind    = "residual-register"
-	residualRegisterVersion = 1
+// The residual register's schema, its loader, its validator, its writer,
+// and the downward rewrite live in scripts/specshift/register, which the
+// passes read as well, so an entry this gate writes is an entry a pass
+// reads and neither side can drift from the other's entry schema. The
+// names below are that one contract under the names this gate reads it
+// by.
+type (
+	residualEntry       = register.Entry
+	residualDisposition = register.Disposition
 )
 
-// The dispositions an entry carries.
 const (
 	// residualInClass records a member that belongs to the class. Its
 	// route out is the class's own pass or remediation.
-	residualInClass = "in-class"
+	residualInClass = register.InClass
 	// residualExcluded records a member that never belonged to the class.
 	// It is permanent.
-	residualExcluded = "excluded"
+	residualExcluded = register.Excluded
 )
 
-// residualEntry is one triage decision, and one entry of a register.
-type residualEntry struct {
-	// Member is the member as the class's predicate reads it: the text of
-	// a citation, a tracked path, or a call site's key.
-	//
-	// It is stored with the continuation join of the occurrence it was
-	// read from preserved, so a member read across two comment lines is
-	// written across two lines here. A wrapped citation folded onto one
-	// line would be a citation the form reads, under this file's own
-	// path, and this file is an ordinary member of the read domain the
-	// citation resolver and the ratchet share. The key the register is
-	// keyed by is the stored text with those line breaks joined back into
-	// spaces, which residualMemberKey returns.
-	Member string `yaml:"member"`
-	// Class names the class the entry belongs to. It repeats the class
-	// the register is read for, so an entry cannot be moved between
-	// registers by a copy that leaves its class behind.
-	Class string `yaml:"class"`
-	// Disposition is in-class or excluded.
-	Disposition string `yaml:"disposition"`
-	// Reason is why the member is in the class or outside it.
-	Reason string `yaml:"reason"`
-}
-
-// String renders the entry for a report.
-func (e residualEntry) String() string {
-	return fmt.Sprintf("%s (%s, %s)", residualMemberKey(e.Member), e.Class, e.Disposition)
-}
-
-// residualMemberKey returns the key a stored member text is held under,
-// which is that text with every preserved continuation join folded back
-// into the space it stands for. A member is keyed by the text the
-// class's predicate reads rather than by the spelling the register
-// stores, so the same occurrence read wrapped in one carrier and
-// unwrapped in another is one member.
-func residualMemberKey(stored string) string {
-	return strings.ReplaceAll(stored, "\n", " ")
-}
+// residualMemberKey returns the key a stored member text is held under.
+func residualMemberKey(stored string) string { return register.MemberKey(stored) }
 
 // residualMember is one member the class's broad predicate selected,
 // with the site it was first read at. The site is a report aid and is
@@ -706,207 +670,27 @@ func sortedResidualMembers(seen map[string]residualMember) []residualMember {
 	return out
 }
 
-// residualRegisterDoc is a register's schema. Entries is a pointer so a
-// document that declares no entries block is distinguishable from one
-// that declares an empty list; the first is malformed and the second is
-// a class whose predicate selects nothing the enumeration misses.
-type residualRegisterDoc struct {
-	Kind    string           `yaml:"kind"`
-	Version int              `yaml:"version"`
-	Class   string           `yaml:"class"`
-	Entries *[]residualEntry `yaml:"entries"`
-}
-
-// loadResidualRegister reads and validates one class's register into its
-// entries, returning them by member together with the order they were
-// written in.
+// loadResidualRegister reads and validates one class's register through
+// the shared register contract, returning its entries by member key
+// together with the order they were written in.
 //
 // A missing, unreadable, or malformed register is an error rather than
 // an empty set: a load that degraded to carrying nothing would report
 // every member of the class at once, and one that degraded to carrying
 // everything would exempt the population the gate exists to surface.
 func loadResidualRegister(read scope.FileReader, c scope.Class) (map[string]residualEntry, []string, error) {
-	path := residualRegisterPath(c)
-	if read == nil {
-		return nil, nil, fmt.Errorf("read residual register %s: no reader is configured", path)
-	}
-	data, err := read(path)
+	doc, err := register.ReadFor(register.Reader(read), residualRegisterPath(c), string(c))
 	if err != nil {
-		return nil, nil, fmt.Errorf("read residual register %s: %w", path, err)
+		return nil, nil, err
 	}
-	var doc residualRegisterDoc
-	if err := yaml.Unmarshal(data, &doc); err != nil {
-		return nil, nil, fmt.Errorf("parse residual register %s: %w", path, err)
-	}
-	if doc.Kind != residualRegisterKind {
-		return nil, nil, fmt.Errorf("residual register %s: expected kind %q, got %q", path, residualRegisterKind, doc.Kind)
-	}
-	if doc.Version != residualRegisterVersion {
-		return nil, nil, fmt.Errorf("residual register %s: expected version %d, got %d",
-			path, residualRegisterVersion, doc.Version)
-	}
-	if doc.Class != string(c) {
-		return nil, nil, fmt.Errorf("residual register %s: declares class %q, and it is read for class %q",
-			path, doc.Class, c)
-	}
-	if doc.Entries == nil {
-		return nil, nil, fmt.Errorf("residual register %s: carries no entries block", path)
-	}
-	carried := map[string]residualEntry{}
-	var order []string
-	for _, entry := range *doc.Entries {
-		if err := validResidualEntry(path, c, entry); err != nil {
-			return nil, nil, err
-		}
-		key := residualMemberKey(entry.Member)
-		if _, ok := carried[key]; ok {
-			return nil, nil, fmt.Errorf("residual register %s: member %q is declared twice", path, key)
-		}
-		carried[key] = entry
-		order = append(order, key)
-	}
+	carried, order := doc.Keyed()
 	return carried, order, nil
 }
 
-// validResidualEntry holds one entry to the schema. A reason is required
-// on both dispositions: an entry with no reason records that someone
-// looked at the member without recording what they concluded, which is
-// the silent widening the register exists to prevent.
-func validResidualEntry(path string, c scope.Class, entry residualEntry) error {
-	if strings.TrimSpace(entry.Member) == "" {
-		return fmt.Errorf("residual register %s: carries an entry with no member", path)
-	}
-	if err := validResidualMemberText(path, entry.Member); err != nil {
-		return err
-	}
-	if entry.Class != string(c) {
-		return fmt.Errorf("residual register %s: member %q declares class %q, and the register is read for class %q",
-			path, entry.Member, entry.Class, c)
-	}
-	if entry.Disposition != residualInClass && entry.Disposition != residualExcluded {
-		return fmt.Errorf("residual register %s: member %q carries disposition %q, want %q or %q",
-			path, entry.Member, entry.Disposition, residualInClass, residualExcluded)
-	}
-	if strings.TrimSpace(entry.Reason) == "" {
-		return fmt.Errorf("residual register %s: member %q carries no reason", path, entry.Member)
-	}
-	if strings.ContainsAny(entry.Reason, "\n\r") {
-		return fmt.Errorf("residual register %s: member %q carries a reason with a line break, and a reason is one line",
-			path, entry.Member)
-	}
-	return nil
-}
-
-// validResidualMemberText holds a stored member text to the spelling the
-// register writes. A line break stands for a continuation the class's
-// predicate joined, so each line carries content and neither opens nor
-// closes on whitespace: a blank or indented line would not survive the
-// block scalar it is written in, and the member the next run reads back
-// would differ from the one recorded.
-func validResidualMemberText(path, member string) error {
-	if strings.Contains(member, "\r") {
-		return fmt.Errorf("residual register %s: member %q carries a carriage return", path, member)
-	}
-	for _, line := range strings.Split(member, "\n") {
-		if strings.TrimSpace(line) == "" {
-			return fmt.Errorf("residual register %s: member %q carries an empty line",
-				path, residualMemberKey(member))
-		}
-		if line != strings.TrimSpace(line) {
-			return fmt.Errorf("residual register %s: member %q carries a line opening or closing on whitespace",
-				path, residualMemberKey(member))
-		}
-	}
-	return nil
-}
-
 // writeResidualRegister writes one class's register holding exactly the
-// entries given. It is the one writer of the file: the downward removal
-// calls it with the entries that survived a run, and the seeding of a
-// register calls it with the members the gate itself selected, so the
-// file is never hand-assembled from a population stated elsewhere.
-//
-// Every value is written as a literal block scalar. A member is a copy
-// of text the class's predicate reads, and the sibling class scans this
-// file as ordinary tree content, so a quoted or wrapped spelling would
-// present the sibling with a member that differs from the one recorded
-// here by an escape or a line break. The seeding would then record the
-// altered copy, whose own written form differs again, and it would not
-// converge.
+// entries given, through the shared register writer.
 func writeResidualRegister(write func(string, []byte) error, c scope.Class, entries []residualEntry) error {
-	path := residualRegisterPath(c)
-	if write == nil {
-		return fmt.Errorf("rewrite residual register %s: no writer is configured", path)
-	}
-	sorted := append([]residualEntry(nil), entries...)
-	sort.Slice(sorted, func(i, j int) bool {
-		return residualMemberKey(sorted[i].Member) < residualMemberKey(sorted[j].Member)
-	})
-	var b strings.Builder
-	b.WriteString(residualRegisterHeader(c))
-	fmt.Fprintf(&b, "kind: %s\nversion: %d\nclass: %s\n", residualRegisterKind, residualRegisterVersion, c)
-	// An empty class declares an empty list rather than an absent one,
-	// because a document with no entries block is the malformed register
-	// the loader refuses, and a class whose predicate selects nothing is
-	// the terminal state the pass and the remediation reach.
-	if len(sorted) == 0 {
-		b.WriteString("entries: []\n")
-	} else {
-		b.WriteString("entries:\n")
-	}
-	for i, entry := range sorted {
-		if err := validResidualEntry(path, c, entry); err != nil {
-			return fmt.Errorf("rewrite residual register %s: %w", path, err)
-		}
-		if i > 0 && residualMemberKey(sorted[i-1].Member) == residualMemberKey(entry.Member) {
-			return fmt.Errorf("rewrite residual register %s: member %q is written twice",
-				path, residualMemberKey(entry.Member))
-		}
-		b.WriteString("  - member: |-\n" + residualBlockScalar(entry.Member))
-		b.WriteString("    class: " + entry.Class + "\n")
-		b.WriteString("    disposition: " + entry.Disposition + "\n")
-		b.WriteString("    reason: |-\n" + residualBlockScalar(entry.Reason))
-	}
-	if err := write(path, []byte(b.String())); err != nil {
-		return fmt.Errorf("rewrite residual register %s: %w", path, err)
-	}
-	return nil
-}
-
-// residualBlockScalar renders a value as the body of a literal block
-// scalar, one indented line per line of the value. A member written
-// across two lines keeps the continuation join the occurrence carried,
-// so the stored copy is not a citation the form reads.
-func residualBlockScalar(value string) string {
-	var b strings.Builder
-	for _, line := range strings.Split(value, "\n") {
-		b.WriteString("      " + line + "\n")
-	}
-	return b.String()
-}
-
-// residualRegisterHeader explains the file to a reader who opens it
-// without the gate beside them. It states no section reference and no
-// line number of its own, because the sibling class reads this file as
-// tree content and a citation written here would be a member of that
-// class.
-func residualRegisterHeader(c scope.Class) string {
-	return fmt.Sprintf(`# SPDX-License-Identifier: MIT
-#
-# Residual register for the %s class.
-#
-# Each entry is a member of the class that the enumeration the migration
-# works from does not carry. An in-class entry belongs to the class, and
-# its route out is the class's own pass or remediation. An excluded entry
-# never belonged to the class, and it is permanent.
-#
-# The residual gate in tests/tier0_static fails tier 0 on a member that
-# matches the class's broad predicate and appears in neither the
-# enumeration nor this file, so a member no enumeration anticipated is
-# triaged here rather than absorbed. The gate removes an in-class entry
-# whose member has left the class in the same run, and it never adds an
-# entry.
-`, c)
+	return register.Write(write, residualRegisterPath(c), string(c), entries)
 }
 
 // residualTree is a fixture tree the gate runs over. It holds whichever
@@ -1268,8 +1052,8 @@ func TestResidualGateFailsOnAResidualInEachClassAndNamesIt(t *testing.T) {
 func TestResidualGateAcceptsAMemberRegisteredInEachDisposition(t *testing.T) {
 	t.Parallel()
 	for _, fixture := range residualFixtures(t) {
-		for _, disposition := range []string{residualInClass, residualExcluded} {
-			t.Run(string(fixture.Class)+"/"+disposition, func(t *testing.T) {
+		for _, disposition := range []residualDisposition{residualInClass, residualExcluded} {
+			t.Run(string(fixture.Class)+"/"+string(disposition), func(t *testing.T) {
 				t.Parallel()
 				tr := newResidualTree(t)
 				fixture.Write(tr)

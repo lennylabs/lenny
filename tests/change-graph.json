@@ -376,7 +376,8 @@
     },
     "scripts/specshift": {
       "static": ["tests/tier0_static/..."],
-      "unit": ["scripts/specshift/..."]
+      "unit": ["scripts/specshift/..."],
+      "contract": ["tests/tier3_contract/residual_register/..."]
     },
     "tests/testinfra/containers": {
       "component": ["tests/testinfra/containers/postgres_test.go"]
@@ -443,7 +444,8 @@
     },
     "tests/registers": {
       "static": ["tests/tier0_static/..."],
-      "unit": ["cmd/lenny-test/...", "scripts/specshift/..."]
+      "unit": ["cmd/lenny-test/...", "scripts/specshift/..."],
+      "contract": ["tests/tier3_contract/residual_register/..."]
     },
     "tests/tier0_static": {
       "static": ["tests/tier0_static/..."]

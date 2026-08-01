@@ -3,7 +3,7 @@
 # A residual register fixture for the generated-artifact class. Its
 # in-class entries are permanent, because a generated file keeps matching
 # the class predicate for as long as it exists.
-kind: specshift-residual-register
+kind: residual-register
 version: 1
 class: generated-artifacts
 entries:
