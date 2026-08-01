@@ -18,5 +18,5 @@ import "testing"
 // against the gateway resume driver. The test stays skipped until that path
 // lands; the body is a placeholder so the tier-0 build gate stays green.
 func TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11(t *testing.T) {
-	t.Skip("WORKSPACE_SNAPSHOT_MISSING resume failure mode is unimplemented; the detection point moves to the gateway-minted presigned chunk restore path (§10.1 line 155). The session-state API field that carries the error is undecided — see the open TEST-GAPS finding for the ArtifactStore restore-procedure failure mode.")
+	t.Skip("not implemented: the WORKSPACE_SNAPSHOT_MISSING resume failure mode; the detection point moves to the gateway-minted presigned chunk restore path (§10.1). The session-state API field that carries the error is undecided — see the open TEST-GAPS finding for the ArtifactStore restore-procedure failure mode.")
 }

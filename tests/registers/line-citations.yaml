@@ -3840,7 +3840,7 @@ files:
     - path: pkg/gateway/sessionserver/workspace_root_persist_test.go
       count: 1
     - path: pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go
-      count: 2
+      count: 1
     - path: pkg/gateway/sessionserver/workspace_warnings_internal_test.go
       count: 6
     - path: pkg/gateway/storage/deadletterredaction/redaction.go
@@ -5202,7 +5202,7 @@ files:
     - path: tests/tier3_contract/ops_endpoints/drift_against_target_test.go
       count: 1
     - path: tests/tier3_contract/ops_endpoints/health_auth_test.go
-      count: 4
+      count: 3
     - path: tests/tier3_contract/ops_endpoints/mcp_test.go
       count: 1
     - path: tests/tier3_contract/ops_endpoints/runbook_authz_test.go

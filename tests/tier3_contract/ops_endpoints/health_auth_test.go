@@ -70,7 +70,7 @@ func TestHealthEndpointsRequireAdminRole(t *testing.T) {
 	// summary/heartbeat endpoint explicitly public) is a pending human
 	// decision; the test is skipped until that is resolved so the
 	// assertion is recorded without gating the batch.
-	t.Skip("§25.3 line 410 admin-role requirement on /v1/admin/health* is unreconciled with the unauthenticated gateway implementation; pending human decision")
+	t.Skip("blocked: the §25.3 admin-role requirement on /v1/admin/health* is unreconciled with the unauthenticated gateway implementation; pending human decision")
 
 	surface := healthAuthSurface()
 

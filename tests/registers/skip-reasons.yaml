@@ -310,11 +310,6 @@ sites:
       site: 1
       call: Skip
       reason: test assumes the bare server has no pod registry
-    - path: pkg/gateway/sessionserver/workspace_snapshot_missing_resume_test.go
-      function: TestResumeWithMissingWorkspaceSnapshotFailsWithSnapshotMissing_spec_25_11
-      site: 1
-      call: Skip
-      reason: WORKSPACE_SNAPSHOT_MISSING resume failure mode is unimplemented; the detection point moves to the gateway-minted presigned chunk restore path (§10.1 line 155). The session-state API field that carries the error is undecided — see the open TEST-GAPS finding for the ArtifactStore restore-procedure failure mode.
     - path: pkg/gateway/storage/pgnotify/pgnotify_test.go
       function: TestListenNotifyRoundTrip_F1338
       site: 1
@@ -836,11 +831,6 @@ sites:
       site: 1
       call: Skip
       reason: §25.6 Error Codes table assigns no code or category to the both-Postgres-and-Kubernetes-unreachable 503; blocked on the same §25.6 reconciliation as the K8s-fallback findings
-    - path: tests/tier3_contract/ops_endpoints/health_auth_test.go
-      function: TestHealthEndpointsRequireAdminRole
-      site: 1
-      call: Skip
-      reason: §25.3 line 410 admin-role requirement on /v1/admin/health* is unreconciled with the unauthenticated gateway implementation; pending human decision
     - path: tests/tier3_contract/ops_endpoints/mcp_test.go
       function: TestRunbookStepsLennyCtlAndAPICommandKeySchemaContract
       site: 1
