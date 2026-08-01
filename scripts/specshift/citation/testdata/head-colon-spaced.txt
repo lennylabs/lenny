@@ -1,0 +1,1 @@
+# The component list is in spec/04_system-components.md:  line 723 of the file.

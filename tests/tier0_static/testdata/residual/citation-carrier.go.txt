@@ -1,4 +1,4 @@
 package carrier
 
-// A note about §4.6 (the rule, line 12 of the section.
+// A note about §4.6 Lines 12 of the section.
 const Name = "carrier"

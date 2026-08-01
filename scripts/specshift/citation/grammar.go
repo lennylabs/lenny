@@ -79,36 +79,59 @@ const (
 	headSection   = "section"
 	headFile      = "file"
 	headQualifier = "qualifier"
-	headParen     = "paren"
 	headMember    = "member"
 )
 
-// qualifierBody is the short sub-element name a citation may interpose between
-// its reference and the keyword, which is one to three tokens. A token is a
-// word that may carry an internal hyphen, and the last token may instead be a
-// number, a numeric range, or a quoted fragment, which is how `item 3`,
-// `paths 1-7`, and `"Version negotiation"` are written. The words `table` and
-// `preamble` are instances of the general rule rather than the only one-word
-// spellings.
+// qualifierBody is the run a citation interposes between its reference and
+// the line-number keyword, which names the sub-element the citation points
+// at. It is the run the class's broad predicate tolerates in the same
+// position, less the bytes named below, and it carries the same length
+// bound, so every occurrence the form reads is an occurrence the predicate
+// selects and the form's population stays inside the class's own.
 //
-// A qualifier narrower than this leaves every citation carrying a sub-element
-// name the matcher does not admit unconverted, unread by the resolver, and
-// uncounted by the ratchet, so its file reaches a zero count with the stale
-// pointer standing. Widening it does not turn prose into a citation, because
-// the branch the qualifier sits on still requires the literal keyword and a
-// member behind it; the colon branch, which stands directly against the
-// reference and would read an English or a YAML colon as the keyword, carries
-// no qualifier at all.
+// A run narrower than this leaves every citation whose sub-element name the
+// matcher does not admit unconverted, unread by the resolver, and uncounted
+// by the ratchet, so its file reaches a zero count with the stale pointer
+// standing. The spellings such a narrowing missed are ordinary: a separator
+// standing between the reference and the keyword, a colon written with
+// whitespace behind it, a parenthesis that opens ahead of the sub-element
+// name rather than against the keyword, a name of more than three tokens,
+// and a name carrying a path, a dotted field, or a markdown link target.
+// The fixtures under testdata/citations carry one carrier of each.
+// Enumerating those spellings is
+// the narrowing this replaces: each enumeration missed the next spelling,
+// and the members it missed had no route out, because the pass that would
+// rewrite them, the resolver that would read them, and the ratchet that
+// would count them are all driven by this one form.
 //
-// The first token is a word rather than a number, so a member list is never
-// read as a sub-element name.
+// Widening the run does not read prose as a citation, because the branch it
+// sits on still requires the literal keyword and a line number behind it.
+// Three bytes are held out of the run so the two spellings that are not
+// citations stay outside the form: the backslash of a regular-expression
+// literal written over this very form, and the percent sign and equals sign
+// of an assertion message naming a fixture's heading range. The section
+// sign is held out as well, so a run never reaches across the reference of
+// the citation written behind it and swallows the citation in between.
+//
+// The run ends on a byte that is not a word byte, so the keyword stands at
+// the head of a word rather than at the tail of one and `deadline 30` is no
+// citation. It is written lazily, so a citation ends at the first
+// line-number token behind its reference rather than at the last one inside
+// the bound.
 const (
-	qualifierWord  = `[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*`
-	qualifierQuote = `"[^"\n` + joinClass + `]*"|'[^'\n` + joinClass + `]*'`
-	qualifierTail  = `(?:` + qualifierWord + `|[0-9]+(?:[-\x{2013}\x{2014}][0-9]+)?|` + qualifierQuote + `)`
-	qualifierBody  = `(?:` + qualifierQuote + `|` + qualifierWord +
-		`(?:` + sp + `+` + qualifierWord + `)?(?:` + sp + `+` + qualifierTail + `)?)`
+	qualifierByte = `[^\n%\\\x{00a7}]`
+	qualifierEnd  = `[^\n%\\\x{00a7}A-Za-z0-9_]`
 )
+
+// qualifierBody is that run: whatever the citation writes there, up to the
+// bound below, ending on the byte that separates the run from the keyword.
+const qualifierBody = qualifierByte + `{0,95}?` + qualifierEnd
+
+// refExpr matches a reference of either spelling, which is what a head opens
+// on. It is read again inside a matched head, so a citation is read from the
+// reference standing closest to its line numbers.
+var refExpr = regexp.MustCompile(
+	`§` + sp + `*\d+(?:\.\d+)*|(?:spec/)?\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md`)
 
 // headExpr matches the head of a citation: the reference, the optional
 // qualifier, the keyword or the colon standing in for it, and the first member.
@@ -131,29 +154,28 @@ var headExpr = regexp.MustCompile(
 		// member is written directly against it. A wrap the join consumed is
 		// admitted after the colon, and nothing else is: an authored space
 		// after a colon belongs to English or to YAML rather than to the form,
-		// and a qualifier ahead of the colon absorbs a prose word and the
-		// digits of an unrelated number, so `§17.1 flat` wrapped onto
-		// `maxUnavailable:1` and `§25.11 daily 03:30 UTC` both read as
-		// citations. Each such phantom enters the per-file count of a file
-		// that carries no citation, and its only route to zero is the pass
-		// rewriting prose.
+		// and a member written behind such a space absorbs the digits of an
+		// unrelated number, so `§17.1 flat` wrapped onto `maxUnavailable:1`
+		// and `§25.11 daily 03:30 UTC` would both read as citations. Each
+		// such phantom enters the per-file count of a file that carries no
+		// citation, and its only route to zero is the pass rewriting prose. A
+		// colon the keyword itself stands behind is read by the branch below,
+		// where the keyword and the line number behind it identify the form.
 		`:` + joinClass + `?` +
 		`|` +
-		// The optional short qualifier naming a sub-element of the section.
-		`(?:` + sp + `+(?P<` + headQualifier + `>` + qualifierBody + `))?` +
-		// The keyword itself. It may open a parenthesis of the carrier's own,
-		// with or without the word `spec` behind it, so a qualified citation
-		// whose keyword and member sit inside a parenthesis is read whole; the
-		// fixture `testdata/citations/qualifier-parenthetical.txt` carries that
-		// spelling. A matcher requiring the keyword to follow the reference or
-		// the qualifier immediately leaves that spelling unconverted, unread by
-		// the resolver, and uncounted by the ratchet. The scanner closes that
-		// parenthesis with the citation. When nothing closes it inside the
-		// citation's bounds the occurrence is still returned, so it is resolved
-		// and counted, and it is marked unbalanced so the resolver reports it
-		// for hand correction rather than a pass converting a span carrying an
-		// unpaired delimiter to a single anchor.
-		`(?:` + sp + `+|` + sp + `*(?P<` + headParen + `>\()` + sp + `*(?:spec` + sp + `+)?)(?:lines?)` + sp + `+` +
+		// The run naming the sub-element of the section, and the keyword
+		// itself. The run carries whatever the citation writes between its
+		// reference and the keyword, the parenthesis a carrier opens
+		// included, wherever that parenthesis opens. A parenthesis the head
+		// leaves open is recognized by the scanner from the run's own
+		// delimiters, so the parenthesized spelling is read whole; the
+		// fixture `testdata/citations/qualifier-parenthetical.txt` carries
+		// one. When nothing closes it inside the citation's bounds the
+		// occurrence is still returned, so it is resolved and counted, and it
+		// is marked unbalanced so the resolver reports it for hand correction
+		// rather than a pass converting a span carrying an unpaired delimiter
+		// to a single anchor.
+		`(?P<` + headQualifier + `>` + qualifierBody + `)(?:lines?)` + sp + `+` +
 		`)` +
 		// The first member.
 		`(?P<` + headMember + `>` + memberBody + `)`,

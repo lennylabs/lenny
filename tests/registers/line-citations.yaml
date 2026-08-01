@@ -100,7 +100,7 @@ files:
     - path: charts/lenny/templates/deployment-config-sync-job.yaml
       count: 2
     - path: charts/lenny/templates/gateway-deployment.yaml
-      count: 99
+      count: 100
     - path: charts/lenny/templates/migrate-job.yaml
       count: 2
     - path: charts/lenny/templates/minio-bucket-lifecycle-job.yaml
@@ -182,7 +182,7 @@ files:
     - path: charts/lenny/tests/direct-mode-isolation-webhook_test.yaml
       count: 1
     - path: charts/lenny/tests/gateway-deployment_test.yaml
-      count: 128
+      count: 130
     - path: charts/lenny/tests/kyverno-share-process-namespace-policy_test.yaml
       count: 1
     - path: charts/lenny/tests/migrate-job_test.yaml
@@ -240,7 +240,7 @@ files:
     - path: charts/lenny/values.schema.json
       count: 7
     - path: charts/lenny/values.yaml
-      count: 223
+      count: 228
     - path: cmd/gen-alerting-rules/main.go
       count: 10
     - path: cmd/git-credential-lenny/helper.go
@@ -268,7 +268,7 @@ files:
     - path: cmd/lenny-compliance/schemaassert_test.go
       count: 3
     - path: cmd/lenny-compliance/schemavalidate.go
-      count: 4
+      count: 5
     - path: cmd/lenny-compliance/schemavalidate_test.go
       count: 3
     - path: cmd/lenny-controller/controllers.go
@@ -290,7 +290,7 @@ files:
     - path: cmd/lenny-ctl/runtimescaffold/validate_probe_test.go
       count: 1
     - path: cmd/lenny-gateway/adminrouter.go
-      count: 44
+      count: 45
     - path: cmd/lenny-gateway/audit_batching_test.go
       count: 1
     - path: cmd/lenny-gateway/audit_residency.go
@@ -342,7 +342,7 @@ files:
     - path: cmd/lenny-gateway/failopen_wiring.go
       count: 5
     - path: cmd/lenny-gateway/flags.go
-      count: 191
+      count: 194
     - path: cmd/lenny-gateway/flags_test.go
       count: 1
     - path: cmd/lenny-gateway/health_alert_overlay_test.go
@@ -350,13 +350,13 @@ files:
     - path: cmd/lenny-gateway/health_without_prometheus_test.go
       count: 1
     - path: cmd/lenny-gateway/httpsurface.go
-      count: 60
+      count: 61
     - path: cmd/lenny-gateway/interceptors.go
       count: 5
     - path: cmd/lenny-gateway/jwks_publish_test.go
       count: 1
     - path: cmd/lenny-gateway/lease_elicit.go
-      count: 4
+      count: 5
     - path: cmd/lenny-gateway/leaseextendseam_wiring_test.go
       count: 4
     - path: cmd/lenny-gateway/legalholdescrow.go
@@ -378,7 +378,7 @@ files:
     - path: cmd/lenny-gateway/main_test.go
       count: 8
     - path: cmd/lenny-gateway/mcpsurface.go
-      count: 32
+      count: 33
     - path: cmd/lenny-gateway/metricsbackfill.go
       count: 46
     - path: cmd/lenny-gateway/playground_audit_test.go
@@ -434,11 +434,11 @@ files:
     - path: cmd/lenny-gateway/tenantdeletion_test.go
       count: 1
     - path: cmd/lenny-gateway/user_revocation.go
-      count: 5
+      count: 7
     - path: cmd/lenny-gateway/wiring_fields.go
       count: 2
     - path: cmd/lenny-gateway/workers.go
-      count: 66
+      count: 68
     - path: cmd/lenny-gateway/workers_backstop_test.go
       count: 1
     - path: cmd/lenny-migrate/main.go
@@ -458,7 +458,7 @@ files:
     - path: cmd/lenny-ops/bundlerules_test.go
       count: 4
     - path: cmd/lenny-ops/deps.go
-      count: 83
+      count: 84
     - path: cmd/lenny-ops/deps_setup.go
       count: 4
     - path: cmd/lenny-ops/deps_setup_test.go
@@ -482,11 +482,11 @@ files:
     - path: cmd/lenny-ops/events_wiring.go
       count: 4
     - path: cmd/lenny-ops/flags.go
-      count: 20
+      count: 22
     - path: cmd/lenny-ops/gatewayclient.go
-      count: 4
+      count: 5
     - path: cmd/lenny-ops/httpsurface.go
-      count: 10
+      count: 11
     - path: cmd/lenny-ops/k8sadapters.go
       count: 2
     - path: cmd/lenny-ops/lock_metrics_test.go
@@ -496,7 +496,7 @@ files:
     - path: cmd/lenny-ops/main.go
       count: 6
     - path: cmd/lenny-ops/opsroll_startup.go
-      count: 8
+      count: 10
     - path: cmd/lenny-ops/opsroll_startup_test.go
       count: 1
     - path: cmd/lenny-ops/restore_test_metrics_test.go
@@ -582,7 +582,7 @@ files:
     - path: docs/runbooks/cert-manager-outage.md
       count: 1
     - path: docs/runbooks/tier-promotion.md
-      count: 3
+      count: 4
     - path: migrations/0047_tenant_guard_platform_admin_bypass.up.sql
       count: 2
     - path: migrations/0049_artifact_store.up.sql
@@ -635,10 +635,12 @@ files:
       count: 4
     - path: migrations/0068_workspace_snapshot_hash.up.sql
       count: 1
+    - path: migrations/0073_credentials_last_used_at.up.sql
+      count: 1
     - path: migrations/0074_runtime_limits_setup_command_policy_default_pool.up.sql
       count: 1
     - path: migrations/0078_credential_pool_cache_policy.up.sql
-      count: 1
+      count: 2
     - path: migrations/0080_sessions_active_by_pod_index.up.sql
       count: 1
     - path: migrations/0081_runtime_workspace_tier.up.sql
@@ -673,12 +675,14 @@ files:
       count: 2
     - path: migrations/0096_preflight_tenant.up.sql
       count: 1
+    - path: migrations/0097_tenant_rbac_config.up.sql
+      count: 1
     - path: migrations/0098_eval_results_idempotency_key.up.sql
       count: 1
     - path: migrations/0099_sessions_delegation_lease.up.sql
       count: 1
     - path: migrations/0100_session_tree_archive.up.sql
-      count: 5
+      count: 6
     - path: migrations/0101_tenant_token_quota_reset_period.up.sql
       count: 1
     - path: migrations/0103_tenant_workspace_tier_check.up.sql
@@ -686,11 +690,11 @@ files:
     - path: migrations/0106_tenant_gc_priority.up.sql
       count: 1
     - path: migrations/0107_siem_delivery_state.up.sql
-      count: 1
+      count: 2
     - path: migrations/0108_agent_pod_state_notify.up.sql
       count: 2
     - path: migrations/0110_pool_elicitation_policy.up.sql
-      count: 1
+      count: 2
     - path: migrations/0111_session_leases.up.sql
       count: 2
     - path: migrations/0112_session_checkpoints_slot_id.up.sql
@@ -926,7 +930,7 @@ files:
     - path: pkg/adapter/coordination_test.go
       count: 16
     - path: pkg/adapter/credentials.go
-      count: 17
+      count: 19
     - path: pkg/adapter/credexpiry.go
       count: 3
     - path: pkg/adapter/credexpiry_test.go
@@ -1038,7 +1042,7 @@ files:
     - path: pkg/adapter/rotationgate_test.go
       count: 3
     - path: pkg/adapter/scrub/scrub.go
-      count: 2
+      count: 3
     - path: pkg/adapter/scrub/scrub_test.go
       count: 7
     - path: pkg/adapter/sdkwarm.go
@@ -1100,7 +1104,7 @@ files:
     - path: pkg/adapter/tracingcontext.go
       count: 3
     - path: pkg/adapter/transport.go
-      count: 6
+      count: 7
     - path: pkg/adapter/transport_mods_test.go
       count: 1
     - path: pkg/adapter/usage.go
@@ -1160,7 +1164,7 @@ files:
     - path: pkg/admission/label_immutability/label_immutability_test.go
       count: 1
     - path: pkg/admission/pool_config_validator/validator.go
-      count: 37
+      count: 39
     - path: pkg/admission/pool_config_validator/validator_test.go
       count: 10
     - path: pkg/admission/webhook/direct_mode_isolation_test.go
@@ -1174,7 +1178,7 @@ files:
     - path: pkg/admission/webhook/label_immutability_test.go
       count: 4
     - path: pkg/admission/webhook/pod_security.go
-      count: 1
+      count: 2
     - path: pkg/admission/webhook/pod_security_test.go
       count: 2
     - path: pkg/admission/webhook/pool_config_validator.go
@@ -1334,7 +1338,7 @@ files:
     - path: pkg/auth/jwt/jwt.go
       count: 5
     - path: pkg/blobstore/artifactcatalog/catalog.go
-      count: 35
+      count: 37
     - path: pkg/blobstore/azureblob/azureblob.go
       count: 10
     - path: pkg/blobstore/azureblob/azureblob_test.go
@@ -1518,13 +1522,13 @@ files:
     - path: pkg/controller/sandbox/sharedassets_internal_test.go
       count: 1
     - path: pkg/controller/tenantdeletion/controller.go
-      count: 5
+      count: 7
     - path: pkg/controller/tenantdeletion/legalhold_override_test.go
       count: 2
     - path: pkg/controller/tenantdeletion/legalhold_test.go
       count: 2
     - path: pkg/controller/tenantdeletion/lifecycle.go
-      count: 3
+      count: 4
     - path: pkg/controller/warmpool/concurrent_sharing_test.go
       count: 2
     - path: pkg/controller/warmpool/controller.go
@@ -1694,7 +1698,7 @@ files:
     - path: pkg/embedded/localcli/attach_test.go
       count: 2
     - path: pkg/embedded/localcli/image.go
-      count: 3
+      count: 5
     - path: pkg/embedded/localcli/image_test.go
       count: 7
     - path: pkg/embedded/localcli/localcli.go
@@ -1714,7 +1718,7 @@ files:
     - path: pkg/embedded/localcli/token.go
       count: 1
     - path: pkg/embedded/manifests/manifests.yaml
-      count: 114
+      count: 115
     - path: pkg/embedded/stack/bootstrap_seed_admin_test.go
       count: 1
     - path: pkg/embedded/stack/catalog.go
@@ -1766,8 +1770,10 @@ files:
     - path: pkg/events/types_test.go
       count: 2
     - path: pkg/experiment/experiment.go
-      count: 6
+      count: 7
     - path: pkg/experiment/experiment_test.go
+      count: 2
+    - path: pkg/experiment/external.go
       count: 2
     - path: pkg/experiment/external_test.go
       count: 2
@@ -1824,11 +1830,11 @@ files:
     - path: pkg/gateway/billing/billingretention/billingretention_test.go
       count: 3
     - path: pkg/gateway/billing/billingsink/billingsink.go
-      count: 3
+      count: 4
     - path: pkg/gateway/billing/billingsink/billingsink_test.go
       count: 6
     - path: pkg/gateway/billing/billingsink/publishing.go
-      count: 1
+      count: 2
     - path: pkg/gateway/billing/billingsink/publishing_test.go
       count: 1
     - path: pkg/gateway/billing/billingstore/billingstore.go
@@ -1876,7 +1882,7 @@ files:
     - path: pkg/gateway/checkpoint/checkpointer/checkpointer.go
       count: 60
     - path: pkg/gateway/checkpoint/checkpointer/checkpointer_test.go
-      count: 32
+      count: 33
     - path: pkg/gateway/checkpoint/checkpointer/freshness.go
       count: 5
     - path: pkg/gateway/checkpoint/checkpointer/freshness_test.go
@@ -2006,7 +2012,7 @@ files:
     - path: pkg/gateway/credentials/credassign/client_test.go
       count: 1
     - path: pkg/gateway/credentials/credassign/credassign.go
-      count: 13
+      count: 15
     - path: pkg/gateway/credentials/credassign/credassign_test.go
       count: 1
     - path: pkg/gateway/credentials/credassign/direct_test.go
@@ -2022,7 +2028,7 @@ files:
     - path: pkg/gateway/credentials/credassign/span_test.go
       count: 1
     - path: pkg/gateway/credentials/credentialpoolstore/credentialpoolstore.go
-      count: 20
+      count: 21
     - path: pkg/gateway/credentials/credentialpoolstore/credentialpoolstore_test.go
       count: 5
     - path: pkg/gateway/credentials/credentialpoolstore/erasure_test.go
@@ -2046,7 +2052,7 @@ files:
     - path: pkg/gateway/credentials/credentialstore/pgstore/rekey.go
       count: 3
     - path: pkg/gateway/credentials/credfallback/controller.go
-      count: 3
+      count: 4
     - path: pkg/gateway/credentials/credfallback/controller_test.go
       count: 6
     - path: pkg/gateway/credentials/credleasestore/credleasestore.go
@@ -2208,9 +2214,9 @@ files:
     - path: pkg/gateway/externalapi/admin/audit_query.go
       count: 63
     - path: pkg/gateway/externalapi/admin/audit_query_filter.go
-      count: 10
-    - path: pkg/gateway/externalapi/admin/audit_query_filter_test.go
       count: 11
+    - path: pkg/gateway/externalapi/admin/audit_query_filter_test.go
+      count: 12
     - path: pkg/gateway/externalapi/admin/audit_query_metrics_test.go
       count: 1
     - path: pkg/gateway/externalapi/admin/audit_query_test.go
@@ -2280,7 +2286,7 @@ files:
     - path: pkg/gateway/externalapi/admin/credential_pool_revocation_test.go
       count: 1
     - path: pkg/gateway/externalapi/admin/credential_pools.go
-      count: 36
+      count: 37
     - path: pkg/gateway/externalapi/admin/credential_pools_dryrun_test.go
       count: 1
     - path: pkg/gateway/externalapi/admin/credential_pools_etag_test.go
@@ -2308,7 +2314,7 @@ files:
     - path: pkg/gateway/externalapi/admin/deployment_config_test.go
       count: 6
     - path: pkg/gateway/externalapi/admin/elicitation_integrity.go
-      count: 11
+      count: 13
     - path: pkg/gateway/externalapi/admin/elicitation_integrity_test.go
       count: 12
     - path: pkg/gateway/externalapi/admin/environment_runtime_exposure.go
@@ -2352,7 +2358,7 @@ files:
     - path: pkg/gateway/externalapi/admin/experiment_sticky_test.go
       count: 2
     - path: pkg/gateway/externalapi/admin/experiments.go
-      count: 20
+      count: 21
     - path: pkg/gateway/externalapi/admin/experiments_etag_test.go
       count: 9
     - path: pkg/gateway/externalapi/admin/experiments_test.go
@@ -2382,7 +2388,7 @@ files:
     - path: pkg/gateway/externalapi/admin/lease_extension_test.go
       count: 16
     - path: pkg/gateway/externalapi/admin/legalhold.go
-      count: 25
+      count: 27
     - path: pkg/gateway/externalapi/admin/legalhold_escrow_test.go
       count: 2
     - path: pkg/gateway/externalapi/admin/legalhold_list_test.go
@@ -2408,13 +2414,13 @@ files:
     - path: pkg/gateway/externalapi/admin/pool_upgrade_test.go
       count: 4
     - path: pkg/gateway/externalapi/admin/pools.go
-      count: 81
+      count: 83
     - path: pkg/gateway/externalapi/admin/pools_circuit_breaker_test.go
       count: 5
     - path: pkg/gateway/externalapi/admin/pools_dryrun_test.go
       count: 1
     - path: pkg/gateway/externalapi/admin/pools_elicitation_test.go
-      count: 1
+      count: 2
     - path: pkg/gateway/externalapi/admin/pools_etag_test.go
       count: 7
     - path: pkg/gateway/externalapi/admin/pools_isolation_internal_test.go
@@ -2460,9 +2466,9 @@ files:
     - path: pkg/gateway/externalapi/admin/runtimes_workspace_test.go
       count: 3
     - path: pkg/gateway/externalapi/admin/scope_enforce.go
-      count: 4
+      count: 6
     - path: pkg/gateway/externalapi/admin/scope_enforce_test.go
-      count: 2
+      count: 5
     - path: pkg/gateway/externalapi/admin/sessions.go
       count: 8
     - path: pkg/gateway/externalapi/admin/sessions_test.go
@@ -2512,13 +2518,13 @@ files:
     - path: pkg/gateway/externalapi/admin/users_test.go
       count: 1
     - path: pkg/gateway/externalapi/admintoken/admintoken.go
-      count: 19
+      count: 24
     - path: pkg/gateway/externalapi/admintoken/admintoken_test.go
-      count: 11
+      count: 12
     - path: pkg/gateway/externalapi/admintoken/k8ssecret/k8ssecret.go
       count: 2
     - path: pkg/gateway/externalapi/admintoken/reclaimer/reclaimer.go
-      count: 3
+      count: 5
     - path: pkg/gateway/externalapi/admintoken/reclaimer/reclaimer_test.go
       count: 8
     - path: pkg/gateway/externalapi/errorclassify/errorclassify.go
@@ -2526,11 +2532,11 @@ files:
     - path: pkg/gateway/externalapi/errorclassify/errorclassify_test.go
       count: 24
     - path: pkg/gateway/externalapi/openapi/openapi.go
-      count: 5
+      count: 11
     - path: pkg/gateway/externalapi/openapi/openapi.json
       count: 21
     - path: pkg/gateway/externalapi/openapi/openapi_test.go
-      count: 18
+      count: 23
     - path: pkg/gateway/externalapi/pagination/pagination.go
       count: 10
     - path: pkg/gateway/externalapi/pagination/pagination_test.go
@@ -2618,9 +2624,9 @@ files:
     - path: pkg/gateway/mcpfabric/delegation/resolve_max_input_size_test.go
       count: 2
     - path: pkg/gateway/mcpfabric/delegation/service.go
-      count: 146
+      count: 152
     - path: pkg/gateway/mcpfabric/delegation/service_test.go
-      count: 25
+      count: 28
     - path: pkg/gateway/mcpfabric/delegation/span_test.go
       count: 2
     - path: pkg/gateway/mcpfabric/delegation/tree_budget_test.go
@@ -2697,6 +2703,8 @@ files:
       count: 5
     - path: pkg/gateway/mcpfabric/delegationtree/leasecontrol/satoken_verify_test.go
       count: 10
+    - path: pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server.go
+      count: 1
     - path: pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go
       count: 8
     - path: pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup_test.go
@@ -2766,7 +2774,7 @@ files:
     - path: pkg/gateway/mcpfabric/mcp/version_internal_test.go
       count: 4
     - path: pkg/gateway/mcpfabric/mcp/websocket.go
-      count: 13
+      count: 14
     - path: pkg/gateway/mcpfabric/mcp/websocket_attach.go
       count: 5
     - path: pkg/gateway/mcpfabric/mcp/websocket_attach_test.go
@@ -2848,11 +2856,11 @@ files:
     - path: pkg/gateway/mcpfabric/mcptools/limits_per_runtime_test.go
       count: 3
     - path: pkg/gateway/mcpfabric/mcptools/mcptools.go
-      count: 118
+      count: 119
     - path: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
-      count: 154
+      count: 155
     - path: pkg/gateway/mcpfabric/mcptools/mcptools_test.go
-      count: 28
+      count: 29
     - path: pkg/gateway/mcpfabric/mcptools/memorytools_test.go
       count: 1
     - path: pkg/gateway/mcpfabric/mcptools/messagepart_internal_test.go
@@ -2872,7 +2880,7 @@ files:
     - path: pkg/gateway/mcpfabric/mcptools/session_control_test.go
       count: 4
     - path: pkg/gateway/mcpfabric/mcptools/tasktree_tools_test.go
-      count: 16
+      count: 17
     - path: pkg/gateway/mcpfabric/mcptools/tenant_per_request_test.go
       count: 1
     - path: pkg/gateway/mcpfabric/mcptools/tenant_resolution_internal_test.go
@@ -2889,6 +2897,8 @@ files:
       count: 2
     - path: pkg/gateway/mcpfabric/playground/idle_sweep_test.go
       count: 2
+    - path: pkg/gateway/mcpfabric/playground/intersect_scope_test.go
+      count: 1
     - path: pkg/gateway/mcpfabric/playground/metrics.go
       count: 4
     - path: pkg/gateway/mcpfabric/playground/playground.go
@@ -2900,7 +2910,7 @@ files:
     - path: pkg/gateway/mcpfabric/playground/runtime_visible_test.go
       count: 2
     - path: pkg/gateway/mcpfabric/playground/sessionrecord.go
-      count: 18
+      count: 19
     - path: pkg/gateway/mcpfabric/playground/sessionrecord_test.go
       count: 3
     - path: pkg/gateway/mcpfabric/playground/token.go
@@ -3007,6 +3017,8 @@ files:
       count: 1
     - path: pkg/gateway/middleware/correlation/tracing_propagation_test.go
       count: 2
+    - path: pkg/gateway/middleware/deprecation/deprecation.go
+      count: 1
     - path: pkg/gateway/middleware/environment/environment.go
       count: 1
     - path: pkg/gateway/middleware/idempotency/idempotency.go
@@ -3042,7 +3054,7 @@ files:
     - path: pkg/gateway/operability/health/metrics.go
       count: 4
     - path: pkg/gateway/operability/health/pools.go
-      count: 5
+      count: 6
     - path: pkg/gateway/operability/health/pools_test.go
       count: 4
     - path: pkg/gateway/operability/health/runbook_bundle_test.go
@@ -3052,7 +3064,7 @@ files:
     - path: pkg/gateway/operability/health/runbook_links_test.go
       count: 9
     - path: pkg/gateway/operability/health/service.go
-      count: 22
+      count: 23
     - path: pkg/gateway/operability/health/service_test.go
       count: 6
     - path: pkg/gateway/operability/health/suggested_actions.go
@@ -3066,7 +3078,7 @@ files:
     - path: pkg/gateway/operability/recommendations/sampler.go
       count: 3
     - path: pkg/gateway/operability/recommendations/service.go
-      count: 25
+      count: 28
     - path: pkg/gateway/operability/recommendations/service_test.go
       count: 2
     - path: pkg/gateway/pki/carotation/carotation_test.go
@@ -3118,7 +3130,7 @@ files:
     - path: pkg/gateway/podlifecycle/podsession/sdkwarm_bind_test.go
       count: 7
     - path: pkg/gateway/podlifecycle/podsession/slotbinder.go
-      count: 16
+      count: 17
     - path: pkg/gateway/podlifecycle/podsession/slotbinder_test.go
       count: 4
     - path: pkg/gateway/podlifecycle/prestop/barrier_test.go
@@ -3434,7 +3446,7 @@ files:
     - path: pkg/gateway/session/memorystore/preflight_test.go
       count: 5
     - path: pkg/gateway/session/messagerouting/messagerouting.go
-      count: 6
+      count: 7
     - path: pkg/gateway/session/messagerouting/messagerouting_test.go
       count: 6
     - path: pkg/gateway/session/orphansession/orphansession.go
@@ -3576,7 +3588,7 @@ files:
     - path: pkg/gateway/sessionserver/coordination_fence_test.go
       count: 9
     - path: pkg/gateway/sessionserver/create.go
-      count: 36
+      count: 37
     - path: pkg/gateway/sessionserver/create_test.go
       count: 33
     - path: pkg/gateway/sessionserver/delegated_child_materialize_test.go
@@ -3638,7 +3650,7 @@ files:
     - path: pkg/gateway/sessionserver/interactions_test.go
       count: 1
     - path: pkg/gateway/sessionserver/interrupt.go
-      count: 7
+      count: 8
     - path: pkg/gateway/sessionserver/interrupt_suspend_phase_test.go
       count: 1
     - path: pkg/gateway/sessionserver/interrupt_test.go
@@ -3648,7 +3660,7 @@ files:
     - path: pkg/gateway/sessionserver/lease_registrar_internal_test.go
       count: 2
     - path: pkg/gateway/sessionserver/lifecycle.go
-      count: 41
+      count: 42
     - path: pkg/gateway/sessionserver/lifecycle_internal_test.go
       count: 5
     - path: pkg/gateway/sessionserver/lifecycle_test.go
@@ -3662,15 +3674,15 @@ files:
     - path: pkg/gateway/sessionserver/messagerouting_rest_test.go
       count: 1
     - path: pkg/gateway/sessionserver/messages.go
-      count: 40
+      count: 41
     - path: pkg/gateway/sessionserver/messages_list.go
       count: 11
     - path: pkg/gateway/sessionserver/messages_list_test.go
       count: 7
     - path: pkg/gateway/sessionserver/messages_resume_deliver_test.go
-      count: 1
+      count: 2
     - path: pkg/gateway/sessionserver/messages_test.go
-      count: 19
+      count: 20
     - path: pkg/gateway/sessionserver/messaging.go
       count: 9
     - path: pkg/gateway/sessionserver/messaging_internal_test.go
@@ -3695,6 +3707,8 @@ files:
       count: 3
     - path: pkg/gateway/sessionserver/pool_exhaustion_queue_test.go
       count: 1
+    - path: pkg/gateway/sessionserver/pool_selection_component_test.go
+      count: 1
     - path: pkg/gateway/sessionserver/pools.go
       count: 5
     - path: pkg/gateway/sessionserver/pools_test.go
@@ -3718,7 +3732,7 @@ files:
     - path: pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go
       count: 10
     - path: pkg/gateway/sessionserver/resume_held_pod_test.go
-      count: 2
+      count: 3
     - path: pkg/gateway/sessionserver/resume_setup_demotion_internal_test.go
       count: 1
     - path: pkg/gateway/sessionserver/resumed_event_test.go
@@ -3754,7 +3768,7 @@ files:
     - path: pkg/gateway/sessionserver/slotretry_test.go
       count: 4
     - path: pkg/gateway/sessionserver/start.go
-      count: 240
+      count: 243
     - path: pkg/gateway/sessionserver/start_admission_gates_test.go
       count: 9
     - path: pkg/gateway/sessionserver/start_credassign_test.go
@@ -3764,13 +3778,15 @@ files:
     - path: pkg/gateway/sessionserver/start_pod_test.go
       count: 21
     - path: pkg/gateway/sessionserver/start_preclaim_internal_test.go
-      count: 24
+      count: 25
     - path: pkg/gateway/sessionserver/start_proxydialect_internal_test.go
       count: 5
+    - path: pkg/gateway/sessionserver/start_usersource_internal_test.go
+      count: 1
     - path: pkg/gateway/sessionserver/startupmetrics_internal_test.go
       count: 4
     - path: pkg/gateway/sessionserver/targetingbreaker.go
-      count: 5
+      count: 6
     - path: pkg/gateway/sessionserver/targetingbreaker_test.go
       count: 6
     - path: pkg/gateway/sessionserver/taskrecord.go
@@ -3860,7 +3876,7 @@ files:
     - path: pkg/gateway/storage/erasure/erasure_test.go
       count: 2
     - path: pkg/gateway/storage/erasure/order.go
-      count: 3
+      count: 4
     - path: pkg/gateway/storage/erasure/order_test.go
       count: 3
     - path: pkg/gateway/storage/erasure/semanticcache_wiring_test.go
@@ -3872,7 +3888,7 @@ files:
     - path: pkg/gateway/storage/erasurejob/erasurejob.go
       count: 5
     - path: pkg/gateway/storage/erasurejob/runner.go
-      count: 10
+      count: 11
     - path: pkg/gateway/storage/erasurejob/runner_test.go
       count: 9
     - path: pkg/gateway/storage/erasurejob/saltlockpg/saltlockpg.go
@@ -4022,9 +4038,9 @@ files:
     - path: pkg/kms/rekey/rekey_test.go
       count: 4
     - path: pkg/legalholdescrow/escrow.go
-      count: 2
-    - path: pkg/legalholdescrow/escrow_test.go
       count: 3
+    - path: pkg/legalholdescrow/escrow_test.go
+      count: 4
     - path: pkg/legalholdescrow/migrator.go
       count: 1
     - path: pkg/legalholdescrow/pgstore/pgstore.go
@@ -4042,7 +4058,7 @@ files:
     - path: pkg/mtls/interceptordial/handshake_test.go
       count: 3
     - path: pkg/mtls/interceptordial/interceptordial.go
-      count: 3
+      count: 4
     - path: pkg/mtls/interceptordial/interceptordial_test.go
       count: 2
     - path: pkg/mtls/rotation_restore_test.go
@@ -4050,7 +4066,7 @@ files:
     - path: pkg/mtls/spiffe/interceptor_verify_test.go
       count: 6
     - path: pkg/mtls/spiffe/verify.go
-      count: 7
+      count: 9
     - path: pkg/mtls/spiffe/verify_test.go
       count: 1
     - path: pkg/observability/audit/catalog.go
@@ -4092,7 +4108,7 @@ files:
     - path: pkg/ops/backup/backup.go
       count: 3
     - path: pkg/ops/backup/estimate.go
-      count: 5
+      count: 6
     - path: pkg/ops/backup/estimate_internal_test.go
       count: 2
     - path: pkg/ops/backup/estimate_test.go
@@ -4110,7 +4126,7 @@ files:
     - path: pkg/ops/backup/metrics_test.go
       count: 2
     - path: pkg/ops/backup/orchestrator.go
-      count: 44
+      count: 46
     - path: pkg/ops/backup/pgstore/pgstore.go
       count: 3
     - path: pkg/ops/backup/pgstore/pgstore_test.go
@@ -4132,7 +4148,9 @@ files:
     - path: pkg/ops/backup/runner/audit_verify_internal_test.go
       count: 1
     - path: pkg/ops/backup/runner/export.go
-      count: 8
+      count: 16
+    - path: pkg/ops/backup/runner/export_test.go
+      count: 12
     - path: pkg/ops/backup/runner/opsevents.go
       count: 5
     - path: pkg/ops/backup/runner/opsevents_test.go
@@ -4144,7 +4162,7 @@ files:
     - path: pkg/ops/backup/runner/runner.go
       count: 5
     - path: pkg/ops/backup/service.go
-      count: 8
+      count: 9
     - path: pkg/ops/backup/store.go
       count: 1
     - path: pkg/ops/baselinestore/pgstore.go
@@ -4152,7 +4170,7 @@ files:
     - path: pkg/ops/baselinestore/pgstore_test.go
       count: 1
     - path: pkg/ops/configservice/configservice.go
-      count: 6
+      count: 8
     - path: pkg/ops/configservice/configservice_test.go
       count: 2
     - path: pkg/ops/conventions/conventions.go
@@ -4216,7 +4234,7 @@ files:
     - path: pkg/ops/doctor/doctor_test.go
       count: 9
     - path: pkg/ops/driftservice/driftservice.go
-      count: 45
+      count: 47
     - path: pkg/ops/driftservice/driftservice_test.go
       count: 14
     - path: pkg/ops/driftservice/gatewayreader/gatewayreader.go
@@ -4260,7 +4278,7 @@ files:
     - path: pkg/ops/events/gapmetric_test.go
       count: 1
     - path: pkg/ops/events/interface.go
-      count: 16
+      count: 17
     - path: pkg/ops/events/interface_test.go
       count: 3
     - path: pkg/ops/events/read_surface_test.go
@@ -4280,7 +4298,7 @@ files:
     - path: pkg/ops/eventsubscription/eventsubscription_test.go
       count: 8
     - path: pkg/ops/eventsubscription/pgstore/pgstore.go
-      count: 2
+      count: 3
     - path: pkg/ops/eventsubscription/pgstore/pgstore_test.go
       count: 2
     - path: pkg/ops/eventsubscription/resolver.go
@@ -4318,7 +4336,7 @@ files:
     - path: pkg/ops/metrics/source.go
       count: 1
     - path: pkg/ops/operations/baselines.go
-      count: 1
+      count: 2
     - path: pkg/ops/operations/baselines_test.go
       count: 3
     - path: pkg/ops/operations/cadence.go
@@ -4378,7 +4396,7 @@ files:
     - path: pkg/ops/opsserver/backup_internal_test.go
       count: 1
     - path: pkg/ops/opsserver/backup_test.go
-      count: 8
+      count: 9
     - path: pkg/ops/opsserver/cache_invalidate_test.go
       count: 2
     - path: pkg/ops/opsserver/correlation_fallback_test.go
@@ -4450,13 +4468,15 @@ files:
     - path: pkg/ops/opsserver/opsserver_test.go
       count: 4
     - path: pkg/ops/opsserver/platform_config.go
-      count: 2
+      count: 3
     - path: pkg/ops/opsserver/platform_registry.go
-      count: 2
+      count: 3
     - path: pkg/ops/opsserver/platform_registry_test.go
       count: 2
     - path: pkg/ops/opsserver/platform_upgrade.go
       count: 2
+    - path: pkg/ops/opsserver/platform_upgrade_test.go
+      count: 1
     - path: pkg/ops/opsserver/ratelimit.go
       count: 7
     - path: pkg/ops/opsserver/ratelimit_internal_test.go
@@ -4508,7 +4528,7 @@ files:
     - path: pkg/ops/opsservice/selfchecks.go
       count: 1
     - path: pkg/ops/opsservice/selfchecks_test.go
-      count: 5
+      count: 7
     - path: pkg/ops/opsservice/service_test.go
       count: 2
     - path: pkg/ops/opsservice/subscriptioncache.go
@@ -4521,6 +4541,8 @@ files:
       count: 5
     - path: pkg/ops/opsservice/webhookloop_test.go
       count: 3
+    - path: pkg/ops/platformassets/platformassets.go
+      count: 1
     - path: pkg/ops/platformassets/platformassets_test.go
       count: 1
     - path: pkg/ops/registryservice/pgstore.go
@@ -4528,11 +4550,11 @@ files:
     - path: pkg/ops/registryservice/pgstore_test.go
       count: 3
     - path: pkg/ops/registryservice/registryservice.go
-      count: 4
+      count: 6
     - path: pkg/ops/registryservice/registryservice_test.go
       count: 6
     - path: pkg/ops/runbooks/index.go
-      count: 1
+      count: 2
     - path: pkg/ops/runbooks/index_test.go
       count: 3
     - path: pkg/ops/upgradeservice/baseline_test.go
@@ -4542,7 +4564,7 @@ files:
     - path: pkg/ops/upgradeservice/checkcache_test.go
       count: 2
     - path: pkg/ops/upgradeservice/codes.go
-      count: 1
+      count: 2
     - path: pkg/ops/upgradeservice/codes_test.go
       count: 1
     - path: pkg/ops/upgradeservice/imagepullchecker.go
@@ -4560,13 +4582,13 @@ files:
     - path: pkg/ops/upgradeservice/state_extra_test.go
       count: 3
     - path: pkg/ops/upgradeservice/upgradeservice.go
-      count: 22
+      count: 25
     - path: pkg/ops/upgradeservice/upgradeservice_test.go
       count: 2
     - path: pkg/ops/upgradeservice/version.go
       count: 2
     - path: pkg/ops/upgradeservice/watchdog.go
-      count: 6
+      count: 7
     - path: pkg/ops/upgradeservice/watchdog_test.go
       count: 5
     - path: pkg/ops/versionsource/versionsource.go
@@ -4677,6 +4699,8 @@ files:
       count: 6
     - path: pkg/preflight/ops_admin_tls.go
       count: 1
+    - path: pkg/preflight/ops_admin_tls_test.go
+      count: 1
     - path: pkg/preflight/ops_readiness.go
       count: 14
     - path: pkg/preflight/ops_readiness_test.go
@@ -4720,7 +4744,7 @@ files:
     - path: pkg/preflight/volume_encryption_test.go
       count: 4
     - path: pkg/preflight/webhooks.go
-      count: 9
+      count: 11
     - path: pkg/preflight/webhooks_test.go
       count: 7
     - path: pkg/proto/adapter/v1/lenny-adapter.pb.go
@@ -4774,9 +4798,9 @@ files:
     - path: pkg/sandbox/isolation/runtimeclass_test.go
       count: 1
     - path: pkg/sandbox/podscrub/podscrub.go
-      count: 8
+      count: 10
     - path: pkg/sandbox/podscrub/podscrub_test.go
-      count: 8
+      count: 9
     - path: pkg/sandbox/slotstate/registry.go
       count: 2
     - path: pkg/sandbox/slotstate/registry_test.go
@@ -4964,17 +4988,19 @@ files:
     - path: sdks/runtime/python/lenny_runtime/types.py
       count: 1
     - path: spec/17_deployment-topology.md
-      count: 1
+      count: 3
     - path: spec/25_agent-operability.md
       count: 1
     - path: tests/integration/admission_policy_test.go
-      count: 2
+      count: 3
     - path: tests/integration/admission_webhook_inventory_test.go
-      count: 3
+      count: 5
     - path: tests/integration/core_deployment_inventory_test.go
-      count: 1
+      count: 2
     - path: tests/integration/phase_stamp_downgrade_test.go
-      count: 3
+      count: 4
+    - path: tests/registers/skip-reasons.yaml
+      count: 1
     - path: tests/spec-map.json
       count: 6
     - path: tests/testinfra/containers/postgres.go
@@ -5026,7 +5052,7 @@ files:
     - path: tests/tier11_docs/playground_delegation_scope_test.go
       count: 1
     - path: tests/tier11_docs/runbook_steps_test.go
-      count: 2
+      count: 3
     - path: tests/tier11_docs/runbooks_test.go
       count: 4
     - path: tests/tier11_docs/time_to_hello_world_test.go
@@ -5183,6 +5209,8 @@ files:
       count: 5
     - path: tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go
       count: 1
+    - path: tests/tier3_contract/admin_conflict_codes/admin_conflict_codes_test.go
+      count: 1
     - path: tests/tier3_contract/cloudevents/cloudevents_test.go
       count: 1
     - path: tests/tier3_contract/cloudevents/ops_events_buffer_test.go
@@ -5222,11 +5250,11 @@ files:
     - path: tests/tier3_contract/rest_mcp_consistency/lifecycle_pagination_test.go
       count: 3
     - path: tests/tier3_contract/rest_mcp_consistency/published_schema_test.go
-      count: 1
+      count: 2
     - path: tests/tier3_contract/rest_sessions/sessions_test.go
       count: 3
     - path: tests/tier3_contract/workspaceplan/sources_test.go
-      count: 2
+      count: 3
     - path: tests/tier4_integration/alerting_metrics_exposition_test.go
       count: 7
     - path: tests/tier4_integration/audit_batch_test.go
@@ -5260,7 +5288,7 @@ files:
     - path: tests/tier4_integration/credential_fallback_test.go
       count: 6
     - path: tests/tier4_integration/credential_lifecycle_test.go
-      count: 4
+      count: 5
     - path: tests/tier4_integration/credential_pool_revocation_propagation_test.go
       count: 5
     - path: tests/tier4_integration/cross_environment_delegation_test.go
@@ -5340,13 +5368,13 @@ files:
     - path: tests/tier5_e2e_kind/diagnostics_fix_test.go
       count: 2
     - path: tests/tier5_e2e_kind/ops_anonymous_rejected_test.go
-      count: 5
+      count: 6
     - path: tests/tier5_e2e_kind/restore_test_cronjob_dispatch_test.go
       count: 3
     - path: tests/tier5_e2e_kind/runtime_publish_journey_test.go
       count: 7
     - path: tests/tier6_e2e_cloud/artifact_replication_residency_test.go
-      count: 4
+      count: 5
     - path: tests/tier6_e2e_cloud/ops_smoke_test.go
       count: 3
     - path: tests/tier7a_load_local/checkpoint_grant_window_test.go
@@ -5364,7 +5392,7 @@ files:
     - path: tests/tier7b_load_kind/scenarios/gateway_capacity_calibration/main.js
       count: 6
     - path: tests/tier7b_load_kind/scenarios/pod_claim_latency/main.js
-      count: 1
+      count: 2
     - path: tests/tier8_chaos/chaos_helpers_test.go
       count: 8
     - path: tests/tier8_chaos/coordination_crash_takeover_test.go
@@ -5388,7 +5416,7 @@ files:
     - path: tests/tier8_chaos/token_service_unavailability_guard_test.go
       count: 4
     - path: tests/tier9_security/admin_scope_enforce_test.go
-      count: 1
+      count: 3
     - path: tests/tier9_security/budget_extension_failclosed_test.go
       count: 3
     - path: tests/tier9_security/delegation_child_materialization_cred_test.go
@@ -5396,11 +5424,11 @@ files:
     - path: tests/tier9_security/diagnostics_fix_guardrails_test.go
       count: 5
     - path: tests/tier9_security/elicitation_integrity_gate_test.go
-      count: 4
+      count: 6
     - path: tests/tier9_security/elicitation_urlmode_audit_test.go
       count: 1
     - path: tests/tier9_security/lease_extension_clear_test.go
-      count: 4
+      count: 6
     - path: tests/tier9_security/ops_inventory_isolation_test.go
       count: 2
     - path: tests/tier9_security/ops_rbac_test.go

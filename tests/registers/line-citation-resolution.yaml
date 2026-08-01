@@ -57,6 +57,7 @@ files:
       citations:
         - §12.5 line 279
         - §12.5 line 280
+        - §15.5 item 1; docs/api/index.md line 124
         - §16.9 line 723
         - §17.6 line 365
         - §17.9.1 line 1350
@@ -119,6 +120,7 @@ files:
     - path: charts/lenny/tests/gateway-deployment_test.yaml
       citations:
         - §12.8 line 746
+        - §15.5 item 1; docs/api/index.md line 124
         - §16.9 line 723
         - §17.6 line 365
         - §17.9.1 line 1350
@@ -161,6 +163,7 @@ files:
         - §12.5 line 280 default is
         - §12.5 lines 277-280 post-install bucket
         - §12.8 line 746
+        - §15.5 item 1; docs/api/index.md line 124
         - §16.5 line 657
         - §16.5 line 666
         - §17.5 line 3
@@ -194,6 +197,7 @@ files:
         - §15.4.6 line 2408
     - path: cmd/lenny-compliance/schemavalidate.go
       citations:
+        - §15.4.6 conformance categories at spec lines 2405 and 2408 require
         - §15.4.6 line 2405
         - §15.4.6 line 2405 + 2408
         - §15.4.6 line 2408
@@ -234,11 +238,14 @@ files:
         - §12.5 line 279
         - §12.8 line 746
         - §12.8 line 746 MemoryStore feature
+        - §15.5 item 1 + docs/api/index.md line 124
+        - §15.5 item 1 / docs/api/index.md line 124
         - §7.4 line 433 deployer policy
     - path: cmd/lenny-gateway/httpsurface.go
       citations:
         - §11.5 line 268
         - §15.1 line 589
+        - §15.5 item 1 + docs/api/index.md line 124
         - §16.4 lines 371-372
     - path: cmd/lenny-gateway/llmproxy_usage.go
       citations:
@@ -359,13 +366,18 @@ files:
     - path: docs/runbooks/tier-promotion.md
       citations:
         - §17.8.2 line 950
+        - '§17.8.3 Step 1 benchmarks: `--llm-proxy-extraction-attested` (line 1263)'
         - §17.8.3 line 1285
         - §17.8.3 line 1285 NO-GO criterion
+    - path: migrations/0073_credentials_last_used_at.up.sql
+      citations:
+        - §15.1 GET /v1/credentials response carries it (spec line 1349, 1365)
     - path: migrations/0096_preflight_tenant.up.sql
       citations:
         - §12.8 lines 743-758
     - path: migrations/0100_session_tree_archive.up.sql
       citations:
+        - '§12.7 erasure ordering requires: the archive MUST be deleted before its tree''s sessions (line 807)'
         - §12.7 lines 783, 807
         - §7.1 lines 426-433
         - §8.10 lines 129, 1062
@@ -446,6 +458,9 @@ files:
     - path: pkg/adapter/mcpruntime_schemaversion_internal_test.go
       citations:
         - §15.4.1 line 1524
+    - path: pkg/adapter/scrub/scrub.go
+      citations:
+        - §6.2 occupancy-zero recycle boundary (spec/05_runtime- registry-and-pool-model.md lines 415-465)
     - path: pkg/adapter/server.go
       citations:
         - §15.4.1 line 1442 cadence at
@@ -512,6 +527,10 @@ files:
       citations:
         - §13.4 line 652
         - §13.4 line 665
+    - path: pkg/admission/pool_config_validator/validator.go
+      citations:
+        - §4.6.1 line ~470 "time-of-day schedules"; pkg/apis/lenny/v1/sandboxwarmpool_types.go lines 9-26
+        - §4.6.2 line ~493 "bootstrap mode"; pkg/apis/lenny/v1/sandboxwarmpool_types.go line 46
     - path: pkg/alerting/alertingmetrics/alertingmetrics.go
       citations:
         - §16.1 line 713
@@ -554,6 +573,7 @@ files:
         - §13.3 line 580 narrowed tool
     - path: pkg/blobstore/artifactcatalog/catalog.go
       citations:
+        - §12.8 Phase 4, line 735
         - §12.8 line 735
         - §12.8 line 739
         - §12.8 line 739 reconciler walks
@@ -760,6 +780,7 @@ files:
         - §26.2 line 213
     - path: pkg/embedded/manifests/manifests.yaml
       citations:
+        - §15.5 item 1; docs/api/index.md line 124
         - §16.9 line 723
     - path: pkg/embedded/stack/catalog.go
       citations:
@@ -953,6 +974,7 @@ files:
         - §15.2.1 line 1376 REST
     - path: pkg/gateway/externalapi/openapi/openapi_test.go
       citations:
+        - §10.2 roles the gateway admits. The spec line 928 documents only
         - §15.1 line 589
         - §15.2.1 line 1376
     - path: pkg/gateway/mcpfabric/delegation/service.go
@@ -963,6 +985,7 @@ files:
         - §8.3 line 100
         - §8.3 lines 100, 157-188, 181, 218
         - §8.4 lines 515-521
+        - §8.5 handler maps to BUDGET_EXHAUSTED (spec line 127)
     - path: pkg/gateway/mcpfabric/delegation/service_test.go
       citations:
         - §11.7 line 62
@@ -1077,6 +1100,7 @@ files:
         - §15.2 lines 1284-1306
         - §15.2.1 rule 1 line 1380
         - §15.2.1 rule 4 line 1386
+        - §15.2.1 rule 5(d) line 1396
         - §15.4.1 line 1548 hard ceiling
         - §15.4.1 lines 1542-1548 MessagePart
         - §15.4.1 lines 1696-1707
@@ -1095,6 +1119,9 @@ files:
         - §8.9 lines 615-623
         - §8.9 lines 615-623 fix the
         - §9.1 line 103
+    - path: pkg/gateway/mcpfabric/mcptools/mcptools_test.go
+      citations:
+        - §15.2.1 rule 5(d) line 1396
     - path: pkg/gateway/mcpfabric/mcptools/messagepart_internal_test.go
       citations:
         - §15.4.1 line 1548
@@ -1109,6 +1136,7 @@ files:
         - §15.2 line 1303
     - path: pkg/gateway/mcpfabric/mcptools/tasktree_tools_test.go
       citations:
+        - §8.9 input schema declares no required fields — the caller-implicit identification rule the spec at lines 615-623 sets
         - §8.9 lines 615-623
         - §8.9 lines 615-623 input
     - path: pkg/gateway/mcpfabric/playground/playground.go
@@ -1162,6 +1190,9 @@ files:
     - path: pkg/gateway/middleware/correlation/tracing_propagation_test.go
       citations:
         - §16.3 lines 320, 326
+    - path: pkg/gateway/middleware/deprecation/deprecation.go
+      citations:
+        - §15.5 item 1; docs/api/index.md line 124
     - path: pkg/gateway/middleware/idempotency/idempotency.go
       citations:
         - §11.5 line 268
@@ -1183,6 +1214,7 @@ files:
     - path: pkg/gateway/operability/recommendations/service.go
       citations:
         - §17.8 line 1014
+        - §25.3 suggestedAction body the example responses use (lines 580-587, 3204)
     - path: pkg/gateway/podlifecycle/podclaim/slotclaimer.go
       citations:
         - §6.4 lines 416-419
@@ -1416,6 +1448,7 @@ files:
     - path: pkg/gateway/sessionserver/lifecycle.go
       citations:
         - §12.9 line 1033
+        - §16.6 OCSF mapping prefixes — `session.upload` (line 338)
     - path: pkg/gateway/sessionserver/list_filter_test.go
       citations:
         - §15.1 line 598
@@ -1572,6 +1605,7 @@ files:
         - §12.8 line 768 throughput metrics
         - §12.8 line 768 tier-specific SLA
         - §12.8 lines 743-758
+        - §12.8 per-job MemoryStore erasure preflight (lines 743-758, defense-in-depth layer 3)
     - path: pkg/gateway/storage/erasurejob/runner_test.go
       citations:
         - §12.8 line 762
@@ -1945,6 +1979,9 @@ files:
       citations:
         - §15.2.1 line 1411
         - §15.2.1 line 1412
+    - path: tests/tier3_contract/rest_mcp_consistency/published_schema_test.go
+      citations:
+        - §15.2 ("Version negotiation" line 1315, quoted above)
     - path: tests/tier4_integration/concurrent_workspace_test.go
       citations:
         - §15.4.1 line 1459
@@ -1965,12 +2002,16 @@ files:
     - path: tests/tier5_e2e_kind/ops_anonymous_rejected_test.go
       citations:
         - §25.4 line 328 (AUTH category is 401 or 403)
+        - §25.4's error taxonomy (line 328)
     - path: tests/tier5_e2e_kind/runtime_publish_journey_test.go
       citations:
         - §5.1 line 690
     - path: tests/tier7b_load_kind/baselines/pod_claim_latency.json
       citations:
         - §6.3 line 368 explicitly frames
+    - path: tests/tier7b_load_kind/scenarios/pod_claim_latency/main.js
+      citations:
+        - §6.3 Tier-2 promotion gate clears, see line 368
     - path: tests/tier9_security/ops_rbac_test.go
       citations:
         - §25.4 lines 62, 1569

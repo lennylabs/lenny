@@ -7296,6 +7296,9 @@ func TestBroadPredicateSelectsEveryCitationTheFormReads(t *testing.T) {
 		"broad-enumerated-list.txt",
 		"broad-enumerated-colon.txt",
 		"broad-enumerated-path.txt",
+		"broad-enumerated-prose.txt",
+		"broad-enumerated-comma.txt",
+		"broad-enumerated-paren.txt",
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
@@ -7319,17 +7322,20 @@ func TestBroadPredicateSelectsEveryCitationTheFormReads(t *testing.T) {
 }
 
 // TestBroadPredicateSelectsASpellingTheFormDoesNotRead pins the residual
-// itself: an occurrence the grammar's separators, keyword position, and
-// keyword case leave unread is still selected, and it is reported with
-// the text a register is keyed by. Each spelling and each expectation is
-// held in a fixture for the reason fixtureCitations states.
+// itself: an occurrence the form leaves unread is still selected, and it
+// is reported with the text a register is keyed by. What the form leaves
+// unread is the keyword written in another case, the keyword standing at
+// the tail of a word rather than at its head, and a run carrying one of
+// the bytes the form holds out of it, which is where the format verb of
+// an assertion message and the escape of a string literal fall. Each
+// spelling and each expectation is held in a fixture for the reason
+// fixtureCitations states.
 func TestBroadPredicateSelectsASpellingTheFormDoesNotRead(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct{ name, fixture string }{
-		{"prose between the reference and the keyword", "broad-residual-prose.txt"},
 		{"a keyword written in another case", "broad-residual-case.txt"},
-		{"a comma between the reference and the keyword", "broad-residual-comma.txt"},
-		{"a member list inside a parenthesis of the carrier", "broad-residual-paren.txt"},
+		{"a keyword standing at the tail of a word", "broad-residual-wordtail.txt"},
+		{"a format verb between the reference and the keyword", "broad-residual-format.txt"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

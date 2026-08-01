@@ -1,0 +1,1 @@
+// The §4.6 failover deadline 12 is the worst case.

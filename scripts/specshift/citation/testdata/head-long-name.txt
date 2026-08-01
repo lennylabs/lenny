@@ -1,0 +1,1 @@
+// The categories are §15.4.6 conformance categories at spec lines 2405 and 2408.

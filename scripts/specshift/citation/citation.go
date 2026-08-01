@@ -145,11 +145,10 @@ func Find(content string) []Citation {
 	starts := lineStarts(content)
 	var out []Citation
 	for pos := 0; pos < len(joined); {
-		loc := headExpr.FindStringSubmatchIndex(joined[pos:])
+		loc := findHead(joined, pos)
 		if loc == nil {
 			break
 		}
-		shift(loc, pos)
 		if !boundedLeft(joined, loc[0]) {
 			pos = loc[0] + 1
 			continue
@@ -205,19 +204,77 @@ func parseAt(joined string, loc []int) (Citation, int, bool) {
 	if path := group(joined, loc, headFile); path != "" {
 		c.File = normalizePath(path)
 	}
-	c.Qualifier = strings.Join(strings.Fields(render(group(joined, loc, headQualifier))), " ")
+	c.Qualifier = trimQualifier(render(group(joined, loc, headQualifier)))
 
 	first, ok := parseMember(render(group(joined, loc, headMember)))
 	if !ok {
 		return Citation{}, 0, false
 	}
 	c.Members = []Member{first}
-	end, membersEnd, unbalanced := consumeCitation(joined, loc[1], &c.Members, group(joined, loc, headParen) != "")
+	end, membersEnd, unbalanced := consumeCitation(joined, loc[1], &c.Members, opensParen(joined[loc[0]:loc[1]]))
 	c.Unbalanced = unbalanced
 	c.MembersEnd = membersEnd
 	c.Text = render(joined[loc[0]:end])
 	return c, end, true
 }
+
+// qualifierTrim is the punctuation a sub-element name is trimmed of at either
+// end, together with the whitespace of the form. A separator standing between
+// the reference and the keyword belongs to the citation's own punctuation
+// rather than to the name, so an anchor written in the citation's place does
+// not carry it. A parenthesis, a bracket, and a quote are kept, because they
+// delimit the name rather than separate it from the reference, and dropping
+// one half of a pair would leave the other standing in the rewritten carrier.
+const qualifierTrim = spaceBytes + ",;:/+&" + rangeSeparators
+
+// trimQualifier returns the sub-element name a head carries, with its
+// punctuation trimmed and its internal whitespace collapsed to single spaces,
+// so the name reads the same whether the citation was written on one line or
+// wrapped across two.
+//
+// A parenthesis the head opens and does not close belongs to the carrier
+// rather than to the name: it is the carrier's parenthetical, which the
+// citation sits inside. Everything from that parenthesis onward is dropped,
+// so the anchor written in the citation's place carries the name alone and
+// never an unpaired delimiter or the word standing between the parenthesis
+// and the keyword.
+func trimQualifier(run string) string {
+	name := strings.Join(strings.Fields(run), " ")
+	if at := unclosedParen(name); at >= 0 {
+		name = name[:at]
+	}
+	return strings.Trim(name, qualifierTrim)
+}
+
+// unclosedParen returns the offset of the first parenthesis the text opens
+// and does not close, or -1 when every parenthesis it opens is closed.
+func unclosedParen(text string) int {
+	var open []int
+	for i := 0; i < len(text); i++ {
+		switch text[i] {
+		case '(':
+			open = append(open, i)
+		case ')':
+			if len(open) > 0 {
+				open = open[:len(open)-1]
+			}
+		}
+	}
+	if len(open) == 0 {
+		return -1
+	}
+	return open[0]
+}
+
+// opensParen reports whether a citation's head leaves a parenthesis of the
+// carrier's own open, which is the state the scanner closes the citation on.
+//
+// The state is taken from the head's own delimiters rather than from a
+// submatch of one spelling of the opening, because a carrier opens its
+// parenthesis wherever it likes: standing against the keyword, standing
+// ahead of the sub-element name, or not at all. A parenthesis the head both
+// opens and closes leaves nothing for the scanner to close.
+func opensParen(head string) bool { return unclosedParen(head) >= 0 }
 
 // consumeCitation extends the citation from the end of its head over every
 // continuation member, closes the parenthesis a head that opened one closes
@@ -327,11 +384,52 @@ func nextHead(joined string, from int) int {
 	if from >= len(joined) {
 		return len(joined)
 	}
-	loc := headExpr.FindStringIndex(joined[from:])
+	loc := findHead(joined, from)
 	if loc == nil {
 		return len(joined)
 	}
-	return from + loc[0]
+	return loc[0]
+}
+
+// findHead returns the submatch offsets of the next head at or after from, in
+// the coordinates of the joined text, or nil when there is none.
+//
+// A head whose sub-element run carries a reference of its own is retried from
+// that reference, so the citation is read from the reference standing closest
+// to its line numbers. The run holds the section-sign spelling out by byte, and
+// the path spelling cannot be held out that way because a sub-element name
+// carries a path of its own; without the retry a section reference written
+// ahead of a path citation would take that citation's line numbers as its own,
+// and the resolver would report them against a section they were never written
+// for.
+func findHead(joined string, from int) []int {
+	for pos := from; pos <= len(joined); {
+		loc := headExpr.FindStringSubmatchIndex(joined[pos:])
+		if loc == nil {
+			return nil
+		}
+		shift(loc, pos)
+		inner := nestedRef(joined, loc)
+		if inner < 0 {
+			return loc
+		}
+		pos = inner
+	}
+	return nil
+}
+
+// nestedRef returns the offset of a reference written inside the head's
+// sub-element run, or -1 when the run carries none.
+func nestedRef(joined string, loc []int) int {
+	at := headExpr.SubexpIndex(headQualifier) * 2
+	if at < 0 || loc[at] < 0 {
+		return -1
+	}
+	found := refExpr.FindStringIndex(joined[loc[at]:loc[at+1]])
+	if found == nil {
+		return -1
+	}
+	return loc[at] + found[0]
 }
 
 // consumeMembers extends the member list from pos over every gloss and every

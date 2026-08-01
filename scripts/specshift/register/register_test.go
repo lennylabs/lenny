@@ -81,16 +81,21 @@ func TestReadForHoldsARegisterToTheClassItIsReadFor(t *testing.T) {
 }
 
 // TestAMemberIsKeyedByItsFoldedText pins that a member stored across two
-// lines, which is how a citation read across a comment wrap is recorded,
-// is one member with the same text stored on one line.
+// lines, which is how an occurrence read across a comment wrap is
+// recorded, is one member with the same text stored on one line.
+//
+// The member below carries no reference and no line-number token, so this
+// case does not write an occurrence of the line-citation class into a file
+// the residual scan reads.
 func TestAMemberIsKeyedByItsFoldedText(t *testing.T) {
 	t.Parallel()
-	if got := register.MemberKey("§7.2\n(table line 123"); got != "§7.2 (table line 123" {
+	wrapped, folded := "the pool selector\nand the claim path", "the pool selector and the claim path"
+	if got := register.MemberKey(wrapped); got != folded {
 		t.Errorf("the wrapped member keys as %q", got)
 	}
 	entries := []register.Entry{
-		{Member: "§7.2\n(table line 123", Class: "line-citations", Disposition: register.InClass, Reason: "r"},
-		{Member: "§7.2 (table line 123", Class: "line-citations", Disposition: register.InClass, Reason: "r"},
+		{Member: wrapped, Class: "line-citations", Disposition: register.InClass, Reason: "r"},
+		{Member: folded, Class: "line-citations", Disposition: register.InClass, Reason: "r"},
 	}
 	doc := &register.Document{Kind: register.Kind, Version: register.Version, Class: "line-citations", Entries: &entries}
 	if err := doc.Validate(); err == nil {

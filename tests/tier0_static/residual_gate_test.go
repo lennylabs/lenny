@@ -844,6 +844,46 @@ func excludedEntry(c scope.Class, member string) residualEntry {
 	return residualEntry{Member: member, Class: string(c), Disposition: residualExcluded, Reason: "it never belonged to the class"}
 }
 
+// TestNoInClassLineCitationEntryIsUnreachableByItsPass pins the closure
+// route an in-class entry records. An in-class entry says the member
+// belongs to the class and the class's own pass or remediation reaches
+// it. The line-citation classes are driven by one citation form: the
+// pass rewrites what that form reads, the resolver resolves it, and the
+// ratchet counts it. A member the form does not read is therefore a
+// member no pass can rewrite, no resolver reports, and no ratchet
+// counts, so filing it as in-class narrows the class from inside the
+// register and lets its carrier reach a count of zero with the stale
+// pointer standing.
+//
+// The two closures the gate accepts stay open: the member is read by the
+// form, in which case the pass reaches it and no entry is needed, or it
+// never belonged to the class, in which case the entry is an exclusion.
+func TestNoInClassLineCitationEntryIsUnreachableByItsPass(t *testing.T) {
+	t.Parallel()
+	read := scope.DirReader(schematest.RepoRoot(t))
+	for _, class := range []scope.Class{scope.ClassLineCitations, scope.ClassLineCitationResolution} {
+		t.Run(string(class), func(t *testing.T) {
+			t.Parallel()
+			path := residualRegisterPath(class)
+			carried, order, err := loadResidualRegister(read, class)
+			if err != nil {
+				t.Fatalf("load %s: %v", path, err)
+			}
+			for _, key := range order {
+				entry := carried[key]
+				if entry.Disposition != residualInClass {
+					continue
+				}
+				if len(citation.Find(key)) == 0 {
+					t.Errorf("%s carries %q as in-class, and the citation form reads no citation in it, "+
+						"so the line pass cannot rewrite it, the resolver does not read it, "+
+						"and the ratchet does not count it", path, key)
+				}
+			}
+		})
+	}
+}
+
 func TestResidualGateCertifiesTheTree(t *testing.T) {
 	t.Parallel()
 	root := schematest.RepoRoot(t)
@@ -920,8 +960,7 @@ func residualFixtureText(t *testing.T, name string) string {
 
 // residualCitationMember is the member the scan reports for the fixture
 // carrier. The spelling is outside the enumerated citation grammar,
-// which admits no prose between the reference and the keyword, so the
-// scan reports it.
+// which reads the keyword in lower case alone, so the scan reports it.
 func residualCitationMember(t *testing.T) string {
 	t.Helper()
 	return strings.TrimSuffix(residualFixtureText(t, "citation-member.txt"), "\n")
@@ -1336,24 +1375,33 @@ func TestResidualGateStoresAWrappedCitationWithItsContinuationJoin(t *testing.T)
 	if !strings.Contains(member, "\n") {
 		t.Fatalf("the member %q carries no line break, so the wrap it was read across is lost", member)
 	}
-	// The case pins nothing unless the folded spelling is one the
-	// citation form reads. The wrap is what keeps the occurrence out of
-	// the enumeration, and folding it back is what would make the stored
-	// copy a citation of its own.
+	// The case pins nothing unless the folded spelling is an occurrence
+	// of the class in its own right. The wrap is what the scan read the
+	// occurrence across, and folding it back into the register is what
+	// would make the stored copy a member of the sibling class, reported
+	// under the register's own path.
 	folded := residualMemberKey(member)
-	if len(citation.FindIn(residualCitationCarrier, folded)) == 0 {
-		t.Fatalf("the folded member %q is read by no citation form", folded)
+	if len(citation.FindBroad(folded)) != 1 {
+		t.Fatalf("the folded member %q is selected by the class predicate as no occurrence", folded)
 	}
 
 	tr.register(scope.ClassLineCitations, inClassEntry(scope.ClassLineCitations, member))
 	body := tr.registerText(scope.ClassLineCitations)
-	if !strings.Contains(body, "      §17.2 \"canonical\n      enumeration\" (line 40\n") {
+	// The expected spelling is read from a fixture rather than written
+	// here, because a copy of the member written in this file would be an
+	// occurrence of the class under this file's own path.
+	want := residualFixtureText(t, "citation-wrapped-member.txt")
+	if !strings.Contains(body, "      "+strings.ReplaceAll(strings.TrimSuffix(want, "\n"), "\n", "\n      ")+"\n") {
 		t.Errorf("the register does not carry the member across two lines:\n%s", body)
 	}
 	register := residualRegisterPath(scope.ClassLineCitations)
 	if read := citation.FindIn(register, body); len(read) > 0 {
 		t.Errorf("the stored member stands as the citation %q, which the ratchet counts and the resolver reports under %s",
 			read[0].Raw, register)
+	}
+	if selected := citation.FindBroadIn(register, body); len(selected) > 0 {
+		t.Errorf("the stored member stands as the occurrence %q, which the sibling class reports under %s",
+			selected[0].Text, register)
 	}
 	// The stored spelling reads back as the same member, so the entry
 	// holds the site rather than being reported again beside it.
