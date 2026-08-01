@@ -712,7 +712,7 @@ func runStaticTier() (string, string) {
 			}
 			out, err := exec.Command("bash", script).CombinedOutput()
 			if err != nil {
-				return fmt.Sprintf("WARNING (non-fatal, §17.6/§17.7/§17.9):\n%s", out), nil
+				return fmt.Sprintf("WARNING (non-fatal, §17.6/§17.7):\n%s", out), nil
 			}
 			return string(out), nil
 		}},

@@ -7,10 +7,11 @@
 #          Every TestXxx function in pkg/*_test.go should call
 #          t.Parallel() unless it has a documented reason not to.
 #   §17.7  No testify / gomega imports in tests/ or pkg/.
-#   §17.9  Skip reasons use one of two canonical forms:
-#            - "not-yet-applicable: phase-<N>: …"
-#            - "not implemented: §<N>.<N>"
-#          Plus any *.SkipUnless* helper invocation.
+#
+# §17.9 skip reasons are classified by the tier-0 Go test in
+# tests/tier0_static/, which reads the syntax tree of every skip call
+# site and fails the tier. One convention has one implementation, so
+# nothing here reads a skip reason.
 #
 # Exit code:
 #   0  no violations
@@ -81,31 +82,6 @@ for f in "${pkg_test_files[@]}"; do
         report "§17.6 ${line}"
     done
 done
-
-# §17.9 — t.Skip reasons should follow the canonical format. Allow
-# the documented patterns:
-#   - "not-yet-applicable: phase-<N>"
-#   - "not implemented:"
-#   - "*.SkipUnless<X>" helper calls (no string)
-#   - any t.Skipf(...) with a {%v}/{%s} formatter (runtime values)
-# Anything else is reported.
-while IFS= read -r match; do
-    # match: file:line:content
-    line="${match#*:}"; line="${line%%:*}"
-    file="${match%%:*}"
-    content="${match#*:*:}"
-    # Skip empty t.Skip() (deliberate phase placeholder).
-    if echo "${content}" | grep -qE '\bt\.Skip\(\s*\)'; then
-        continue
-    fi
-    # Skip the recognized patterns.
-    if echo "${content}" | grep -qE '(t\.Skipf|t\.Skip\(\s*"(not-yet-applicable: phase-[0-9]+(\.[0-9]+)?[a-z]?|not implemented:|.SkipUnless))'; then
-        continue
-    fi
-    # Skip patterns that build their string from the harness helpers
-    # (kind.SkipUnlessAvailable, etc.) — caught by SkipUnless above.
-    report "§17.9 unexpected t.Skip reason: ${file}:${line}: ${content}"
-done < <(grep -RIEn 't\.Skip\(' "${ROOT}/tests" "${ROOT}/pkg" 2>/dev/null | grep -v testdata | grep -v 'lint-test-conventions:exempt-skip' || true)
 
 if (( violations > 0 )); then
     echo "lint-test-conventions: ${violations} violation(s)" >&2
