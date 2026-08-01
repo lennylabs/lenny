@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -246,16 +245,19 @@ func TestClassReadDomainIsExportedForTheReservedPhraseAndIdentifierClasses(t *te
 	}
 }
 
-// TestClassReadDomainExcludesTheClassOwnRegisters pins the third
-// exclusion of a class's read domain. A residual entry holds a copy of
-// its member's text, so a scan that read its own residual register, or
-// the pass or baseline register its gate consumes, would report that
-// copy under the register's own path as a further member, and the entry
-// seeded for the copy would add another copy. The seeding does not
-// converge. The exclusion is per class: another class's register stays
-// ordinary tree content, because a member found there is recorded in a
-// register the reading class does not open.
-func TestClassReadDomainExcludesTheClassOwnRegisters(t *testing.T) {
+// TestClassReadDomainExcludesEveryResidualRegisterAndTheClassOwnBaseline
+// pins the third exclusion of a class's read domain. A residual entry
+// holds a copy of its member's text, so a scan that read a residual
+// register, or the pass or baseline register its own gate consumes,
+// would report that copy under the register's own path as a further
+// member, and the entry seeded for the copy would add another copy. The
+// seeding does not converge.
+//
+// The residual registers are excluded from every class rather than from
+// their own class alone. Two classes whose predicates overlap otherwise
+// pin each other's registers permanently, so neither can empty. The pass
+// or baseline register stays per class, because one gate consumes it.
+func TestClassReadDomainExcludesEveryResidualRegisterAndTheClassOwnBaseline(t *testing.T) {
 	t.Parallel()
 	list, _ := treeDomain(t)
 	domain, err := scope.ClassReadDomain(context.Background(), list, scope.ClassReservedPhrase)
@@ -279,9 +281,31 @@ func TestClassReadDomainExcludesTheClassOwnRegisters(t *testing.T) {
 			t.Errorf("ReadableForClass(%s, %q) = true, want false", scope.ClassReservedPhrase, reg)
 		}
 	}
-	const other = "tests/registers/residual-anchors.yaml"
-	if !in[other] {
-		t.Errorf("%s class read domain omits another class's register %s", scope.ClassReservedPhrase, other)
+	for _, other := range scope.Classes() {
+		reg := other.ResidualRegister()
+		if in[reg] {
+			t.Errorf("%s class read domain admits the %s residual register %s, whose copies of that class's members it would report as its own",
+				scope.ClassReservedPhrase, other, reg)
+		}
+		ok, err := scope.ReadableForClass(scope.ClassReservedPhrase, reg)
+		if err != nil {
+			t.Fatalf("ReadableForClass(%s, %s): %v", scope.ClassReservedPhrase, reg, err)
+		}
+		if ok {
+			t.Errorf("ReadableForClass(%s, %q) = true, want false", scope.ClassReservedPhrase, reg)
+		}
+	}
+	// Another class's pass or baseline register stays ordinary tree
+	// content, so the exclusion above is bounded rather than covering the
+	// whole register directory.
+	const sibling = "tests/registers/anchor-senses.yaml"
+	ok, err := scope.ReadableForClass(scope.ClassReservedPhrase, sibling)
+	if err != nil {
+		t.Fatalf("ReadableForClass(%s, %s): %v", scope.ClassReservedPhrase, sibling, err)
+	}
+	if !ok {
+		t.Errorf("ReadableForClass(%s, %q) = false; only a residual register and the class's own baseline are excluded",
+			scope.ClassReservedPhrase, sibling)
 	}
 	if _, err := scope.ReadableForClass(scope.Class("reduction"), "pkg/carrier/carrier.go"); err == nil {
 		t.Error("ReadableForClass with an unknown class returned no error")
@@ -7271,8 +7295,9 @@ func TestMarkerDeclaredAnswersNotGeneratedForAProducerOutput(t *testing.T) {
 }
 
 // TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain pins
-// that the exclusion which keeps a class from reading a register as tree
-// content is per class rather than shared.
+// that the exclusion which keeps the residual scan from reading a
+// register as tree content belongs to that scan rather than to the read
+// domain the gates and the passes share.
 //
 // A residual register carries the text of every member it triages and a
 // reason for each, and the naming lint, the identifier-resolution gate,
@@ -7281,8 +7306,9 @@ func TestMarkerDeclaredAnswersNotGeneratedForAProducerOutput(t *testing.T) {
 // them and, through the write domain that exclusion also governs,
 // written by no pass, so a reserved phrase, a retired identifier
 // spelling, or a citation written there would have no route out. The
-// class's own scan still excludes its own register, because a scan that
-// read it would report the copy it holds of each member.
+// residual scan still excludes every residual register from every
+// class's domain, because a scan that read one would report the copy it
+// holds of each member.
 func TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain(t *testing.T) {
 	t.Parallel()
 	read := func(string) ([]byte, error) { return []byte("kind: residual-register\nversion: 1\n"), nil }
@@ -7306,20 +7332,23 @@ func TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain(t *testing
 			t.Errorf("the %s class reads its own register %s as tree content, so its seeding does not converge",
 				c, register)
 		}
-		// A sibling class reads it as ordinary tree content. That is what
-		// makes the per-class exclusion narrow enough to leave every member
-		// recorded somewhere: a member found in another class's register is
-		// recorded in this class's own, whose text this class does not read.
+		// No sibling class reads it either. Two classes whose predicates
+		// overlap, as the two line-citation classes do, each hold a copy of
+		// the other's member text, so a sibling that read it would triage
+		// every member twice and would keep matching after the pass had
+		// rewritten every carrier site, leaving the in-class entry that
+		// recorded the member unremovable.
 		for _, other := range scope.Classes() {
-			if other == c || slices.Contains(other.Registers(), register) {
+			if other == c {
 				continue
 			}
 			sibling, err := scope.ReadableForClass(other, register)
 			if err != nil {
 				t.Fatalf("read the %s class domain: %v", other, err)
 			}
-			if !sibling {
-				t.Errorf("the %s class does not read %s, and it is not one of its own registers", other, register)
+			if sibling {
+				t.Errorf("the %s class reads the %s residual register %s as tree content, so the two registers pin each other",
+					other, c, register)
 			}
 		}
 	}

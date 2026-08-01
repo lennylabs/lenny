@@ -1465,6 +1465,16 @@ func TestResidualGateReadsNoRegisterAsTreeContent(t *testing.T) {
 		"its own residual register": func(tr *residualTree) {
 			tr.register(fixture.Class, inClassEntry(fixture.Class, residualCitationMember(tr.t)))
 		},
+		// Another class's residual register is excluded for the same
+		// reason. The two line-citation classes select the same text, so
+		// each register holds a copy of the other's members: a class that
+		// read its sibling's register would triage every member twice and
+		// would keep selecting it after the pass had rewritten every
+		// carrier site, leaving the entry that recorded it unremovable.
+		"another class's residual register": func(tr *residualTree) {
+			tr.register(scope.ClassLineCitationResolution,
+				inClassEntry(scope.ClassLineCitationResolution, residualCitationMember(tr.t)))
+		},
 		"the baseline its gate excludes": func(tr *residualTree) {
 			tr.file("tests/registers/line-citations.yaml",
 				"kind: line-citation-count-baseline\nversion: 1\nfiles: []\n# "+residualCitationMember(tr.t)+"\n")

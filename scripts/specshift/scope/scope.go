@@ -78,13 +78,13 @@ func (p Pass) Valid() bool {
 // report each copy under the register's own path and seeding an entry
 // for that copy would not converge.
 //
-// A residual register is absent from this list. The exclusion that keeps
-// a class from reading a register as tree content is per class and lives
-// in classRegisters below, and a residual register is an ordinary member
-// of the shared read domain: the naming lint, the identifier-resolution
-// gate, the citation resolver, and the ratchet all read the member and
-// reason text a register carries, and every pass may write it. A
-// register listed here would be read by no gate and written by no pass.
+// A residual register is absent from this list. Every residual register
+// is outside the residual scan's per-class domain, which ReadableForClass
+// answers, and it is an ordinary member of the shared read domain: the
+// naming lint, the identifier-resolution gate, the citation resolver, and
+// the ratchet all read the member and reason text a register carries, and
+// every pass may write it. A register listed here would be read by no
+// gate and written by no pass.
 var readExcludedFiles = []string{
 	"BUILD-GAPS.md",
 	"TEST-GAPS.md",
@@ -149,20 +149,25 @@ const (
 	ClassSkipReason Class = "skip-reasons"
 )
 
-// classRegisters holds, per class, the registers the class's own scan
-// cannot read as tree content: its residual register, plus the pass or
-// baseline register the class's own gate already excludes.
+// classRegisters holds, per class, the registers the class's scan cannot
+// read as tree content: its residual register, plus the pass or baseline
+// register the class's own gate already excludes.
 //
 // A residual entry holds a copy of its member's text, so a scan that
-// read the register would report that copy under the register's own path
-// as a further residual, and the entry seeded for that copy would add
-// another copy. The seeding does not converge. The same argument covers
-// the pass or baseline register the gate consumes.
+// read a residual register would report that copy under the register's
+// own path as a further residual, and the entry seeded for that copy
+// would add another copy. The seeding does not converge. The same
+// argument covers the pass or baseline register the gate consumes.
 //
-// The set is per class rather than global. Another class's register is
-// ordinary tree content: a member found there is recorded in this
-// class's own register, whose text this class does not read, so that
-// seeding does terminate.
+// Every residual register is outside every class's scan, not that class's
+// own alone, which residualRegisterOfAnyClass answers. Two classes whose
+// predicates overlap, as the two line-citation classes do, otherwise pin
+// each other: each register holds a copy of the other's member text, so
+// each class reports the copy as a residual of its own, every member is
+// triaged twice, and an in-class entry keeps matching after the pass has
+// rewritten every carrier site, so no class reaches the empty state its
+// rewrite drives toward. The pass or baseline register listed alongside
+// stays per class, because it is consumed by one gate.
 //
 // A path here need not exist yet. Later sub-steps seed the registers of
 // the classes whose passes they build, and an exclusion for a register
@@ -222,6 +227,20 @@ const (
 // register that has not landed selects nothing.
 func (c Class) ResidualRegister() string {
 	return residualRegisterDir + residualRegisterPrefix + string(c) + ".yaml"
+}
+
+// residualRegisterOfAnyClass reports whether the tracked path is the
+// residual register of some class. Every one of them is outside the
+// residual scan domain of every class, because a register holds a
+// verbatim copy of each member's text and a class whose predicate
+// overlaps another's would read those copies as its own members.
+func residualRegisterOfAnyClass(target string) bool {
+	for c := range classRegisters {
+		if target == c.ResidualRegister() {
+			return true
+		}
+	}
+	return false
 }
 
 // Classes returns every class name in a stable order.
@@ -322,10 +341,12 @@ func Readable(p string) bool {
 }
 
 // ReadableForClass reports whether a tracked path is inside the read
-// domain of one class. That domain is the shared read domain less two
+// domain of one class. That domain is the shared read domain less three
 // further exclusions: the root-level planning records, for the
-// reserved-phrase and identifier classes, and the class's own registers,
-// which the class cannot read as tree content. The generated-artifact
+// reserved-phrase and identifier classes, every class's residual
+// register, and the pass or baseline register the class's own gate
+// consumes. The last two are the registers a class's predicate would
+// otherwise match as tree content. The generated-artifact
 // rule is not applied here: a generated artifact is inside a gate's read
 // domain and carries a per-file count, and its route to zero is the
 // regeneration of its source.
@@ -340,6 +361,9 @@ func ReadableForClass(c Class, target string) (bool, error) {
 		return false, nil
 	}
 	if excludesPlanningRecord(c, target) {
+		return false, nil
+	}
+	if residualRegisterOfAnyClass(target) {
 		return false, nil
 	}
 	for _, reg := range classRegisters[c] {
@@ -375,8 +399,9 @@ func excludesPlanningRecord(c Class, target string) bool {
 // derived artifact.
 //
 // The class register exclusion is deliberately absent here. That
-// exclusion belongs to the residual scan, which cannot read its own
-// class's registers as tree content. It is not a write exclusion: a
+// exclusion belongs to the residual scan, which reads no residual
+// register and no register its own gate consumes as tree content. It is
+// not a write exclusion: a
 // class's sense register and residual register are ordinary members of
 // the shared read domain, so the naming lint, the identifier-resolution
 // gate, and the citation gates all read them and report the sites they

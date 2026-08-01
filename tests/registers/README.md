@@ -118,11 +118,14 @@ register's own path, which the ratchet counts and the resolver reports.
 A residual register is an ordinary member of the read domain the gates
 and the passes share, so the naming lint, the identifier-resolution
 gate, the citation resolver, and the ratchet all read the member and
-reason text it carries and every pass may write it. The exclusion that
-keeps a class from reading a register as tree content is per class: a
-class reads neither its own residual register, whose copy of each member
-it would report again, nor the pass or baseline register its own gate
-consumes.
+reason text it carries and every pass may write it. The residual scan
+reads none of them: a class's own register holds a copy of each member
+it already triaged, and another class's register holds a copy of every
+member whose text the two predicates both select, so a class that read
+either would report the copy as a further member and would keep
+selecting it after the pass had rewritten every carrier site, leaving
+the entry that recorded it unremovable. The pass or baseline register a
+gate consumes is excluded from that gate's own class alone.
 
 ## Baselines and sense maps
 
