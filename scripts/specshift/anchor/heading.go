@@ -31,6 +31,18 @@ import (
 // whichever document that is.
 type headings struct {
 	byFile map[string]map[string]citation.Heading
+	// sections holds every section number the specification files of the
+	// tree state in a heading. It is what decides whether a bare §X.Y
+	// citation the anchor-move map carries no successor for names a
+	// section that still exists, so a citation of a section the
+	// reduction removed the heading of stops the run rather than
+	// standing as a canonical-looking pointer at nothing.
+	//
+	// Every heading level is read, including the level-one title that
+	// states a specification file's own number, because that is a number
+	// this pass writes as a citation itself. A section index that
+	// dropped it would abort on the pass's own output.
+	sections map[string]bool
 }
 
 // explicitAnchorExpr reads the kramdown attribute that gives a heading
@@ -58,7 +70,7 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 	if err != nil {
 		return nil, fmt.Errorf("index the headings of the tree: %w", err)
 	}
-	h := &headings{byFile: map[string]map[string]citation.Heading{}}
+	h := &headings{byFile: map[string]map[string]citation.Heading{}, sections: map[string]bool{}}
 	for _, target := range domain {
 		if filepath.Ext(target) != ".md" {
 			continue
@@ -71,6 +83,17 @@ func newHeadings(ctx context.Context, list scope.Lister, read scope.FileReader) 
 			return nil, fmt.Errorf("read %s to index its headings: %w", target, err)
 		}
 		h.byFile[target] = index(string(content))
+		if !citation.IsSpecFile(target) {
+			continue
+		}
+		// A §X.Y token names a section of the specification, so only a
+		// specification file states one, which is the same predicate the
+		// citation resolver and the per-file ratchet read.
+		for _, heading := range citation.AllHeadings(string(content)) {
+			if heading.Number != "" {
+				h.sections[heading.Number] = true
+			}
+		}
 	}
 	if len(h.byFile) == 0 {
 		return nil, fmt.Errorf("index the headings of the tree: no markdown document in the read domain")
@@ -190,6 +213,13 @@ func (h *headings) citationFor(t Target) (string, error) {
 		return "§" + heading.Number, nil
 	}
 	return t.String(), nil
+}
+
+// declaresSection reports whether a specification file of the tree
+// states the section number in a heading, which is what makes a bare
+// citation of it a reference the reduction left alone.
+func (h *headings) declaresSection(number string) bool {
+	return h.sections[number]
 }
 
 // carries reports whether the tree carries the markdown document.
