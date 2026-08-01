@@ -32,22 +32,25 @@
 // reads meaning. The reviewer resolves each site into the register
 // before the substitution runs.
 //
-// Which naming-table row a resolved site takes is decided by the form of
-// the site. A site standing in the method component of a gRPC
-// full-method literal takes the proto RPC row, because that literal
-// carries the RPC name the service definition declares and the Go method
-// of the same channel is spelled differently. Every other site takes a
-// row that is not the proto RPC one. A channel that states a spelling in
-// more carriers than the form selects between is resolved by the
-// carrier the register entry names, and a site the two rules leave
-// ambiguous aborts rather than taking the first row.
+// Which naming-table row a resolved site takes is decided first by the
+// form of the site, and the form decides unconditionally. A site
+// standing in the method component of a gRPC full-method literal takes
+// the proto RPC row, because that literal carries the RPC name the
+// service definition declares and the Go method of the same channel is
+// spelled differently. A site standing in the name of the file itself
+// takes the path row, because the file-name stem is the path carrier.
+// Every other site takes a row that is not the proto RPC one. A channel
+// that states a spelling in more carriers than the form selects between
+// is resolved by the carrier the register entry names, a carrier the
+// form has already ruled out fails rather than overriding it, and a site
+// the two rules leave ambiguous aborts rather than taking the first row.
 //
 // The pass writes on three channels, all planned before anything is
 // written. It substitutes at each resolved site; it moves a file whose
 // own name carries a retired spelling, driven by an entry of the same
 // register; and it rewrites the keys the move invalidates in the
-// path-keyed registers. The third channel exists because two of those
-// registers are outside every pass's site-rewrite domain, a citation
+// path-keyed registers. The third channel is separate because two of
+// those registers are outside every pass's site-rewrite domain, a citation
 // gate not being able to read its own baseline as tree content, while a
 // rename still has to move their keys in the same run. Without it the
 // line-citation ratchet fires on a rename that changed no citation, and
@@ -99,6 +102,16 @@ type Rewriter struct {
 	// walk would depend on the order the walk took.
 	moves   map[string]string
 	symbols map[string]string
+
+	// prepared records that the one-per-run preparation has been
+	// attempted, and prepErr the outcome it reached. The outcome is
+	// memoized whether it succeeded or failed, because the preparation
+	// walks and parses the whole tracked tree and reports the run's
+	// whole hand-correction population: re-entering it on the next file
+	// the harness hands the pass would re-walk the tree once per file in
+	// the write domain and report each abort once per file.
+	prepared bool
+	prepErr  error
 }
 
 // New returns the identifier pass over the tree the lister and reader
@@ -129,12 +142,14 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 	if err := r.prepare(ctx); err != nil {
 		return nil, err
 	}
-	// A path-keyed register holds paths as keys rather than as channel
-	// references, and the key channel is what moves them. Reading them as
-	// sites as well would demand a sense-register entry for every key
-	// naming a file whose name carries a retired spelling, and would then
-	// rewrite the key twice under two different rules.
-	if scope.KeyWritable(target) {
+	// The two citation baselines are outside the read domain the passes
+	// and the gates share, because a citation gate cannot read its own
+	// baseline as tree content, so the key rewrite is the only channel
+	// that reaches them. Every other path-keyed register is an ordinary
+	// member of that domain and takes the site rewrite alongside its key
+	// rewrite; the spans the key rewrite owns are held out of the site
+	// enumeration by contentSites, so no key is written twice.
+	if scope.KeyWritable(target) && !scope.Readable(target) {
 		return content, nil
 	}
 	text := string(content)
@@ -177,15 +192,32 @@ func (r *Rewriter) RewriteKeys(ctx context.Context, target string, content []byt
 	return after, nil
 }
 
-// prepare reads the naming table, holds the register to the tree, and
-// computes the file moves and symbol renames the run performs. It runs
+// prepare reads the naming table, computes the file moves and symbol
+// renames the run performs, and holds the register to the tree. It runs
 // once per run, on whichever channel reaches the pass first, because the
 // key rewrite of a register outside the site-rewrite domain needs the
 // moves the site walk would otherwise be the only producer of.
+//
+// Its outcome is memoized in both dispositions. A failure re-computed
+// per file would re-walk and re-parse the whole tracked tree once per
+// file in the write domain and report the same population of aborts
+// once per file, and one run states that population once.
 func (r *Rewriter) prepare(ctx context.Context) error {
-	if r.table != nil {
-		return nil
+	if r.prepared {
+		return r.prepErr
 	}
+	r.prepared = true
+	r.prepErr = r.prepareOnce(ctx)
+	return r.prepErr
+}
+
+// prepareOnce is the body of the preparation, run once per pass.
+//
+// The renames are planned before the register is held to the tree,
+// because the site enumeration of a path-keyed register holds out the
+// spans the key rewrite owns and so is defined only once the moves are
+// known.
+func (r *Rewriter) prepareOnce(ctx context.Context) error {
 	if r.senses == nil {
 		return fmt.Errorf("the identifier pass ran with no register loaded")
 	}
@@ -201,17 +233,12 @@ func (r *Rewriter) prepare(ctx context.Context) error {
 		return err
 	}
 	r.table = table
-	if err := r.checkClaimed(ctx, tracked); err != nil {
-		r.table = nil
-		return err
-	}
 	moves, symbols, err := r.planRenames(ctx, tracked)
 	if err != nil {
-		r.table = nil
 		return err
 	}
 	r.moves, r.symbols = moves, symbols
-	return nil
+	return r.checkClaimed(ctx, tracked)
 }
 
 // checkChannels holds every entry to the channels the naming table
@@ -245,21 +272,46 @@ func (r *Rewriter) checkChannels(table *Table) error {
 // spelling rather than referring to the channel, and demanding a
 // register entry for it would key the enumeration of a specification
 // file to the size of the table inside it.
+//
+// A spelling standing in a key the key rewrite already moves is not one
+// of them either. The key channel is authoritative over those spans: it
+// writes the path the run moved the file to, whereas the site rule would
+// write a carrier spelling over part of that path, and a register entry
+// demanded for every such key would state a sense the move already
+// carries. Every other occurrence a path-keyed register writes, a
+// section title or a wildcard glob key among them, is an ordinary site
+// and is resolved through the register like any other.
 func (r *Rewriter) contentSites(target, content string) []site {
 	all := findSites(content, r.table.Retired())
+	keys := keySpans(target, content, r.moves, r.symbols)
 	out := make([]site, 0, len(all))
 	for _, s := range all {
-		if !r.table.mentioned(target, s.start) {
-			out = append(out, s)
+		if r.table.mentioned(target, s.start) || withinSpan(keys, s.start) {
+			continue
 		}
+		out = append(out, s)
 	}
 	return out
 }
 
+// withinSpan reports whether an offset stands inside one of the spans.
+func withinSpan(spans [][2]int, at int) bool {
+	for _, span := range spans {
+		if at >= span[0] && at < span[1] {
+			return true
+		}
+	}
+	return false
+}
+
 // pathSites returns the retired-spelling sites a file's own name
-// carries.
+// carries, each marked with the form that selects the path row.
 func (r *Rewriter) pathSites(target string) []site {
-	return findSites(target, r.table.Retired())
+	sites := findSites(target, r.table.Retired())
+	for i := range sites {
+		sites[i].fileName = true
+	}
+	return sites
 }
 
 // plan resolves every site of one file against the register.
@@ -305,33 +357,58 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 
 // rowFor selects the naming-table row a resolved site takes.
 //
-// The form of the site decides first: a gRPC full-method literal carries
-// the RPC name of the service definition, so it takes the proto RPC row,
-// and every other site takes a row that is not the proto RPC one. The
-// register entry's carrier decides what the form leaves open. A site
-// neither rule resolves to one row aborts rather than taking the first,
-// because the two spellings are both canonical and no gate downstream
-// reads which one the site meant.
+// The form of the site decides first, and it decides unconditionally. A
+// gRPC full-method literal carries the RPC name of the service
+// definition, so it takes the proto RPC row; a file name carries the
+// path stem, so it takes the path row; every other site takes a row that
+// is neither. The register entry's carrier then resolves what the form
+// leaves open, and a carrier the form has already ruled out fails rather
+// than overriding it: an entry naming the Go type row at a full-method
+// literal would write a method the service definition does not declare,
+// and the run would exit clean because no gate downstream reads which
+// spelling the site meant. A site neither rule resolves to one row
+// aborts rather than taking the first, for the same reason.
 func (r *Rewriter) rowFor(s site, entry Entry) (Row, error) {
 	rows := r.table.rowsFor(s.retired, entry.Channel)
 	if len(rows) == 0 {
 		return Row{}, fmt.Errorf("the naming table states no spelling of %s for %s, so the site has no substitution",
 			s.retired, entry.Channel)
 	}
+	form, rows := formRows(s, rows)
+	if len(rows) == 0 {
+		return Row{}, fmt.Errorf("the site is %s, and the naming table states no such spelling of %s for %s",
+			form, s.retired, entry.Channel)
+	}
 	if entry.Carrier != "" {
-		rows = withCarrier(rows, entry.Carrier, true)
-		if len(rows) == 0 {
-			return Row{}, fmt.Errorf("%s names the carrier %s, and the naming table states no %s spelling of %s for %s",
-				r.registerPath, entry.Carrier, entry.Carrier, s.retired, entry.Channel)
+		narrowed := withCarrier(rows, entry.Carrier, true)
+		if len(narrowed) == 0 {
+			return Row{}, fmt.Errorf("%s names the carrier %s, and the site is %s, which the naming table states no %s spelling of %s for %s at",
+				r.registerPath, entry.Carrier, form, entry.Carrier, s.retired, entry.Channel)
 		}
-	} else {
-		rows = withCarrier(rows, CarrierProtoRPC, s.grpcMethod)
+		rows = narrowed
 	}
 	if len(rows) != 1 {
 		return Row{}, fmt.Errorf("the naming table states %d spellings of %s for %s (%s), and neither the site nor %s selects one",
 			len(rows), s.retired, entry.Channel, carriersOf(rows), r.registerPath)
 	}
 	return rows[0], nil
+}
+
+// formRows applies the form rule of a site to a channel's rows, and
+// names the form for a failure message.
+//
+// A file name is the carrier of the path stem, so it takes the path row
+// alone: resolving it from whichever other row happened to be unique
+// would move a carrier to a name the table states for no path.
+func formRows(s site, rows []Row) (string, []Row) {
+	switch {
+	case s.fileName:
+		return "a file name", withCarrier(rows, CarrierPath, true)
+	case s.grpcMethod:
+		return "the method component of a gRPC full-method literal", withCarrier(rows, CarrierProtoRPC, true)
+	default:
+		return "ordinary carrier text", withCarrier(rows, CarrierProtoRPC, false)
+	}
 }
 
 // withCarrier keeps the rows of one carrier, or every row of another
@@ -537,9 +614,6 @@ func (r *Rewriter) claimableSites(target string, tracked map[string]bool) (int, 
 	}
 	if !writable {
 		return 0, "the file is outside the pass's write domain", nil
-	}
-	if scope.KeyWritable(target) {
-		return 0, "the file is a path-keyed register, whose keys the run rekeys rather than site-rewrites", nil
 	}
 	content, err := r.read(target)
 	if err != nil {

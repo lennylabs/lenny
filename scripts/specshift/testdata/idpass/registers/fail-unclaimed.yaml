@@ -1,7 +1,19 @@
 # SPDX-License-Identifier: MIT
+# Every file name the tree carries is resolved, so the run reaches the
+# check that holds the register to the tree, where one entry names an
+# occurrence its file does not carry.
 kind: identifier-senses
 version: 1
 entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: schemas/lifecycle-events.schema.json
+    path: true
+    channel: CH-RUNTIMEOPS
   - file: docs/reference/channels.md
     occurrence: 4
     channel: CH-RUNTIMEOPS

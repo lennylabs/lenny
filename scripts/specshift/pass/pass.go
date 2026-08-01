@@ -143,7 +143,14 @@ func (a *Aborts) Unwrap() []error {
 // Aborted returns the fail-closed error for the sites a run could not
 // resolve: nothing when there are none, the site itself when there is
 // one, and the whole collection otherwise.
+//
+// One site is one entry however many channels of the run reached it. A
+// pass whose whole-tree preparation reports its aborts to every file the
+// harness hands it would otherwise state the same site once per file in
+// the write domain, and the hand-correction population the run exists to
+// enumerate would be unreadable.
 func Aborted(sites []*Abort) error {
+	sites = distinctAborts(sites)
 	switch len(sites) {
 	case 0:
 		return nil
@@ -152,6 +159,22 @@ func Aborted(sites []*Abort) error {
 	default:
 		return &Aborts{Sites: sites}
 	}
+}
+
+// distinctAborts keeps the first report of each site, in the order the
+// walk reached them. Two reports of one site carry the same path, line,
+// and reason, so the second states nothing the first does not.
+func distinctAborts(sites []*Abort) []*Abort {
+	seen := make(map[Abort]bool, len(sites))
+	out := make([]*Abort, 0, len(sites))
+	for _, site := range sites {
+		if site == nil || seen[*site] {
+			continue
+		}
+		seen[*site] = true
+		out = append(out, site)
+	}
+	return out
 }
 
 // AllAborts reports whether the error chain carries one or more aborts,

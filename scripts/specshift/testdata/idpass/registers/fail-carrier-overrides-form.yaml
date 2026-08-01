@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: MIT
-# The senses of the fixture tree, one entry per occurrence of a retired
-# spelling the pass cannot prove is the channel.
+# The senses of the fixture tree, with the entry of the gRPC full-method
+# literal naming the Go type carrier, which the form of that site rules
+# out.
 kind: identifier-senses
 version: 1
 entries:
@@ -28,6 +29,7 @@ entries:
   - file: pkg/adapter/holdstate.go
     occurrence: 1
     channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
   - file: pkg/adapter/holdstate.go
     occurrence: 2
     channel: CH-ADAPTEREVENTS

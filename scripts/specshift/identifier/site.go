@@ -26,6 +26,10 @@ type site struct {
 	// proto RPC row over the Go type row when the channel states a
 	// spelling in both.
 	grpcMethod bool
+	// fileName records that the occurrence stands in the name of the
+	// tracked file itself, which is the carrier of the path stem and so
+	// selects the path row.
+	fileName bool
 }
 
 // findSites returns every retired-spelling site a text carries, in

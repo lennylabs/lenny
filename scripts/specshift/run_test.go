@@ -6329,6 +6329,51 @@ func TestIdentifierPassAbortsAtAFileNameNoEntryResolves(t *testing.T) {
 	if abort.Path != "pkg/adapter/lifecyclechannel.go" {
 		t.Errorf("the abort names %s, want pkg/adapter/lifecyclechannel.go", abort.Path)
 	}
+	// The rename plan is computed once per run, so the file name is
+	// reported once. A plan re-computed per file in the write domain
+	// would re-walk and re-parse the whole tree once per file and report
+	// the same site as many times as the tree has files, which is a
+	// hand-correction population the operator cannot read.
+	sites, ok := pass.AllAborts(err)
+	if !ok {
+		t.Fatalf("the pass returned %v, which carries no aborts", err)
+	}
+	if len(sites) != 1 {
+		t.Errorf("the run reports the one unresolved file name %d time(s): %v", len(sites), err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run left the tree modified")
+	}
+}
+
+// TestIdentifierPassResolvesAFileNameFromThePathRowAlone pins the form
+// rule over the file-name position. A file name is the carrier of the
+// path stem, so it takes the path row of the naming table, and a channel
+// that states the retired spelling for some other carrier alone leaves
+// the file name with no substitution. Resolving it from whichever row
+// happened to be the only one would move a carrier to a name the table
+// states for no path, with the run exiting clean.
+//
+// spec: §28.1 (N4, the naming law: the file-name stem of a carrier is
+// the channel's identifier)
+func TestIdentifierPassResolvesAFileNameFromThePathRowAlone(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "fail/nopathrow")
+	before := treeSnapshot(t, root)
+	_, err := applyIDPassErr(t, root, "fail-nopathrow.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass moved a file from a row stated for another carrier")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the pass returned %v, which is not an abort", err)
+	}
+	if abort.Path != "pkg/adapter/lifecyclechannel.go" {
+		t.Errorf("the abort names %s, want pkg/adapter/lifecyclechannel.go", abort.Path)
+	}
+	if !strings.Contains(abort.Reason, "file name") {
+		t.Errorf("the abort does not name the form of the site: %s", abort.Reason)
+	}
 	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
 		t.Error("the aborted run left the tree modified")
 	}
@@ -6388,6 +6433,77 @@ func TestIdentifierPassResolvesAGrpcFullMethodLiteralFromTheProtoRow(t *testing.
 	}
 	if !strings.Contains(after, "\"AdapterEventsChannel\"") {
 		t.Errorf("the Go symbol beside it was not resolved from the Go type row:\n%s", after)
+	}
+}
+
+// TestIdentifierPassRefusesACarrierTheFormOfTheSiteRulesOut pins the
+// precedence of the two row-selection rules. The form of the site
+// decides first and decides unconditionally, and the carrier a register
+// entry names resolves what the form leaves open. An entry naming the Go
+// type carrier at a gRPC full-method literal would otherwise write the
+// Go spelling into the literal, naming a method the service definition
+// does not declare, and the run would exit clean because no gate reads
+// which spelling the site meant.
+//
+// spec: §28.1 (N4, the naming law: the proto RPC name stem is the
+// channel's identifier)
+func TestIdentifierPassRefusesACarrierTheFormOfTheSiteRulesOut(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	before := treeSnapshot(t, root)
+	_, err := applyIDPassErr(t, root, "fail-carrier-overrides-form.yaml")
+	if err == nil {
+		t.Fatal("the identifier pass resolved a full-method literal from the carrier the entry named")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the pass returned %v, which is not an abort", err)
+	}
+	if abort.Path != "pkg/adapter/holdstate.go" {
+		t.Errorf("the abort names %s, want pkg/adapter/holdstate.go", abort.Path)
+	}
+	for _, names := range []string{"go-symbol", "full-method"} {
+		if !strings.Contains(abort.Reason, names) {
+			t.Errorf("the abort does not name %s: %s", names, abort.Reason)
+		}
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run left the tree modified")
+	}
+}
+
+// TestIdentifierPassRewritesASitePathKeyedRegisterCarriesOutsideAKey
+// pins the write domain of the two path-keyed registers that sit inside
+// the read domain the passes and the gates share. Their keys move on the
+// key channel, and every other occurrence they carry, a section title
+// and a wildcard glob key here, is an ordinary site resolved through the
+// sense register. Leaving those occurrences to the key channel would
+// leave a readable file with a retired spelling no pass can write, which
+// the identifier-resolution gate and the residual scan both report.
+//
+// spec: §28.1 (N4, the naming law: the canonical identifier is written
+// in every carrier of the channel it denotes)
+func TestIdentifierPassRewritesASitePathKeyedRegisterCarriesOutsideAKey(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "tree")
+	before := treeSnapshot(t, root)
+	for _, register := range []string{"tests/change-graph.json", "tests/spec-map.json"} {
+		if !strings.Contains(before[register], "LifecycleChannel") && !strings.Contains(before[register], "lifecyclechannel*") {
+			t.Fatalf("the fixture %s carries no occurrence outside a key position", register)
+		}
+	}
+	applyIDPass(t, root, "tree.yaml")
+	after := treeSnapshot(t, root)
+	if !strings.Contains(after["tests/spec-map.json"], "Registers of the RuntimeOpsChannel") {
+		t.Errorf("the section title was left at its retired spelling:\n%s", after["tests/spec-map.json"])
+	}
+	if !strings.Contains(after["tests/change-graph.json"], "pkg/adapter/runtimeops*_test.go") {
+		t.Errorf("the wildcard glob key was left at its retired spelling:\n%s", after["tests/change-graph.json"])
+	}
+	// The keys the move writes are not resolved a second time as sites,
+	// so each is written once and reads as the path the file moved to.
+	if !strings.Contains(after["tests/change-graph.json"], `"pkg/adapter/runtimeops.go"`) {
+		t.Errorf("the moved glob key is not the path the file moved to:\n%s", after["tests/change-graph.json"])
 	}
 }
 
@@ -6536,12 +6652,13 @@ func TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates(t *testing.T
 }
 
 // TestIdentifierPassFailsWhenARegisterStillNamesAMovedFile pins the
-// stale-key check that makes the rekey channel fail closed. A register
-// that writes a moved path inside a wider value, such as a note, keeps
-// pointing at a file the run has moved, and the rewrite that moves whole
-// keys cannot reach it. The run stops with the tree unchanged and the
-// operator corrects the value, rather than completing and leaving the
-// gates to fire on the wrong file afterwards.
+// stale-key check that makes the rekey channel fail closed. A citation
+// baseline is outside the read domain the passes share, so the key
+// rewrite is the only channel that reaches it, and a moved path it
+// writes inside a wider value such as a citation text keeps pointing at
+// a file the run has moved. The run stops with the tree unchanged and
+// the operator corrects the value, rather than completing and leaving
+// the gates to fire on the wrong file afterwards.
 //
 // spec: §28.1 (N4, the naming law: the run that moves a carrier moves
 // every key written for it)
@@ -6553,7 +6670,7 @@ func TestIdentifierPassFailsWhenARegisterStillNamesAMovedFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("the identifier pass completed with a register naming a file it moved")
 	}
-	if !strings.Contains(err.Error(), "tests/spec-map.json") {
+	if !strings.Contains(err.Error(), "tests/registers/line-citation-resolution.yaml") {
 		t.Errorf("the failure does not name the register: %v", err)
 	}
 	if !strings.Contains(err.Error(), "pkg/adapter/lifecyclechannel.go") {

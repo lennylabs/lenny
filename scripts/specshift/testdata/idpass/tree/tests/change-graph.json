@@ -3,6 +3,9 @@
   "globs": {
     "pkg/adapter/lifecyclechannel.go": {
       "unit": ["pkg/adapter/..."]
+    },
+    "pkg/adapter/lifecyclechannel*_test.go": {
+      "unit": ["pkg/adapter/..."]
     }
   }
 }

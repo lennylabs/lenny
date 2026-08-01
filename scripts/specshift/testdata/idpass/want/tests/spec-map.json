@@ -2,7 +2,7 @@
   "version": 1,
   "sections": {
     "28.3": {
-      "title": "Registers",
+      "title": "Registers of the RuntimeOpsChannel",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
         "pkg/adapter/runtimeops_test.go::TestRuntimeOpsChannelServes"

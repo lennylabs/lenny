@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // rekey moves the keys one path-keyed register carries for the files the
@@ -39,6 +41,39 @@ func rekey(target string, content []byte, moves, symbols map[string]string) []by
 		}
 	}
 	return []byte(text)
+}
+
+// keySpans returns the byte spans of one register's content that the key
+// rewrite owns, which are the whole-scalar occurrences of each moved path
+// and each renamed symbol reference.
+//
+// The site rewrite holds these spans out of its own enumeration, so a key
+// the move already writes is not also resolved as a channel reference and
+// is not written twice under two rules. A file the key rewrite does not
+// reach carries no such span, so its whole content is site material.
+func keySpans(target, content string, moves, symbols map[string]string) [][2]int {
+	if !scope.KeyWritable(target) {
+		return nil
+	}
+	var spans [][2]int
+	for _, old := range sortedKeys(symbols) {
+		spans = append(spans, matchSpans(referenceExpr(old), content)...)
+	}
+	for _, old := range sortedKeys(moves) {
+		for _, expr := range scalarExprs(target, old) {
+			spans = append(spans, matchSpans(expr, content)...)
+		}
+	}
+	return spans
+}
+
+// matchSpans returns the spans one expression matches in a text.
+func matchSpans(expr *regexp.Regexp, content string) [][2]int {
+	var spans [][2]int
+	for _, at := range expr.FindAllStringIndex(content, -1) {
+		spans = append(spans, [2]int{at[0], at[1]})
+	}
+	return spans
 }
 
 // scalarExprs returns the expressions matching one path written as a
