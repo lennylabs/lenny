@@ -179,14 +179,18 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      # Restore-only: this job installs go-mutesting alone, so saving
+      # under the shared key would publish a ~/go/bin missing gofumpt,
+      # golangci-lint, and the proto generator's binaries, and the next
+      # job to take an exact hit on it would skip its own install.
       - name: Restore tool cache (~/go/bin)
         id: tools-cache
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        uses: actions/cache/restore@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
         with:
           path: ~/go/bin
-          key: lenny-go-bin-v2-${{ runner.os }}-${{ hashFiles('go.sum') }}
+          key: lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}
           restore-keys: |
-            lenny-go-bin-v2-${{ runner.os }}-
+            lenny-go-bin-v3-${{ runner.os }}-
       - name: Install go-mutesting
         if: steps.tools-cache.outputs.cache-hit != 'true'
         # Commit pin: go-mutesting predates the /v2 module-path

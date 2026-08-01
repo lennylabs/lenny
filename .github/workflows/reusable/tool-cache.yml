@@ -2,7 +2,8 @@
 #
 # Reusable workflow: cache + install the go-installed binaries the
 # Lenny test harness uses (gofumpt, goimports, golangci-lint,
-# go-mutesting, setup-envtest, buf).
+# go-mutesting, setup-envtest, buf, protoc-gen-go, and
+# protoc-gen-go-grpc).
 #
 # Callers consume it via `uses:`; the workflow restores ~/go/bin
 # from a cache keyed on go.sum + a `tools` revision marker, and
@@ -37,10 +38,10 @@ jobs:
         with:
           path: |
             ~/go/bin
-          key: lenny-go-bin-v2-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ inputs.tools }}
+          key: lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ inputs.tools }}
           restore-keys: |
-            lenny-go-bin-v2-${{ runner.os }}-${{ hashFiles('go.sum') }}-
-            lenny-go-bin-v2-${{ runner.os }}-
+            lenny-go-bin-v3-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            lenny-go-bin-v3-${{ runner.os }}-
       - name: Install fmt tools
         if: contains(inputs.tools, 'fmt')
         run: |
@@ -50,10 +51,12 @@ jobs:
         if: contains(inputs.tools, 'lint')
         run: |
           which golangci-lint || go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
-      - name: Install buf
+      - name: Install buf and the proto codegen plugins
         if: contains(inputs.tools, 'buf')
         run: |
           which buf || go install github.com/bufbuild/buf/cmd/buf@v1.69.0
+          which protoc-gen-go || go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.36.11
+          which protoc-gen-go-grpc || go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@v1.6.2
       - name: Install setup-envtest
         if: contains(inputs.tools, 'envtest')
         run: |
