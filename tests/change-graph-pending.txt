@@ -1,15 +1,17 @@
 # SPDX-License-Identifier: MIT
 #
-# Change-graph entries whose target paths don't yet exist on disk
-# but are committed ahead of the implementation phase that ships
-# them. validate-maps consults this list and exempts the entries
-# from the file-existence check.
+# Change-graph paths that don't yet exist on disk but are committed
+# ahead of the implementation phase that ships them. validate-maps
+# consults this list and exempts the paths from the file-existence
+# check, which probes both the glob keys of tests/change-graph.json
+# and the per-tier targets those keys select.
 #
-# Format: one path per line, matching the change-graph key exactly
-# (including trailing `/` or `/...`). `#` starts a comment.
+# Format: one path per line, spelled exactly as the change graph
+# spells it, whether it is a glob key or a per-tier target (including
+# any trailing `/` or `/...`). `#` starts a comment.
 #
 # Drop an entry from this file once the matching directory or file
-# ships under pkg/, cmd/, charts/, migrations/, or sdks/.
+# ships.
 
 # Phase 3+ deliverables.
 charts/lenny/
@@ -49,3 +51,71 @@ sdks/runtime/typescript/
 
 # Phase 17b+ — recommendations rule engine.
 pkg/recommendations/rules
+
+# Per-tier test targets whose suites land with the phase that ships
+# the behavior they exercise.
+pkg/gateway/llm_proxy/...
+pkg/gateway/session_orchestrator/...
+pkg/mcp/...
+pkg/output/...
+pkg/store/artifact/...
+pkg/store/credentialpool/...
+pkg/store/event/...
+pkg/store/lease/...
+pkg/store/memory/...
+pkg/store/quota/...
+pkg/store/session/...
+pkg/store/token/...
+tests/tier0_static/helm_lint_test.go
+tests/tier0_static/spec_link_check_test.go
+tests/tier2_component/alerting/...
+tests/tier2_component/auth/...
+tests/tier2_component/controllers/poolscaling_test.go
+tests/tier2_component/delegation/...
+tests/tier2_component/experiments/...
+tests/tier2_component/gateway_subsystems/admin_plane_test.go
+tests/tier2_component/gateway_subsystems/environment_test.go
+tests/tier2_component/gateway_subsystems/session_orchestrator_test.go
+tests/tier2_component/gateway_subsystems/token_service_test.go
+tests/tier2_component/gateway_subsystems/upload_handler_test.go
+tests/tier2_component/policy/...
+tests/tier2_component/recommendations/...
+tests/tier2_component/stores/artifact_store_test.go
+tests/tier2_component/stores/credential_pool_store_test.go
+tests/tier2_component/stores/event_store_test.go
+tests/tier2_component/stores/lease_store_test.go
+tests/tier2_component/stores/memory_store_test.go
+tests/tier2_component/stores/quota_store_test.go
+tests/tier2_component/stores/session_store_test.go
+tests/tier2_component/stores/token_store_test.go
+tests/tier2_component/translators/image_resolver_test.go
+tests/tier2_component/workspace_plan/...
+tests/tier3_contract/rest_mcp/...
+tests/tier4_integration/admin_bootstrap_test.go
+tests/tier4_integration/credential_revocation_test.go
+tests/tier4_integration/credential_rotation_test.go
+tests/tier4_integration/environment_filtering_test.go
+tests/tier4_integration/experiment_routing_test.go
+tests/tier4_integration/llm_proxy_anthropic_test.go
+tests/tier4_integration/mcp_elicitation_chain_test.go
+tests/tier4_integration/mcp_provenance_test.go
+tests/tier4_integration/policy_gate_test.go
+tests/tier4_integration/quota_enforcement_test.go
+tests/tier5_e2e_kind/admission_inventory_test.go
+tests/tier5_e2e_kind/admission_policy_test.go
+tests/tier5_e2e_kind/bootstrap_first_install_test.go
+tests/tier5_e2e_kind/drain_readiness_webhook_test.go
+tests/tier5_e2e_kind/label_immutability_test.go
+tests/tier5_e2e_kind/lenny_ops_first_deploy_test.go
+tests/tier5_e2e_kind/mtls_enforcement_test.go
+tests/tier5_e2e_kind/network_policy_test.go
+tests/tier5_e2e_kind/pool_upgrade_test.go
+tests/tier5_e2e_kind/sandbox_claim_test.go
+tests/tier5_e2e_kind/warm_pool_test.go
+tests/tier7b_load_kind/scenarios/checkpoint_duration.go
+tests/tier7b_load_kind/scenarios/credential_rotation_under_load.go
+tests/tier7b_load_kind/scenarios/delegation_fanout.go
+tests/tier8_chaos/concurrent_claim_test.go
+tests/tier10_conformance/basic/...
+tests/tier10_conformance/full/...
+tests/tier10_conformance/standard/...

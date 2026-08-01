@@ -1150,3 +1150,142 @@ func TestTrackedComponentAndAboveTestFilesAreMappedAndAnnotated(t *testing.T) {
 			len(missing), strings.Join(missing, "; "))
 	}
 }
+
+// changeGraphFileExistenceFixture builds a temp repo root holding a
+// change graph whose globs block carries the given key → tier → target
+// mapping, creates every path named in present (a path ending in `/`
+// becomes a directory, any other becomes a file), writes the given
+// lines as tests/change-graph-pending.txt, and runs the existence
+// check over the root.
+func changeGraphFileExistenceFixture(t *testing.T, globs map[string]map[string][]string, present, pending []string) checkResult {
+	t.Helper()
+	root := t.TempDir()
+	for _, p := range present {
+		full := filepath.Join(root, p)
+		if strings.HasSuffix(p, "/") {
+			if err := os.MkdirAll(full, 0o755); err != nil {
+				t.Fatalf("mkdir %s: %v", p, err)
+			}
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatalf("mkdir for %s: %v", p, err)
+		}
+		if err := os.WriteFile(full, []byte("package p\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	if err := os.MkdirAll(filepath.Join(root, "tests"), 0o755); err != nil {
+		t.Fatalf("mkdir tests: %v", err)
+	}
+	if len(pending) > 0 {
+		body := strings.Join(pending, "\n") + "\n"
+		if err := os.WriteFile(filepath.Join(root, "tests", "change-graph-pending.txt"), []byte(body), 0o644); err != nil {
+			t.Fatalf("write pending: %v", err)
+		}
+	}
+	raw, err := json.Marshal(map[string]any{"version": 1, "globs": globs})
+	if err != nil {
+		t.Fatalf("marshal change graph: %v", err)
+	}
+	graphPath := filepath.Join(root, "tests", "change-graph.json")
+	if err := os.WriteFile(graphPath, raw, 0o644); err != nil {
+		t.Fatalf("write change graph: %v", err)
+	}
+	return validateChangeGraphFileExistence(graphPath, root)
+}
+
+// TestValidateChangeGraphFileExistenceProbesPerTierTargets pins the
+// existence check to both sides of a change-graph entry. A per-tier
+// target that resolves to nothing makes `--changed` run that tier over
+// a package pattern matching nothing, so the graph claims coverage the
+// run never executes. The check probes the targets as well as the keys,
+// and the failure detail names the key, the tier, and the target so the
+// dangling edge is identifiable without re-reading the graph.
+//
+// spec: TESTING.md §5 (tests/change-graph.json maps source packages,
+// schemas, migrations, and chart templates to the tests that exercise
+// them)
+func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
+	// Every key and every target resolves.
+	r := changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"scripts/specshift": {
+				"static": {"tests/tier0_static/..."},
+				"unit":   {"scripts/specshift/..."},
+			},
+		},
+		[]string{"scripts/specshift/", "tests/tier0_static/"}, nil)
+	expectPass(t, r)
+	if !strings.Contains(r.detail, "2 target(s)") {
+		t.Errorf("the detail does not report the probed targets: %s", r.detail)
+	}
+
+	// A target naming a package that exists nowhere in the tree fails,
+	// even though its key resolves.
+	r = changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"scripts/specshift": {
+				"unit":     {"scripts/specshift/..."},
+				"contract": {"tests/tier3_contract/residual/..."},
+			},
+		},
+		[]string{"scripts/specshift/"}, nil)
+	expectFail(t, r, "scripts/specshift", "contract", "tests/tier3_contract/residual/...")
+
+	// A dangling target is exempt while it is listed as pending, spelled
+	// as the graph spells it.
+	r = changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"scripts/specshift": {
+				"contract": {"tests/tier3_contract/residual/..."},
+			},
+		},
+		[]string{"scripts/specshift/"},
+		[]string{"tests/tier3_contract/residual/..."})
+	expectPass(t, r)
+
+	// The key side still fails on its own.
+	r = changeGraphFileExistenceFixture(t,
+		map[string]map[string][]string{
+			"pkg/gone": {"unit": {"pkg/adapter/..."}},
+		},
+		[]string{"pkg/adapter/"}, nil)
+	expectFail(t, r, "pkg/gone")
+}
+
+// TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers pins the tiers the
+// specification migration tooling selects. The tooling's gates are a
+// tier-0 static battery and tier-1 unit tests, so a change under
+// scripts/specshift/ or tests/registers/ must select those tiers and no
+// tier whose suite the tooling does not carry.
+//
+// spec: TESTING.md §5 (tests/change-graph.json maps source packages,
+// schemas, migrations, and chart templates to the tests that exercise
+// them)
+func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	var doc struct {
+		Globs map[string]map[string][]string `json:"globs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse change graph: %v", err)
+	}
+	for _, key := range []string{"scripts/specshift", "tests/registers"} {
+		tiers, ok := doc.Globs[key]
+		if !ok {
+			t.Fatalf("the change graph has no entry for %s", key)
+		}
+		names := make([]string, 0, len(tiers))
+		for tier := range tiers {
+			names = append(names, tier)
+		}
+		sort.Strings(names)
+		if strings.Join(names, ",") != "static,unit" {
+			t.Errorf("%s selects %v; the tooling carries a static and a unit tier only", key, names)
+		}
+	}
+}

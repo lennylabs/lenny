@@ -293,51 +293,77 @@ func validateSpecMapPaths(specMapPath, root string) checkResult {
 	return newResult("spec-map paths", true, fmt.Sprintf("%d section(s); every spec_file resolves", len(doc.Sections)))
 }
 
-// validateChangeGraphFileExistence walks every change-graph glob
-// key and confirms it points at a file or directory that actually
-// exists. Catches typos and renames that leave stale entries.
+// changeGraphPathResolves reports whether a change-graph path, either a
+// glob key or one of the per-tier targets that key selects, names
+// something that exists under root. A trailing `/...` (Go-style
+// recursive) or `/` (directory hint) is stripped so the directory itself
+// is probed; any other path matches either a directory or a file.
+func changeGraphPathResolves(root, p string) bool {
+	probe := strings.TrimSuffix(p, "/...")
+	probe = strings.TrimSuffix(probe, "/")
+	_, err := os.Stat(filepath.Join(root, probe))
+	return err == nil
+}
+
+// validateChangeGraphFileExistence walks tests/change-graph.json and
+// confirms that every path it names exists: each glob key, and each
+// per-tier target that key selects. Both sides carry the same failure
+// mode. A key that resolves to nothing selects no tests for the tree it
+// claims to cover, and a target that resolves to nothing makes
+// `--changed` run a tier over a package pattern matching nothing, so the
+// graph asserts coverage at that tier which never executes. The check
+// catches typos and renames that leave stale entries on either side.
 //
-// Globs ending with `/...` (Go-style recursive) or `/` (directory
-// hint) are matched against directories; other entries are matched
-// against either a directory or a file. Entries that legitimately
-// reference yet-to-land paths are tolerated when explicitly listed
-// in tests/change-graph-pending.txt (one path per line); this lets
-// the change graph commit ahead of the implementation.
+// A path that legitimately references something not yet landed is
+// tolerated when listed in tests/change-graph-pending.txt (one path per
+// line, spelled exactly as the graph spells it); this lets the change
+// graph commit ahead of the implementation.
+//
+// spec: TESTING.md §5 (tests/change-graph.json maps source packages,
+// schemas, migrations, and chart templates to the tests that exercise
+// them)
 func validateChangeGraphFileExistence(changeGraphPath, root string) checkResult {
+	const name = "change-graph file-existence"
 	data, err := os.ReadFile(changeGraphPath)
 	if err != nil {
-		return newResult("change-graph file-existence", false, err.Error())
+		return newResult(name, false, err.Error())
 	}
 	var doc struct {
-		Globs map[string]any `json:"globs"`
+		Globs map[string]map[string][]string `json:"globs"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return newResult("change-graph file-existence", false, err.Error())
+		return newResult(name, false, err.Error())
 	}
 	pending := readPendingPaths(filepath.Join(root, "tests", "change-graph-pending.txt"))
 	missing := []string{}
-	for key := range doc.Globs {
-		if pending[key] {
-			continue
-		}
-		// Strip trailing `/...` or `/` to test the directory itself.
-		probe := strings.TrimSuffix(key, "/...")
-		probe = strings.TrimSuffix(probe, "/")
-		if _, err := os.Stat(filepath.Join(root, probe)); err != nil {
+	targets := 0
+	for key, tiers := range doc.Globs {
+		if !pending[key] && !changeGraphPathResolves(root, key) {
 			missing = append(missing, key)
 		}
+		for tier, tierTargets := range tiers {
+			for _, target := range tierTargets {
+				targets++
+				if pending[target] || changeGraphPathResolves(root, target) {
+					continue
+				}
+				missing = append(missing, fmt.Sprintf("%s [%s] → %s", key, tier, target))
+			}
+		}
 	}
+	sort.Strings(missing)
 	if len(missing) > 0 {
 		preview := missing
 		if len(preview) > 5 {
 			preview = append(preview[:5], fmt.Sprintf("... (%d more)", len(missing)-5))
 		}
-		return newResult("change-graph file-existence", false,
-			fmt.Sprintf("%d glob(s) point at missing paths: %s",
+		return newResult(name, false,
+			fmt.Sprintf("%d path(s) missing: %s",
 				len(missing), strings.Join(preview, "; ")))
 	}
-	return newResult("change-graph file-existence", true,
-		fmt.Sprintf("%d glob(s); every path resolves on disk", len(doc.Globs)))
+	return newResult(name, true,
+		fmt.Sprintf("%d glob(s) and %d target(s); every path resolves on disk",
+			len(doc.Globs), targets))
 }
 
 // changeGraphCoverageBaseline is the repo-relative path of the coverage
