@@ -218,9 +218,12 @@ func TestTranscriptStoreContract(t *testing.T) {
 			got = append(got, perTurn[i]...)
 		}
 		want := []struct{ role, content string }{
-			{"user", "turn one"}, {"assistant", "answer one"},
-			{"user", "turn two"}, {"assistant", "answer two"},
-			{"user", "turn three"}, {"assistant", "answer three"},
+			{"user", "turn one"},
+			{"assistant", "answer one"},
+			{"user", "turn two"},
+			{"assistant", "answer two"},
+			{"user", "turn three"},
+			{"assistant", "answer three"},
 		}
 		if len(got) != len(want) {
 			t.Fatalf("reassembled %d entries, want %d", len(got), len(want))

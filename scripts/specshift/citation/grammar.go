@@ -131,7 +131,8 @@ const qualifierBody = qualifierByte + `{0,95}?` + qualifierEnd
 // on. It is read again inside a matched head, so a citation is read from the
 // reference standing closest to its line numbers.
 var refExpr = regexp.MustCompile(
-	`§` + sp + `*\d+(?:\.\d+)*|(?:spec/)?\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md`)
+	`§` + sp + `*\d+(?:\.\d+)*|(?:spec/)?\d{2}_[A-Za-z0-9][A-Za-z0-9._-]*\.md`,
+)
 
 // headExpr matches the head of a citation: the reference, the optional
 // qualifier, the keyword or the colon standing in for it, and the first member.
