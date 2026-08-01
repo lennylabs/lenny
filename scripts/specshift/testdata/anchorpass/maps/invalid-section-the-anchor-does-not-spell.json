@@ -4,10 +4,10 @@
   "moves": [
     {
       "anchor": "1541-adapterbinary-protocol",
-      "section": "15.4.1",
+      "section": "15.4.4",
       "successor": {
-        "file": "docs/reference/anchor-style.md",
-        "anchor": "2859-ch-fenced-example"
+        "file": "spec/28_communication-channels.md",
+        "anchor": "2851-ch-adapterbinary"
       }
     }
   ]

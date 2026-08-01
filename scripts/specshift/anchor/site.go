@@ -24,14 +24,8 @@ const (
 	// `[...](#anchor)` form, into an anchor the map retires.
 	linkSite siteKind = "link"
 	// citationSite is a bare section citation of the §X.Y form, in a
-	// comment or in prose, naming a section the map retires an anchor
-	// of.
+	// comment or in prose, naming a section the map declares retired.
 	citationSite siteKind = "citation"
-	// unmappedLinkSite is an intra-repo markdown fragment link into an
-	// anchor its target document no longer declares and the map carries
-	// no entry for. There is no successor to write, so the site stops
-	// the run rather than standing as a reference the pass passed over.
-	unmappedLinkSite siteKind = "unmapped-link"
 )
 
 // site is one reference the pass reads: the byte span it replaces, the
@@ -65,14 +59,19 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // anchor the map retires or the section such an anchor addressed, in
 // source order.
 //
+// The map scopes both classes, and it scopes them by the same rule: a
+// reference the map carries no entry for is outside the pass. A
+// reference into a heading that is gone and that this migration did not
+// move predates the migration, no sub-step records what it means, and
+// this pass has no successor for it. The fragment-link gate reads that
+// population for the link form, and the pre-existing broken fragment
+// links it names are corrected by hand alongside it.
+//
 // A fragment link addresses a heading of a document the tree carries. A
 // link into an anchor its target document still declares is a link the
 // reduction left alone and stands. A link into an anchor that document
 // no longer declares is a redirect when the map names the anchor, and is
-// an unresolved reference when the map does not, which stops the run:
-// the pass has no successor to write there, and passing over it would
-// leave a reference into a retired anchor behind while the run reported
-// the zero work of a completed migration.
+// left as it stands when the map does not.
 //
 // A link whose destination is not a tracked markdown document of the
 // tree is not a site: an absolute URL and a link into a file the
@@ -80,16 +79,12 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // fragment-link gate reads, and rewriting one would edit a reference the
 // pass cannot check.
 //
-// A bare section citation is in the class when the map retires an anchor
-// of the section it names and the specification no longer declares that
-// section. The map scopes this class as it scopes the link class, so a
-// citation of a number the specification does not declare and this
-// migration did not retire is left as it stands: it predates the
-// migration, no sub-step records what it means, and this pass has no
-// successor for it. Within the class, what an occurrence means is
-// answered by the sense register one occurrence at a time, because a
-// reduction carves material out of the anchor it moves, and an
-// occurrence the register does not answer for stops the run.
+// A bare section citation is in the class when the map declares the
+// section it names as retired and the specification no longer declares
+// that section. Within the class, what an occurrence means is answered
+// by the sense register one occurrence at a time, because a reduction
+// carves material out of the anchor it moves, and an occurrence the
+// register does not answer for stops the run.
 //
 // A citation written inside a markdown fragment link is not read as a
 // bare citation. The pass performs a target-only redirect, and a label
@@ -113,12 +108,11 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 		if !tree.carries(file) || tree.declaresAnchor(file, anchor) {
 			continue
 		}
-		kind := linkSite
 		if _, mapped := moves.anchor(anchor); !mapped {
-			kind = unmappedLinkSite
+			continue
 		}
 		out = append(out, site{
-			kind:     kind,
+			kind:     linkSite,
 			start:    m[2],
 			end:      m[5],
 			line:     lineOf(text, m[2]),
