@@ -1,0 +1,9 @@
+// SPDX-License-Identifier: MIT
+
+syntax = "proto3";
+
+package lenny.adapter.v1;
+
+service Adapter {
+  rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse);
+}

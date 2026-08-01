@@ -33,17 +33,21 @@
 // before the substitution runs.
 //
 // Which naming-table row a resolved site takes is decided first by the
-// form of the site, and the form decides unconditionally. A site
-// standing in the method component of a gRPC full-method literal takes
-// the proto RPC row, because that literal carries the RPC name the
-// service definition declares and the Go method of the same channel is
-// spelled differently. A site standing in the name of the file itself
-// takes the path row, because the file-name stem is the path carrier.
-// Every other site takes a row that is not the proto RPC one. A channel
-// that states a spelling in more carriers than the form selects between
-// is resolved by the carrier the register entry names, a carrier the
-// form has already ruled out fails rather than overriding it, and a site
-// the two rules leave ambiguous aborts rather than taking the first row.
+// form of the site, and the form decides unconditionally where it
+// applies. A site standing in the method component of a gRPC full-method
+// literal takes the proto RPC row, because that literal carries the RPC
+// name the service definition declares and the Go method of the same
+// channel is spelled differently. A site standing in the name of the
+// file itself takes the path row, because the file-name stem is the path
+// carrier. The form selects a row at those two positions and rules
+// nothing out anywhere else, so ordinary carrier text stays open to every
+// row of the channel, the proto RPC one included: the primary carrier of
+// that row is the `rpc <Name>` declaration of the service definition,
+// which is ordinary text. A channel that states a spelling in more
+// carriers than the form selects between is resolved by the carrier the
+// register entry names, a carrier the form has already ruled out fails
+// rather than overriding it, and a site the two rules leave ambiguous
+// aborts rather than taking the first row.
 //
 // The pass writes on three channels, all planned before anything is
 // written. It substitutes at each resolved site; it moves a file whose
@@ -357,12 +361,13 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 
 // rowFor selects the naming-table row a resolved site takes.
 //
-// The form of the site decides first, and it decides unconditionally. A
-// gRPC full-method literal carries the RPC name of the service
-// definition, so it takes the proto RPC row; a file name carries the
-// path stem, so it takes the path row; every other site takes a row that
-// is neither. The register entry's carrier then resolves what the form
-// leaves open, and a carrier the form has already ruled out fails rather
+// The form of the site decides first, and it decides unconditionally
+// where it applies. A gRPC full-method literal carries the RPC name of
+// the service definition, so it takes the proto RPC row; a file name
+// carries the path stem, so it takes the path row; every other site
+// stays open to every row the channel states for the spelling. The
+// register entry's carrier then resolves what the form leaves open, and
+// a carrier the form has already ruled out fails rather
 // than overriding it: an entry naming the Go type row at a full-method
 // literal would write a method the service definition does not declare,
 // and the run would exit clean because no gate downstream reads which
@@ -380,7 +385,7 @@ func (r *Rewriter) rowFor(s site, entry Entry) (Row, error) {
 			form, s.retired, entry.Channel)
 	}
 	if entry.Carrier != "" {
-		narrowed := withCarrier(rows, entry.Carrier, true)
+		narrowed := withCarrier(rows, entry.Carrier)
 		if len(narrowed) == 0 {
 			return Row{}, fmt.Errorf("%s names the carrier %s, and the site is %s, which the naming table states no %s spelling of %s for %s at",
 				r.registerPath, entry.Carrier, form, entry.Carrier, s.retired, entry.Channel)
@@ -399,24 +404,33 @@ func (r *Rewriter) rowFor(s site, entry Entry) (Row, error) {
 //
 // A file name is the carrier of the path stem, so it takes the path row
 // alone: resolving it from whichever other row happened to be unique
-// would move a carrier to a name the table states for no path.
+// would move a carrier to a name the table states for no path. A
+// full-method literal takes the proto RPC row for the same reason.
+//
+// The two rules select; they do not subtract. Ordinary carrier text
+// keeps every row the channel states for the spelling, because the proto
+// RPC row's own primary carrier is the `rpc <Name>` declaration of the
+// service definition, which is ordinary text: subtracting that row
+// everywhere outside a full-method literal would leave the declaration
+// with no route to the spelling the naming table states for it. What the
+// form leaves open the register entry's carrier resolves, and a site it
+// leaves ambiguous aborts.
 func formRows(s site, rows []Row) (string, []Row) {
 	switch {
 	case s.fileName:
-		return "a file name", withCarrier(rows, CarrierPath, true)
+		return "a file name", withCarrier(rows, CarrierPath)
 	case s.grpcMethod:
-		return "the method component of a gRPC full-method literal", withCarrier(rows, CarrierProtoRPC, true)
+		return "the method component of a gRPC full-method literal", withCarrier(rows, CarrierProtoRPC)
 	default:
-		return "ordinary carrier text", withCarrier(rows, CarrierProtoRPC, false)
+		return "ordinary carrier text", rows
 	}
 }
 
-// withCarrier keeps the rows of one carrier, or every row of another
-// carrier when keep is false.
-func withCarrier(rows []Row, c Carrier, keep bool) []Row {
+// withCarrier keeps the rows of one carrier.
+func withCarrier(rows []Row, c Carrier) []Row {
 	var out []Row
 	for _, row := range rows {
-		if (row.Carrier == c) == keep {
+		if row.Carrier == c {
 			out = append(out, row)
 		}
 	}

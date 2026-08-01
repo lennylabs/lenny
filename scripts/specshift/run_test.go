@@ -6436,6 +6436,36 @@ func TestIdentifierPassResolvesAGrpcFullMethodLiteralFromTheProtoRow(t *testing.
 	}
 }
 
+// TestIdentifierPassWritesTheProtoRowIntoTheServiceDefinition pins that
+// the form rule selects a row where it applies and rules nothing out
+// anywhere else. The primary carrier of the proto RPC row is the
+// `rpc <Name>` declaration of the service definition, which is ordinary
+// carrier text rather than a full-method literal, so a rule that
+// subtracted that row from every site outside such a literal would leave
+// the declaration with no route to the spelling the naming table states
+// for it: the run would either abort there with no register value able to
+// select the row, or write the Go type spelling into a method the service
+// does not declare. The declaration, the two message types it names, and
+// the full-method literal of the client beside it are written in one run,
+// while the Go symbol of the same channel takes the Go type spelling.
+//
+// spec: §28.1 (N4, the naming law: the proto RPC name stem is the
+// channel's identifier)
+func TestIdentifierPassWritesTheProtoRowIntoTheServiceDefinition(t *testing.T) {
+	t.Parallel()
+	root := idTree(t, "proto")
+	applyIDPass(t, root, "proto.yaml")
+	assertRewritten(t, root, "schemas/lenny-adapter.proto")
+	assertRewritten(t, root, "pkg/adapter/client.go")
+	service := readFixtureFile(t, filepath.Join(root, "schemas", "lenny-adapter.proto"))
+	if !strings.Contains(service, "rpc AdapterEvents(stream AdapterEventsRequest)") {
+		t.Errorf("the RPC declaration was not written from the proto RPC row:\n%s", service)
+	}
+	if strings.Contains(service, "AdapterEventsChannel") {
+		t.Errorf("the service definition carries the Go type spelling:\n%s", service)
+	}
+}
+
 // TestIdentifierPassRefusesACarrierTheFormOfTheSiteRulesOut pins the
 // precedence of the two row-selection rules. The form of the site
 // decides first and decides unconditionally, and the carrier a register

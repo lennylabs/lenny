@@ -1,0 +1,27 @@
+# SPDX-License-Identifier: MIT
+# The senses of the proto service definition and the client beside it.
+# The RPC declaration and the two message types it names are ordinary
+# carrier text, so the entry names the proto-rpc carrier; the full-method
+# literal is resolved by the form of the site alone.
+kind: identifier-senses
+version: 1
+entries:
+  - file: schemas/lenny-adapter.proto
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/client.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+  - file: pkg/adapter/client.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
