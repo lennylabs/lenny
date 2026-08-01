@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MIT
+#
+# A well-formed register that resolves both occurrences of the sibling
+# carrier, so what this tree exercises is the citation whose section no
+# specification file declares: the run stops at it and the sibling the
+# register does resolve is left byte-identical.
+kind: anchor-senses
+version: 1
+entries:
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

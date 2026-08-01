@@ -81,10 +81,11 @@ var leadingDigitsExpr = regexp.MustCompile(`^[0-9]+`)
 func sectionDigits(number string) string { return strings.ReplaceAll(number, ".", "") }
 
 // retiresSection reports whether the map retires the anchor of the
-// section the number names, which is what puts a bare §X.Y citation of
-// it in the pass's population. A number the map does not retire names a
-// section this migration does not move, and the citation of it stands
-// as written.
+// section the number names, which is what makes a bare §X.Y citation of
+// it a citation the sense register resolves. A number the map does not
+// retire is judged against the sections the specification declares: a
+// section the tree still declares stands as written, and one it does not
+// stops the run.
 func (m *moveMap) retiresSection(number string) bool {
 	return m.sections[sectionDigits(number)]
 }

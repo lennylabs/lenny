@@ -2,8 +2,8 @@
 #
 # A well-formed register, so what this tree exercises is the link class
 # alone: the link into the anchor the anchor-move map retires is
-# redirected, and the link into the anchor it does not is left as it is
-# written.
+# redirected, and the link into the anchor its document still declares is
+# left as it is written.
 kind: anchor-senses
 version: 1
 entries:
