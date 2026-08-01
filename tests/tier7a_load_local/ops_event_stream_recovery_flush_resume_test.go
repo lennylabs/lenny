@@ -54,6 +54,9 @@ func newReplicaServer(window *replicaWindow) *httptest.Server {
 // backward, and the next source switch re-delivered every event after it, so a
 // consumer receives duplicate operational events after every Redis recovery it
 // straddles.
+//
+// spec: §25.5 (best-effort recovery flush, cross-switch no-drop ordering,
+// independent per-connection read cursor).
 func TestOpsEventStreamResumeDoesNotRewindOnRecoveryFlush(t *testing.T) {
 	rd := containers.StartRedis(t, containers.RedisOptions{})
 	ctx := context.Background()

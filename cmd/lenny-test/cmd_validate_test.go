@@ -1112,3 +1112,41 @@ func trackIdentifierPassRename(t *testing.T, root string) {
 		t.Fatalf("git add -A: %v: %s", err, out)
 	}
 }
+
+// Both tier-0 predicates over component-and-above test files range over
+// the tracked tree rather than over a fixture, so a test file added
+// without a spec-map entry or without its annotations turns the static
+// tier red for every later change. This case drives both predicates over
+// that same tree in process, so the omission surfaces from a package-
+// scoped unit run rather than only from a composed tier-0 run.
+//
+// spec: TESTING.md §5 ("tests/spec-map.json maps every spec section to
+// the tests ... that encode it") and TESTING.md §7, which requires the
+// spec and diagnosis annotations on every component-and-above test.
+func TestTrackedComponentAndAboveTestFilesAreMappedAndAnnotated(t *testing.T) {
+	root := repoRoot()
+	expectPass(t, validateTestFilesMapped(filepath.Join(root, "tests", "spec-map.json"), root))
+
+	var missing []string
+	for _, dir := range componentAndAboveTierDirs() {
+		base := filepath.Join(root, dir)
+		if _, err := os.Stat(base); err != nil {
+			continue
+		}
+		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			_, miss := scanDiagnosis(path)
+			missing = append(missing, miss...)
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", dir, err)
+		}
+	}
+	if len(missing) > 0 {
+		t.Errorf("%d test function(s) carry no spec or diagnosis annotation: %s",
+			len(missing), strings.Join(missing, "; "))
+	}
+}

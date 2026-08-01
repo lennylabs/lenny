@@ -116,15 +116,14 @@ func runValidateMaps(args []string) int {
 //
 // In Phase 0 there are no tests yet, so this is effectively a no-op that
 // confirms the validator runs without error. As tests are added it gains teeth.
-func runValidateDiagnosis(args []string) int {
-	fs := flag.NewFlagSet("validate-diagnosis", flag.ExitOnError)
-	jsonOut := fs.Bool("json", false, "machine-readable output")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-
-	root := repoRoot()
-	tierDirs := []string{
+// componentAndAboveTierDirs returns the tier directories at or above
+// component, relative to the repository root. Both tier-0 predicates
+// over test files range over this one list: every file in it must
+// appear in the spec map and must carry the spec and diagnosis
+// annotations, so a directory added to one predicate is added to the
+// other.
+func componentAndAboveTierDirs() []string {
+	return []string{
 		"tests/tier2_component",
 		"tests/tier3_contract",
 		"tests/tier4_integration",
@@ -137,6 +136,17 @@ func runValidateDiagnosis(args []string) int {
 		"tests/tier10_conformance",
 		"tests/tier12_load_cloud",
 	}
+}
+
+func runValidateDiagnosis(args []string) int {
+	fs := flag.NewFlagSet("validate-diagnosis", flag.ExitOnError)
+	jsonOut := fs.Bool("json", false, "machine-readable output")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	root := repoRoot()
+	tierDirs := componentAndAboveTierDirs()
 
 	totalFiles := 0
 	totalFuncs := 0
@@ -707,19 +717,7 @@ func validateTestFilesMapped(specMapPath, root string) checkResult {
 	}
 
 	// Walk every _test.go under the tier dirs at or above component.
-	tierDirs := []string{
-		"tests/tier2_component",
-		"tests/tier3_contract",
-		"tests/tier4_integration",
-		"tests/tier5_e2e_kind",
-		"tests/tier6_e2e_cloud",
-		"tests/tier7a_load_local",
-		"tests/tier7b_load_kind",
-		"tests/tier8_chaos",
-		"tests/tier9_security",
-		"tests/tier10_conformance",
-		"tests/tier12_load_cloud",
-	}
+	tierDirs := componentAndAboveTierDirs()
 	orphans := []string{}
 	for _, dir := range tierDirs {
 		base := filepath.Join(root, dir)

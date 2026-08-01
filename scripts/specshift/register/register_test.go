@@ -102,3 +102,107 @@ func TestAMemberIsKeyedByItsFoldedText(t *testing.T) {
 		t.Error("the validator accepted the same member stored wrapped and unwrapped")
 	}
 }
+
+// registerDir is the tree that tracks one residual register per class,
+// relative to this package.
+var registerDir = filepath.Join("..", "..", "..", "tests", "registers")
+
+// trackedRegisters returns the path of every residual register in the
+// tree.
+func trackedRegisters(t *testing.T) []string {
+	t.Helper()
+	entries, err := os.ReadDir(registerDir)
+	if err != nil {
+		t.Fatalf("read the tracked register directory: %v", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasPrefix(e.Name(), "residual-") || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		out = append(out, filepath.Join(registerDir, e.Name()))
+	}
+	if len(out) == 0 {
+		t.Fatal("no residual register is tracked, so this case pins nothing")
+	}
+	return out
+}
+
+// TestEveryTrackedResidualRegisterLoadsThroughTheSharedLoader holds every
+// register in the tree to the one kind declaration, the one version, and
+// the one entry schema, so a register the residual gate writes stays a
+// register a pass reads. A second writer with a schema of its own would
+// produce a file the other half refuses, and nothing else in the tree
+// would fail.
+func TestEveryTrackedResidualRegisterLoadsThroughTheSharedLoader(t *testing.T) {
+	t.Parallel()
+	for _, path := range trackedRegisters(t) {
+		rel := filepath.Base(path)
+		t.Run(rel, func(t *testing.T) {
+			t.Parallel()
+			doc, err := register.Load(path)
+			if err != nil {
+				t.Fatalf("load %s through the shared residual-register loader: %v", rel, err)
+			}
+			if doc.Kind != register.Kind {
+				t.Errorf("%s declares kind %q, and the shared loader reads %q", rel, doc.Kind, register.Kind)
+			}
+			if doc.Version != register.Version {
+				t.Errorf("%s declares version %d, and the shared loader reads %d", rel, doc.Version, register.Version)
+			}
+			// The class a register declares is the class its filename
+			// names, so a register cannot be read for one class while
+			// carrying another's population.
+			wantClass := strings.TrimSuffix(strings.TrimPrefix(rel, "residual-"), ".yaml")
+			if doc.Class != wantClass {
+				t.Errorf("%s declares class %q, and its path names %q", rel, doc.Class, wantClass)
+			}
+			if _, err := register.ReadFor(os.ReadFile, path, wantClass); err != nil {
+				t.Errorf("read %s for the class its path names: %v", rel, err)
+			}
+			// Every entry is held to the one entry schema, which is what
+			// makes an entry one side writes readable by the other.
+			for _, e := range *doc.Entries {
+				if err := register.ValidEntry(rel, doc.Class, e); err != nil {
+					t.Errorf("%s: %v", rel, err)
+				}
+				if e.Disposition != register.InClass && e.Disposition != register.Excluded {
+					t.Errorf("%s: member %q carries disposition %q", rel, e.Key(), e.Disposition)
+				}
+			}
+		})
+	}
+}
+
+// TestTheSharedWriterProducesARegisterTheSharedLoaderReads pins the two
+// halves of the format against each other, so a register the shared
+// writer produces reloads through the shared loader.
+func TestTheSharedWriterProducesARegisterTheSharedLoaderReads(t *testing.T) {
+	t.Parallel()
+	entries := []register.Entry{{
+		Member:      "pkg/carrier/carrier.go",
+		Class:       "generated-artifacts",
+		Disposition: register.InClass,
+		Reason:      "producer output that carries no marker",
+	}}
+	path := filepath.Join(t.TempDir(), "residual-generated-artifacts.yaml")
+	if err := register.Write(func(target string, content []byte) error {
+		return os.WriteFile(target, content, 0o644)
+	}, path, "generated-artifacts", entries); err != nil {
+		t.Fatalf("write a register through the shared writer: %v", err)
+	}
+	doc, err := register.ReadFor(os.ReadFile, path, "generated-artifacts")
+	if err != nil {
+		t.Fatalf("reload the written register through the shared loader: %v", err)
+	}
+	if got := doc.Members(); len(got) != 1 || got[0] != "pkg/carrier/carrier.go" {
+		t.Fatalf("the reloaded register carries %v", got)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the written register: %v", err)
+	}
+	if !strings.Contains(string(body), "kind: "+register.Kind+"\n") {
+		t.Errorf("the written register declares no %q kind:\n%s", register.Kind, body)
+	}
+}
