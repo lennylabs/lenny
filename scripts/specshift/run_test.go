@@ -5539,30 +5539,76 @@ func TestAnchorPassRedirectsALinkFromARootLevelCarrierWithoutLeavingTheRoot(t *t
 	assertRedirected(t, root, "README.md")
 }
 
-// TestAnchorPassLeavesACitationOfASectionTheMapDoesNotRetireUntouched
-// pins the scope of the bare-citation class, which is the scope rule the
-// link class carries. Each map entry states the section its retired
-// anchor addressed, so the map states which sections were retired as
-// well as which anchors. A citation of a number no entry declares names
-// a section this migration did not move: the specification may have
-// stopped declaring it long before, an external standard may number its
-// own clauses that way, no sub-step records what it means, and the pass
-// leaves it as it stands. The citation of the section the map does
-// declare retired stands in the same carrier and is redirected.
+// TestAnchorPassAbortsAtACitationOfARetiredSectionTheMapDoesNotCarry
+// pins the fail-closed rule that scopes the bare-citation class. A
+// citation names a section no specification file declares, and the
+// anchor-move map carries no entry for it, so the pass has no successor
+// for the citation. The run stops non-zero, names the file and the line,
+// and leaves every carrier byte-identical, including the sibling
+// citation in the same file whose occurrence the sense register does
+// resolve.
 //
-// Reading every undeclared §X.Y token as a site instead would put the
-// citations that predate this migration inside the class, demand a sense
-// entry no change seeds for them, and shift the occurrence numbering the
-// register is keyed by, so the entry written for the citation the
-// migration retired would land at the citation it did not.
+// Passing over such a citation instead would leave a pointer at a
+// heading that is gone while the run exited zero, which reads as the
+// completed migration it is not, and the change that empties the map is
+// the change that destroys the record of what the run should have done.
 //
-// spec: §28.1 (N8, the citation rule: a citation names the heading that
-// defines the material it cites)
-func TestAnchorPassLeavesACitationOfASectionTheMapDoesNotRetireUntouched(t *testing.T) {
+// spec: §28.1 (N8, the citation rule: a citation whose destination is
+// unresolved is reported rather than left naming a heading that is gone)
+func TestAnchorPassAbortsAtACitationOfARetiredSectionTheMapDoesNotCarry(t *testing.T) {
 	t.Parallel()
-	root := anchorTree(t, "citation-outside-the-map")
-	applyAnchorPass(t, root, "tree.json")
-	assertRedirected(t, root, "pkg/carrier/flow.go")
+	root := anchorTree(t, "fail/citation-outside-the-map")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass returned no error at a citation of a retired section the map does not carry")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/flow.go" || abort.Line != 7 {
+		t.Errorf("the abort names %s line %d, want pkg/carrier/flow.go line 7", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "15.9.9") || !strings.Contains(abort.Reason, "tree.json") {
+		t.Errorf("the abort names neither the citation nor the anchor-move map: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
+	}
+}
+
+// TestAnchorPassAbortsAtACitationOfASectionAMapEntryLeavesUnstated pins
+// the same rule at the defect that produces it silently. An entry states
+// the section its retired anchor addressed, and an entry that leaves it
+// unstated carries no successor for any citation of that section. The
+// run stops at the citation rather than rewriting the links alone and
+// exiting zero over a tree whose citations still name a section that is
+// gone.
+//
+// spec: §28.1 (N8, the citation rule: a citation whose destination is
+// unresolved is reported rather than left naming a heading that is gone)
+func TestAnchorPassAbortsAtACitationOfASectionAMapEntryLeavesUnstated(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "non-specification-destination")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "section-unstated.json")
+	if err == nil {
+		t.Fatal("the anchor pass returned no error at a citation of a section the map entry leaves unstated")
+	}
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "pkg/carrier/framing.go" || abort.Line != 7 {
+		t.Errorf("the abort names %s line %d, want pkg/carrier/framing.go line 7", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "15.4.1") {
+		t.Errorf("the abort does not name the citation: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
+	}
 }
 
 // TestAnchorPassLeavesACitationWrittenAsALinkLabelToTheHandCorrection
@@ -5586,36 +5632,42 @@ func TestAnchorPassLeavesACitationWrittenAsALinkLabelToTheHandCorrection(t *test
 	assertRedirected(t, root, "docs/reference/label.md")
 }
 
-// TestAnchorPassLeavesALinkIntoAnAnchorTheMapDoesNotNameUntouched pins
-// the scope rule the link class shares with the bare-citation class. A
+// TestAnchorPassAbortsAtALinkIntoARetiredAnchorTheMapDoesNotCarry pins
+// the fail-closed rule at the link form of the same condition. A
 // fragment link addresses an anchor its target document no longer
-// declares, and the map carries no entry for that anchor, so this
-// migration did not move it and the pass has no successor for it. The
-// link is left exactly as it was written and the run completes, while
-// the sibling link the map does name is redirected in the same run. The
-// fragment-link gate reads that link and reports it as one of the
-// pre-existing broken fragment links corrected by hand.
+// declares, and the map carries no entry for that anchor, so the pass
+// has no successor for it. The run stops non-zero, names the file and
+// the line, and leaves every carrier byte-identical, including the
+// sibling link the map does name and would otherwise have redirected in
+// the same run.
 //
-// Aborting the run there instead would halt the migration on a
-// population that is corrected by hand and covered by a gate, while a
-// bare citation in the same condition is scoped out of the pass, so the
-// same condition would carry two opposite rules.
+// Passing over such a link instead would leave a reference into a
+// heading that is gone while the run exited zero, and the change that
+// empties the map would destroy the record of what the run should have
+// done.
 //
-// spec: §28.1 (N8, the citation rule: a reference the migration did not
-// move is left naming what it named)
-func TestAnchorPassLeavesALinkIntoAnAnchorTheMapDoesNotNameUntouched(t *testing.T) {
+// spec: §28.1 (N8, the citation rule: a reference whose destination is
+// unresolved is reported rather than left naming a heading that is gone)
+func TestAnchorPassAbortsAtALinkIntoARetiredAnchorTheMapDoesNotCarry(t *testing.T) {
 	t.Parallel()
-	root := anchorTree(t, "outside-the-map")
-	applyAnchorPass(t, root, "tree.json")
-	const untouched = "docs/reference/flow-control.md"
-	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(untouched)))
-	want := readFixtureFile(t, filepath.Join(fixtureAnchorPass, "outside-the-map", filepath.FromSlash(untouched)))
-	if after != want {
-		t.Errorf("%s after the anchor pass is\n%s\nwant\n%s", untouched, after, want)
+	root := anchorTree(t, "fail/link-outside-the-map")
+	before := treeSnapshot(t, root)
+	_, err := applyAnchorPassErr(t, root, "tree.json")
+	if err == nil {
+		t.Fatal("the anchor pass returned no error at a link into a retired anchor the map does not carry")
 	}
-	redirected := readFixtureFile(t, filepath.Join(root, "README.md"))
-	if !strings.Contains(redirected, "spec/28_communication-channels.md#2851-ch-adapterbinary") {
-		t.Errorf("the run did not redirect the sibling link the map names:\n%s", redirected)
+	abort, ok := pass.AsAbort(err)
+	if !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if abort.Path != "docs/reference/flow-control.md" || abort.Line != 4 {
+		t.Errorf("the abort names %s line %d, want docs/reference/flow-control.md line 4", abort.Path, abort.Line)
+	}
+	if !strings.Contains(abort.Reason, "1544-flow-control") || !strings.Contains(abort.Reason, "tree.json") {
+		t.Errorf("the abort names neither the anchor nor the anchor-move map: %v", abort)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run wrote to the tree")
 	}
 }
 
@@ -5893,7 +5945,6 @@ func TestAnchorPassRejectsAMissingOrMalformedAnchorMoveMap(t *testing.T) {
 		{"a move naming no successor file", "invalid-no-successor-file.json", "names no successor file"},
 		{"a move naming no successor anchor", "invalid-no-successor-anchor.json", "names no successor anchor"},
 		{"an anchor declared twice", "invalid-duplicate-anchor.json", "is declared twice"},
-		{"a move declaring no section field", "invalid-no-section.json", "declares no section field"},
 	} {
 		t.Run(tc.defect, func(t *testing.T) {
 			t.Parallel()
@@ -5910,52 +5961,29 @@ func TestAnchorPassRejectsAMissingOrMalformedAnchorMoveMap(t *testing.T) {
 	}
 }
 
-// TestAnchorPassRefusesAMapEntryThatStatesNoSectionForANumberedAnchor
-// pins that the map states which sections it retires rather than leaving
-// them to be read out of each anchor's spelling. The section an entry
-// declares is what puts a bare §X.Y citation inside the class the sense
-// register resolves, so an entry that leaves it unstated narrows that
-// class silently: the run would rewrite the links, report zero citation
-// work, exit zero, and the change that empties the map would then
-// destroy the record of what the run should have done.
-//
+// TestAnchorPassRefusesAMapEntryDeclaringASectionItsAnchorDoesNotSpell
+// pins the section an entry states against the anchor that carries it.
 // An anchor a renderer derived from a numbered heading opens with the
-// section's digits and is held to a section those digits spell, while an
-// anchor declared by an explicit kramdown attribute carries no digits,
-// which is why the section is declared rather than inferred.
+// section's digits, so a number those digits do not spell answers
+// citations of a section this entry did not retire, and it would send
+// them to the successor of an anchor that never addressed them.
+//
+// An anchor declared by an explicit kramdown attribute carries no
+// digits, which is why the section is declared rather than read out of
+// the anchor's spelling.
 //
 // spec: §28.1 (N8, the citation rule: the redirect is driven by the map
 // the change ships)
-func TestAnchorPassRefusesAMapEntryThatStatesNoSectionForANumberedAnchor(t *testing.T) {
+func TestAnchorPassRefusesAMapEntryDeclaringASectionItsAnchorDoesNotSpell(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		defect string
-		file   string
-		names  string
-	}{
-		{
-			"a numbered anchor whose entry declares the section empty",
-			"invalid-numbered-anchor-declaring-no-section.json",
-			"declares no section",
-		},
-		{
-			"an entry whose declared section its anchor does not spell",
-			"invalid-section-the-anchor-does-not-spell.json",
-			"the anchor's own digits do not spell",
-		},
-	} {
-		t.Run(tc.defect, func(t *testing.T) {
-			t.Parallel()
-			root := anchorTree(t, "tree")
-			r := anchor.New(scope.DirLister(root), scope.DirReader(root))
-			err := r.LoadRegister(filepath.Join(fixtureAnchorPass, "maps", tc.file))
-			if err == nil {
-				t.Fatalf("the anchor pass loaded %s", tc.defect)
-			}
-			if !strings.Contains(err.Error(), tc.names) {
-				t.Errorf("the failure does not name the defect %q: %v", tc.names, err)
-			}
-		})
+	root := anchorTree(t, "tree")
+	r := anchor.New(scope.DirLister(root), scope.DirReader(root))
+	err := r.LoadRegister(filepath.Join(fixtureAnchorPass, "maps", "invalid-section-the-anchor-does-not-spell.json"))
+	if err == nil {
+		t.Fatal("the anchor pass loaded an entry whose declared section its anchor does not spell")
+	}
+	if !strings.Contains(err.Error(), "the anchor's own digits do not spell") {
+		t.Errorf("the failure does not name the defect: %v", err)
 	}
 }
 

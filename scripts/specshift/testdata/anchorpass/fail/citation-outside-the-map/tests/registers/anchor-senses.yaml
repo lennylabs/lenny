@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+#
+# The register records the second occurrence of this carrier, which is
+# the citation of the section the anchor-move map retires an anchor of.
+# The first occurrence names a section the specification no longer
+# declares and the map carries no entry for, so no entry can answer it
+# and the run stops there.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/flow.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary
