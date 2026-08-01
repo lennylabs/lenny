@@ -461,15 +461,17 @@ func receiverTypeName(expr ast.Expr) string {
 }
 
 // skipCallForm reports the call form when the call is a skip call site.
-// The receiver is any identifier, because a test handle is named
-// variously across the tree, and the helper form is recognized on its
-// name alone.
+// The decision is keyed on the selected name alone, whatever expression
+// the handle is reached through: a test handle is spelled variously
+// across the tree, as a bare identifier, as a field of a case or harness
+// struct, or as an element of a slice. Holding a Skip method on some
+// other type to the same predicate costs that site a category or a
+// register entry, while reading only the bare-identifier spelling would
+// leave every other spelling of the convention unenforced, so the wider
+// match is the one that fails closed.
 func skipCallForm(call *ast.CallExpr) (string, bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
-		return "", false
-	}
-	if _, ok := sel.X.(*ast.Ident); !ok {
 		return "", false
 	}
 	name := sel.Sel.Name
@@ -905,14 +907,23 @@ func TestSkipReasonClassifierAcceptsAHelperCallAndABareSkip(t *testing.T) {
 
 func TestSkipReasonClassifierRejectsAFreeTextReasonInBothCallForms(t *testing.T) {
 	t.Parallel()
+	// The handle a skip is called on is spelled variously across the tree.
+	// A reason reached through a struct field, a nested field, or a slice
+	// element states the same thing as one called on a bare identifier, so
+	// each spelling is inspected and reported rather than passed over.
 	for _, tc := range []struct {
+		name      string
 		call      string
 		statement string
 	}{
-		{skipCallPlain, `t.Skip("docker is not running")`},
-		{skipCallFormatted, `t.Skipf("docker is not running: %v", 1)`},
+		{"a bare handle", skipCallPlain, `t.Skip("docker is not running")`},
+		{"a bare handle, formatted", skipCallFormatted, `t.Skipf("docker is not running: %v", 1)`},
+		{"a handle held by a case", skipCallPlain, `tc.t.Skip("docker is not running")`},
+		{"a handle held by a nested harness", skipCallFormatted, `env.harness.tb.Skipf("docker is not running: %v", 1)`},
+		{"a handle held by a slice", skipCallPlain, `handles[i].Skip("docker is not running")`},
+		{"a handle returned by a call", skipCallPlain, `harness(t).Skip("docker is not running")`},
 	} {
-		t.Run(tc.call, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tr := newSkipTree(t)
 			tr.carrier("tests/carrier/carrier_test.go", tc.statement)
