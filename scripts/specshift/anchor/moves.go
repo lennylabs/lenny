@@ -31,15 +31,17 @@ type Target struct {
 func (t Target) String() string { return t.File + "#" + t.Anchor }
 
 // Move is one retired anchor's redirect: the anchor a heading was
-// addressed by before the reduction, the section number that heading
-// declared when it declared one, and the heading the material moved to.
+// addressed by before the reduction, and the heading the material moved
+// to. Those two are the whole entry, which is what the change that
+// seeds the map writes.
 //
-// Section is what makes a bare section citation decidable at all. The
-// anchor alone does not carry the number, because the anchor is a slug
-// of the whole heading text.
+// The map decides the link class alone, because a link names the
+// retired anchor. It decides nothing about a bare section citation: the
+// citation names a number the anchor does not carry, and a reduction
+// carves material out of the anchor it moves, so the per-occurrence
+// sense register answers that class instead.
 type Move struct {
 	Anchor    string `json:"anchor"`
-	Section   string `json:"section"`
 	Successor Target `json:"successor"`
 }
 
@@ -55,13 +57,11 @@ type mapDocument struct {
 	Moves *[]Move `json:"moves"`
 }
 
-// moveMap is the loaded map, indexed for the two site classes it drives:
-// a markdown fragment link, which names the retired anchor, and a bare
-// section citation, which names the retired section number.
+// moveMap is the loaded map, indexed by the retired anchor, which is
+// what the one site class it drives names: a markdown fragment link.
 type moveMap struct {
-	path      string
-	byAnchor  map[string]Move
-	bySection map[string]Move
+	path     string
+	byAnchor map[string]Move
 }
 
 // loadMoves reads and validates the anchor-move map.
@@ -93,7 +93,7 @@ func loadMoves(path string) (*moveMap, error) {
 	if len(*doc.Moves) == 0 {
 		return nil, fmt.Errorf("anchor-move map %s: carries no move", path)
 	}
-	m := &moveMap{path: path, byAnchor: map[string]Move{}, bySection: map[string]Move{}}
+	m := &moveMap{path: path, byAnchor: map[string]Move{}}
 	for i, move := range *doc.Moves {
 		if err := validateMove(path, i, move); err != nil {
 			return nil, err
@@ -102,14 +102,6 @@ func loadMoves(path string) (*moveMap, error) {
 			return nil, fmt.Errorf("anchor-move map %s: anchor %q is declared twice", path, move.Anchor)
 		}
 		m.byAnchor[move.Anchor] = move
-		if move.Section == "" {
-			continue
-		}
-		if prior, ok := m.bySection[move.Section]; ok {
-			return nil, fmt.Errorf("anchor-move map %s: §%s is declared by both %q and %q, so a citation of it has two successors",
-				path, move.Section, prior.Anchor, move.Anchor)
-		}
-		m.bySection[move.Section] = move
 	}
 	return m, nil
 }
@@ -129,21 +121,12 @@ func validateMove(path string, i int, m Move) error {
 	if strings.TrimSpace(m.Successor.Anchor) == "" {
 		return fmt.Errorf("%s names no successor anchor", where)
 	}
-	if m.Section != "" && !sectionNumberExpr.MatchString(m.Section) {
-		return fmt.Errorf("%s carries the section %q, which is not a dotted section number", where, m.Section)
-	}
 	return nil
 }
 
 // anchor returns the redirect for a retired anchor.
 func (m *moveMap) anchor(a string) (Move, bool) {
 	move, ok := m.byAnchor[a]
-	return move, ok
-}
-
-// section returns the redirect for a retired section number.
-func (m *moveMap) section(number string) (Move, bool) {
-	move, ok := m.bySection[number]
 	return move, ok
 }
 

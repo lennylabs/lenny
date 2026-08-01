@@ -4,7 +4,6 @@
   "moves": [
     {
       "anchor": "1541-adapterbinary-protocol",
-      "section": "15.4.1",
       "successor": {
         "file": "docs/reference/anchor-style.md",
         "anchor": "2859-ch-fenced-example"

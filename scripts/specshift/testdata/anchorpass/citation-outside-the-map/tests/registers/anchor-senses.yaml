@@ -1,0 +1,12 @@
+# SPDX-License-Identifier: MIT
+#
+# The register answers the occurrence on its own. The anchor-move map
+# names no anchor of the retired section this carrier cites, which is
+# the ordinary case: the map is keyed by retired anchor and carries no
+# section number at all.
+kind: anchor-senses
+version: 1
+entries:
+  - file: pkg/carrier/flow.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary

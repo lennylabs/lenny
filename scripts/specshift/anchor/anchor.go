@@ -36,9 +36,7 @@
 // pointer at a heading that does not define the cited material, and no
 // gate over the anchor classes reads meaning: the fragment-link gate
 // reads links alone, and the citation resolver and the per-file ratchet
-// match the retired line-citation form alone. A recorded occurrence
-// whose section the map carries no successor for aborts the same way,
-// because the redirect it needs was never written down.
+// match the retired line-citation form alone.
 //
 // A section number is judged live or retired against the specification's
 // own headings. A heading numbered the same way in a testing document or
@@ -80,9 +78,9 @@ type Rewriter struct {
 	list scope.Lister
 	read scope.FileReader
 
-	// moves is the driving register: the redirect for each retired
-	// anchor, keyed by anchor for the link form and by section number
-	// for the bare citation form.
+	// moves is the driving register: the successor heading for each
+	// retired anchor, keyed by that anchor, which is the form a fragment
+	// link names.
 	moves *moveMap
 
 	// senses are the per-occurrence destinations of the bare citations
@@ -150,16 +148,14 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 // A link is decided by the map, which named its anchor as retired and
 // carries the successor to write in its place.
 //
-// A citation is decided by the sense register, which is read first
-// because what the occurrence means is the question the map cannot
-// answer. An occurrence the register does not record aborts the
-// run, and so does a recorded occurrence whose section the map carries
-// no successor for: in the first case what the citation means was never
-// resolved, and in the second the redirect it needs was never written
-// down. Passing over either would leave a citation of a section that is
-// gone while the run exited zero, which reads as the completed migration
-// it is not, and the change that empties the map is the change that
-// destroys the record of what the run should have done.
+// A citation is decided by the sense register alone, because what the
+// occurrence means is the question the map cannot answer. An occurrence
+// the register does not record aborts the run: what the citation means
+// was never resolved. Passing over it would leave a citation of a
+// section that is gone while the run exited zero, which reads as the
+// completed migration it is not, and the change that empties the
+// registers is the change that destroys the record of what the run
+// should have done.
 //
 // Every unresolved site is collected before the plan fails, so one run
 // names the whole hand-correction population rather than its first
@@ -168,8 +164,8 @@ func (r *Rewriter) Rewrite(ctx context.Context, target string, content []byte) (
 //
 // Every citation site takes an occurrence number, so the sense
 // register's numbering of a file is the position of the citation among
-// every citation of a retired section that file carries, whether or not
-// the map happens to carry a redirect for it.
+// every citation of a retired section that file carries, in source
+// order.
 func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 	edits := make([]edit, 0, len(sites))
 	var aborts []*pass.Abort
@@ -181,17 +177,13 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 			continue
 		}
 		citations++
-		// The register is read before the map, because what the citation
-		// means is the question the map cannot answer: an occurrence the
-		// register does not record is unresolved whether or not the map
-		// happens to carry a successor for the section it names.
+		// The register is the only answer for this class: the map is
+		// keyed by retired anchor, which carries no section number, and
+		// a reduction carves material out of the anchor it moves, so an
+		// occurrence the register does not record is unresolved.
 		sense, ok := r.senses[target][citations]
 		if !ok {
 			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: unresolvedReason(s, citations)})
-			continue
-		}
-		if !s.mapped {
-			aborts = append(aborts, &pass.Abort{Path: target, Line: s.line, Reason: r.unmappedReason(s)})
 			continue
 		}
 		written, err := r.tree.citationFor(sense.target())
@@ -212,14 +204,6 @@ func (r *Rewriter) plan(target string, sites []site) ([]edit, error) {
 func unresolvedReason(s site, occurrence int) string {
 	return fmt.Sprintf("occurrence %d of a citation naming the retired §%s has no entry in %s, so what it means is unresolved",
 		occurrence, s.section, senseRegisterPath)
-}
-
-// unmappedReason states why a citation the anchor-move map does not
-// carry stops the run, naming the section the citation points at and the
-// map that records no successor for it.
-func (r *Rewriter) unmappedReason(s site) string {
-	return fmt.Sprintf("the citation of §%s names a section the specification no longer declares, and %s carries no successor for it",
-		s.section, r.moves.path)
 }
 
 // checkRegisters indexes the tree's headings, loads the sense register

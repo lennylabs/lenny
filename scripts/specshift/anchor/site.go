@@ -11,9 +11,10 @@ import (
 
 // siteKind names which of the two reference forms a site carries. The
 // forms are driven by different registers: a link names the retired
-// anchor, which the map decides on its own, and a bare citation names
-// the retired section, whose destination the map cannot decide because
-// a reduction carves material out of the anchor it moves.
+// anchor, which the map decides on its own, and a bare citation names a
+// retired section number the map does not carry at all, whose
+// destination the sense register answers per occurrence because a
+// reduction carves material out of the anchor it moves.
 type siteKind string
 
 const (
@@ -41,12 +42,6 @@ type site struct {
 	// samePage records that the link was written in the same-page form,
 	// so a redirect that stays on the page keeps that form.
 	samePage bool
-	// mapped records that the anchor-move map carries the redirect for
-	// the retired section a bare citation names. A citation the map does
-	// not carry names a section the specification no longer declares and
-	// for which no successor was recorded, which the pass reports rather
-	// than passing over.
-	mapped bool
 }
 
 // fragmentLinkExpr matches a markdown link with a fragment. The first
@@ -79,11 +74,12 @@ var bareCitationExpr = regexp.MustCompile(`§(\d+(?:\.\d+)*)`)
 // pass cannot check.
 //
 // A bare section citation is in the class when the specification no
-// longer declares the section it names. The map cannot decide that half:
-// a citation of a section the map records is one this migration retired,
-// and a citation of a section that is gone with no map entry is one the
-// pass reports rather than passing over. Which of the two it is decides
-// only which failure the plan reports, so both are sites here.
+// longer declares the section it names. The map decides nothing here: it
+// is keyed by retired anchor, and the anchor is a slug of the heading
+// text rather than the number a citation carries. What such an
+// occurrence means is answered by the sense register, one occurrence at
+// a time, and an occurrence the register does not answer for stops the
+// run.
 func findSites(target, text string, moves *moveMap, tree *headings) []site {
 	var out []site
 	for _, m := range fragmentLinkExpr.FindAllStringSubmatchIndex(text, -1) {
@@ -109,7 +105,6 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 			anchor:   anchor,
 			file:     file,
 			samePage: destination == "",
-			mapped:   true,
 		})
 	}
 	for _, m := range bareCitationExpr.FindAllStringSubmatchIndex(text, -1) {
@@ -117,14 +112,12 @@ func findSites(target, text string, moves *moveMap, tree *headings) []site {
 		if tree.declaresSection(number) {
 			continue
 		}
-		_, mapped := moves.section(number)
 		out = append(out, site{
 			kind:    citationSite,
 			start:   m[0],
 			end:     m[1],
 			line:    lineOf(text, m[0]),
 			section: number,
-			mapped:  mapped,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].start < out[j].start })

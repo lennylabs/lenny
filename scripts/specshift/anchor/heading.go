@@ -54,10 +54,6 @@ var explicitAnchorExpr = regexp.MustCompile(`\{:[^}\n]*#([A-Za-z0-9._-]+)[^}\n]*
 // addresses the heading above it.
 var standaloneAnchorExpr = regexp.MustCompile(`^\{:[^}\n]*#([A-Za-z0-9._-]+)[^}\n]*\}$`)
 
-// sectionNumberExpr matches a dotted section number, which is the form a
-// map entry's section field and a bare citation both carry.
-var sectionNumberExpr = regexp.MustCompile(`^\d+(?:\.\d+)*$`)
-
 // newHeadings indexes the markdown documents of the class read domain.
 //
 // The domain comes from the scope package, so the pass reads the walk,
