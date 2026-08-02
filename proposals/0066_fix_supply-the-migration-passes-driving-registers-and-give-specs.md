@@ -1,6 +1,7 @@
 # Proposal: Supply the migration passes' driving registers and give specshift a write-confinement option so proposal 0064 can be applied
 
-- **Status:** Draft for review.
+- **Status:** Verified (2026-08-01). Converged after 11 adversarial review rounds (46 findings fixed);
+  awaiting sign-off.
 - **Lands after:** `proposals/0065_new_build-the-specification-migration-tooling-and-its-gates.md`, which is
   implemented. **Lands before:**
   `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, which cannot be
@@ -95,8 +96,9 @@ named target would therefore cover no carrier and plan an empty diff, which the 
 verifier treats as a failure (`.claude/workflows/implement-proposal.js` line 375). The same holds for
 SPEC-2, whose Target list names one `spec/` path while the identifier occurrences under `spec/` span four
 files, and for SPEC-3, which stages a run of the line pass over the shifted tree as one atomic sub-step
-with its reduction (0064 lines 2531, 2550 through 2552, and 2575 through 2576) and names twelve `spec/`
-paths in its Target list.
+with its reduction (0064 lines 2531, 2550 through 2552, and 2575 through 2576), stages a run of the anchor
+pass over the markdown links into the anchors that reduction retires (0064 lines 2594 through 2597), and
+names twelve `spec/` paths in its Target list.
 
 **The apply agent confirms a mechanical command's file list and diff against the sub-step's own text.**
 Before applying, it runs the dry-run form and confirms that the command "touches only files this sub-step
@@ -164,22 +166,26 @@ them under which confinement, and the sentences stating which files that run wri
    its repeatable complement. A two-valued switch would name `spec/` in the tool, which no gate's
    population and no later migration is bound to.
 
-   A mechanical sub-step runs the pass exactly twice: once as `-only spec/`, issued by the one apply agent
-   AMEND-1 assigns the mechanical edit to, and once as `-except spec/` in the code phase. The assigned file
+   A mechanical sub-step runs each pass it stages exactly twice: once as `-only spec/`, issued by the one
+   apply agent AMEND-1 assigns the mechanical edit to, and once as `-except spec/` in the code phase.
+   SPEC-1 and SPEC-2 stage one pass each, and SPEC-3 and SPEC-4 stage two each, so those two sub-steps
+   issue two confined invocations per phase from the same agent. The assigned file
    is `spec/28_communication-channels.md` for SPEC-1, `spec/15_external-api-surface.md` for SPEC-2,
    `spec/04_system-components.md` for SPEC-3, which carries the larger citation population below the
-   shifted ranges the pass reads (0064 lines 2531 through 2533) and the subsection headings the same
-   sub-step inserts ahead of the pass, and
-   `spec/15_external-api-surface.md` for SPEC-4, which is the carrier of the retired anchors both of
-   SPEC-4's passes rewrite. For SPEC-1 the assignment also orders the invocation, because the assigned
-   file is the one whose authored edit declares the identifier space the pass indexes, and one agent
-   applies the edits handed to it in order. SPEC-2 needs no such ordering, because §28 is committed by
-   SPEC-1 before SPEC-2 runs. §11 records the orderings SPEC-3's and SPEC-4's assignments do not
-   establish. A per-file confinement was rejected on the two measurements §1 states: the agent fan-out is
+   shifted ranges the line pass reads (0064 lines 2531 through 2533) and the subsection headings the same
+   sub-step inserts ahead of that pass, and which also issues SPEC-3's anchor invocation over the links its
+   reduction retires (0064 lines 2594 through 2597), and
+   `spec/15_external-api-surface.md` for SPEC-4, which is the carrier of the retired §15.4 anchors. For
+   SPEC-1 the assignment orders the invocation after the §28 declaration
+   alone, because the assigned file is the one whose authored edit declares the identifier space the pass
+   indexes, and one agent applies the edits handed to it in order; the ordering against SPEC-1's own three
+   hand corrections stays open, and §11 decision 8 records it. SPEC-2 needs no such ordering, because §28
+   is committed by SPEC-1 before SPEC-2 runs. §11 records the orderings SPEC-1's, SPEC-3's, and SPEC-4's
+   assignments do not establish. A per-file confinement was rejected on the two measurements §1 states: the agent fan-out is
    derived from the sub-step's named `spec/` targets, none of which carries a site, and concurrent
    per-file invocations race on the declared identifier index and on the entries each other has consumed.
-   One invocation per phase removes both, and it makes the covering obligation in decision 8 a two-term
-   partition a test can state.
+   One invocation per pass per phase removes both, and it makes the covering obligation in decision 8 a
+   two-term partition a test can state.
 
    That invocation writes the 12 `spec/` carriers while its agent's `HARD CONSTRAINT` names one file, and
    the apply agent's mechanical branch asks two further confirmations before it applies: that the command's
@@ -215,8 +221,14 @@ them under which confinement, and the sentences stating which files that run wri
    (`scripts/specshift/name/name.go` lines 302 through 328,
    `scripts/specshift/identifier/identifier.go` lines 579 through 613). Narrowing `Writable` would make an
    entry for a code carrier read as an entry outside the pass's write domain.
-8. **The register's claimed-entry check is filtered by the run's confinement.** `checkClaimed`
-   (`scripts/specshift/name/name.go` line 277, `scripts/specshift/identifier/identifier.go` line 590) skips
+8. **The register's claimed-entry check is filtered by the run's confinement, in the two passes that carry
+   one.** The name and the identifier passes carry a claimed-entry check and the line and the anchor passes
+   carry none (`grep -rn "checkClaimed" scripts/specshift/` matches
+   `scripts/specshift/name/name.go` line 277 and `scripts/specshift/identifier/identifier.go` line 590
+   alone). For the line and the anchor passes a register entry outside the confinement is therefore neither
+   consumed nor rejected, and a replayed run over an already-rewritten tree finds no site and exits zero
+   with an empty diff rather than aborting. Decision 13's report is what covers those two passes, and §5
+   states the outcome for each pass in its own row. In the two passes that carry it, `checkClaimed` skips
    an entry whose file the run does not cover. Without the filter the second parallel apply agent aborts on
    the file the first already rewrote, and the code-phase run aborts on every entry the specification phase
    already applied. Each run checks its register in both directions over its own confinement.
@@ -239,7 +251,8 @@ them under which confinement, and the sentences stating which files that run wri
     adapter handler file or the adapter proto. A split into two sequential commits of one in-flight change
     does not violate that requirement, and it does leave a window in which `spec/` carries a canonical
     identifier that the code, the documentation, and the pinned test literals still spell the retired way.
-11. **Tier 11 is the one gate that observes the window, and the anchor half of the split is unobserved.**
+11. **Tier 11 and the citation resolver are the gates that observe the window, and the anchor half of the
+    split is unobserved.**
     The concrete case is `spec/04_system-components.md` line 489, whose clause `signals its coordinating
     gateway replica over the per-pod adapter-to-gateway control channel` is pinned verbatim at
     `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69. Tier 11 goes red when the
@@ -249,15 +262,23 @@ them under which confinement, and the sentences stating which files that run wri
     `tests/tier0_static/` (0064 line 3119), which is a non-`spec/` target the pipeline implements in the
     code phase (`.claude/workflows/implement-proposal.js` line 202), and 0064 arranges for it to land green
     by hand-correcting the six pre-existing broken links in the sub-step that lands it (0064 lines 4136
-    through 4160). §11 records the two decisions this leaves open, which are that SPEC-1 names tier 11 as
-    its own exit criterion and that the reviewer accepts a window one gate observes.
+    through 4160). The citations from carriers outside `spec/` into the ranges SPEC-3's reduction shifts are
+    observed, by the committed citation-resolution gate against the baseline 0065 seeds, per §3.3. §11
+    records the decisions this leaves open, which are that SPEC-1 names tier 11 as its own exit criterion,
+    that SPEC-3 names the citation resolver against its baseline together with tier 11 as its own exit
+    criterion, that SPEC-4 names a line-citation register at zero as its own exit criterion, and that the
+    reviewer accepts a window these two gates observe in part.
 12. **Consistency is re-established by the remainder run in 0064's code phase**, which rewrites the code,
     schema, chart, documentation, and pinned-literal spellings, followed by the gates 0064 lands there: the
     naming lint, the identifier-resolution gate, the citation and fragment-link gates, the per-class
     residual scans, and tier 11.
 13. **The tool reports the confinement rather than leaving it to be inferred.** A confined run names the
     confinement it ran under, the number of files it planned, the register entries it deferred because
-    their files lie outside the confinement, and the gates that stay red until every entry is covered. That
+    their files lie outside the confinement, and the gates that stay red until every entry is covered. The
+    report covers all four passes. For the name and the identifier passes the deferred set is the set
+    `checkClaimed` skipped; for the line and the anchor passes, which carry no claimed-entry check, it is
+    derived from the driving register the run already holds in full, which is the per-file count map for the
+    line pass and the sense register for the anchor pass. That
     report reaches the agent that ran the command and the operator reading its output. It does not reach
     the specification-phase verifier, whose method is to read the proposal subsection, read the target
     file, and run `git diff` (`.claude/workflows/implement-proposal.js` lines 371 through 373), so no claim
@@ -323,8 +344,9 @@ pass that reads it, which half of it is outstanding, and the run that empties it
 
 ### 3.2 The two-run protocol
 
-A mechanical sub-step of 0064 becomes two invocations rather than one, and the pair is what makes it
-appliable inside a phase whose commit covers `spec/` alone.
+Each pass a mechanical sub-step of 0064 stages becomes two invocations rather than one, so a sub-step that
+stages two passes becomes four invocations across the two phases, and the pair per pass is what makes the
+sub-step appliable inside a phase whose commit covers `spec/` alone.
 
 Inside the specification-apply phase, the apply agent AMEND-1 assigns the mechanical edit to runs the pass
 confined to `spec/`, as `go run ./scripts/specshift -pass name -register
@@ -340,13 +362,18 @@ pass, the same register, and the same contract run once more as `-except spec/`,
 remaining carrier: code, schemas, charts, documentation, root-level contract documents, and the pinned
 literals under `tests/tier11_docs/`.
 
-A sub-step therefore issues exactly one confined invocation per phase, because AMEND-1 leaves its
+A sub-step therefore issues one confined invocation per pass per phase, because AMEND-1 leaves its
 mechanical edit one target file and the fan-out spawns one agent per target file, and the two confinements partition
-the pass's write domain, which is the covering obligation decision 8 states and §8 case 4 asserts. The
+the pass's write domain, which is the covering obligation decision 8 states and §8 case 4 asserts. For the
+name and the identifier passes the
 register is checked in both directions over each run's own confinement, so an off-by-one enumeration still
 aborts the run it belongs to, and the pair checks every entry because it covers every file. A pair of
-invocations whose confinements overlapped would not be safe: the second would abort on entries the first
-consumed, which §5 records as a loud failure rather than a silent one, and §8 case 10 pins.
+invocations of either of those two passes whose confinements overlapped would not be safe: the second would
+abort on entries the first consumed, which §5 records as a loud failure rather than a silent one, and §8
+case 10 pins. The line and the anchor passes carry no claimed-entry check, so neither the abort nor the
+skip applies to them: an entry outside the confinement is not read, and an overlapping second run plans an
+empty diff and exits zero. The deferred-entry report decision 13 states is what covers those two passes,
+and §5 states each outcome in its own row.
 
 ### 3.3 What the split costs, and what closes it
 
@@ -372,7 +399,8 @@ non-specification file inside a specification sub-step, which is a change to
 References to SPEC-1 through SPEC-4 name 0064's four specification sub-steps: SPEC-1 lands the naming law,
 the registers, and the reserved-phrase removal and runs the name pass; SPEC-2 lands the wire-contract
 rename and runs the identifier pass; SPEC-3 writes the new specification sections, performs the reductions,
-and runs the line pass over the shifted tree; SPEC-4 retires the redirected anchors and the line citations. References to TOOL-1 and TEST-1
+and runs both the line pass over the shifted tree and the anchor pass over the links its reductions retire;
+SPEC-4 retires the redirected anchors and the line citations. References to TOOL-1 and TEST-1
 of 0065 name the tooling and the gate cases that proposal landed. This proposal's own staged changes are
 SUPPLY-1 through SUPPLY-3, TOOL-1, TEST-1, and AMEND-1; where the two documents' labels collide, the label
 without a proposal number is this document's.
@@ -505,20 +533,27 @@ the pass, which is the same property SPEC-1's own mechanical invocation depends 
 |:--|:--|:--|
 | A pass meets a site its register does not carry, inside the run's confinement | The run aborts non-zero before any write, naming the site, and the tree stays byte-identical because `Apply` plans the whole diff first | The fail-closed rule each pass states, `scripts/specshift/pass/pass.go` lines 441 through 464; §6 TEST-1 case 7 |
 | A pass meets such a site outside the run's confinement | The run does not read the site and does not abort. The complementary run reads it and aborts there. This holds for every site class, including the file-name carriers the identifier pass plans renames for outside the walk, which the same predicate filters | §4.1; §6 TOOL-1 item 4; §8 case 15 |
-| A register entry names a file outside the run's confinement | The claimed-entry check skips it and the run reports it as deferred. The complementary run checks it | Decision 8; §4.1 |
+| A register entry names a file outside the run's confinement, for the name or the identifier pass | The claimed-entry check skips it and the run reports it as deferred. The complementary run checks it | Decision 8; §4.1 |
+| A register entry names a file outside the run's confinement, for the line or the anchor pass | Neither pass carries a claimed-entry check, so nothing checks the entry in either direction and the entry is neither consumed nor rejected. TOOL-1 item 5 derives the deferred report for these two passes from the line pass's per-file count map and the anchor pass's sense register, so the entry is reported as deferred and the standing red-gate sentence names the gates that stay red | Decision 8; Decision 13; §6 TOOL-1 item 5; §8 case 17 |
 | Neither `-only` nor `-except` is given on a run of a pass | Usage error, nothing written | Decision 5; §4.1 |
 | A confinement matches no file in the write domain | The run fails with the zero-file guard, naming the confinement, rather than reporting an empty diff | §4.1 |
-| Two invocations of one sub-step overlap in their confinements | Not prevented by the tool. The second aborts on entries the first consumed, which is a loud failure rather than a silent one. AMEND-1 gives each mechanical edit one target file, so the fan-out spawns one issuing agent per sub-step and the two confinements are disjoint | Decision 2; §3.2; §6 AMEND-1; §8 case 10 |
+| Two invocations of one sub-step overlap in their confinements, for the name or the identifier pass | Not prevented by the tool. The second aborts on entries the first consumed, which is a loud failure rather than a silent one. AMEND-1 gives each mechanical edit one target file, so the fan-out spawns one issuing agent per sub-step and the two confinements are disjoint | Decision 2; §3.2; §6 AMEND-1; §8 case 10 |
+| Two invocations of one sub-step overlap in their confinements, for the line or the anchor pass | Not prevented by the tool and not loud. Neither pass carries a claimed-entry check, so a replayed run over an already-rewritten tree finds no site, plans an empty diff, and exits zero reporting zero files (`scripts/specshift/line/line.go` lines 118 through 120, `scripts/specshift/anchor/anchor.go` lines 141 through 143, `scripts/specshift/main.go` lines 194 and 202). The deferred report TOOL-1 item 5 adds for these two passes is the signal, and §8 case 17 pins both the report and the empty-diff outcome | Decision 8; Decision 13; §6 TOOL-1 item 5; §8 case 17 |
+| The anchor pass's two `-only spec/` invocations overlap across SPEC-3 and SPEC-4, rather than inside one sub-step | Accepted and silent. Both read the whole of `tests/spec-anchor-moves.json`, and the pass scopes its site search by the map alone (`scripts/specshift/anchor/site.go` lines 116 through 146), so SPEC-3's invocation rewrites every `spec/` reference into a retired anchor and SPEC-4's finds no site, plans zero files, and exits zero (`scripts/specshift/anchor/anchor.go` lines 141 through 143). AMEND-1 item 5 states the resulting empty diff for SPEC-4's assigned file. The pair of `-except spec/` runs stands in the same relation, and whichever of the two runs second writes nothing, which no specification-phase verifier reads. The row above covers two invocations of one sub-step; this overlap is across two | Decision 3; Decision 4; §6 AMEND-1 |
 | A mechanical invocation runs before the authored edit that declares the identifier space | The run fails on the declared-identifier check before any file is written, naming the declaring file. For SPEC-1 the ordering is established by assigning the mechanical edit to the agent that owns the declaring file, which applies its edits in order, and SPEC-2 runs after SPEC-1 has committed §28 | §3.2; §4.1; §6 AMEND-1; §8 case 9 |
-| SPEC-4's hand corrections sit in files other agents own, and its mechanical invocation is issued by one of them | Unresolved by this proposal. The assignment removes the duplicate invocations and does not order the invocation after a hand correction another agent makes in the same sub-step | §11 |
-| SPEC-3's line pass is a mechanical run whose two reduced files are applied by two agents, and its mechanical edit is assigned to one of them | Unresolved by this proposal. The assignment orders the run after `spec/04`'s reduction and heading insertion and does not order it after `spec/15`'s reduction, which a parallel agent applies | §6 AMEND-1; §11 |
-| SPEC-3's reduction and its line pass are one atomic sub-step in 0064, and the split defers the line pass over every non-`spec/` carrier to the code phase | Accepted, and wider than the window decision 10 records. Every citation into the shifted `spec/04` and `spec/15` ranges from a carrier outside `spec/` resolves to the wrong line until the `-except spec/` run lands, and the citation resolver is the gate that reports it, against the baseline 0065 seeds | §3.3; §6 AMEND-1; §11 |
+| SPEC-1's three hand-corrected sentences sit at reserved-phrase sites in files the same sub-step's `-only spec/` name run rewrites, and other agents own those files | Unresolved by this proposal. 0064 corrects the interrupt sentences at `spec/07_session-lifecycle.md` line 324 and `spec/15_external-api-surface.md` line 1755 and the slot-failure sentence at `spec/05_runtime-registry-and-pool-model.md` line 540 by hand rather than by substitution, "because a substitution turns each of them into a precise false statement" (0064 lines 1283 through 1286). All three are reserved-phrase sites, so SUPPLY-1's seeding carries an entry for each, and each is applied by an agent the pipeline spawns in parallel with the issuing agent (`.claude/workflows/implement-proposal.js` lines 289 through 297). Both terminal orderings fail. If the run lands first, it substitutes at the three sites 0064 forbids substituting at, and the sibling agent's authored edit no longer locates its anchor and is recorded as unappliable (`.claude/workflows/implement-proposal.js` line 312). If a hand correction lands first and removes the phrase, its file carries fewer sites than the register claims, `unclaimedReason` returns "the file carries N reserved-phrase site(s)" and `checkClaimed` fails the run before any write (`scripts/specshift/name/name.go` lines 243 and 277 through 323); this is deterministic for `spec/07_session-lifecycle.md`, whose single reserved-phrase site is the hand-corrected one (measured: `grep -oiE "(lifecycle\|control)[ -]channel" spec/07_session-lifecycle.md` returns 1) | §6 SUPPLY-1; §11 |
+| SPEC-4's hand corrections sit in files other agents own, and its two mechanical invocations are issued by one of them | Unresolved by this proposal. The assignment removes the duplicate invocations and orders neither invocation after a hand correction another agent makes in the same sub-step | §11 |
+| SPEC-3's line pass and anchor pass are mechanical runs whose two reduced files are applied by two agents, and its mechanical edit is assigned to one of them | Unresolved by this proposal, in three distinct ways. The assignment orders both runs after `spec/04`'s reduction and heading insertion and orders neither of them after `spec/15`'s reduction, which a parallel agent applies, and a citation converted against an unshifted `spec/15` carries a stale line number. It also orders neither run after the §28.5 channel-contract cards SPEC-3 authors in `spec/28_communication-channels.md` through a parallel agent, which the anchor pass's move successors and sense destinations name (0064 lines 2668 through 2669 and 2164 through 2166); `checkRegisters` returns a hard error before any file is rewritten when one of those headings is absent (`scripts/specshift/anchor/anchor.go` lines 240 through 272), so the anchor invocation aborts rather than writing a stale value. It orders the anchor invocation after none of the 14 markdown links SPEC-3 hand-corrects to a heading other than the map's successor, which are the seven `spec/07_session-lifecycle.md` links and the seven same-page `spec/15_external-api-surface.md` links into the retired `1541-adapterbinary-protocol` anchor (0064 lines 2784 through 2789 and 2830 through 2833); both files sit inside the `-only spec/` confinement and are applied by parallel agents, the anchor pass rewrites a link from the move map with no register consulted (`scripts/specshift/anchor/site.go` lines 129 through 146, `scripts/specshift/anchor/anchor.go` lines 186 through 190), and this residue is silent rather than an abort because the map's successor heading exists, so `checkRegisters` passes and the run rewrites to a resolving but wrong destination and exits zero | §6 AMEND-1; §11 |
+| SPEC-3's reduction, its line pass, and its anchor pass are one atomic sub-step in 0064, and the split defers both passes over every non-`spec/` carrier to the code phase | Accepted, and wider than the window decision 10 records. Every citation into the shifted `spec/04` and `spec/15` ranges from a carrier outside `spec/` resolves to the wrong line until the `-except spec/` run lands, and the citation resolver is the gate that reports it, against the baseline 0065 seeds. The anchor half of SPEC-3's split carries no gate for the same reason SPEC-4's does | §3.3; §6 AMEND-1; §11 |
 | The specification-confined invocation writes the 12 `spec/` carriers while its agent's `HARD CONSTRAINT` names one file, and its dry run names files the sub-step's Target list does not | Accepted for the commit scope, open for the confirmation. The sub-step commit agent stages whatever changed under `spec/`, and the confinement keeps the run inside that scope by excluding the carriers outside `spec/`. The apply agent's own confirmation that the dry run "touches only files this sub-step targets" is satisfied by AMEND-1 item 5, which states the expected file list in the Change paragraph the agent reads | Decision 4; §6 AMEND-1; §11 |
 | SPEC-1's mechanical edit is assigned to `spec/28_communication-channels.md`, which the name pass writes nothing to | The mechanical diff for that file is empty, which the workflow's verify prompt calls a failure. AMEND-1 item 5 states in SPEC-1's Change paragraph that the diff for the assigned file is empty by construction, because §28 reproduces no reserved phrase, and that the run's evidence is the dry-run report together with `git diff -- spec/`. The sentence the verifier applies sits in the workflow, which §7 leaves unchanged, so the residue is a reviewer decision | Decision 4; §6 AMEND-1; §11 |
+| SPEC-3's line pass is assigned to `spec/04_system-components.md` and SPEC-4's to `spec/15_external-api-surface.md`, and the line pass writes neither file | The mechanical diff for each assigned file is empty for the same reason SPEC-1's is, because neither file holds an entry in `tests/registers/line-citations.yaml`, whose only `spec/` entries are `spec/17_deployment-topology.md` and `spec/25_agent-operability.md` (lines 4990 through 4993), and a file with no citation is returned unchanged (`scripts/specshift/line/line.go` lines 118 through 120). AMEND-1 item 5 states the empty diff and its measurement in both Change paragraphs. SPEC-3's anchor invocation is in the same position, because no reference in `spec/04_system-components.md` names an anchor the reduction retires: §4.7 keeps its anchor and every same-page link targets a §4.x anchor the reduction keeps, its six file-qualified links into `spec/15_external-api-surface.md` target `#151-rest-api` (lines 194, 1100, 1102, and 1389) and `#1543-runtime-integration-levels` (lines 796 and 967), which both survive, its remaining file-qualified links name target files the reduction retires no anchor in, and it carries no bare `§15.4` citation. SPEC-4's anchor invocation is in the same position for a different reason: SPEC-3's earlier `-only spec/` invocation of the same pass, driven by the same whole move map, has already rewritten every `spec/` reference into a retired anchor, including the `#internal-messagepart-format` link at `spec/15_external-api-surface.md` line 1399, so SPEC-4's run finds no site, plans zero files, and leaves an empty diff for its assigned file. AMEND-1 item 5 states that measurement as well, so five of the six mechanical edits carry the sentence | Decision 4; §6 AMEND-1; §11 |
 | The declaring section is authored but not yet staged when the pass runs | The passes' lister unions the index with the unignored untracked paths, so the section is a member of the domain and of the declared-identifier index. The gates keep the index-only lister and their read domain is unchanged | Decision 15; §8 case 13 |
 | Between the two runs, `spec/` carries the canonical spelling while code, docs, charts, and pinned literals carry the retired one | Accepted. Tier 11 is red on every rewritten pinned literal until the remainder run lands in the code phase of the same change. The concrete case is `spec/04_system-components.md` line 489 pinned at `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 | §3.3; decision 11 |
-| Between the two runs, a link outside `spec/` points at an anchor `spec/` has retired | Accepted and unobserved. The fragment-link gate that would report it is landed by 0064 in the code phase, after the window, and 0064 arranges for it to land green (0064 lines 3119 and 4136 through 4160), so no gate is red on the anchor half of the split | §3.3; decision 11; §11 |
-| 0064's SPEC-1 names tier 11 as its own exit criterion, and the split leaves that criterion red at the end of SPEC-1 | Unresolved by this proposal. AMEND-1 is scoped to how a mechanical sub-step is invoked and stages no change to a sub-step's exit criteria. §11 states the decision the reviewer takes | §11 |
+| Between the two runs, a link outside `spec/` points at an anchor `spec/` has retired | Accepted and unobserved. The fragment-link gate that would report it is landed by 0064 in the code phase, after the window, and 0064 arranges for it to land green (0064 lines 3119 and 4136 through 4160), so no gate is red on the anchor class during the window. The line-citation half of the same split is observed, by the citation resolver per the SPEC-3 row above and by SPEC-4's own exit criterion per the row below | §3.3; decision 11; §11 |
+| 0064's SPEC-1 names tier 11 as its own exit criterion, and the split leaves that criterion red at the end of SPEC-1 | Unresolved by this proposal. AMEND-1 is scoped to how a mechanical sub-step is invoked and stages no change to a sub-step's exit criteria. §11 decision 3 states the decision the reviewer takes | §11 |
+| 0064's SPEC-3 names the citation resolver against its baseline, together with tier 11, as its own exit criterion (0064 lines 2552 through 2554 and 2646), and the split leaves that criterion red at the end of SPEC-3 | Unresolved by this proposal. The `-only spec/` line-pass run reaches the `spec/` carriers alone, and the only `spec/` carriers holding line citations are `spec/17_deployment-topology.md` and `spec/25_agent-operability.md` (`tests/registers/line-citations.yaml` lines 4990 through 4993), so every citation from a carrier outside `spec/` into the ranges SPEC-3's reduction shifts is converted only by the code-phase `-except spec/` run. The resolver reports each of those as a failure the baseline does not carry (`scripts/specshift/gate/resolution.go` lines 177 through 181), and the specification-phase verifier is required to confirm that the gate a mechanical sub-step names as its exit criterion is green (`.claude/workflows/implement-proposal.js` line 375). No `spec/` edit can convert a citation held by a carrier outside `spec/`, so the fix rounds cannot converge on it either. §11 decision 3 puts the same three options to the reviewer that it puts for SPEC-1's and SPEC-4's criteria | §11 |
+| 0064's SPEC-4 names "every per-file count in the line-citation register is zero" as its own exit criterion (0064 line 2876), and the split leaves that criterion red at the end of SPEC-4 | Unresolved by this proposal. The `-only spec/` run reaches the `spec/` carriers alone, so every non-`spec/` count stays above zero (`tests/registers/line-citations.yaml` lines 16 through 19 among about 5,400 lines of entries) until the code-phase `-except spec/` run lands, and the specification-phase verifier is required to confirm that the gate a mechanical sub-step names as its exit criterion is green (`.claude/workflows/implement-proposal.js` line 375). No `spec/` edit can drive a non-`spec/` count to zero, so the fix rounds cannot converge on it either. §11 decision 3 puts the same three options to the reviewer that it puts for SPEC-1's criterion | §11 |
 | A pinned-literal entry carries an in-range but wrong index | Does not fail closed. The literal is left unwritten and tier 11 reports it after the fact. TEST-1's tier-0 assertion over the committed register is what catches it beforehand | §4.3 |
 | A tier-11 carrier gains or loses a string literal between this proposal landing and 0064's apply | Every index at or after the change shifts, so the register is re-derived rather than hand-patched | §4.2; §6 SUPPLY-1 |
 | A seeded register is emptied by 0064 as it proceeds | Accepted and required. SPEC-1 empties the reserved-phrase register and SPEC-4 empties the anchor map and the anchor sense register, so no committed test asserts that a seeded register is non-empty | §6 TEST-1 |
@@ -577,6 +612,14 @@ rather than reproducing them (0064 N3), so the file carries no reserved-phrase s
 it would be reported by `unclaimedReason` as `the file carries 0 reserved-phrase site(s)` and would fail
 every run (`scripts/specshift/name/name.go` lines 302 through 328). The 12 `spec/` carriers §1 measures are
 the whole of this register's `spec/` slice.
+
+The seeding rule is one entry per site, so the register carries an entry for each of the three sentences
+0064 SPEC-1 corrects by hand rather than by substitution, which are the interrupt sentences at
+`spec/07_session-lifecycle.md` line 324 and `spec/15_external-api-surface.md` line 1755 and the
+slot-failure sentence at `spec/05_runtime-registry-and-pool-model.md` line 540 (0064 lines 1283 through
+1286). Omitting them is not available: the pass fails closed on a site the register does not carry, so a
+run that reaches an omitted site aborts. Carrying them puts the run and the three sibling agents that hold
+those files in an ordering AMEND-1 does not establish, and §11 decision 8 records it.
 
 Write `tests/registers/pinned-spec-literals.yaml` in the schema `scripts/specshift/name/pinned.go` lines 29
 through 50 requires. Each entry carries `file` and `literal`, where `literal` is the 1-based position of
@@ -782,7 +825,13 @@ The illustration uses `pkg/gateway/session/sessioninbox/events.go`, whose commen
 `§15.4.1` citation of the `message_expired` payload, because a carrier of a bare citation is what this
 register keys. The markdown-link members 0064 hand-corrects under its target-and-label rule are not entries
 here; they are hand edits inside 0064's own sub-steps, which is why `spec/07_session-lifecycle.md`, whose
-only members 0064 names are seven such links, carries no entry on that account.
+only members 0064 names are seven such links, carries no entry on that account. Leaving them out of the
+sense register does not leave them out of the pass: the anchor pass's link class is driven by
+`tests/spec-anchor-moves.json` alone, so a markdown link into a retired anchor is rewritten to that map's
+single successor with no register consulted (`scripts/specshift/anchor/site.go` lines 129 through 146,
+`scripts/specshift/anchor/anchor.go` lines 186 through 190). A confined run that reads one of those links
+before its hand correction lands therefore rewrites it to the successor rather than to the heading 0064
+names, and §11 decision 7 records that ordering.
 
 `tests/spec-anchor-moves.json` is a new tracked root-level path under `tests/`, and it needs no glob key in
 `tests/change-graph.json`: the change-graph completeness check's domain is the `.go` and `.sh` extensions,
@@ -795,7 +844,8 @@ Add the `tests/registers/README.md` rows for both artifacts.
 
 **Target:** `scripts/specshift/main.go`, `scripts/specshift/pass/pass.go`, `scripts/specshift/scope/scope.go`,
 `scripts/specshift/name/name.go`, `scripts/specshift/name/pinned.go`,
-`scripts/specshift/identifier/identifier.go`.
+`scripts/specshift/identifier/identifier.go`, `scripts/specshift/line/line.go`,
+`scripts/specshift/anchor/anchor.go`.
 
 **Rationale:** The write domain is computed once over the whole tracked tree and the harness walks all of
 it, so a pass invoked in the specification-apply phase writes files outside that phase's commit scope, and
@@ -889,8 +939,19 @@ which aborts the run on the declared-identifier index per decision 15.
    under, the number of files planned, the count and the distinct files of the register entries deferred as
    outside the confinement, and the standing sentence that the naming lint, the identifier-resolution gate,
    the fragment-link gate, the per-class residual scans, and tier 11 stay red until every deferred entry is
-   covered by a complementary run. The report is the whole compensating signal for the relaxed claimed-entry
-   check, so §8 case 11 asserts its content over the run's output.
+   covered by a complementary run. The report covers all four passes, through the deferred set each pass
+   reports to the report writer. For the name and the identifier passes that set is the set `checkClaimed`
+   skipped. The line and the anchor passes carry no claimed-entry check
+   (`checkClaimed` exists in `scripts/specshift/name/name.go` line 277 and
+   `scripts/specshift/identifier/identifier.go` line 590 alone), so each derives its deferred set from the
+   driving register it already holds in full before the walk, which is the per-file count map for the line
+   pass (`scripts/specshift/line/line.go` lines 271 through 283) and the sense register the anchor pass
+   loads once per run in `checkRegisters` (`scripts/specshift/anchor/anchor.go` lines 240 through 266): an
+   entry whose file the confinement does not cover is deferred. For those two passes the report is the only
+   signal of an uncovered entry, because neither an entry outside the confinement nor a replayed run over an
+   already-rewritten tree aborts. §8 case 11 asserts the report's content over the run's output for the name
+   pass, and §8 case 17 asserts it for the line and the anchor passes together with the empty-diff outcome
+   of a replayed run.
 
 6. **Lister.** Add `scope.WorkingTreeLister` beside `scope.GitLister`
    (`scripts/specshift/scope/scope.go` lines 660 through 675), returning the union of `git ls-files -z`
@@ -920,7 +981,7 @@ which aborts the run on the declared-identifier index per decision 15.
    `TestRunRequiresARegister` (line 1666), whose run carries no register and no confinement. Add
    `-except spec/` to each of the four, so every one keeps failing for the reason it pins.
 
-The ordering constraints are stated in §3.2: a sub-step issues one confined invocation per phase, and the
+The ordering constraints are stated in §3.2: a sub-step issues one confined invocation per pass per phase, and the
 specification-phase invocation runs after the authored edit that declares the identifier space, which is
 established by attaching it to the agent that owns the declaring file.
 
@@ -969,12 +1030,18 @@ becomes several concurrent runs of the identical command. The second and third o
 (`scripts/specshift/name/name.go` lines 294 through 297 and 324 through 325), because their entries lie
 inside the confinement and the filter TOOL-1 item 4 stages does not skip them.
 
-SPEC-3 is amended for the same reasons. Its Change paragraphs stage a run of the `specshift` line pass over
+SPEC-3 is amended for the same reasons, and it stages two passes rather than one. Its Change paragraphs
+stage a run of the `specshift` line pass over
 the shifted tree as one atomic sub-step with the reduction (0064 lines 2531, 2550 through 2552, and 2575
-through 2576), so it is a mechanical edit under the plan agent's classification, and it names twelve `spec/`
-paths in its Target list (0064 lines 1722 through 1752). Left unamended, its invocation carries no
+through 2576) and a run of the anchor pass over the markdown links into the §15.4 and §4.7 subsections the
+reduction retires (0064 lines 2594 through 2597), so both are mechanical edits under the plan agent's
+classification, and it names twelve `spec/`
+paths in its Target list (0064 lines 1722 through 1752). Left unamended, each invocation carries no
 confinement and returns the usage error TOOL-1 item 1 stages, and its twelve targets spawn twelve
-concurrent runs of the identical command.
+concurrent runs of each identical command. Confining the anchor invocation is required on the merits as
+well: 0064 assigns the anchor pass the markdown cross-reference redirect class in `docs/` as well as in
+`spec/` (0064 line 281), so an unconfined run in the specification phase would write outside that phase's
+commit scope.
 
 **Change (staged description).** In each of SPEC-1, SPEC-2, SPEC-3, and SPEC-4, state five things about the
 sub-step's mechanical edit, without changing which sites the sub-step rewrites:
@@ -985,11 +1052,23 @@ sub-step's mechanical edit, without changing which sites the sub-step rewrites:
    which is already the only `spec/` path that sub-step targets, so the sentence records the assignment
    rather than narrowing it, and §28 exists by then because SPEC-1 committed it;
    `spec/04_system-components.md` for SPEC-3, which carries the larger citation population below the
-   shifted ranges the pass reads (0064 lines 2531 through 2533) and the subsection headings the same
-   sub-step inserts ahead of the pass; and
-   `spec/15_external-api-surface.md` for SPEC-4, the carrier of the retired §15.4 anchors both of its
-   passes rewrite.
-2. The invocation is the last edit the named file's agent applies, and it runs once for the sub-step.
+   shifted ranges the line pass reads (0064 lines 2531 through 2533) and the subsection headings the same
+   sub-step inserts ahead of that pass, and which issues SPEC-3's anchor invocation as well; and
+   `spec/15_external-api-surface.md` for SPEC-4, the carrier of the retired §15.4 anchors.
+2. The invocations are the last edits the named file's agent applies, and each pass the sub-step stages
+   runs once for the sub-step. Where a sub-step stages two passes, the Change paragraph states their order.
+   In SPEC-3 the reduction runs first, the subsection headings are inserted over the prose that survives it,
+   the line pass runs over the shifted tree (0064 lines 2574 through 2576), and the anchor pass runs last
+   among that agent's edits. Running it last among `spec/04_system-components.md`'s own edits does not order
+   it after the headings it requires. `checkRegisters` holds every move successor and every sense
+   destination to a heading a document of the tree declares and returns a hard error before any file is
+   rewritten (`scripts/specshift/anchor/anchor.go` lines 240 through 272), and those headings are the §28.5
+   channel-contract cards SPEC-3 authors in `spec/28_communication-channels.md` (0064 lines 2668 through
+   2669 and 2164 through 2166), which is a distinct target file of the same sub-step and therefore an agent
+   the pipeline spawns in parallel with `spec/04`'s (`.claude/workflows/implement-proposal.js` lines 295
+   through 297). §11 decision 7 records that dependency as an abort the reviewer decides on. In SPEC-4 the
+   anchor pass runs before the line pass, which is the order its own Change paragraph states (0064 lines
+   2769 and 2859 through 2861).
 3. The command lines, verbatim, in the dry-run form and the apply form the pipeline's mechanical branch
    runs in that order, together with the complementary code-phase form. For SPEC-1:
 
@@ -999,16 +1078,24 @@ sub-step's mechanical edit, without changing which sites the sub-step rewrites:
    ```
 
    with `-except spec/` in place of `-only spec/` for the code-phase run. SPEC-2 states the same pair with
-   `-pass identifier -register tests/registers/identifier-senses.yaml`. SPEC-3 states the same pair with
-   `-pass line -register tests/registers/line-citations.yaml`. SPEC-4 states one pair per pass,
+   `-pass identifier -register tests/registers/identifier-senses.yaml`. SPEC-3 and SPEC-4 each state one
+   pair per pass, because each stages two passes: SPEC-3 with
+   `-pass line -register tests/registers/line-citations.yaml` and
+   `-pass anchor -register tests/spec-anchor-moves.json`, in the order item 2 states, and SPEC-4
    with `-pass anchor -register tests/spec-anchor-moves.json` and
-   `-pass line -register tests/registers/line-citations.yaml`.
+   `-pass line -register tests/registers/line-citations.yaml`, in the order item 2 states.
 4. The one-run sentence the same Change paragraph carries is replaced by the two-run form, so the
    paragraph the plan agent composes the command from does not state the contrary of the command lines
    item 3 adds. In SPEC-1, the clause `walks the whole domain N3 states in one run` (0064 line 1162)
    becomes `walks the whole domain N3 states across the two confined runs stated above`, with the rest of
-   that sentence, including its generated-file exclusion clause, unchanged. In SPEC-4, `Run the anchor
-   pass tree-wide` (0064 line 2769) becomes `Run the anchor pass over the two confined runs stated above`.
+   that sentence, including its generated-file exclusion clause, unchanged. SPEC-4 carries one such
+   sentence per pass, and both are replaced. `Run the anchor
+   pass tree-wide` (0064 line 2769) becomes `Run the anchor pass over the two confined runs stated above`,
+   and `Run the line pass over every carrier of the citation form to convert line citations to anchor
+   citations, driving every per-file count in the line-citation register to zero` (0064 lines 2859 through
+   2861) becomes `Run the line pass over every carrier of the citation form across the two confined runs
+   stated above, to convert line citations to anchor citations, driving every per-file count in the
+   line-citation register to zero across the pair`.
    SPEC-2 carries no such sentence: its Change paragraph states the rename `across
    every machine-readable surface, by script` (0064 line 1369), which names the surfaces the rename covers
    rather than the number of runs, so it is left as it is. In SPEC-3, `in every carrier` (0064 line 2551)
@@ -1016,15 +1103,54 @@ sub-step's mechanical edit, without changing which sites the sub-step rewrites:
    the shifted tree` (0064 lines 2575 through 2576) becomes `then run the line pass over the shifted tree
    in the two confined runs stated above`, with the atomicity sentence at 0064 line 2531 left as it is,
    because the split of that atomicity is a reviewer decision §11 records rather than a sentence this
-   amendment resolves.
+   amendment resolves. SPEC-3's anchor sentence, `The same change runs the anchor pass over the markdown
+   links into the retired §15.4 and §4.7 subsections` (0064 lines 2594 through 2595), is left as it is for
+   the reason SPEC-2's rename sentence is: it names the sites the pass covers rather than the number of
+   runs, so it states no contrary of the command lines item 3 adds.
 5. What the run writes and what the assigned file's diff carries, so the apply agent's two mechanical
    confirmations resolve against the sub-step's own text. The Change paragraph states that the `-only spec/`
    run rewrites every `spec/` carrier of the sub-step's class rather than the assigned file alone, that the
    dry run's file list therefore names `spec/` files the Target list does not, and that this file list is
-   the expected output rather than a run that has exceeded its scope. For SPEC-1 it states additionally that
-   the mechanical diff for the assigned `spec/28_communication-channels.md` is empty, because §28 describes
-   the banned spellings rather than reproducing them and so carries no reserved-phrase site, and that the
-   run's evidence is the dry-run report together with `git diff -- spec/`. The two sentences the apply agent
+   the expected output rather than a run that has exceeded its scope. Where the assigned file carries no
+   site of the pass's class, the Change paragraph states additionally that the mechanical diff for that file
+   is empty by construction, names the measurement that makes it so, and states that the run's evidence is
+   the dry-run report together with `git diff -- spec/`. Five of the six mechanical edits are in that
+   position. SPEC-1's assigned `spec/28_communication-channels.md` carries no reserved-phrase site, because
+   §28 describes the banned spellings rather than reproducing them. SPEC-3's line pass writes nothing to its
+   assigned `spec/04_system-components.md`, and SPEC-4's line pass writes nothing to its assigned
+   `spec/15_external-api-surface.md`, because neither file holds an entry in
+   `tests/registers/line-citations.yaml`, whose only `spec/` entries are `spec/17_deployment-topology.md`
+   and `spec/25_agent-operability.md` (`tests/registers/line-citations.yaml` lines 4990 through 4993), and a
+   file the register does not carry an entry for is one the line pass finds no citation in and returns
+   unchanged (`scripts/specshift/line/line.go` lines 118 through 120). SPEC-3's anchor pass writes nothing
+   to the same assigned `spec/04_system-components.md` either, and its Change paragraph takes the sentence a
+   fourth time, on the measurement that no reference in that file, in any class the anchor pass reads, names
+   an anchor `tests/spec-anchor-moves.json` retires. Every same-page link in the file targets a §4.x anchor
+   the reduction keeps, including the twelve `](#47-runtime-adapter)` links, because §4.7 keeps its heading
+   and its anchor and gains no `tests/spec-anchor-moves.json` entry (0064 lines 2268 through 2269 and 2285
+   through 2286). The file carries 225 file-qualified links, of which six enter
+   `spec/15_external-api-surface.md`: four target `#151-rest-api`, at lines 194, 1100, 1102, and 1389, and
+   two target `#1543-runtime-integration-levels`, at lines 796 and 967, which 0064 confirms survives (0064
+   lines 2801 through 2803). The retired anchors are `1541-adapterbinary-protocol` together with the
+   unnumbered headings inside the §15.4.1 block (0064 lines 2663 through 2669), all of which sit in
+   `spec/15_external-api-surface.md`, so the remaining file-qualified links name target files in which the
+   SPEC-3 reduction retires no anchor. The file carries no bare `§15.4` citation either, so it holds no
+   member of the class the anchor sense register keys. SPEC-4's anchor pass takes the sentence a fifth
+   time, on a different measurement: its `-only spec/` run finds no site anywhere under `spec/`. The anchor
+   pass has no per-sub-step scoping. `findSites` makes every markdown link whose fragment is an anchor of
+   the move map a site and rewrites it to that map's successor, with no register and no anchor subset
+   consulted (`scripts/specshift/anchor/site.go` lines 116 through 146), and SUPPLY-3 seeds
+   `tests/spec-anchor-moves.json` once with one entry per retired anchor, including
+   `internal-messagepart-format` (0064 lines 2663 through 2669), because decision 3 rejects a
+   per-confinement register pair. SPEC-3's `-only spec/` anchor invocation therefore walks the same 28
+   `spec/` files under the same whole map and rewrites the `#internal-messagepart-format` link at
+   `spec/15_external-api-surface.md` line 1399 that 0064 assigns to SPEC-4's pass (0064 lines 2805 through
+   2808), so by the time SPEC-4's invocation runs no reference under `spec/` names a retired anchor. Every
+   file is returned unchanged, the run plans zero files and exits zero
+   (`scripts/specshift/anchor/anchor.go` lines 141 through 143), and the diff for the assigned
+   `spec/15_external-api-surface.md` is empty by construction. The Change paragraph states that
+   measurement and states that the run's evidence is the dry-run report's zero-file count. §11 decision 7
+   records the case in which SPEC-3's invocation aborts instead. The two sentences the apply agent
    and the verifier apply, that a dry run must touch "only files this sub-step targets" and that "A
    mechanical edit whose diff is empty is a failure"
    (`.claude/workflows/implement-proposal.js` lines 312 and 375), sit in the workflow, which §7 leaves
@@ -1032,7 +1158,9 @@ sub-step's mechanical edit, without changing which sites the sub-step rewrites:
    what the reviewer decides about the residue.
 
 The amendment adds no edit site, changes no register, changes no sub-step's exit criterion, and changes
-neither proposal's Status bullet. It lands with this proposal, which lands before 0064 is applied.
+neither proposal's Status bullet. §11 decision 3 records the three exit criteria the split leaves red,
+which are SPEC-1's tier 11, SPEC-3's citation resolver against its baseline, and SPEC-4's line-citation
+register at zero. It lands with this proposal, which lands before 0064 is applied.
 
 ## 7. Non-goals
 
@@ -1147,7 +1275,7 @@ tiers this change reaches are tier 0 and tier 1, per `.claude/rules/test-coverag
     that filtered `checkClaimed` by the files the run planned sites for rather than by the files the
     confinement covers satisfies case 3 and turns this run into a silent no-op, which is the failure §5
     records as loud.
-11. **A confined run whose register spans both sides of the confinement names, in its output, the
+11. **A confined name-pass run whose register spans both sides of the confinement names, in its output, the
     confinement it ran under, the number of files planned, and the file of every deferred entry, together
     with the standing red-gate sentence, and its deferred and checked entry counts sum to the register's
     entry count** (tier 1), asserted over the run's output in the manner of
@@ -1193,6 +1321,18 @@ tiers this change reaches are tier 0 and tier 1, per `.claude/rules/test-coverag
     applies the confinement predicate across the whole of `checkRegister`, which the two sub-cases of case 9
     both pass because they abort before that loop is reached. Without it, a filtered implementation would
     let the specification phase commit `spec/` and defer the abort to the code phase.
+17. **A confined line-pass run and a confined anchor-pass run each name their deferred entries, and a
+    replayed run of either over the tree it already rewrote exits zero with an empty diff** (tier 1), over a
+    fixture tree whose sites and register entries span both sides of the confinement. The first half asserts
+    that each run's output names the confinement, the planned file count, the file of every register entry
+    outside the confinement, and the standing red-gate sentence, which for these two passes is the only
+    signal that an entry is uncovered. The second half asserts the outcome §5 records: neither pass carries
+    a claimed-entry check, so the replayed run reports zero files and returns success
+    (`scripts/specshift/line/line.go` lines 118 through 120,
+    `scripts/specshift/anchor/anchor.go` lines 141 through 143,
+    `scripts/specshift/main.go` lines 194 and 202) rather than taking the abort case 10 pins for the name
+    and the identifier passes. Without this case the deferred report for these two passes could be dropped
+    and every listed case would still pass.
 
 ## 9. Findings closed on application
 
@@ -1390,6 +1530,184 @@ Review rounds populate this section. The draft records the two changes dropped b
   measurement in identical wording, alongside the heading insertion the same sub-step performs ahead of the
   pass.
 
+### Pass 4 (2026-08-01, automated)
+
+- **AMEND-1 staged no confined command line for SPEC-3's anchor pass.** SPEC-3's Change paragraph runs the
+  anchor pass over the markdown links into the retired §15.4 and §4.7 subsections alongside its line pass
+  (0064 lines 2594 through 2597), so the plan agent emits a second mechanical command with no confinement,
+  which TOOL-1 item 1 makes a usage error and the apply agent records as unappliable
+  (`.claude/workflows/implement-proposal.js` line 312). AMEND-1 item 3 now states one command pair per pass
+  for SPEC-3, item 1 records that the same assigned `spec/04_system-components.md` issues both invocations,
+  item 2 states the order of a sub-step's two invocations for SPEC-3 and SPEC-4, and §1, §3.4, decision 4,
+  the §5 SPEC-3 rows, and §11 decision 7 state that SPEC-3 runs two passes.
+- **SPEC-4's own exit criterion is unmeetable under the split, and only SPEC-1's was recorded.** SPEC-4
+  states that "The sub-step's exit criteria are that every per-file count in the line-citation register is
+  zero" (0064 line 2876), while the `-only spec/` run reaches the `spec/` carriers alone and no `spec/` edit
+  can drive a non-`spec/` count down (`tests/registers/line-citations.yaml` lines 16 through 19). §5 gains
+  the row, §11 decision 3 covers both criteria and puts the same three options to the reviewer, decision 11
+  names tier 11 and the citation resolver as the gates that observe the window, and the §5 anchor-window row
+  is narrowed to the anchor class.
+- **SPEC-3's and SPEC-4's assigned `spec/` files carry no line citation, so their line-pass diffs are empty
+  and AMEND-1 item 5 staged the covering sentence for SPEC-1 alone.** Neither
+  `spec/04_system-components.md` nor `spec/15_external-api-surface.md` holds an entry in
+  `tests/registers/line-citations.yaml`, whose only `spec/` entries are `spec/17_deployment-topology.md` and
+  `spec/25_agent-operability.md` (lines 4990 through 4993), and a file with no citation is returned
+  unchanged (`scripts/specshift/line/line.go` lines 118 through 120), which is the empty mechanical diff the
+  verifier calls a failure (`.claude/workflows/implement-proposal.js` line 375). AMEND-1 item 5 now states
+  the empty-diff sentence for every mechanical edit whose assigned file its pass writes nothing to, names
+  the three that are in that position and the measurement for each, §5 gains the row, and §11 decision 6
+  covers all three.
+- **The deferred-entry report and the unclaimed-entry abort were stated as properties of any confined run,
+  and only the name and identifier passes carry a claimed-entry check.** `checkClaimed` exists in
+  `scripts/specshift/name/name.go` line 277 and `scripts/specshift/identifier/identifier.go` line 590 alone,
+  so for the line and the anchor passes an entry outside the confinement is neither checked nor reported and
+  a replayed run plans an empty diff and exits zero (`scripts/specshift/line/line.go` lines 118 through 120,
+  `scripts/specshift/anchor/anchor.go` lines 141 through 143, `scripts/specshift/main.go` lines 194 and
+  202). Decision 8, decision 13, §3.2, the §5 rows, and TOOL-1 item 5 now scope the abort to the two passes
+  that carry the check and extend the deferred report to all four, deriving the line pass's deferred set
+  from its per-file count map and the anchor pass's from its sense register, both of which each run already
+  holds. §8 case 17 pins the report and the empty-diff outcome for those two passes, and TOOL-1's Target and
+  §12 add the two files.
+- **AMEND-1 item 4 left SPEC-4's line-pass one-run sentence beside the confined command lines it
+  contradicts.** SPEC-4 carries a one-run sentence per pass, and item 4 replaced the anchor one alone. Item
+  4 now also replaces `Run the line pass over every carrier of the citation form to convert line citations
+  to anchor citations, driving every per-file count in the line-citation register to zero` (0064 lines 2859
+  through 2861) with the two-run form, and it records that SPEC-3's anchor sentence names the sites the pass
+  covers rather than a number of runs and is left as it is, for the reason SPEC-2's rename sentence is. §12
+  records the sentence-level changes.
+- **Corrections to this pass: SPEC-3's anchor-pass edit was excused from the empty-diff sentence on a false
+  measurement.** The pass asserted that `spec/04_system-components.md` links into a retired
+  `#47-runtime-adapter` anchor. §4.7 keeps its heading and its anchor and gains no
+  `tests/spec-anchor-moves.json` entry (0064 lines 2268 through 2269 and 2285 through 2286), every one of
+  the file's same-page links targets an anchor the reduction keeps, and no file-qualified link in it targets
+  a retired anchor either, which pass 5 restates on the measured link population. SPEC-3's anchor pass
+  therefore writes nothing to its assigned file, so
+  AMEND-1 item 5 now takes the empty-diff sentence for that edit as well, and §5's row and §11 decision 6
+  cover it. SPEC-4's anchor pass remains the one edit of the four that writes its assigned file, through the
+  `#internal-messagepart-format` link at `spec/15_external-api-surface.md` line 1399 (0064 lines 2805
+  through 2808).
+- **Corrections to this pass: the denominator of mechanical edits was left at the pre-fix figure.** Making
+  SPEC-3 a two-pass sub-step raises the total from five mechanical edits to six, because SPEC-1 and SPEC-2
+  stage one pass each and SPEC-3 and SPEC-4 stage two each. AMEND-1 item 5 and §11 decision 6 now read four
+  of the six rather than three of the five.
+- **Corrections to this pass: three sites still stated one confined invocation per sub-step per phase.**
+  TOOL-1's closing ordering sentence, §3.2's opening sentence, and decision 4's summary clause carried the
+  superseded singular form against the per-pass rule the pass established at §3.2 and decision 4. All three
+  now state one confined invocation per pass per phase, and §3.2 records that a two-pass sub-step becomes
+  four invocations across the two phases.
+
+### Pass 5 (2026-08-01, automated)
+
+- **AMEND-1 item 2 justified SPEC-3's anchor ordering on an author the tree contradicts.** The item stated
+  that the anchor pass runs last because "the reduction and the insertion are what create those headings",
+  which named `spec/04_system-components.md`'s own edits as the source of the successor headings. The
+  successors are the §28.5 channel-contract cards SPEC-3 authors in `spec/28_communication-channels.md`
+  (0064 lines 2668 through 2669 and 2164 through 2166), a distinct target file of the same sub-step, which
+  the pipeline applies through an agent it spawns in parallel with `spec/04`'s
+  (`.claude/workflows/implement-proposal.js` lines 295 through 297), and `checkRegisters` returns a hard
+  error before any file is rewritten when a successor or a sense destination names a heading no document of
+  the tree declares (`scripts/specshift/anchor/anchor.go` lines 240 through 272). Item 2 now states the
+  order without the false rationale and names the unestablished dependency, the §5 SPEC-3 ordering row
+  separates the `spec/15` stale-line-number residue from the `spec/28` abort, and §11 decision 7 records
+  the abort, the three options, and why reassigning the anchor edit to `spec/28_communication-channels.md`'s
+  agent is not staged.
+- **AMEND-1 item 5's measurement for SPEC-3's anchor edit was false.** The item stated that
+  `spec/04_system-components.md` carries "only two file-qualified links". The file carries 225 of them, six
+  of which enter `spec/15_external-api-surface.md`: four to `#151-rest-api` at lines 194, 1100, 1102, and
+  1389, and two to `#1543-runtime-integration-levels` at lines 796 and 967. Item 5 now states the
+  measurement that establishes the empty diff, which is that no reference in the file, in any class the
+  anchor pass reads, names an anchor `tests/spec-anchor-moves.json` retires: the same-page links all target
+  a §4.x anchor the reduction keeps, the two `spec/15` anchor targets survive (0064 lines 2801 through
+  2803), the retired anchors all sit in `spec/15_external-api-surface.md` (0064 lines 2663 through 2669) so
+  the remaining file-qualified links name target files with no retired anchor, and the file carries no bare
+  `§15.4` citation. The §5 row and §11 decision 6 carry the same measurement, and §12's count of mechanical
+  edits with an empty assigned-file diff is corrected from three to four.
+
+### Pass 6 (2026-08-01, automated)
+
+- **SPEC-3's confined anchor invocation was not ordered after the 14 markdown links 0064 hand-corrects, and
+  the residue was unrecorded.** The §5 ordering row enumerated two residues. The anchor pass's link class is
+  driven by `tests/spec-anchor-moves.json` rather than by the sense register, so a markdown link into a
+  retired anchor is rewritten to the map's single successor with no register consulted
+  (`scripts/specshift/anchor/site.go` lines 129 through 146, `scripts/specshift/anchor/anchor.go` lines 186
+  through 190), and the seven `spec/07_session-lifecycle.md` links and the seven same-page
+  `spec/15_external-api-surface.md` links SPEC-3 hand-corrects to the heading each cites (0064 lines 2784
+  through 2789 and 2830 through 2833) are inside the `-only spec/` confinement and applied by parallel
+  sibling agents. The failure is silent rather than an abort, because the map's successor heading exists.
+  The §5 row now records three residues, §11 decision 7 records the third with the same three options
+  decision 4 puts for SPEC-4 and with the whole-file write behavior of `Apply`
+  (`scripts/specshift/pass/pass.go` lines 441 through 464), and SUPPLY-3 states that leaving those links
+  out of the sense register does not leave them out of the pass.
+- **SPEC-1's three hand-corrected reserved-phrase sentences collided with its own `-only spec/` run, and the
+  collision was recorded for SPEC-3 and SPEC-4 alone.** The sentences at `spec/07_session-lifecycle.md`
+  line 324, `spec/15_external-api-surface.md` line 1755, and `spec/05_runtime-registry-and-pool-model.md`
+  line 540 are reserved-phrase sites in files the run rewrites and parallel agents apply (0064 lines 1283
+  through 1286). SUPPLY-1 now states that the register carries an entry for each, because the pass fails
+  closed on an omitted site, §5 carries a row of the form SPEC-4's takes, and §11 decision 8 records both
+  terminal orderings, the deterministic `checkClaimed` failure at `spec/07_session-lifecycle.md`
+  (`scripts/specshift/name/name.go` lines 243 and 277 through 328), the lost writes from `Apply`'s
+  whole-file writes, and the three options.
+- **SPEC-3's own exit criterion was left red and unmeetable and was counted nowhere.** 0064 SPEC-3 names the
+  citation resolver reporting no failure the baseline does not already carry, together with tier 11, as its
+  exit criterion (0064 lines 2552 through 2554 and 2646). The `-only spec/` run reaches the `spec/`
+  carriers alone, whose only line-citation holders are `spec/17_deployment-topology.md` and
+  `spec/25_agent-operability.md` (`tests/registers/line-citations.yaml` lines 4990 through 4993), so every
+  citation from a carrier outside `spec/` into a shifted range is reported as a failure
+  (`scripts/specshift/gate/resolution.go` lines 177 through 181) and no specification-phase edit can
+  convert it. §5 carries a row for it, §11 decision 3 covers it alongside SPEC-1's and SPEC-4's criteria
+  with the same three options, and the counts in §2 decision 11 and in AMEND-1's closing paragraph are
+  corrected from two to three.
+- **§2 decision 4's ordering sweep still read as though SPEC-1 carried no open ordering.** The sweep closed
+  with "§11 records the orderings SPEC-3's and SPEC-4's assignments do not establish", which contradicted
+  the §11 decision 8 this pass added, the §5 row it added, and SUPPLY-1's new paragraph. The SPEC-1
+  sentence now states that the assignment orders the invocation after the §28 declaration alone and that
+  the ordering against SPEC-1's three hand corrections stays open, and the closing sentence names SPEC-1,
+  SPEC-3, and SPEC-4.
+- **The new SPEC-3 exit-criterion passages cited the wrong range in the citation resolver.** Lines 200
+  through 213 of `scripts/specshift/gate/resolution.go` are the end of `Run` and the head of `scan`. The
+  code that classifies a non-resolving citation as a failure the baseline does not carry is at lines 177
+  through 181, and the `Failures` field contract is at lines 101 through 103. The §5 SPEC-3 row, §11
+  decision 3's SPEC-3 paragraph, and this pass's own log entry now cite lines 177 through 181.
+
+### Pass 7 (2026-08-01, automated)
+
+- **SPEC-4's anchor invocation was exempted from the empty-diff sentence on a measurement AMEND-1's own
+  SPEC-3 invocation falsifies.** AMEND-1 stages an earlier `-only spec/` anchor invocation in SPEC-3 driven
+  by the same single move map, and the anchor pass scopes its site search by that map alone: `findSites`
+  makes every markdown link whose fragment is any anchor of the map a site and rewrites it to that map's
+  successor, with no register and no anchor subset consulted (`scripts/specshift/anchor/site.go` lines 116
+  through 146), while SUPPLY-3 seeds `tests/spec-anchor-moves.json` once with one entry per retired anchor,
+  including `internal-messagepart-format` (0064 lines 2663 through 2669), and decision 3 rejects a
+  per-confinement register pair. SPEC-3's invocation therefore rewrites the `#internal-messagepart-format`
+  link at `spec/15_external-api-surface.md` line 1399 that 0064 assigns to SPEC-4's pass (0064 lines 2805
+  through 2808), so SPEC-4's `-only spec/` invocation finds no site, returns every file unchanged
+  (`scripts/specshift/anchor/anchor.go` lines 141 through 143), plans zero files, and leaves the empty
+  mechanical diff the specification-phase verifier treats as a failure
+  (`.claude/workflows/implement-proposal.js` line 375), which is the `spec-unappliable` outcome this
+  proposal exists to remove. AMEND-1 item 5 now takes the empty-diff sentence for that edit as well, on
+  that measurement, and the count of mechanical edits carrying the sentence is corrected from four of six
+  to five of six in AMEND-1 item 5, the §5 row, §11 decision 6, and §12. §11 decision 6 also records that
+  reassignment is unavailable for this edit and states the options and the choice this proposal stages.
+  The pass 4 log entry stating that SPEC-4's anchor pass writes its assigned file is superseded by this
+  entry. Decision 4 and AMEND-1 item 1 no longer describe `spec/15_external-api-surface.md` as the file
+  both of SPEC-4's passes rewrite.
+- **The overlap of the anchor pass's two `-only spec/` confinements across SPEC-3 and SPEC-4 was recorded
+  nowhere.** The existing §5 overlap rows are scoped to two invocations of one sub-step. §5 gains a row
+  stating that both invocations read the whole move map, that the second is a silent zero-file run rather
+  than an abort because the anchor pass carries no claimed-entry check, and that the pair of `-except
+  spec/` runs stands in the same relation outside the specification-phase verifier's reach.
+- **Correction to this pass: §11 decision 6's reassignment option was widened to five edits while its
+  enumeration and its own exception paragraph cover four.** The empty-diff count of five of six is correct
+  and stands at §5, AMEND-1 item 5, §11 decision 6's opening, and §12. The reassignment quantifier is a
+  separate count: the sentence enumerates SPEC-1, the two line-pass edits, and SPEC-3's anchor-pass edit,
+  and the paragraph below it states that reassignment is unavailable for SPEC-4's anchor-pass edit because
+  SPEC-3's invocation leaves no `spec/` file carrying a site of that class
+  (`scripts/specshift/anchor/site.go` lines 116 through 146,
+  `scripts/specshift/anchor/anchor.go` lines 141 through 143, `spec/15_external-api-surface.md` line 1399,
+  0064 lines 2663 through 2669). Decision 6 therefore read as offering the reviewer a choice over five
+  edits, explaining it for four, and declaring it unavailable for the fifth. The quantifier is corrected to
+  the four reassignable mechanical edits.
+
 ## 11. Open decisions for review
 
 1. **Who resolves the two-valued occurrences in the sense registers.** The identifier register exists
@@ -1402,7 +1720,7 @@ Review rounds populate this section. The draft records the two changes dropped b
    17 sites across 4 files. The anchor sense register carries the same kind of judgement over its whole
    population: SUPPLY-3 enumerates its members mechanically from the pass's own aborts, and which of the
    three destinations each occurrence means is decided per site.
-2. **Whether the two-run window is accepted, given that one gate observes it.** Between the confined runs,
+2. **Whether the two-run window is accepted, given that two gates observe it in part.** Between the confined runs,
    tier 11 is red on every pinned literal whose specification sentence was rewritten, and the citation
    resolver is red against its baseline on every citation into the ranges SPEC-3's reduction shifts. The
    anchor half of the split is unobserved: the fragment-link gate that would report a retired-anchor link
@@ -1410,7 +1728,7 @@ Review rounds populate this section. The draft records the two changes dropped b
    green (0064 lines 3119 and 4136 through 4160). The alternative is to hold 0064 until the pipeline can
    write a non-specification file inside a specification sub-step, which is a change to
    `.claude/workflows/implement-proposal.js` this proposal does not stage.
-3. **What to do about SPEC-1's own exit criterion.** 0064's SPEC-1 names tier 11 as its exit criterion,
+3. **What to do about SPEC-1's, SPEC-3's, and SPEC-4's own exit criteria.** 0064's SPEC-1 names tier 11 as its exit criterion,
    with the eviction-route pinned literal as its stated concrete case, and the specification-phase verifier
    is required to confirm that a mechanical edit's named exit criterion is green
    (`.claude/workflows/implement-proposal.js` line 375). Under the split, SPEC-1 terminates with that
@@ -1418,6 +1736,35 @@ Review rounds populate this section. The draft records the two changes dropped b
    and stages no change to a sub-step's exit criteria, so the reviewer decides whether to accept the red
    criterion for the duration of the change, to extend AMEND-1 to SPEC-1's exit criterion, or to change the
    pipeline.
+
+   SPEC-3 carries a criterion of the same class. 0064's SPEC-3 states that its line pass converts every
+   citation into the reduced `spec/04` and `spec/15` ranges "inside the same change that removes the
+   content, and the exit criterion is that the resolver reports no failure the baseline does not already
+   carry, together with tier 11" (0064 lines 2552 through 2554), and it restates tier 11 as an exit
+   criterion of the sub-step alongside the resolver (0064 line 2646). Its `-only spec/` run reaches the
+   `spec/` carriers alone, and the only `spec/` carriers holding line citations are
+   `spec/17_deployment-topology.md` and `spec/25_agent-operability.md`
+   (`tests/registers/line-citations.yaml` lines 4990 through 4993), so every citation from a carrier
+   outside `spec/` into a shifted range stays stale until the code-phase `-except spec/` run lands and the
+   resolver reports each one as a failure the baseline does not carry
+   (`scripts/specshift/gate/resolution.go` lines 177 through 181). No edit the specification phase is
+   permitted to make can convert one of those citations, so neither the verifier's confirmation nor the fix
+   rounds that follow it can reach green. The same three options apply: accept the red criterion for the
+   duration of the change, extend AMEND-1 to re-scope the criterion to the citations the `spec/` slice
+   carries for the specification phase and restate the whole-domain form as the code-phase criterion, or
+   change the pipeline.
+
+   SPEC-4 carries a third criterion of the same class, which the split leaves unmeetable rather than
+   merely red for a while. 0064's SPEC-4 states that "The sub-step's exit criteria are that every per-file
+   count in the line-citation register is zero" (0064 line 2876). Its `-only spec/` line-pass run reaches
+   the `spec/` carriers alone, so every non-`spec/` count in `tests/registers/line-citations.yaml` stays
+   above zero until the code-phase `-except spec/` run lands, and no edit the specification phase is
+   permitted to make can drive one of those counts down, so neither the verifier's confirmation nor the fix
+   rounds that follow it can reach green. The same three options apply: accept the red criterion for the
+   duration of the change, extend AMEND-1 to re-scope the criterion to the `spec/` slice for the
+   specification phase and restate the whole-register form as the code-phase criterion, or change the
+   pipeline. This proposal stages none of them, because each changes a sub-step's exit criterion, which
+   AMEND-1 is scoped out of.
 4. **How SPEC-4's mechanical invocations are ordered against its own hand corrections.** AMEND-1 assigns
    SPEC-4's mechanical edit to one `spec/` target file, which removes the duplicate concurrent
    invocations, and it does not order that invocation after the hand corrections SPEC-4 makes in the other
@@ -1438,27 +1785,119 @@ Review rounds populate this section. The draft records the two changes dropped b
    targets" and that "the applied diff for this file matches what the dry run predicted", and the verifier
    treats a mechanical edit whose diff is empty as a failure
    (`.claude/workflows/implement-proposal.js` lines 312 and 375). A `-only spec/` run writes the class's
-   `spec/` carriers rather than the assigned target alone, and SPEC-1's assigned
-   `spec/28_communication-channels.md` takes an empty mechanical diff because §28 carries no
-   reserved-phrase site. AMEND-1 item 5 states both facts in the Change paragraph both agents read, which
+   `spec/` carriers rather than the assigned target alone, and five of the six mechanical edits take an
+   empty mechanical diff for their assigned file: SPEC-1's `spec/28_communication-channels.md`, because §28
+   carries no reserved-phrase site; the line-pass edits of SPEC-3 and SPEC-4, whose assigned
+   `spec/04_system-components.md` and `spec/15_external-api-surface.md` hold no entry in
+   `tests/registers/line-citations.yaml`, whose only `spec/` entries are `spec/17_deployment-topology.md`
+   and `spec/25_agent-operability.md` (lines 4990 through 4993); and SPEC-3's anchor-pass edit, because no
+   reference in `spec/04_system-components.md` names an anchor the reduction retires, §4.7 keeping its own
+   anchor, the file's six file-qualified links into `spec/15_external-api-surface.md` targeting
+   `#151-rest-api` and `#1543-runtime-integration-levels`, both of which survive, its remaining
+   file-qualified links naming target files the reduction retires no anchor in, and the file carrying no
+   bare `§15.4` citation; and SPEC-4's anchor-pass edit, because SPEC-3's earlier `-only spec/` invocation
+   of the same pass reads the same whole move map and rewrites every `spec/` reference into a retired
+   anchor, including the `#internal-messagepart-format` link at `spec/15_external-api-surface.md` line 1399
+   (`scripts/specshift/anchor/site.go` lines 116 through 146; 0064 lines 2805 through 2808), so SPEC-4's
+   invocation finds no site and returns every file unchanged
+   (`scripts/specshift/anchor/anchor.go` lines 141 through 143). AMEND-1 item 5 states each fact in the
+   Change paragraph both agents read, which
    is the artifact that says what the sub-step targets and what its mechanical edit writes. The reviewer
-   decides whether that is sufficient, whether to reassign SPEC-1's mechanical edit to a `spec/` carrier the
-   name pass writes and establish the §28-before-run ordering by the declared-identifier abort alone, or to
+   decides whether that is sufficient, whether to reassign each of the four reassignable mechanical edits
+   to a `spec/` carrier its pass writes, which for SPEC-1 means establishing the §28-before-run ordering by the
+   declared-identifier abort alone, for the two line-pass edits means assigning them to
+   `spec/17_deployment-topology.md` or `spec/25_agent-operability.md`, neither of which the same sub-step
+   otherwise targets, and for SPEC-3's anchor-pass edit means assigning it to
+   `spec/15_external-api-surface.md`, which the same sub-step targets but a parallel agent applies, or to
    change the pipeline. This proposal stages the first, because the second trades a deterministic ordering
    for a fail-loud one and the third is the workflow change §7 excludes.
-7. **Whether SPEC-3's atomic reduction and line pass may be split across the two phases.** 0064 states that
+
+   Reassignment is unavailable for SPEC-4's anchor-pass edit, because SPEC-3's invocation leaves no `spec/`
+   file carrying a site of that class. Its options are to accept the zero-file run on AMEND-1 item 5's
+   sentence, to drop the `-only spec/` invocation from SPEC-4 and let SPEC-3's invocation stand as the
+   specification phase's whole anchor run, or to change the pipeline. This proposal stages the first,
+   because dropping the invocation would leave SPEC-4 with no confined command for a pass its own Change
+   paragraph runs and would move the anchor class's specification-phase coverage into a sub-step other than
+   the one 0064 assigns it to.
+7. **Whether SPEC-3's atomic reduction, line pass, and anchor pass may be split across the two phases.** 0064 states that
    the reduction and the line pass over `spec/04` and `spec/15` are one atomic sub-step, because removing
    content shifts the line numbers roughly a thousand citations point at (0064 lines 2531 through 2560).
    Under the two-run protocol the `spec/` half of the pass runs in the specification phase and every
    citation from a carrier outside `spec/` is converted in the code phase, so those citations resolve to the
    wrong line for the length of the window and the citation resolver reports them against its baseline. The
    window is wider than the one decision 10 records, which covers spellings rather than line numbers.
-   AMEND-1 also assigns SPEC-3's mechanical edit to `spec/04_system-components.md`, which orders the run
-   after that file's reduction and heading insertion and does not order it after `spec/15`'s reduction,
-   applied by a parallel agent. The reviewer decides whether to accept the window and that ordering, to
-   sequence the two reductions into separate sub-steps, or to hold the line pass entirely for the code
-   phase. This proposal stages the split, because holding the pass would leave the specification phase's own
-   committed `spec/04` and `spec/15` citations stale with no run to fix them inside that phase.
+   The same sub-step also runs the anchor pass over the markdown links into the anchors its reduction
+   retires (0064 lines 2594 through 2597), which the split defers outside `spec/` in the same way, and that
+   half carries no gate for the reason decision 11 states.
+   AMEND-1 also assigns SPEC-3's mechanical edits to `spec/04_system-components.md`, which orders both runs
+   after that file's reduction and heading insertion and orders neither of them after `spec/15`'s reduction,
+   applied by a parallel agent, so a citation converted against an unshifted `spec/15` carries a stale line
+   number. The anchor invocation carries a second and harder residue. Its move successors and its sense
+   destinations name the §28.5 channel-contract cards SPEC-3 authors in `spec/28_communication-channels.md`
+   (0064 lines 2668 through 2669 and 2164 through 2166), that file is a distinct target of the same sub-step
+   and so is applied by an agent the pipeline spawns in parallel (`.claude/workflows/implement-proposal.js`
+   lines 295 through 297), and `checkRegisters` holds every successor and destination to a heading a document
+   of the tree declares and returns a hard error before any file is rewritten
+   (`scripts/specshift/anchor/anchor.go` lines 240 through 272). An anchor invocation that runs before the
+   sibling agent has written §28.5 therefore exits non-zero and the apply agent records the edit as
+   unappliable (`.claude/workflows/implement-proposal.js` line 312), which is the `spec-unappliable` outcome
+   this proposal exists to remove. Reassigning the anchor mechanical edit to
+   `spec/28_communication-channels.md`'s own agent was considered and is not staged: it would put SPEC-3's
+   two mechanical invocations in two parallel agents, which leaves the line-then-anchor order item 2 states
+   unestablished, and it moves the empty-diff residue of §11 decision 6 onto a file this sub-step creates,
+   whose link population no measurement on the current tree can state.
+
+   The anchor invocation carries a third residue, of the class decision 4 records for SPEC-4's hand
+   corrections. SPEC-3 hand-corrects 14 markdown links into the retired `1541-adapterbinary-protocol`
+   anchor to a heading other than the map's successor: the seven `spec/07_session-lifecycle.md` links, to
+   the surviving §15.4 `MessageEnvelope` heading (0064 lines 2784 through 2786), and the seven same-page
+   `spec/15_external-api-surface.md` links at lines 1838, 2165, 2489, 2584, 2662, 2684, and 2733, to the
+   heading whose material each cites (0064 lines 2786 through 2789 and 2830 through 2833). Both files are
+   distinct target files of the same sub-step, so their corrections are applied by agents the pipeline
+   spawns in parallel with `spec/04`'s (`.claude/workflows/implement-proposal.js` lines 295 through 297),
+   both sit inside the `-only spec/` confinement, and item 2 orders the invocation only last among
+   `spec/04`'s own edits. The anchor pass makes every markdown link into a retired anchor a `linkSite` and
+   rewrites it to the map's single successor with no register consulted
+   (`scripts/specshift/anchor/site.go` lines 129 through 146, `scripts/specshift/anchor/anchor.go` lines
+   186 through 190), and SUPPLY-3 seeds the map with the retirement of `1541-adapterbinary-protocol`.
+   Unlike the §28.5 case, this residue is silent: the map's successor heading exists, so `checkRegisters`
+   passes, the run rewrites the 14 links to a resolving but wrong destination and exits zero. `Apply`
+   writes whole files from the planned diff (`scripts/specshift/pass/pass.go` lines 441 through 464), so an
+   invocation and a sibling agent editing `spec/07_session-lifecycle.md` or
+   `spec/15_external-api-surface.md` at the same time lose each other's writes. The options are the ones
+   decision 4 puts for SPEC-4: sequence those hand corrections into an earlier sub-step, assign every one
+   of them to the issuing file's agent, or accept the wrong rewrite and a re-correction after the run.
+
+   The reviewer decides whether to accept
+   the window and all three orderings, to sequence the §28.5 authoring, the 14 hand-corrected links, and
+   the two reductions into separate sub-steps, or to hold both passes entirely for the code phase. This
+   proposal stages the split, because
+   holding the passes would leave the specification phase's own committed `spec/04` and `spec/15` citations
+   and links stale with no run to fix them inside that phase.
+8. **How SPEC-1's mechanical invocation is ordered against its own three hand corrections.** 0064 corrects
+   the interrupt sentences at `spec/07_session-lifecycle.md` line 324 and
+   `spec/15_external-api-surface.md` line 1755 and the slot-failure sentence at
+   `spec/05_runtime-registry-and-pool-model.md` line 540 by hand, "because a substitution turns each of
+   them into a precise false statement" (0064 lines 1283 through 1286). All three carry the reserved
+   phrase, so all three are sites the name pass finds and SUPPLY-1's register carries, and all three sit in
+   files the same sub-step's `-only spec/` run rewrites and other agents apply in parallel with the
+   issuing agent (`.claude/workflows/implement-proposal.js` lines 289 through 297). Both terminal orderings
+   fail. A run that lands first substitutes at the three sites 0064 forbids substituting at, and the
+   sibling agent's authored edit no longer locates its anchor and is recorded as unappliable
+   (`.claude/workflows/implement-proposal.js` line 312). A hand correction that lands first removes the
+   phrase from its file, so the file carries fewer sites than the register claims, `unclaimedReason`
+   returns `the file carries N reserved-phrase site(s)` and `checkClaimed` fails the run before any write
+   (`scripts/specshift/name/name.go` lines 243 and 277 through 328); this is deterministic for
+   `spec/07_session-lifecycle.md`, whose single reserved-phrase site is the hand-corrected one, and it is
+   the `spec-unappliable` outcome this proposal exists to remove. The same run also writes
+   `spec/05_runtime-registry-and-pool-model.md`, `spec/07_session-lifecycle.md`, and
+   `spec/15_external-api-surface.md` while their own agents are editing them, and `Apply` writes whole
+   files from a diff planned against the pre-run contents (`scripts/specshift/pass/pass.go` lines 441
+   through 464), so the two writers lose each other's edits. The options are the ones decision 4 puts for
+   SPEC-4: sequence the three hand corrections into an earlier sub-step, assign all three to the issuing
+   file's agent, or accept the substitution and re-correct the three sentences afterwards. This proposal
+   stages none of them, because each reorganizes 0064's sub-steps rather than supplying data or a tool
+   option.
 
 ## 12. Files touched on application
 
@@ -1490,10 +1929,15 @@ Review rounds populate this section. The draft records the two changes dropped b
   claimed-entry checks.
 - `scripts/specshift/identifier/identifier.go`, for the same filter on its claimed-entry check and on the
   file-name rename planning in `planRenames`.
+- `scripts/specshift/line/line.go` and `scripts/specshift/anchor/anchor.go`, for the deferred set each
+  reports to the run report, derived from the per-file count map and from the sense register, since neither
+  pass carries a claimed-entry check to derive it from.
 - `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, for AMEND-1's
   sentences in SPEC-1, SPEC-2, SPEC-3, and SPEC-4 stating each mechanical sub-step's confined command
-  lines, its one `spec/` target file, the `spec/` carriers its confined run writes beyond that file, and,
-  for SPEC-1, that the mechanical diff for the assigned file is empty by construction.
+  lines, one pair per pass for the two sub-steps that stage two passes, its one `spec/` target file, the
+  order of its invocations, the `spec/` carriers its confined run writes beyond that file, the replacement
+  of each one-run sentence with the two-run form, and, for the five mechanical edits whose assigned file
+  their pass writes nothing to, that the mechanical diff for that file is empty by construction.
 - `scripts/specshift/run_test.go`, for the cases §8 lists and for adding `-except spec/` to
   `TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite`, whose unconfined successful run the required
   confinement would otherwise turn red.
