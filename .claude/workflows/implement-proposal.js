@@ -285,6 +285,14 @@ if (plan.specEdits.length === 0) {
       " sub-step(s); applying one sub-step at a time",
   );
 
+  // Declared outside the loop because the post-loop specStatus line reads it.
+  // `let` is block-scoped, so declaring it per sub-step left the read after the
+  // loop referencing an undeclared binding and every run threw a ReferenceError.
+  // Its value after the loop is the last sub-step's, which is the one that
+  // decides the phase: an earlier sub-step that did not converge returns from
+  // inside the loop and never reaches the read.
+  let clean = false;
+
   for (const ss of substeps) {
     const ssEdits = plan.specEdits.filter((e) => e.subsection === ss);
     const ssFiles = [...new Set(ssEdits.map((e) => e.targetFile))];
@@ -408,7 +416,7 @@ if (plan.specEdits.length === 0) {
       "\n\nMake the smallest edits that resolve each discrepancy. Return a short summary of each fix.";
 
     let round = 0;
-    let clean = false;
+    clean = false;
     while (round < maxApplyRounds && !clean) {
       round++;
       log("  " + ss + " verification round " + round);
