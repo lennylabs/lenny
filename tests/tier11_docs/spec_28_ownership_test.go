@@ -62,26 +62,32 @@ var subStepHeading = regexp.MustCompile(`^### ([A-Za-z]+-\d+)\.`)
 // The three parts of an attribution clause. A creation verb attributes
 // the making, or the already-made presence, of something to a subject.
 // An object names one of the three things the ownership transfer moved:
-// the file as a new specification file, the four headings the section
-// opens with, and the register they carry. A negated verb states the
-// opposite of an attribution, so a clause carrying one is not a site.
+// the section file, the four headings the section opens with, and the
+// register they carry. A negated verb states the opposite of an
+// attribution, so a clause carrying one is not a site.
 //
-// The new-specification-file object is a claim over more than one file.
-// The renaming proposal still lands one specification file of its own,
-// the scenarios section, so a singular claim is that file and reading it
-// as an attribution would report a sentence the transfer left true. A
-// claim naming the communication-channels file itself is read by the
-// files-touched rule below, which matches on the path.
+// The section file is an object under the two paraphrases the proposals
+// write it as. Under its path it is read by the file rule below, which
+// requires the path and the creation verb to stand together: a target
+// list enumerates the path beside the files a sub-step touches, and
+// reading a verb anywhere in that enumeration as an attribution would
+// report a list the transfer left true. The new-specification-file
+// object is a claim over more than one file: the renaming proposal still
+// lands one specification file of its own, the scenarios section, so a
+// singular claim is that file and reading it as an attribution would
+// report a sentence the transfer left true.
 var (
 	creationVerbExpr = regexp.MustCompile(`\b(?:creates?|created|authors?|authored|writes|wrote|lands|landed|exists|existed)\b`)
-	creationObjExpr  = regexp.MustCompile(`(?:both|two) new specification files?|new specification files\b|§28\.1 through §28\.4|the §28\.3 register`)
+	creationObjExpr  = regexp.MustCompile(`the communication-channels file|those five headings|(?:both|two) new specification files?|new specification files\b|§28\.1 through §28\.4|the §28\.3 register`)
 	negatedVerbExpr  = regexp.MustCompile(`\b(?:creates?|writes|authors?|lands|names)\b (?:none|no|neither)\b`)
 )
 
 // A files-touched bullet names a file and states whether it is new,
 // without naming a subject: the document is the subject of its own
 // files-touched list, so a bullet calling the section file new is an
-// attribution on its own terms and is read as one.
+// attribution on its own terms and is read as one. The same holds for a
+// bullet or an argument that states the file is created without naming
+// who creates it, which the verb rule below reads.
 var (
 	sectionFileExpr  = regexp.MustCompile("`?spec/28_communication-channels\\.md`?")
 	newFileClaimExpr = regexp.MustCompile(`\b(?:both new|new specification files?|is new|are new)\b|, new\b`)
@@ -208,6 +214,65 @@ func TestSection28OwnershipSweepReadsACreditedSentence_spec_28(t *testing.T) {
 	}
 }
 
+// TestSection28OwnershipSweepReadsTheTransferredSentences_spec_28 plants
+// each sentence the ownership transfer removed from the renaming
+// proposal, in the form that document carried it, and requires every one
+// reported.
+//
+// The transfer moved three things: the section file, its §28.1 through
+// §28.4 headings, and its §28.3 register. A sweep that reads the file
+// only as a claim over more than one new specification file, or only
+// alongside a separate newness claim, reports the two sentences naming
+// the headings or the register and passes over the ones naming the file
+// itself. Reverting one of those sentences then restores the
+// double-ownership state with the sweep green, which is the failure this
+// case pins: each removed phrasing is a site on its own.
+//
+// diagnosis: a failure means the ownership sweep reads a subset of the
+// sentences the transfer rewrote, so an attribution restored in one of
+// the other forms goes unreported. Read the section file as a moved
+// object in its own right, under its path and under the paraphrases the
+// document writes it as.
+//
+// spec: §28, §28.3
+func TestSection28OwnershipSweepReadsTheTransferredSentences_spec_28(t *testing.T) {
+	document := readRenamingProposal(t)
+	subSteps := subStepNames(document)
+	if len(subSteps) == 0 {
+		t.Fatalf("%s publishes no sub-step under %q, so the case plants no subject", renamingProposalFile, changeSectionHeading)
+	}
+
+	// The first three are the index-row argument, the build-order bullet,
+	// and the files-touched bullet as the document carried them before
+	// ownership of the section moved. The last two are the same
+	// attribution written with a sub-step as the subject, under the path
+	// and under the paraphrase the document uses for it.
+	for _, reverted := range []string{
+		"The rows land in the same change that creates `spec/28_communication-channels.md` with those five headings, so every row this sub-step writes resolves at its exit and no row in this proposal precedes its target file.",
+		"**Naming law, registers, and prose.** `spec/28_communication-channels.md` is created here carrying §28.1 through §28.4, which are the law and the three registers, together with the reserved-word removal and the `spec/03` correction.",
+		"- `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new.",
+		subSteps[0] + " creates `spec/28_communication-channels.md` carrying the naming law and the three registers.",
+		subSteps[0] + " creates the communication-channels file with those five headings.",
+	} {
+		sites := ownershipSites(t, plantBelowFilesTouched(t, document, reverted))
+		if len(sites) == 0 {
+			t.Errorf("the sentence %q reported no site, so reverting it leaves the sweep green", reverted)
+		}
+	}
+
+	// The corrected forms of the first two sentences credit the landing
+	// proposal in the clause naming the file, so widening the file to a
+	// moved object must leave them unreported.
+	for _, corrected := range []string{
+		"Proposal 0067 created `spec/28_communication-channels.md` with those five headings and wrote those rows before " + subSteps[0] + " runs, so every row resolves.",
+		"`spec/29_communication-scenarios.md`, new. `spec/28_communication-channels.md` exists, created by proposal 0067, and " + subSteps[0] + " appends to it.",
+	} {
+		if sites := ownershipSites(t, plantBelowFilesTouched(t, document, corrected)); len(sites) != 0 {
+			t.Errorf("the corrected sentence %q reported %q", corrected, sites)
+		}
+	}
+}
+
 // plantBelowFilesTouched returns the document with one paragraph planted
 // below the files-touched heading, which sits inside the swept region.
 func plantBelowFilesTouched(t *testing.T, document, paragraph string) string {
@@ -249,7 +314,7 @@ func TestSection28OwnershipRecordMatchesTheProposal_spec_28(t *testing.T) {
 	}
 
 	for _, sentence := range proseSentences(string(body)) {
-		if attributesCreation(sentence, subjects) || claimsTheSectionIsNew(sentence) {
+		if creditsTheRenamingProposal(sentence, subjects) {
 			t.Errorf("%s credits the renaming proposal with creating the section: %q", ownershipRecordFile, sentence)
 		}
 	}
@@ -306,7 +371,7 @@ func ownershipSites(t *testing.T, document string) []string {
 
 	var sites []string
 	for _, sentence := range proseSentences(region) {
-		if attributesCreation(sentence, subjects) || claimsTheSectionIsNew(sentence) {
+		if creditsTheRenamingProposal(sentence, subjects) {
 			sites = append(sites, sentence)
 		}
 	}
@@ -346,6 +411,44 @@ var clauseBoundaryExpr = regexp.MustCompile(`;|,? \b(?:and|but|so|which|because|
 // renaming proposal lands the section file as a new file.
 func claimsTheSectionIsNew(sentence string) bool {
 	return sectionFileExpr.MatchString(sentence) && newFileClaimExpr.MatchString(sentence)
+}
+
+// claimsTheSectionIsCreatedHere reports whether one clause of a sentence
+// states that the section file is created, without crediting the
+// proposal that landed it.
+//
+// The document writes its build-order bullets, its index-row argument,
+// and its files-touched list with no named subject, so a clause naming
+// the section file beside a creation verb attributes the creation to the
+// document carrying it. Requiring a separate newness claim on top of the
+// path, as the files-touched rule does, leaves every such clause
+// unreported: a build-order bullet stating that the file is created here
+// and an index-row argument resting on the change that creates it both
+// name the file and claim no newness. The credit standing anywhere in
+// the clause is what separates the corrected text, which states the file
+// was landed elsewhere, from the attribution.
+func claimsTheSectionIsCreatedHere(sentence string) bool {
+	for _, clause := range clauseBoundaryExpr.Split(sentence, -1) {
+		if negatedVerbExpr.MatchString(clause) || ownerCreditExpr.MatchString(clause) {
+			continue
+		}
+		for _, listed := range strings.Split(clause, ",") {
+			if sectionFileExpr.MatchString(listed) && creationVerbExpr.MatchString(listed) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// creditsTheRenamingProposal reports whether one sentence credits the
+// renaming proposal, or one of its sub-steps, with creating the section
+// file, its opening headings, or its register, or states the section
+// file is one that proposal lands as new.
+func creditsTheRenamingProposal(sentence string, subjects *regexp.Regexp) bool {
+	return attributesCreation(sentence, subjects) ||
+		claimsTheSectionIsNew(sentence) ||
+		claimsTheSectionIsCreatedHere(sentence)
 }
 
 // subStepNames returns the sub-step labels the proposal publishes under
