@@ -188,4 +188,9 @@
   - [27.8 Metrics](27_web-playground.md#278-metrics)
   - [27.9 Security considerations](27_web-playground.md#279-security-considerations)
   - [27.10 Roll-forward notes](27_web-playground.md#2710-roll-forward-notes)
+- [28. Communication Channels](28_communication-channels.md)
+  - [28.1 Naming law](28_communication-channels.md#281-naming-law)
+  - [28.2 Taxonomy and axes](28_communication-channels.md#282-taxonomy-and-axes)
+  - [28.3 Registers](28_communication-channels.md#283-registers)
+  - [28.4 Claim register](28_communication-channels.md#284-claim-register)
 
