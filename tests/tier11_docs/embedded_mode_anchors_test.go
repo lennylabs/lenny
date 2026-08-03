@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 // specCrossRef names one intra-spec link added by proposal 0013: the
@@ -243,7 +244,7 @@ func slugify(text string) string {
 	var b strings.Builder
 	for _, r := range strings.ToLower(strings.TrimSpace(text)) {
 		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case unicode.IsLetter(r), unicode.IsDigit(r):
 			b.WriteRune(r)
 		case r == ' ':
 			b.WriteRune('-')

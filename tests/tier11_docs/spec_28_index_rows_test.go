@@ -35,21 +35,62 @@ type specIndexRow struct {
 var indexRowPattern = regexp.MustCompile(`^\s*- \[([^\]]*)\]\(([^)#]+)(?:#([^)]*))?\)\s*$`)
 
 // specIndexRowsFor returns the anchored index rows of spec/README.md
-// that point into file, and reports whether the file's own unanchored
-// section row is present.
-func specIndexRowsFor(index, file string) (rows []specIndexRow, sectionRow bool) {
+// that point into file, together with the link title of the file's own
+// unanchored section row. The section title is empty when the index
+// carries no such row. The title is returned rather than a presence bit
+// so the caller can hold the section row and the section's level-1
+// heading to the same one-to-one title rule the anchored rows follow.
+func specIndexRowsFor(index, file string) (rows []specIndexRow, sectionTitle string) {
 	for _, line := range strings.Split(index, "\n") {
 		m := indexRowPattern.FindStringSubmatch(line)
 		if m == nil || m[2] != file {
 			continue
 		}
 		if m[3] == "" {
-			sectionRow = true
+			sectionTitle = m[1]
 			continue
 		}
 		rows = append(rows, specIndexRow{title: m[1], anchor: m[3]})
 	}
-	return rows, sectionRow
+	return rows, sectionTitle
+}
+
+// sectionHeadingLevel is the heading level of the heading that names the
+// section as a whole, the one the index's unanchored row links to.
+const sectionHeadingLevel = 1
+
+// sectionRowMismatches returns one message per disagreement between the
+// index's unanchored section row and the section file's level-1
+// heading. The section is named once by its own heading and once by the
+// row that links to the file, and those two titles must match, exactly
+// as an anchored row's title must match the subsection heading it points
+// at. A file with no level-1 heading, or with more than one, is reported
+// too: the index row would then name no heading or an arbitrary one.
+//
+// spec: §28
+func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []string {
+	var out []string
+	if sectionTitle == "" {
+		out = append(out, "the spec index carries no unanchored section row for the section file")
+	}
+
+	var titles []string
+	for _, h := range headings {
+		if h.level == sectionHeadingLevel {
+			titles = append(titles, h.text)
+		}
+	}
+	switch {
+	case len(titles) == 0:
+		out = append(out, "the section file carries no level-1 heading for the index's section row to name")
+	case len(titles) > 1:
+		out = append(out, fmt.Sprintf("the section file carries more than one level-1 heading: %s",
+			strings.Join(titles, ", ")))
+	case sectionTitle != "" && titles[0] != sectionTitle:
+		out = append(out, fmt.Sprintf("index section row %q names level-1 heading %q; the titles must match one to one",
+			sectionTitle, titles[0]))
+	}
+	return out
 }
 
 // indexSubsectionLevel is the heading level of the subsections the index
@@ -180,6 +221,94 @@ func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("deep heading resolves", func(t *testing.T) { assertRowAtDeeperHeadingResolves(t) })
 	t.Run("ambiguous anchor", func(t *testing.T) { assertAmbiguousAnchorIsReported(t) })
 	t.Run("underscore kept", func(t *testing.T) { assertUnderscoreSurvivesTheSlugRule(t) })
+	t.Run("non-ascii letter kept", func(t *testing.T) { assertNonASCIILetterSurvivesTheSlugRule(t) })
+	t.Run("section row title", func(t *testing.T) { assertSectionRowNamesTheLevel1Heading(t) })
+}
+
+// assertNonASCIILetterSurvivesTheSlugRule pins the letter class of the
+// derivation. The rule keeps every letter, so a heading carrying a
+// letter outside the ASCII range derives an anchor that still contains
+// it. A derivation restricted to a-z deletes the letter instead and
+// reports the row that points at such a heading as dangling.
+//
+// spec: §28
+func assertNonASCIILetterSurvivesTheSlugRule(t *testing.T) {
+	t.Helper()
+	if got, want := slugify("28.6 Café registers"), "286-café-registers"; got != want {
+		t.Errorf("slugify(%q) = %q, want %q", "28.6 Café registers", got, want)
+	}
+	doc := "## 28.6 Café registers\n"
+	rows := []specIndexRow{{title: "28.6 Café registers", anchor: "286-café-registers"}}
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
+		t.Errorf("non-ASCII letter dropped from the derived anchor: %+v", rec)
+	}
+}
+
+// assertSectionRowNamesTheLevel1Heading pins that the index's unanchored
+// section row and the section's level-1 heading are held to the same
+// one-to-one title rule the anchored rows are. Reducing that row to a
+// presence check lets the heading and its index row be renamed
+// independently, which is exactly the index-versus-section title
+// disagreement this test reports.
+//
+// spec: §28
+func assertSectionRowNamesTheLevel1Heading(t *testing.T) {
+	t.Helper()
+
+	const index = "- [28. Communication Channels](28_communication-channels.md)\n" +
+		"  - [28.1 Naming law](28_communication-channels.md#281-naming-law)\n"
+	rows, sectionTitle := specIndexRowsFor(index, channelsSpecFile)
+	if len(rows) != 1 || rows[0].anchor != "281-naming-law" {
+		t.Fatalf("anchored rows = %+v", rows)
+	}
+	if sectionTitle != "28. Communication Channels" {
+		t.Fatalf("section row title = %q, want %q", sectionTitle, "28. Communication Channels")
+	}
+
+	matching := scanMarkdownHeadings("# 28. Communication Channels\n\n## 28.1 Naming law\n")
+	if got := sectionRowMismatches(matching, sectionTitle); len(got) != 0 {
+		t.Errorf("matching section row and level-1 heading reported: %v", got)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		doc     string
+		title   string
+		wantSub string
+	}{
+		{
+			name:    "renamed heading",
+			doc:     "# 28. Communication channels\n\n## 28.1 Naming law\n",
+			title:   sectionTitle,
+			wantSub: "must match one to one",
+		},
+		{
+			name:    "missing section row",
+			doc:     "# 28. Communication Channels\n",
+			title:   "",
+			wantSub: "no unanchored section row",
+		},
+		{
+			name:    "no level-1 heading",
+			doc:     "## 28.1 Naming law\n",
+			title:   sectionTitle,
+			wantSub: "no level-1 heading",
+		},
+		{
+			name:    "two level-1 headings",
+			doc:     "# 28. Communication Channels\n\n# 28. Communication Channels bis\n",
+			title:   sectionTitle,
+			wantSub: "more than one level-1 heading",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := sectionRowMismatches(scanMarkdownHeadings(tc.doc), tc.title)
+			if len(got) != 1 || !strings.Contains(got[0], tc.wantSub) {
+				t.Errorf("sectionRowMismatches = %v, want one message containing %q", got, tc.wantSub)
+			}
+		})
+	}
 }
 
 // assertFencedLineIsNotAHeading pins that a "## " line inside a fenced
@@ -348,10 +477,7 @@ func assertSection28IndexReconciles(t *testing.T) {
 		t.Fatalf("read %s: %v", channelsSpecFile, err)
 	}
 
-	rows, sectionRow := specIndexRowsFor(string(index), channelsSpecFile)
-	if !sectionRow {
-		t.Errorf("spec/README.md carries no unanchored section row for %s", channelsSpecFile)
-	}
+	rows, sectionTitle := specIndexRowsFor(string(index), channelsSpecFile)
 	if len(rows) == 0 {
 		t.Fatalf("spec/README.md carries no anchored index row for %s", channelsSpecFile)
 	}
@@ -373,6 +499,9 @@ func assertSection28IndexReconciles(t *testing.T) {
 	}
 	for _, msg := range titleMismatches(headings, rows) {
 		t.Error(msg)
+	}
+	for _, msg := range sectionRowMismatches(headings, sectionTitle) {
+		t.Errorf("%s and spec/README.md disagree: %s", channelsSpecFile, msg)
 	}
 }
 
