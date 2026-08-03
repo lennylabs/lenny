@@ -93,6 +93,22 @@ func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []str
 	return out
 }
 
+// subsectionHeadingLevel is the heading level of the numbered
+// subsections the index's anchored rows name, and the level that encloses
+// the register tables.
+const subsectionHeadingLevel = 2
+
+// registerTableLevel is the heading level the register tables of §28.3
+// are published at.
+const registerTableLevel = 3
+
+// registerSubsectionTitle is the level-2 heading that encloses the
+// section's register tables. The exemption below applies under this
+// heading only.
+//
+// spec: §28.3
+const registerSubsectionTitle = "28.3 Registers"
+
 // registerTableTitles are the headings inside §28.3 that name one of the
 // section's register tables. They are the only headings in the section
 // the published index carries no anchored row for, and the exemption is
@@ -107,6 +123,20 @@ var registerTableTitles = []string{
 	"Channel register",
 	"Register-entry register",
 	"Naming table",
+}
+
+// isRegisterTableHeading reports whether h is one of the register tables
+// the published index carries no anchored row for. The exemption is
+// scoped to the headings it describes rather than to their text: h must
+// be a level-3 heading, and the level-2 heading enclosing it must be
+// §28.3. A heading carrying a listed title at another level, or under
+// another subsection, falls back to the coverage rule and is reported as
+// carrying no index row, so the section can grow further subsections
+// without a listed title silently exempting a heading in one of them.
+//
+// spec: §28.3
+func isRegisterTableHeading(h markdownHeading, enclosing string, exempt map[string]bool) bool {
+	return h.level == registerTableLevel && enclosing == registerSubsectionTitle && exempt[h.text]
 }
 
 // titleSet turns a list of heading titles into the membership set
@@ -159,7 +189,8 @@ type indexReconciliation struct {
 // level, because a fragment pointing at a deeper heading resolves in a
 // rendered document. The coverage direction runs over every heading
 // below the section's own level-1 heading, which the unanchored section
-// row names instead, minus the titles in exempt. Coverage is tracked per
+// row names instead, minus the register tables of §28.3 named by exempt.
+// Coverage is tracked per
 // heading rather than per anchor, so one row cannot cover two headings
 // that collide on a slug.
 //
@@ -195,14 +226,20 @@ func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow, exempt 
 		covered[idx[0]] = true
 	}
 
+	enclosing := ""
 	for i, h := range headings {
-		if h.level == sectionHeadingLevel {
+		switch h.level {
+		case sectionHeadingLevel:
+			enclosing = ""
 			continue
+		case subsectionHeadingLevel:
+			enclosing = h.text
 		}
+		isExempt := isRegisterTableHeading(h, enclosing, exempt)
 		switch {
-		case exempt[h.text] && covered[i]:
+		case isExempt && covered[i]:
 			rec.staleExempt = append(rec.staleExempt, h.text)
-		case !exempt[h.text] && !covered[i]:
+		case !isExempt && !covered[i]:
 			rec.uncovered = append(rec.uncovered, h.text)
 		}
 	}
@@ -254,6 +291,7 @@ func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("deep heading resolves", func(t *testing.T) { assertRowAtDeeperHeadingResolves(t) })
 	t.Run("numbered deep heading needs a row", func(t *testing.T) { assertNumberedDeepHeadingNeedsAnIndexRow(t) })
 	t.Run("register-table exemption is closed", func(t *testing.T) { assertRegisterTableExemptionIsClosed(t) })
+	t.Run("register-table exemption is scoped", func(t *testing.T) { assertRegisterTableExemptionIsScopedToItsSubsection(t) })
 	t.Run("ambiguous anchor", func(t *testing.T) { assertAmbiguousAnchorIsReported(t) })
 	t.Run("underscore kept", func(t *testing.T) { assertUnderscoreSurvivesTheSlugRule(t) })
 	t.Run("non-ascii letter kept", func(t *testing.T) { assertNonASCIILetterSurvivesTheSlugRule(t) })
@@ -472,9 +510,12 @@ func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 
 	exempt := titleSet(registerTableTitles...)
 
+	// Both headings under §28.5 are reported: the numbered one because no
+	// row names it, and "Naming table" because the register-table
+	// exemption reaches under §28.3 only.
 	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, exempt)
-	if len(rec.uncovered) != 1 || rec.uncovered[0] != "28.5.1 Intra-pod" {
-		t.Errorf("numbered subsection below level 2 not reported as missing an index row: %v", rec.uncovered)
+	if !equalStrings(rec.uncovered, []string{"28.5.1 Intra-pod", "Naming table"}) {
+		t.Errorf("headings below level 2 not reported as missing an index row: %v", rec.uncovered)
 	}
 
 	// The section's own level-1 heading states no subsection number and is
@@ -486,10 +527,75 @@ func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 		}
 	}
 
-	// Adding the row clears the report.
-	rows = append(rows, specIndexRow{title: "28.5.1 Intra-pod", anchor: "2851-intra-pod"})
-	if rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, exempt); len(rec.uncovered) != 0 || len(rec.dangling) != 0 {
-		t.Errorf("covered numbered subsection still reported: %+v", rec)
+	// Adding the rows clears the report.
+	rows = append(rows,
+		specIndexRow{title: "28.5.1 Intra-pod", anchor: "2851-intra-pod"},
+		specIndexRow{title: "Naming table", anchor: "naming-table"})
+	if rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, exempt); len(rec.uncovered) != 0 || len(rec.dangling) != 0 || len(rec.staleExempt) != 0 {
+		t.Errorf("covered subsections still reported: %+v", rec)
+	}
+}
+
+// assertRegisterTableExemptionIsScopedToItsSubsection pins that the
+// register-table exemption is keyed on the heading's position rather than
+// on its title alone. Only a level-3 heading enclosed by §28.3 takes it.
+// A heading carrying one of the same titles at another level, or under
+// another numbered subsection the section gains later, is unreachable
+// from the published index unless a row names it, so it is reported. A
+// membership test on the heading text alone exempts all of these and
+// leaves the coverage direction open exactly where the section grows.
+//
+// spec: §28.3
+func assertRegisterTableExemptionIsScopedToItsSubsection(t *testing.T) {
+	t.Helper()
+
+	exempt := titleSet(registerTableTitles...)
+	const head = "# 28. Communication Channels\n\n"
+	rows := []specIndexRow{
+		{title: "28.3 Registers", anchor: "283-registers"},
+		{title: "28.5 Contract cards", anchor: "285-contract-cards"},
+	}
+
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want []string
+	}{
+		{
+			name: "level-3 under the registers subsection",
+			doc:  head + "## 28.3 Registers\n\n### Link register\n",
+			want: nil,
+		},
+		{
+			name: "same title under another subsection",
+			doc:  head + "## 28.3 Registers\n\n## 28.5 Contract cards\n\n### Naming table\n",
+			want: []string{"Naming table"},
+		},
+		{
+			name: "same title at the subsection level",
+			doc:  head + "## 28.3 Registers\n\n## Link register\n",
+			want: []string{"Link register"},
+		},
+		{
+			name: "same title below the register-table level",
+			doc:  head + "## 28.3 Registers\n\n### Link register\n\n#### Channel register\n",
+			want: []string{"Channel register"},
+		},
+		{
+			name: "same title before any subsection heading",
+			doc:  head + "### Channel register\n\n## 28.3 Registers\n",
+			want: []string{"Channel register"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := reconcileIndexRows(scanMarkdownHeadings(tc.doc), rows, exempt)
+			if !equalStrings(rec.uncovered, tc.want) {
+				t.Errorf("uncovered = %v, want %v", rec.uncovered, tc.want)
+			}
+			if len(rec.staleExempt) != 0 {
+				t.Errorf("staleExempt = %v, want none", rec.staleExempt)
+			}
+		})
 	}
 }
 
