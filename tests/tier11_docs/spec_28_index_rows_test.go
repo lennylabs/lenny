@@ -377,6 +377,7 @@ func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("non-ascii letter kept", func(t *testing.T) { assertNonASCIILetterSurvivesTheSlugRule(t) })
 	t.Run("section row title", func(t *testing.T) { assertSectionRowNamesTheSectionHeading(t) })
 	t.Run("heading levels follow the number depth", func(t *testing.T) { assertHeadingLevelsFollowTheNumberDepth(t) })
+	t.Run("staged section text matches the landed file", func(t *testing.T) { assertStagedSectionTextMatchesTheLandedFile(t) })
 }
 
 // assertNonASCIILetterSurvivesTheSlugRule pins the letter class of the
@@ -956,5 +957,140 @@ func assertCollapsedAnchorIsReported(t *testing.T) {
 	}
 	if len(rec.uncovered) != 1 || rec.uncovered[0] != "28.9 Registers (v2): keys" {
 		t.Errorf("heading left uncovered by the collapsed anchor not reported: %v", rec.uncovered)
+	}
+}
+
+// channelsProposalFile is the proposal document that stages the text of
+// the communication-channels section. The staged text is the approved
+// wording, and the section file is what the tree publishes, so the two
+// are held to one content.
+//
+// spec: §28
+const channelsProposalFile = "0067_new_author-spec-28-the-channel-naming-law-taxonomy-and-registers.md"
+
+// stagedSectionHeading matches the section's own heading at any level,
+// which is the line a staged block of the section opens with. The level
+// is left free so a block written at the wrong depth is still recognized
+// as staging the section and is reported as differing, rather than
+// disappearing from the comparison.
+var stagedSectionHeading = regexp.MustCompile(`^#{1,6}\s+28\. Communication Channels\s*$`)
+
+// stagedSectionBlocks returns the fenced blocks of a proposal document
+// that stage the communication-channels section, one string slice of
+// lines per block. A block is recognized by the section heading it opens
+// with rather than by the sub-step that carries it, so renaming or
+// renumbering the surrounding change text does not silently drop the
+// comparison.
+func stagedSectionBlocks(doc string) [][]string {
+	var blocks [][]string
+	var current []string
+	inFence := false
+	for _, line := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if inFence {
+				if len(current) > 0 && stagedSectionHeading.MatchString(current[0]) {
+					blocks = append(blocks, current)
+				}
+				current = nil
+			}
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			current = append(current, line)
+		}
+	}
+	return blocks
+}
+
+// stagedSectionMismatch compares the staged lines with the landed ones
+// and returns one message per disagreement: the first line whose text
+// differs, and a line count that differs. It returns no message when the
+// two are the same text line for line.
+func stagedSectionMismatch(staged, landed []string) []string {
+	var out []string
+	for i := 0; i < len(staged) && i < len(landed); i++ {
+		if staged[i] != landed[i] {
+			out = append(out, fmt.Sprintf("line %d differs: staged %q, landed %q", i+1, staged[i], landed[i]))
+			break
+		}
+	}
+	if len(staged) != len(landed) {
+		out = append(out, fmt.Sprintf("the staged block carries %d lines and the landed section carries %d",
+			len(staged), len(landed)))
+	}
+	return out
+}
+
+// markdownFileLines splits a markdown file's content into the lines a
+// fenced block holds it as, dropping the single trailing newline every
+// tracked file ends with so the two sides carry the same last line.
+func markdownFileLines(content string) []string {
+	return strings.Split(strings.TrimSuffix(content, "\n"), "\n")
+}
+
+// assertStagedSectionTextMatchesTheLandedFile pins the approved staged
+// text of the section to the file the tree publishes. The heading-level
+// rule fixes the depths the section publishes, and every anchor is
+// derived from the heading text alone, so a staged block written at
+// other depths, or reworded in a paragraph, passes every other check in
+// this file while the approved text and the published section state
+// different things and neither side records which one is authoritative.
+//
+// spec: §28
+func assertStagedSectionTextMatchesTheLandedFile(t *testing.T) {
+	t.Helper()
+	root := repoRoot(t)
+
+	proposal, err := os.ReadFile(filepath.Join(root, "proposals", channelsProposalFile))
+	if err != nil {
+		t.Fatalf("read the staging proposal: %v", err)
+	}
+	section, err := os.ReadFile(filepath.Join(root, "spec", channelsSpecFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", channelsSpecFile, err)
+	}
+
+	blocks := stagedSectionBlocks(string(proposal))
+	if len(blocks) != 1 {
+		t.Fatalf("%s stages %d blocks of %s; exactly one block must state the section's text",
+			channelsProposalFile, len(blocks), channelsSpecFile)
+	}
+	landed := markdownFileLines(string(section))
+	for _, msg := range stagedSectionMismatch(blocks[0], landed) {
+		t.Errorf("the text %s stages and the landed %s disagree: %s", channelsProposalFile, channelsSpecFile, msg)
+	}
+
+	// The comparison reports the two divergences that pass every other
+	// check in this file: a block written one level shallower throughout,
+	// which derives exactly the anchors the landed depths derive, and a
+	// block whose prose is rewrapped, which changes no heading at all.
+	shallower := make([]string, len(landed))
+	copy(shallower, landed)
+	for i, line := range shallower {
+		if strings.HasPrefix(line, "##") {
+			shallower[i] = strings.TrimPrefix(line, "#")
+		}
+	}
+	if got := stagedSectionMismatch(shallower, landed); len(got) == 0 {
+		t.Errorf("a staged block written one level shallower was accepted")
+	}
+	rewrapped := append([]string(nil), landed...)
+	rewrapped[2] = rewrapped[2] + " and one more clause"
+	if got := stagedSectionMismatch(rewrapped, landed); len(got) == 0 {
+		t.Errorf("a staged block whose prose differs was accepted")
+	}
+
+	// A block that does not open with the section heading stages
+	// something else and is never compared, and a document staging the
+	// section twice is reported rather than compared against the first.
+	other := "```markdown\n- [28. Communication Channels](28_communication-channels.md)\n```\n"
+	if got := stagedSectionBlocks(other); len(got) != 0 {
+		t.Errorf("a block staging other content was read as the section: %v", got)
+	}
+	twice := "```markdown\n## 28. Communication Channels\n```\n\ntext\n\n```markdown\n# 28. Communication Channels\n```\n"
+	if got := stagedSectionBlocks(twice); len(got) != 2 {
+		t.Errorf("stagedSectionBlocks read %d blocks of a document staging the section twice, want 2", len(got))
 	}
 }

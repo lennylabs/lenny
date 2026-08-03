@@ -342,7 +342,13 @@ records that as an accepted state with the reason no gate reports it in the inte
 
 The headings and their anchors are `28. Communication Channels` at `#28-communication-channels`,
 `28.1 Naming law` at `#281-naming-law`, `28.2 Taxonomy and axes` at `#282-taxonomy-and-axes`,
-`28.3 Registers` at `#283-registers`, and `28.4 Claim register` at `#284-claim-register`. The anchors
+`28.3 Registers` at `#283-registers`, and `28.4 Claim register` at `#284-claim-register`. Each heading is
+published at the level its own section number's depth fixes, which is the convention the rest of `spec/`
+follows and the domain 0064 §4.8's heading walker enumerates: the section heading `## 28. Communication
+Channels` at level 2, each numbered subsection at level 3, and the four register-table headings inside
+§28.3, which carry no number of their own, one level below the subsection enclosing them at level 4. The
+staged block in SPEC-1 carries those levels, so the block and the landed file are the same text line for
+line. The anchors
 follow the slug rule 0064 §4.8 states, which lowercases the heading text, deletes every character that is
 not a letter, a digit, a space, a hyphen, or an underscore, and replaces each remaining space with one
 hyphen. `spec/README.md` ends at the `27.10 Roll-forward notes` row at line 190, so the new rows append.
@@ -390,7 +396,7 @@ remediation step cites.
 **Anchor:** the file does not exist. Create it with exactly the content below.
 
 ```markdown
-# 28. Communication Channels
+## 28. Communication Channels
 
 This section is the normative home for the communication channels between the gateway replicas, the agent
 pod, the adapter container, the runtime container, and the control plane. §28.1 states the law that fixes
@@ -399,7 +405,7 @@ records. §28.3 carries the registers of links, channels, and register entries, 
 table that records the spelling each carrier takes. §28.4 states the claim register, which records the
 implementation status of every statement this section makes.
 
-## 28.1 Naming law
+### 28.1 Naming law
 
 **N1.** A channel's canonical identifier is a mnemonic for the conversation it carries, chosen so that no
 two channels on the same boundary share a stem. The endpoint pair, the plane, the dial direction, the
@@ -455,7 +461,7 @@ permitted citation. A section that gives up content carries a permanent successo
 heading that now owns the content and the identifiers that moved. The citation resolver and the
 line-citation ratchet are the gates that hold this rule.
 
-## 28.2 Taxonomy and axes
+### 28.2 Taxonomy and axes
 
 An identifier is drawn from one of three classes, and the class fixes the columns the entry carries in
 §28.3.
@@ -477,7 +483,7 @@ Every channel records six axes.
 | Boundary | `intra-pod`, `gateway-to-pod`, `pod-to-gateway`, `pod-egress`, `gateway-to-store`, `inter-replica`, or `control-plane` | Closed set, and the grouping key of the contract cards, so a channel's boundary value and its card subsection carry the same string |
 | Exclusivity | The granularity plus the enforcing guard, or the guard named as missing | Records whether two gateway replicas can hold the channel at once. The per-channel values are stated with the contract cards |
 
-## 28.3 Registers
+### 28.3 Registers
 
 Three registers carry the entries of the three classes, one row per entry. The provenance column carries
 the entry number the channel inventory in `gateway-runtime-comms.md` assigns, so a reader can recover the
@@ -491,7 +497,7 @@ reads `None` when the connection carrying the channel is referred to by that cha
 case the channel row's transport column and the endpoint stated with the contract cards describe the
 connection, and the connection takes a link entry at the point a second channel row refers to it.
 
-### Link register
+#### Link register
 
 | Identifier | Participants | Dial direction | Transport | Endpoint | Lifetime | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -503,7 +509,7 @@ connection, and the connection takes a link entry at the point a second channel 
 cross-replica message routing it carries is not implemented. That status is recorded as an `ABSENT`
 claim-register row per §28.4 rather than as an absent transport in this register.
 
-### Channel register
+#### Channel register
 
 | Identifier | Link | Boundary | Plane | Dial direction | Authority direction | Transport | Message vocabulary | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
@@ -522,7 +528,7 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 | `CH-EVENTRELAY` | None | `gateway-to-store` | State | Gateway | Gateway | Redis | Cross-replica session event backlog | C16 |
 | `CH-ADMISSION` | None | `control-plane` | Control | Admission webhook | Admission webhook | HTTP | Drain-readiness admission on pod eviction | C22 |
 
-### Register-entry register
+#### Register-entry register
 
 | Identifier | Store | Key or table | Writer set | Reader set | Semantics | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -532,7 +538,7 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 | `REG-PODSTATE` | Postgres | `agent_pod_state` | WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas for `sessions_served` and `scrub_failure_count` | Gateway replicas | One row per pod. A read-optimized mirror carrying the pod phase the orphan-session reconciler reads, together with the gateway-written reuse counters the recycle disposition evaluates ([§12.6](12_storage-architecture.md#126-interface-design), [§4.7](04_system-components.md#47-runtime-adapter)) | C21 |
 | `REG-CLAIM` | Kubernetes API | `SandboxClaim` named `claim-<podName>` | Gateway replicas for the create, the status-subresource binding-state writes, and the hold-expiry delete, and the WarmPoolController leader for the deletes at pod termination and orphan garbage collection | Gateway replicas and controllers | Cluster-wide per-pod acquisition on first claim. The object carries no owner reference, so the controller's delete is the reclamation path for a claim its holder did not remove ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)) | C17 |
 
-### Naming table
+#### Naming table
 
 The table records, per carrier, the spelling a channel whose identifier changed takes on that carrier. A
 retired spelling standing in the row that retires it is the declaration of that spelling rather than a
@@ -548,12 +554,11 @@ reference to the channel.
 | `CH-RUNTIMEOPS` | socket | `@lenny-lifecycle` | `@lenny-runtime-ops` |
 | `CH-RUNTIMEOPS` | path | `lifecycle-events` | `runtime-ops-events` |
 
-## 28.4 Claim register
+### 28.4 Claim register
 
 Every normative statement this section makes about a mechanism carries a row in the claim register at
-`tests/claim-map.json`, with a status drawn from a closed set. `WIRED` means the mechanism is reachable
-from production code. `UNWIRED` means it is implemented and has no production caller. `ABSENT` means it is
-specified and not implemented.
+`tests/claim-map.json`, with a status drawn from a closed set. `WIRED` means the mechanism is reachable from production code. `UNWIRED`
+means it is implemented and has no production caller. `ABSENT` means it is specified and not implemented.
 
 A `WIRED` row names the production surface that reaches the mechanism. A row whose status is not `WIRED`
 names, through a deferral identifier, the step that closes it, which makes the register the work queue for
@@ -832,6 +837,15 @@ a `// diagnosis:` comment, in the form the surrounding files use.
    the opposite of an attribution. `// diagnosis:` states that a failure means two proposal documents state
    that they create one specification file. `// spec: §28, §28.3`.
 
+10. **The staged section text and the landed section file are the same text** (tier 11), in
+    `tests/tier11_docs/spec_28_index_rows_test.go` alongside the heading-level case. The case reads the
+    fenced `markdown` block this document stages for `spec/28_communication-channels.md`, requires that
+    exactly one such block exists, and asserts it equals the landed file line for line, reporting the first
+    line that differs. The heading-level case fixes the depths the section publishes; this case fixes the
+    staged text to the same depths and to every other byte, so the two cannot drift apart unnoticed while
+    each side reads as correct on its own. `// diagnosis:` states that a failure means the approved staged
+    text and the landed section disagree. `// spec: §28`.
+
 Coverage: the change adds no Go lines, so the new-code coverage floor applies to the test files alone.
 Run `lenny-test --changed --max-tier 11` before declaring the change done, and
 `lenny-test coverage --diff <base-ref>` over the tests above.
@@ -986,6 +1000,19 @@ stated alternative before the first round.
   item 4 gains an assertion that the domain N3 states matches the trees and extensions
   `scope.ReservedPhraseCarrier` admits.
 
+### Pass 5 (2026-08-03, automated)
+
+- **The staged section text and the landed section file disagreed on every heading level and on one
+  paragraph's wrapping, while §12 states that the file lands "exactly as SPEC-1 stages them".** The staged
+  block wrote the section heading at level 1, the numbered subsections at level 2, and the register tables
+  at level 3, one level shallower than the section-number depth rule the rest of `spec/` follows and the
+  rule 0064 §4.8's heading walker enumerates, and the block also kept a wrapping of §28.4's opening
+  paragraph that the landed file no longer carries. The landed depths are the correct ones, so the staged
+  text was the stale side, and a re-verification run comparing the two would have read a discrepancy with
+  no record of which side is authoritative. SPEC-1's block now carries the landed text, §4.5 states the
+  derivation once, and §8 item 10 asserts the two are the same text line for line, which is the check that
+  catches this class of drift.
+
 ## 11. Open decisions for review
 
 1. **Whether to take the smaller route instead.** Amending 0064 SPEC-1 to split itself into a pass-free
@@ -1034,7 +1061,7 @@ stated alternative before the first round.
 - `scripts/specshift/package_reachability_test.go`, new, for the tier-1 case §8 item 8 states. It carries
   no production code: the change adds a test file to the tooling and adds no package to it.
 - `tests/tier11_docs/spec_28_index_rows_test.go`, `tests/tier11_docs/spec_28_reserved_phrase_test.go`, and
-  `tests/tier11_docs/spec_28_register_writers_test.go`, new, for the tier-11 cases §8 items 3, 4, and 5
+  `tests/tier11_docs/spec_28_register_writers_test.go`, new, for the tier-11 cases §8 items 3, 4, 5, and 10
   state. `tests/tier11_docs` is outside `componentAndAboveTierDirs` (`cmd/lenny-test/cmd_validate.go` lines
   125 through 138), so the three files need no `tests/spec-map.json` key, and the change-graph completeness
   check excludes `_test.go` (line 398), so none of the five test files needs a `tests/change-graph.json`
