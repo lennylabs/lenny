@@ -122,9 +122,16 @@ identifier index at line 239, and that file is absent as well, so a run today fa
    exclusivity as an axis and states that its per-channel values are recorded with the contract cards,
    which is where 0064 SPEC-3 writes the exclusivity and concurrency model. Sourcing a normative column
    from an unfrozen document is avoided rather than annotated.
-5. **Specification-only: this proposal stages no register or map data file under `tests/`.** The exclusion
-   covers `tests/registers/`, `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`,
-   `tests/change-graph.json`, and `tests/claim-map.json`. It does not cover the test files §8 stages, which
+5. **Specification-only: this proposal seeds no register and writes no map entry under `tests/`.** The
+   exclusion covers `tests/registers/`, `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`, and
+   `tests/claim-map.json`. It covers the entries of `tests/change-graph.json` and does not cover its
+   routing: the graph gains a `docs` target on the `spec/` key and on the `scripts/specshift` key, because
+   a tier-11 guard over a file fires under `--changed` only when that file's key names the docs tier, and
+   the two keys resolve every file §8 items 3 through 5 read. That is a separate question from the
+   completeness check the rest of this decision covers, which asks whether a file the change stages needs
+   a graph entry of its own and is answered below. The two keys carry no new entry for a staged file, and
+   `cmd/lenny-test/cmd_run_resolve_docs_test.go` pins the routing against the guards themselves so a guard
+   over a further file cannot land unhooked. It does not cover the test files §8 stages, which
    are the tests every change carries under `.claude/rules/test-coverage.md` and which no gate the reasoning
    below names reaches: `tests/tier11_docs` is absent from `componentAndAboveTierDirs`
    (`cmd/lenny-test/cmd_validate.go` lines 125 through 138), so none of the three tier-11 files needs a
@@ -687,11 +694,12 @@ its convergence record states decisions as they were made, so both are left as w
   a goal rather than a non-goal, because ownership of one file cannot sit in two documents.
 - **Any register or map data file under `tests/`**, which is `tests/registers/`, a `tests/spec-map.json`
   key, a `tests/spec-map-exceptions.yaml` exception, a `tests/change-graph.json` entry, and
-  `tests/claim-map.json`, per decision 5. The three tier-11 test files §8 stages are in scope, and §12
-  lists them.
-- **Regenerating `pkg/proto/`, editing `schemas/`, or touching any Go file under `pkg/`, `cmd/`, `sdks/`,
-  or `migrations/`, any chart file, or any documentation file.** The Go test files §8 stages under
-  `scripts/specshift` and `tests/tier11_docs` are in scope.
+  `tests/claim-map.json`, per decision 5. The `docs` routing target on the `spec/` and `scripts/specshift`
+  keys of `tests/change-graph.json` is in scope, per decision 5, because the tier-11 guards fire under
+  `--changed` only through it. The three tier-11 test files §8 stages are in scope, and §12 lists them.
+- **Regenerating `pkg/proto/`, editing `schemas/`, or touching any non-test Go file under `pkg/`, `cmd/`,
+  `sdks/`, or `migrations/`, any chart file, or any documentation file.** The Go test files §8 stages
+  under `scripts/specshift`, `cmd/lenny-test`, and `tests/tier11_docs` are in scope.
 
 ## 8. Testing
 
@@ -969,5 +977,12 @@ stated alternative before the first round.
   125 through 138), so the three files need no `tests/spec-map.json` key, and the change-graph completeness
   check excludes `_test.go` (line 398), so none of the five test files needs a `tests/change-graph.json`
   entry.
-- No register or map data file under `tests/` is touched, and no file under `pkg/`, `cmd/`, `sdks/`,
-  `schemas/`, `charts/`, or `docs/` is touched, per decision 5 and §7.
+- `tests/change-graph.json`, for the `docs` target on the `spec/` key and on the `scripts/specshift` key,
+  which is what makes an edit to a file a tier-11 guard reads select the docs tier under `--changed`, per
+  decision 5. No key gains an entry for a file this change stages.
+- `cmd/lenny-test/cmd_run_resolve_docs_test.go`, new, and `cmd/lenny-test/cmd_validate_test.go`, for the
+  tier-1 cases over that routing: the first derives the files the tier-11 guards read from the guards
+  themselves and asserts each selects the docs tier, and the second states the tiers each migration-tooling
+  key selects as a closed set.
+- No register or map data file under `tests/` is seeded or given an entry, and no non-test file under
+  `pkg/`, `cmd/`, `sdks/`, `schemas/`, `charts/`, or `docs/` is touched, per decision 5 and §7.
