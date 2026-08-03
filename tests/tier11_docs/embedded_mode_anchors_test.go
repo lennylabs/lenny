@@ -8,7 +8,6 @@
 package tier11_docs_test
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -178,30 +177,28 @@ func localFidelityParagraph(content string) string {
 	return rest
 }
 
-// atxHeading matches an ATX markdown heading line (## … ######) and
-// captures the heading text after the marker and the single space.
-var atxHeading = regexp.MustCompile(`^#{1,6}\s+(.*)$`)
+// atxHeading matches an ATX markdown heading line (# … ######) and
+// captures the marker run and the heading text after the single space.
+var atxHeading = regexp.MustCompile(`^(#{1,6})\s+(.*)$`)
 
-// headingSlugs reads a markdown file and returns the set of GitHub-style
-// anchor slugs for every ATX heading in it. The slug derivation mirrors
-// GitHub's: lowercase, drop characters that are not letters, digits,
-// spaces, or hyphens (so backticks, parentheses, and dots vanish), then
-// replace each run-internal space with a single hyphen.
-func headingSlugs(path string) (map[string]bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("open %s: %w", path, err)
-	}
-	defer f.Close()
+// markdownHeading is one ATX heading of a markdown document: its level
+// (the number of leading '#' characters) and its text.
+type markdownHeading struct {
+	level int
+	text  string
+}
 
-	slugs := map[string]bool{}
+// scanMarkdownHeadings returns every ATX heading of doc, in document
+// order. A heading line inside a fenced code block is example content
+// rather than a heading: it produces no anchor, so the scan skips it.
+// This is the single heading scanner the package uses; anchor checks
+// that need one level only filter the result.
+func scanMarkdownHeadings(doc string) []markdownHeading {
+	var headings []markdownHeading
 	inFence := false
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-	for sc.Scan() {
-		line := sc.Text()
-		// Skip fenced code blocks: a ``` or ~~~ line toggles the fence,
-		// and headings inside a fence are not real headings.
+	for _, line := range strings.Split(doc, "\n") {
+		// A ``` or ~~~ line toggles the fence, and headings inside a
+		// fence are not real headings.
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
 			inFence = !inFence
@@ -214,28 +211,44 @@ func headingSlugs(path string) (map[string]bool, error) {
 		if m == nil {
 			continue
 		}
-		slugs[slugify(m[1])] = true
+		headings = append(headings, markdownHeading{level: len(m[1]), text: strings.TrimSpace(m[2])})
 	}
-	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("scan %s: %w", path, err)
+	return headings
+}
+
+// headingSlugs reads a markdown file and returns the set of anchor slugs
+// for every ATX heading in it.
+func headingSlugs(path string) (map[string]bool, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	slugs := map[string]bool{}
+	for _, h := range scanMarkdownHeadings(string(b)) {
+		slugs[slugify(h.text)] = true
 	}
 	return slugs, nil
 }
 
-// slugify converts heading text to a GitHub anchor slug.
+// slugify converts heading text to an anchor slug under the rule the
+// tree's existing anchors follow: lowercase the text, delete every
+// character that is not a letter, a digit, a space, a hyphen, or an
+// underscore (so backticks, parentheses, and dots vanish), and replace
+// each remaining space with one hyphen. Deleting punctuation rather than
+// collapsing a run of it to a single hyphen is what makes
+// "28.1 Naming law" resolve to "281-naming-law".
+//
+// spec: §28
 func slugify(text string) string {
 	var b strings.Builder
-	for _, r := range strings.ToLower(text) {
+	for _, r := range strings.ToLower(strings.TrimSpace(text)) {
 		switch {
 		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
 			b.WriteRune(r)
 		case r == ' ':
 			b.WriteRune('-')
-		case r == '-':
-			b.WriteRune('-')
-		default:
-			// Drop everything else (backticks, parentheses, dots,
-			// em-dashes): GitHub removes these from the slug.
+		case r == '-', r == '_':
+			b.WriteRune(r)
 		}
 	}
 	return b.String()
