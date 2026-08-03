@@ -15,6 +15,15 @@ import (
 // declares no identifier and the index reads it as empty.
 const proseFixture = "testdata/prose"
 
+// citingLinkFixture is a tree whose channel register names a link
+// identifier the link register does not declare, which is the form a
+// dangling reference between the two registers takes.
+const citingLinkFixture = "testdata/citing-link"
+
+// citedUndeclaredLink is the identifier that fixture's channel row names
+// in its Link cell and its link register does not carry.
+const citedUndeclaredLink = "LNK-GHOST"
+
 // declaredClassPrefixes are the class prefixes the taxonomy states. The
 // landed registers declare at least one identifier under each, so an
 // index missing one of them read a register the section states.
@@ -35,6 +44,15 @@ var declaredClassPrefixes = []string{"LNK-", "CH-", "REG-"}
 // exists and declares nothing is a tree the pass cannot run against yet,
 // and reporting an empty space instead would fail every entry of the
 // register.
+//
+// The third case records what the index does with a reference between
+// two registers. It reads every identifier-shaped whole cell of a
+// register table, so a channel row whose Link cell names a connection
+// the link register does not declare enters the index as a declaration
+// of that connection rather than being reported as dangling. Holding a
+// Link cell to a row of the link register is therefore the register
+// reconciliation's job, at the documentation tier, and this case pins
+// the coupling so the two are not assumed to be one check.
 //
 // spec: §28.1, §28.3
 func TestDeclaredIdentifiersIndexesTheLandedSection_spec_28_3(t *testing.T) {
@@ -65,6 +83,18 @@ func TestDeclaredIdentifiersIndexesTheLandedSection_spec_28_3(t *testing.T) {
 			if !strings.Contains(err.Error(), part) {
 				t.Errorf("the failure %q does not name %q, so it does not say which files were read", err, part)
 			}
+		}
+	})
+
+	t.Run("a link cell naming an undeclared connection is indexed as a declaration", func(t *testing.T) {
+		ctx := context.Background()
+		declared, err := declaredIdentifiers(ctx, scope.DirLister(citingLinkFixture), scope.DirReader(citingLinkFixture))
+		if err != nil {
+			t.Fatalf("index the declared identifiers of the citing fixture: %v", err)
+		}
+		if !declared[citedUndeclaredLink] {
+			t.Fatalf("the index dropped %s, so it no longer reads every identifier-shaped cell of a register table",
+				citedUndeclaredLink)
 		}
 	})
 }

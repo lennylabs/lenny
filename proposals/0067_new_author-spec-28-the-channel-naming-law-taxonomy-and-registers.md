@@ -724,7 +724,10 @@ a `// diagnosis:` comment, in the form the surrounding files use.
    `TestDeclaredIdentifiersIndexesTheLandedSection_spec_28_3`. The accept case asserts that the index
    carries a `LNK-`, a `CH-`, and a `REG-` identifier from the landed tables. The reject case runs over a
    fixture whose `spec/28` carries §28.1 alone, which is the empty-declaration boundary at
-   `scripts/specshift/name/declare.go` lines 99 through 101. `// spec: §28.1, §28.3`.
+   `scripts/specshift/name/declare.go` lines 99 through 101. A third case runs over a fixture whose channel
+   register names a link the link register does not declare, and pins that the index reads that cell as a
+   declaration rather than reporting it, so the reference between the two registers is recorded as the
+   documentation tier's check rather than assumed to be the index's. `// spec: §28.1, §28.3`.
 3. **Every §28 index row resolves to a heading in the section, and every §28 heading carries an index
    row** (tier 11), in `tests/tier11_docs/spec_28_index_rows_test.go` as
    `TestSection28IndexRowsResolve_spec_28`. The test derives each anchor from the heading text under the
@@ -766,7 +769,11 @@ a `// diagnosis:` comment, in the form the surrounding files use.
    form the surrounding `tests/tier11_docs` reconciliation tests use, so an edit to either side fails the
    case. `// diagnosis:` states that a failure means `spec/28`'s register and the store's or the
    connection's own section disagree on who writes it or on how it is carried.
-   `// spec: §28.3, §12.6, §4.6.3, §7.2`.
+   The same case holds §28.3's referential rule between the link register and the channel register: every
+   channel row's Link cell reads `None` or names a row of the link register, and every link a channel row
+   names in its message-vocabulary cell resolves the same way, with a reject case over a cell naming an
+   undeclared link and an assertion that both populations, the carried rows and the `None` rows, are
+   non-empty. `// spec: §28.3, §12.6, §4.6.3, §7.2`.
 6. **No new line-citation test is added.** The line-citation ratchet already reads every tracked file and
    fails a file whose count rises, and `spec/28` enters at zero, so a line citation written into the
    section later fails tier 0 without a new predicate.

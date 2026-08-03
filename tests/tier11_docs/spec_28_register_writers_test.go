@@ -22,6 +22,8 @@ package tier11_docs_test
 import (
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -31,8 +33,22 @@ import (
 // spec: §28.3
 const (
 	linkRegisterHeading          = "Link register"
+	channelRegisterHeading       = "Channel register"
 	registerEntryRegisterHeading = "Register-entry register"
 )
+
+// noLinkCell is what a channel row's Link column reads when the
+// connection carrying the channel is referred to by that row alone.
+//
+// spec: §28.3
+const noLinkCell = "None"
+
+// linkTokenExpr matches a link identifier standing in a cell, which is
+// the form a channel row names the connection its calls are forwarded
+// over in its message-vocabulary cell.
+//
+// spec: §28.3
+var linkTokenExpr = regexp.MustCompile(`LNK-[A-Z0-9]+(?:-[A-Z0-9]+)*`)
 
 // The register entries and the link entry whose derived cells this check
 // reconciles with the section specifying the store or the connection.
@@ -267,11 +283,11 @@ func (r registerTable) cellDivergence(identifier, column, want string) error {
 	return nil
 }
 
-// readChannelsRegisters returns the link register and the register-entry
-// register of the landed section.
+// readChannelsRegisters returns the three registers of the landed
+// section.
 //
 // spec: §28.3
-func readChannelsRegisters(t *testing.T) (links, entries registerTable) {
+func readChannelsRegisters(t *testing.T) (links, channels, entries registerTable) {
 	t.Helper()
 	section := readChannelsSection(t)
 
@@ -279,11 +295,15 @@ func readChannelsRegisters(t *testing.T) (links, entries registerTable) {
 	if err != nil {
 		t.Fatalf("read the link register from %s: %v", channelsSpecFile, err)
 	}
+	channels, err = readRegisterTable(section, channelRegisterHeading)
+	if err != nil {
+		t.Fatalf("read the channel register from %s: %v", channelsSpecFile, err)
+	}
 	entries, err = readRegisterTable(section, registerEntryRegisterHeading)
 	if err != nil {
 		t.Fatalf("read the register-entry register from %s: %v", channelsSpecFile, err)
 	}
-	return links, entries
+	return links, channels, entries
 }
 
 // diagnosis: a failure means spec/28's register and the store's or the
@@ -295,16 +315,145 @@ func readChannelsRegisters(t *testing.T) (links, entries registerTable) {
 // describes a store nobody writes the way §12.6 and §4.6.3 state it is
 // written, and a
 // `LNK-INTERREPLICA` row that states another transport, dial direction,
-// or lifetime describes a connection §7.2 does not specify.
+// or lifetime describes a connection §7.2 does not specify. A failure of
+// the link-reference case means a channel row names a connection the
+// link register does not declare, which is a reference §28.3 states as
+// resolving and the declaration index reads as a declaration of its own
+// instead.
 //
 // spec: §28.3, §12.6, §4.6.3, §7.2
 func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
-	links, entries := readChannelsRegisters(t)
+	links, channels, entries := readChannelsRegisters(t)
 
 	t.Run("pod state writer set", func(t *testing.T) { assertPodStateWriterSetMatchesStorage(t, entries) })
 	t.Run("claim writer set", func(t *testing.T) { assertClaimWriterSetMatchesOwnership(t, entries) })
 	t.Run("inter-replica link", func(t *testing.T) { assertInterReplicaLinkMatchesSessionLifecycle(t, links) })
 	t.Run("reassigned writer set", func(t *testing.T) { assertReassignedWriterSetIsRejected(t, entries) })
+	t.Run("link references resolve", func(t *testing.T) { assertChannelLinkReferencesResolve(t, links, channels) })
+	t.Run("dangling link reference", func(t *testing.T) { assertDanglingLinkReferenceIsRejected(t, links, channels) })
+}
+
+// assertChannelLinkReferencesResolve holds every reference a channel row
+// makes to the link register to a row of that register. §28.3 states the
+// referential rule between the two: a channel's Link column names the
+// entry declaring the connection it is carried on, and reads `None` when
+// that connection is referred to by its own row alone. A row naming the
+// connection its calls are forwarded over states that link in its
+// message-vocabulary cell, which is a reference to the same register.
+//
+// Both populations are asserted non-empty, because a register whose rows
+// all read `None`, or whose rows all name a link, passes the resolution
+// walk while stating neither half of the rule.
+//
+// spec: §28.3
+func assertChannelLinkReferencesResolve(t *testing.T, links, channels registerTable) {
+	t.Helper()
+
+	for _, divergence := range unresolvedLinkReferences(links, channels) {
+		t.Error(divergence)
+	}
+
+	carried, standalone := 0, 0
+	for identifier := range channels.rows {
+		cell, err := channels.cell(identifier, "Link")
+		if err != nil {
+			t.Fatalf("read the Link cell of %s: %v", identifier, err)
+		}
+		if strings.Trim(cell, "`") == noLinkCell {
+			standalone++
+			continue
+		}
+		carried++
+	}
+	if carried == 0 {
+		t.Errorf("no channel row names a link entry, so the register states no carried channel")
+	}
+	if standalone == 0 {
+		t.Errorf("every channel row names a link entry, so the register states no channel whose connection its own row alone refers to")
+	}
+}
+
+// assertDanglingLinkReferenceIsRejected holds the resolution walk itself
+// to the rule, by feeding it a channel row whose Link cell and whose
+// message-vocabulary cell each name a connection the link register does
+// not declare. A walk that read the cell without resolving it against
+// the link register would accept both.
+//
+// spec: §28.3
+func assertDanglingLinkReferenceIsRejected(t *testing.T, links, channels registerTable) {
+	t.Helper()
+
+	const undeclared = "`LNK-GHOST`"
+	carried := carriedChannelIdentifier(t, channels)
+
+	mutated := channels.withCell(carried, "Link", undeclared)
+	if got := unresolvedLinkReferences(links, mutated); len(got) == 0 {
+		t.Errorf("the resolution walk accepts a Link cell of %s reading %s, which the link register does not declare",
+			carried, undeclared)
+	}
+
+	forwarded := channels.withCell(carried, "Message vocabulary", "Platform tool calls, forwarded over "+undeclared)
+	if got := unresolvedLinkReferences(links, forwarded); len(got) == 0 {
+		t.Errorf("the resolution walk accepts a message-vocabulary cell of %s forwarding over %s, which the link register does not declare",
+			carried, undeclared)
+	}
+}
+
+// carriedChannelIdentifier returns one channel the register states a link
+// entry for, so a reject case mutates a row whose cells the accept case
+// resolves.
+func carriedChannelIdentifier(t *testing.T, channels registerTable) string {
+	t.Helper()
+	identifiers := make([]string, 0, len(channels.rows))
+	for identifier := range channels.rows {
+		identifiers = append(identifiers, identifier)
+	}
+	sort.Strings(identifiers)
+	for _, identifier := range identifiers {
+		cell, err := channels.cell(identifier, "Link")
+		if err != nil {
+			t.Fatalf("read the Link cell of %s: %v", identifier, err)
+		}
+		if strings.Trim(cell, "`") != noLinkCell {
+			return identifier
+		}
+	}
+	t.Fatalf("the channel register names no link entry, so no row carries the reference the reject case mutates")
+	return ""
+}
+
+// unresolvedLinkReferences returns one report per reference a channel row
+// makes to a link the link register does not declare, in a stable order.
+// It is a separate function so a case can assert that a dangling
+// reference is reported without failing itself.
+//
+// spec: §28.3
+func unresolvedLinkReferences(links, channels registerTable) []string {
+	var out []string
+	for identifier := range channels.rows {
+		for _, column := range []string{"Link", "Message vocabulary"} {
+			cell, err := channels.cell(identifier, column)
+			if err != nil {
+				out = append(out, fmt.Sprintf("read the %s cell of %s: %v", column, identifier, err))
+				continue
+			}
+			if column == "Link" && strings.Trim(cell, "`") == noLinkCell {
+				continue
+			}
+			for _, token := range linkTokenExpr.FindAllString(cell, -1) {
+				if _, declared := links.rows[token]; !declared {
+					out = append(out, fmt.Sprintf("§28.3's %s cell of %s names %s, which the link register does not declare",
+						column, identifier, token))
+				}
+			}
+			if column == "Link" && len(linkTokenExpr.FindAllString(cell, -1)) == 0 {
+				out = append(out, fmt.Sprintf("§28.3's Link cell of %s is %q, which is neither %s nor a link identifier",
+					identifier, cell, noLinkCell))
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // assertReassignedWriterSetIsRejected holds the writer-set check itself to
