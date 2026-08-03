@@ -60,6 +60,35 @@ const (
 	interReplicaLink      = "LNK-INTERREPLICA"
 )
 
+// linkReferenceColumns are the two channel-register columns a channel row
+// refers to the link register from: the Link column names the connection
+// the channel is carried on, and the message-vocabulary column names the
+// connection a channel's calls are forwarded over.
+//
+// spec: §28.3
+var linkReferenceColumns = []string{"Link", "Message vocabulary"}
+
+// minimumReferringChannelRows is the threshold §28.3 sets for declaring a
+// link entry: the link register declares a connection more than one
+// channel row refers to, and a connection referred to by one row alone
+// reads `None` in that row instead, so it takes an entry at the point a
+// second channel row refers to it.
+//
+// spec: §28.3
+const minimumReferringChannelRows = 2
+
+// unreferencedLinkEntries are the link entries §28.3 declares that no
+// channel row refers to, each with the reason the section states for it.
+// The exemption is closed in both directions: an entry listed here that
+// gains a referring channel row is reported as stale, so the list cannot
+// outlive the gap it records.
+//
+// spec: §28.3
+var unreferencedLinkEntries = map[string]string{
+	interReplicaLink: "the specification states the connection and the cross-replica message routing it carries " +
+		"is not implemented, which §28.3 records as a claim-register row rather than as an absent transport",
+}
+
 // The sentences of §12.6, §4.6.3, and §7.2 the three derived cells are
 // read from, byte-exact. A specification edit that rewords one of them
 // fails the case that pins it, so the derivation is re-checked by hand
@@ -319,7 +348,10 @@ func readChannelsRegisters(t *testing.T) (links, channels, entries registerTable
 // the link-reference case means a channel row names a connection the
 // link register does not declare, which is a reference §28.3 states as
 // resolving and the declaration index reads as a declaration of its own
-// instead.
+// instead. A failure of the declaration-threshold case means the link
+// register declares a connection fewer than two channel rows refer to,
+// which §28.3 states must read `None` in the one row that refers to it,
+// or an entry listed as referred to by no channel row has gained one.
 //
 // spec: §28.3, §12.6, §4.6.3, §7.2
 func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
@@ -331,6 +363,8 @@ func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
 	t.Run("reassigned writer set", func(t *testing.T) { assertReassignedWriterSetIsRejected(t, entries) })
 	t.Run("link references resolve", func(t *testing.T) { assertChannelLinkReferencesResolve(t, links, channels) })
 	t.Run("dangling link reference", func(t *testing.T) { assertDanglingLinkReferenceIsRejected(t, links, channels) })
+	t.Run("link declaration threshold", func(t *testing.T) { assertLinkDeclarationThresholdHolds(t, links, channels) })
+	t.Run("single-reference link entry", func(t *testing.T) { assertSingleReferenceLinkEntryIsRejected(t, links, channels) })
 }
 
 // assertChannelLinkReferencesResolve holds every reference a channel row
@@ -454,6 +488,174 @@ func unresolvedLinkReferences(links, channels registerTable) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// referringChannelRows counts, per link identifier the link register
+// declares, the channel rows that refer to it. A row that names the same
+// link in both its Link cell and its message-vocabulary cell counts once,
+// because §28.3's threshold is stated over channel rows rather than over
+// references.
+//
+// spec: §28.3
+func referringChannelRows(links, channels registerTable) map[string]int {
+	counts := make(map[string]int, len(links.rows))
+	for identifier := range links.rows {
+		counts[identifier] = 0
+	}
+	for identifier := range channels.rows {
+		referred := map[string]bool{}
+		for _, column := range linkReferenceColumns {
+			cell, err := channels.cell(identifier, column)
+			if err != nil {
+				continue
+			}
+			for _, token := range linkTokenExpr.FindAllString(cell, -1) {
+				referred[token] = true
+			}
+		}
+		for token := range referred {
+			if _, declared := links.rows[token]; declared {
+				counts[token]++
+			}
+		}
+	}
+	return counts
+}
+
+// underDeclaredLinkEntries returns one report per link entry the register
+// declares that the declaration threshold does not admit, in a stable
+// order. An entry fewer than minimumReferringChannelRows channel rows
+// refer to is a connection §28.3 states must read `None` in the one row
+// that refers to it, and an entry listed as referred to by no channel row
+// that does gain one is a stale exemption. It is a separate function so a
+// case can assert that a mutated table is reported without failing itself.
+//
+// spec: §28.3
+func underDeclaredLinkEntries(links, channels registerTable) []string {
+	var out []string
+	for identifier, count := range referringChannelRows(links, channels) {
+		reason, exempt := unreferencedLinkEntries[identifier]
+		switch {
+		case exempt && count > 0:
+			out = append(out, fmt.Sprintf("§28.3 declares %s as referred to by no channel row because %s, and %d channel row(s) refer to it",
+				identifier, reason, count))
+		case exempt:
+		case count < minimumReferringChannelRows:
+			out = append(out, fmt.Sprintf("§28.3's link register declares %s, which %d channel row(s) refer to; the register declares a connection more than one channel row refers to",
+				identifier, count))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// assertLinkDeclarationThresholdHolds holds the link register to the
+// declaration threshold §28.3 states, which is the half of the referential
+// rule the resolution walk does not reach. The walk reports a channel row
+// naming a link the register does not declare; this reports the other
+// direction, a link entry the register declares that fewer than two
+// channel rows refer to, which §28.3 states must read `None` in the one
+// row that refers to it instead. The exemption for an entry no channel row
+// refers to is closed, so an exempt entry that gains a referring row is
+// reported too.
+//
+// spec: §28.3
+func assertLinkDeclarationThresholdHolds(t *testing.T, links, channels registerTable) {
+	t.Helper()
+	for _, divergence := range underDeclaredLinkEntries(links, channels) {
+		t.Error(divergence)
+	}
+}
+
+// assertSingleReferenceLinkEntryIsRejected holds the threshold check
+// itself to the rule, by dropping one of the two references a declared
+// link carries. Every remaining reference still resolves and both
+// populations of the Link column stay non-empty, so the resolution walk
+// and the non-emptiness assertions accept the mutated table; only the
+// threshold reports it. The exempt entry gaining a referring row is
+// rejected the same way, so the exemption cannot outlive its reason.
+//
+// spec: §28.3
+func assertSingleReferenceLinkEntryIsRejected(t *testing.T, links, channels registerTable) {
+	t.Helper()
+
+	link, first, second := twiceReferredLink(t, links, channels)
+	mutated := channels.withCell(second, "Message vocabulary", "Connector tool calls")
+	if got := unresolvedLinkReferences(links, mutated); len(got) != 0 {
+		t.Fatalf("dropping the reference of %s to %s left an unresolved reference: %v", second, link, got)
+	}
+	if !reportsEntry(underDeclaredLinkEntries(links, mutated), link) {
+		t.Errorf("the threshold accepts %s declared while only %s refers to it", link, first)
+	}
+
+	exempted := channels.withCell(first, "Link", "`"+interReplicaLink+"`")
+	if !reportsEntry(underDeclaredLinkEntries(links, exempted), interReplicaLink) {
+		t.Errorf("the threshold accepts %s listed as referred to by no channel row while %s refers to it",
+			interReplicaLink, first)
+	}
+}
+
+// reportsEntry reports whether any report names the given identifier.
+func reportsEntry(reports []string, identifier string) bool {
+	for _, report := range reports {
+		if strings.Contains(report, identifier) {
+			return true
+		}
+	}
+	return false
+}
+
+// twiceReferredLink returns a link entry two channel rows refer to,
+// together with those two rows in a stable order, so a reject case drops a
+// reference the landed table carries rather than one it invents.
+func twiceReferredLink(t *testing.T, links, channels registerTable) (link, first, second string) {
+	t.Helper()
+
+	identifiers := make([]string, 0, len(links.rows))
+	for identifier := range links.rows {
+		identifiers = append(identifiers, identifier)
+	}
+	sort.Strings(identifiers)
+
+	for _, identifier := range identifiers {
+		referring := referringChannelRowsFor(channels, identifier)
+		if len(referring) == minimumReferringChannelRows {
+			return identifier, referring[0], referring[1]
+		}
+	}
+	t.Fatalf("no link entry is referred to by exactly %d channel rows, so no reject case can drop one reference",
+		minimumReferringChannelRows)
+	return "", "", ""
+}
+
+// referringChannelRowsFor returns the channel rows referring to one link
+// entry, sorted.
+func referringChannelRowsFor(channels registerTable, link string) []string {
+	var out []string
+	for identifier := range channels.rows {
+		for _, column := range linkReferenceColumns {
+			cell, err := channels.cell(identifier, column)
+			if err != nil {
+				continue
+			}
+			if containsToken(linkTokenExpr.FindAllString(cell, -1), link) {
+				out = append(out, identifier)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// containsToken reports whether tokens carries want.
+func containsToken(tokens []string, want string) bool {
+	for _, token := range tokens {
+		if token == want {
+			return true
+		}
+	}
+	return false
 }
 
 // assertReassignedWriterSetIsRejected holds the writer-set check itself to
