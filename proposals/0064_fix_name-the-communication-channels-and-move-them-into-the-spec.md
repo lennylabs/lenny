@@ -188,8 +188,9 @@ stale.
 
 ### 3.1 What lands
 
-This proposal lands two new specification files, one naming law, three registers, and the tooling that
-migrates every reference to them.
+This proposal lands one new specification file, `spec/29_communication-scenarios.md`, appends to
+`spec/28_communication-channels.md`, which proposal 0067 created carrying the naming law and the three
+registers, and lands the tooling that migrates every reference to them.
 
 `spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
 three registers, the contract cards grouped by participant edge, the exclusivity model, the wire-contract
@@ -2699,8 +2700,9 @@ headings, `## 29`, each `### N.M` subsection of `spec/29`, and the §4.4.1 throu
 through §4.7.11 headings this sub-step inserts into `spec/04`. The `spec/28` and `spec/29` headings are
 named in §4.8; the §4.4 and §4.7 titles are authored inside this sub-step from the paragraph subjects that
 survive the reduction, so their keys are written against the titles the insertion produces. The §28.1 through
-§28.4 headings are not among them, because SPEC-1 created them together with their sections and wrote their
-key or their exceptions entry there, so this sub-step neither writes nor retires coverage for them.
+§28.4 headings are not among them, because proposal 0067 created them together with their sections and
+SPEC-1 wrote their key or their exceptions entry there, so this sub-step neither writes nor retires
+coverage for them.
 Without this the walker is red at the exit of the
 sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
 existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193
