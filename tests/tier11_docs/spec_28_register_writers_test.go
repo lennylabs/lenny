@@ -18,7 +18,6 @@ package tier11_docs_test
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,52 +62,6 @@ const (
 		"replica forwards the message to the session's coordinator (identified via the coordination lease in " +
 		"Redis/Postgres)."
 )
-
-// specSectionOutsideFences reads path and returns the text of the
-// section whose heading contains headingSub, ending it at the next
-// heading of the same or a shallower level that stands outside a fenced
-// block. The shared specSection helper reads a fenced line opening with
-// a hash as a heading, so a section carrying a YAML example whose
-// comments open with a hash ends at that comment. §7.2 carries such an
-// example ahead of the sentences this check pins, so it is read through
-// this reader; §12.6 and §4.6.3 are read through specSection.
-//
-// spec: §7.2
-func specSectionOutsideFences(t *testing.T, path, headingSub string) string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	lines := strings.Split(string(body), "\n")
-	start, startLevel, inFence := -1, 0, false
-	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		m := atxHeading.FindStringSubmatch(line)
-		if m == nil {
-			continue
-		}
-		if start < 0 {
-			if strings.Contains(line, headingSub) {
-				start, startLevel = i, len(m[1])
-			}
-			continue
-		}
-		if len(m[1]) <= startLevel {
-			return strings.Join(lines[start:i], "\n")
-		}
-	}
-	if start < 0 {
-		t.Fatalf("%s: section heading %q not found (renamed or removed?)", filepath.Base(path), headingSub)
-	}
-	return strings.Join(lines[start:], "\n")
-}
 
 // registerTable is one table of §28.3, indexed by its header labels and
 // keyed by the identifier its first column carries. Reading a cell
@@ -321,7 +274,7 @@ func assertInterReplicaLinkMatchesSessionLifecycle(t *testing.T, links registerT
 	requireCellContains(t, links, interReplicaLink, "Dial direction", []string{"Forwarding replica"})
 	requireCellContains(t, links, interReplicaLink, "Lifetime", []string{"coordinating replica"})
 
-	sessions := specSectionOutsideFences(t, filepath.Join(repoRoot(t), "spec", "07_session-lifecycle.md"), "### 7.2 ")
+	sessions := specSection(t, filepath.Join(repoRoot(t), "spec", "07_session-lifecycle.md"), "### 7.2 ")
 	requireAllContain(t, "§7.2 cross-replica message routing", sessions, []string{
 		forwardMessageTransportSentence,
 		forwardingReplicaSentence,
