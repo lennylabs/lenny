@@ -188,12 +188,13 @@ stale.
 
 ### 3.1 What lands
 
-This proposal lands two new specification files, one naming law, three registers, and the tooling that
-migrates every reference to them.
+This proposal lands one new specification file, the subsections that complete the specification file
+proposal 0067 landed, and the tooling that migrates every reference to the names those two files fix.
 
-`spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
-three registers, the contract cards grouped by participant edge, the exclusivity model, the wire-contract
-artifact register, and the failure and degradation matrix. Grouping the cards by edge is what makes the
+`spec/28_communication-channels.md` is the normative home. Proposal 0067 landed it carrying the naming
+law and taxonomy, the three registers, and the claim register, and this proposal appends the contract
+cards grouped by participant edge, the exclusivity model, the wire-contract artifact register, and the
+failure and degradation matrix. Grouping the cards by edge is what makes the
 unbuilt adapter-to-gateway direction a visible block rather than two rows lost in a twenty-two row table.
 The artifact register is also what supersedes the `schemas/README.md` artifact table, which stands for the
 same set and names a strict subset of it. The `spec/24` compliance-suite sentence is corrected in place
@@ -1950,8 +1951,8 @@ runtime-operations frames §15.4.3 and §15.4.6 state as runtime obligations.
 
 Two gates land in this sub-step under §3.5, because this is the sub-step that supplies each one's route to
 green. The §28.8 matrix completeness check is a tier-0 gate, and it lands here because §28.8 is written
-here while the §28.3 register its bijection reads already exists from SPEC-1, so the bijection first holds
-at this sub-step's exit. The artifact-register supersession check is a tier-11 gate, and it lands here
+here while the §28.3 register its bijection reads is already in the tree, landed by proposal 0067 before
+any sub-step of this proposal runs, so the bijection first holds at this sub-step's exit. The artifact-register supersession check is a tier-11 gate, and it lands here
 because the enumeration it forbids, the `schemas/README.md` table, is replaced here. Its read domain is stated rather than left to the implementation: the tracked markdown under
 `spec/`, `docs/`, and `schemas/`, together with the tracked root-level markdown documents N3 leaves in
 scope, which is the markdown subset of the walk the naming lint reads. The predicate states the exemption
@@ -2701,8 +2702,10 @@ headings, `## 29`, each `### N.M` subsection of `spec/29`, and the §4.4.1 throu
 through §4.7.11 headings this sub-step inserts into `spec/04`. The `spec/28` and `spec/29` headings are
 named in §4.8; the §4.4 and §4.7 titles are authored inside this sub-step from the paragraph subjects that
 survive the reduction, so their keys are written against the titles the insertion produces. The §28.1 through
-§28.4 headings are not among them, because SPEC-1 created them together with their sections and wrote their
-key or their exceptions entry there, so this sub-step neither writes nor retires coverage for them.
+§28.4 headings are not among them. Proposal 0067 landed those headings together with their sections, and
+SPEC-1 writes their `tests/spec-map.json` key or their `tests/spec-map-exceptions.yaml` entry, which is
+the obligation its Target carries for those two files, so this sub-step neither writes nor retires
+coverage for them.
 Without this the walker is red at the exit of the
 sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
 existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193

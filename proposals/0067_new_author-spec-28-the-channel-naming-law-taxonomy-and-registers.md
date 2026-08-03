@@ -608,9 +608,10 @@ create a file that already exists and to author headings that are already there.
 spellings the naming table records and has no `spec/28` target to write them into, which is the gap that
 would otherwise force a different proposal to mint two normative identifiers.
 
-**Change (staged description).** Ten sentence-level edits, each leaving the rest of the sub-step intact.
-Items 1 through 3, 6, and 7 reach SPEC-1's Target list and Change text, items 4 and 5 reach SPEC-2's, and
-items 8 through 10 reach the three sentences outside the two sub-steps that state SPEC-1 creates the file.
+**Change (staged description).** Thirteen sentence-level edits, each leaving the rest of the sub-step
+intact. Items 1 through 3, 6, and 7 reach SPEC-1's Target list and Change text, items 4 and 5 reach
+SPEC-2's, and items 8 through 13 reach the sentences outside the two sub-steps that credit SPEC-1 with
+creating the file, its four headings, or its register.
 
 1. In SPEC-1's Target list (lines 1126 through 1128), replace
    `` `spec/28_communication-channels.md` §28.1 through §28.4 (new)`` with
@@ -665,6 +666,26 @@ items 8 through 10 reach the three sentences outside the two sub-steps that stat
     "`spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new." with a
     bullet stating that `spec/29_communication-scenarios.md` is new and that
     `spec/28_communication-channels.md` exists, created by proposal 0067, and is appended to by SPEC-3.
+
+11. In §3.1's opening paragraph, replace the sentence "This proposal lands two new specification files,
+    one naming law, three registers, and the tooling that migrates every reference to them." and the
+    clause of the paragraph below it that states what `spec/28_communication-channels.md` carries, with
+    text stating that proposal 0064 lands one new specification file together with the subsections that
+    complete the file proposal 0067 landed, and that proposal 0067 landed the naming law, the taxonomy,
+    the three registers, and the claim register while proposal 0064 appends the contract cards, the
+    exclusivity model, the artifact register, and the failure and degradation matrix.
+12. In SPEC-3's landing argument for the §28.8 matrix completeness gate, replace the clause stating that
+    the §28.3 register the gate's bijection reads "already exists from SPEC-1" with one stating that the
+    register is already in the tree, landed by proposal 0067 before any sub-step of proposal 0064 runs.
+    The timing argument the clause carries, that the bijection first holds at the sub-step's exit, is
+    unchanged.
+13. In SPEC-3's heading-coverage paragraph, replace the sentence stating that the §28.1 through §28.4
+    headings are outside its obligation "because SPEC-1 created them together with their sections and
+    wrote their key or their exceptions entry there" with one stating that proposal 0067 landed those
+    headings together with their sections and that SPEC-1 writes their `tests/spec-map.json` key or their
+    `tests/spec-map-exceptions.yaml` entry, which is the obligation SPEC-1's Target already carries for
+    those two files. The obligation half survives item 3, so it stays with the sub-step that runs the name
+    pass.
 
 No other sub-step instruction in proposal 0064 changes. Its status line and its remaining sub-steps are
 untouched. Its §1 scope paragraph describes the two-proposal change at the level of the whole document, and
@@ -800,6 +821,16 @@ a `// diagnosis:` comment, in the form the surrounding files use.
    fails the case rather than shipping with no pass and no gate entering it. The tooling implements the
    migration's operational model rather than a specification behavior, so the case carries no `// spec:`
    annotation, in the form `scripts/specshift/run_test.go` uses.
+
+9. **No clause of proposal 0064 credits one of its own sub-steps with creating the section, its §28.1
+   through §28.4 headings, or its §28.3 register** (tier 11), in
+   `tests/tier11_docs/spec_28_ownership_test.go` as `TestSection28OwnershipSitsInOneProposal_spec_28`. The
+   case reads the sub-step names out of that document rather than restating them, sweeps its sentences
+   outside the status block, the scope paragraph, and the convergence record, and reports a sentence
+   carrying a subject of that proposal, a creation verb, and one of the three objects the transfer moved.
+   A negated verb is read out, because a clause stating that a sub-step writes none of that content states
+   the opposite of an attribution. `// diagnosis:` states that a failure means two proposal documents state
+   that they create one specification file. `// spec: §28, §28.3`.
 
 Coverage: the change adds no Go lines, so the new-code coverage floor applies to the test files alone.
 Run `lenny-test --changed --max-tier 11` before declaring the change done, and
@@ -982,15 +1013,17 @@ stated alternative before the first round.
   stages them.
 - `spec/README.md`, for the §28 index row and the four subsection rows appended after the `27.10
   Roll-forward notes` row, exactly as SPEC-2 stages them.
-- `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, for the ten
+- `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, for the thirteen
   sentence-level edits AMEND-1 states: five in SPEC-1's Target and Change text, which change its `spec/28`
   and `spec/README.md` obligations from authoring to confirmation and drop the stale index position claim,
   two in SPEC-2's Target and Change text, which give it the `spec/28` target and the obligation to write
-  the naming-table rows for the spellings it fixes, and three in §3.5, §4.8, and §11, which are the
-  remaining sentences stating that SPEC-1 creates the file.
+  the naming-table rows for the spellings it fixes, and six in §3.1, §3.5, §4.8, §11, and SPEC-3's two
+  landing arguments, which are the remaining sentences crediting SPEC-1 with creating the file, its four
+  headings, or its register.
 - `scripts/specshift/identifier/table_test.go` and `scripts/specshift/name/declare_test.go`, for the tier-1
   cases §8 items 1 and 2 state, added to the existing files.
 - `tests/tier11_docs/spec_28_taxonomy_test.go`, new, for the tier-11 case §8 item 7 states.
+- `tests/tier11_docs/spec_28_ownership_test.go`, new, for the tier-11 case §8 item 9 states.
 - `scripts/specshift/reserved_phrase_domain_test.go`, new, for the tier-1 half of §8 item 4: the records
   the naming law places outside the prohibition are outside the reserved-phrase class's read domain, and
   an ordinary carrier of each form it places inside stays in it.
