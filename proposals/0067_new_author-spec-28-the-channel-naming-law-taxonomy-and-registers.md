@@ -1,6 +1,6 @@
 # Proposal: Author `spec/28` §28.1 through §28.4, the channel naming law, taxonomy, registers, and claim register, as a specification-only landing
 
-- **Status:** **Approved (2026-08-03) by jaf sign-off.** Verified (2026-08-03), converged after 7
+- **Status:** **Applied to spec (2026-08-03).** Approved (2026-08-03) by jaf sign-off. Verified (2026-08-03), converged after 7
   adversarial review rounds (16 findings fixed) across one full-pool sweep, the certifying sweep running
   every lens complete with zero confirmed findings.
 - **Prerequisites:** none. This proposal creates a specification file and its index rows, amends the
