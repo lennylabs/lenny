@@ -31,6 +31,15 @@ const embeddedSpelling = "sample-token"
 // token boundaries, so the site walk reads one occurrence of it.
 const boundedSpelling = "stray-token"
 
+// proseSiteFixture is a tree whose communication-channels section names
+// a channel by its retired spelling in the prose of §28.2, outside the
+// naming-table row that retires it.
+const proseSiteFixture = "testdata/prosesite"
+
+// proseSiteLine is the line of that fixture the prose occurrence stands
+// on.
+const proseSiteLine = 5
+
 // TestLoadTableReadsTheLandedNamingTable_spec_28_3 reads the naming
 // table out of the tracked tree and out of a tree that states no such
 // table.
@@ -125,6 +134,62 @@ func TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3(t *testing.T) {
 	}
 }
 
+// TestRetiredSpellingsStandOnlyInTheRowsThatRetireThem_spec_28_3 pins
+// the one exemption the pass grants inside the communication-channels
+// section: a retired spelling standing in the row that retires it is the
+// declaration of that spelling, and an occurrence anywhere else in the
+// section is a site.
+//
+// The accept case reads the tracked tree, where every occurrence stands
+// in a row. The reject case reads a section whose prose names a channel
+// by its retired spelling, which is the state that leaves the pass with
+// a site its sense register carries no entry for and aborts the run
+// before any write.
+//
+// spec: §28.3
+func TestRetiredSpellingsStandOnlyInTheRowsThatRetireThem_spec_28_3(t *testing.T) {
+	const channelSection = "spec/28_communication-channels.md"
+
+	t.Run("the tracked section carries every spelling in a row", func(t *testing.T) {
+		ctx := context.Background()
+		root, err := scope.RepoRoot(ctx, ".")
+		if err != nil {
+			t.Fatalf("locate the repository root: %v", err)
+		}
+		read := scope.DirReader(root)
+		table, err := LoadTable(ctx, scope.GitLister(root), read)
+		if err != nil {
+			t.Fatalf("read the naming table out of the tracked tree: %v", err)
+		}
+		content, err := read(channelSection)
+		if err != nil {
+			t.Fatalf("read %s: %v", channelSection, err)
+		}
+		for _, line := range table.SitesOutsideNamingRows(channelSection, string(content)) {
+			t.Errorf("%s:%d carries a retired spelling outside the row that retires it, which is a site with no sense-register entry",
+				channelSection, line)
+		}
+	})
+
+	t.Run("a spelling in the section's prose is a site", func(t *testing.T) {
+		ctx := context.Background()
+		read := scope.DirReader(proseSiteFixture)
+		table, err := LoadTable(ctx, scope.DirLister(proseSiteFixture), read)
+		if err != nil {
+			t.Fatalf("read the naming table out of the specimen tree: %v", err)
+		}
+		content, err := read(channelSection)
+		if err != nil {
+			t.Fatalf("read the specimen section: %v", err)
+		}
+		got := table.SitesOutsideNamingRows(channelSection, string(content))
+		if len(got) != 1 || got[0] != proseSiteLine {
+			t.Errorf("sites outside a naming-table row = %v, want [%d], the prose line naming the channel by its retired spelling",
+				got, proseSiteLine)
+		}
+	})
+}
+
 // retiredSpellingsInWriteDomain counts, per retired spelling of the
 // table, the sites the pass reads outside the specification file the
 // table is stated in. Counting is by the pass's own site walk rather
@@ -133,10 +198,13 @@ func TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3(t *testing.T) {
 // is no site, and a check reading it as one would pass a row the
 // substitution never reaches.
 //
-// The specification file the table is stated in is excluded because
-// every retired spelling stands in the row that retires it by
-// construction, so counting that row would satisfy the reachability
-// check for a spelling nothing else in the tree writes.
+// The naming-table rows are excluded because every retired spelling
+// stands in the row that retires it by construction, so counting that
+// row would satisfy the reachability check for a spelling nothing else
+// in the tree writes. The exclusion is the row rather than the whole
+// specification file: an occurrence standing in the section's prose is a
+// site the pass acts on like any other, and a file-wide skip counts it
+// in neither direction.
 func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read scope.FileReader, table *Table) (map[string]int, error) {
 	domain, err := scope.WriteDomain(ctx, list, scope.Identifier, read)
 	if err != nil {
@@ -145,14 +213,14 @@ func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read 
 	retired := table.Retired()
 	counts := map[string]int{}
 	for _, target := range domain {
-		if strings.HasPrefix(target, channelSectionPrefix) {
-			continue
-		}
 		data, err := read(target)
 		if err != nil {
 			return nil, err
 		}
 		for _, s := range findSites(string(data), retired) {
+			if table.mentioned(target, s.start) {
+				continue
+			}
 			counts[s.retired]++
 		}
 	}

@@ -1,15 +1,18 @@
 // SPDX-License-Identifier: MIT
 
 // Tier-11 documentation check holding the communication-channels
-// section to the reserved-word prohibition the section itself states,
-// and holding the domain that prohibition states to the predicate the
-// name pass and the naming lint share. These tests are NOT under a
+// section to the reserved-word prohibition the section itself states, to
+// the naming table's rule that a retired channel spelling stands only in
+// the row that retires it, and holding the domain the prohibition states
+// to the predicate the name pass and the naming lint share. These tests
+// are NOT under a
 // build tag because they exercise the repository state directly — no
 // external infrastructure required.
 
 package tier11_docs_test
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -18,6 +21,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/scripts/specshift/identifier"
 	"github.com/lennylabs/lenny/scripts/specshift/name"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
@@ -132,7 +136,11 @@ func n3DomainTrees(section string) ([]string, error) {
 // the position of each site within the file. A failure of the domain
 // case means §28.1's statement of the domain and
 // scope.ReservedPhraseCarrier, the predicate the name pass and the
-// naming lint share, no longer describe the same set of carriers.
+// naming lint share, no longer describe the same set of carriers. A
+// failure of the retired-spelling case means the section names a channel
+// by a spelling its own naming table retires, outside the row that
+// retires it, which is a site the identifier pass finds no sense-register
+// entry for and aborts the run on.
 //
 // spec: §28.1
 func TestSection28StatesN3WithoutViolatingIt_spec_28_1(t *testing.T) {
@@ -145,6 +153,53 @@ func TestSection28StatesN3WithoutViolatingIt_spec_28_1(t *testing.T) {
 	})
 	t.Run("naming-table row is no exemption", func(t *testing.T) { assertNamingTableRowIsNoExemption(t) })
 	t.Run("stated domain", func(t *testing.T) { assertN3DomainMatchesTheSharedPredicate(t) })
+	t.Run("retired spellings stand in their rows", func(t *testing.T) {
+		assertRetiredSpellingsStandInTheirNamingTableRows(t)
+	})
+}
+
+// assertRetiredSpellingsStandInTheirNamingTableRows holds the landed
+// section to the other half of the rule the section's own naming table
+// states: a retired channel spelling standing in the row that retires it
+// is the declaration of that spelling, and an occurrence anywhere else
+// in the section is a reference to the channel.
+//
+// The identifier pass exempts the row and exempts nothing else, and its
+// sense register is keyed by file and by the position of each site
+// within that file, so an occurrence written into the section's prose is
+// a site with no register entry and aborts the pass that later walks the
+// file. The walk and the exemption are the pass's own, so neither the
+// spellings nor the exemption is restated here.
+//
+// The reject case plants one of the table's own spellings past the end
+// of the landed section, which leaves the row spans the table carries
+// for the file unmoved, and asserts it is reported. Without it the
+// accept case passes over a section the walk stopped reading.
+//
+// spec: §28.1, §28.3
+func assertRetiredSpellingsStandInTheirNamingTableRows(t *testing.T) {
+	t.Helper()
+	ctx := context.Background()
+	root := repoRoot(t)
+	table, err := identifier.LoadTable(ctx, scope.GitLister(root), scope.DirReader(root))
+	if err != nil {
+		t.Fatalf("read the naming table out of the tracked tree: %v", err)
+	}
+	target := "spec/" + channelsSpecFile
+	section := readChannelsSection(t)
+
+	for _, line := range table.SitesOutsideNamingRows(target, section) {
+		t.Errorf("%s:%d names a channel by a retired spelling outside the row that retires it", channelsSpecFile, line)
+	}
+
+	retired := table.Retired()
+	if len(retired) == 0 {
+		t.Fatalf("the naming table retires no spelling, so the reject case plants none")
+	}
+	planted := section + "\nThe gateway opens the " + retired[0] + " stream to the adapter.\n"
+	if got := table.SitesOutsideNamingRows(target, planted); len(got) != 1 {
+		t.Errorf("a retired spelling planted in the section's prose reported %v, want one site", got)
+	}
 }
 
 // assertSection28CarriesNoReservedPhrase holds the landed section to the
