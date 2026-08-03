@@ -24,13 +24,19 @@ const (
 // of its own packages resolves to the directory that package sits in.
 const modulePath = "github.com/lennylabs/lenny/"
 
-// The three forms a guard names a file it reads in: a specification path
+// The forms a guard names a file it reads in: a specification path
 // written whole, a specification file named by its numbered stem and
-// joined to the spec directory at the call site, and an import of a
-// package of the migration tooling.
+// joined to the spec directory at the call site, a proposal document
+// written whole, and an import of a package of the migration tooling.
+//
+// A guard over a proposal document holds the record of who creates a
+// specification file to one document, so the document it reads is a
+// source of the guard on the same terms as the section text is, and it
+// has to select the docs tier the same way.
 var (
 	specPathExpr      = regexp.MustCompile(`spec/[A-Za-z0-9_.-]+\.md`)
 	specFileStemExpr  = regexp.MustCompile(`"(\d{2}_[a-z0-9-]+\.md)"`)
+	proposalPathExpr  = regexp.MustCompile(`proposals/[A-Za-z0-9_.-]+\.md`)
 	toolingImportExpr = regexp.MustCompile(`"` + regexp.QuoteMeta(modulePath) + `(scripts/[A-Za-z0-9_/-]+)"`)
 )
 
@@ -71,11 +77,55 @@ func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
 	if !containsString(paths, "spec/28_communication-channels.md") {
 		t.Fatalf("the guards under %s resolve to %v, which omits the section they hold", channelGuardDir, paths)
 	}
+	// A guard holds the record of who creates that section to one
+	// proposal document, so a proposal path is the second population the
+	// derivation reads. Its absence means the derivation reads the spec
+	// paths alone and the routing assertion below passes vacuously over
+	// every document a guard reads outside spec/.
+	if !containsPrefixed(paths, "proposals/") {
+		t.Fatalf("the guards under %s resolve to %v, which names no proposal document; the derivation reads no such path, so its routing is unasserted", channelGuardDir, paths)
+	}
 	for _, path := range paths {
 		tiers := tiersForChangedPathIn(doc.Globs, path)
 		if !containsString(tiers, "docs") {
 			t.Errorf("a change to %s selects %v, which omits the docs tier that guards it", path, tiers)
 		}
+	}
+}
+
+// TestAGuardSourceOutsideTheDocsTargetsIsReported pins the two halves
+// the routing assertion rests on, over a synthetic guard rather than
+// over the landed tree: the derivation reads the file a guard names in
+// whichever tree it sits, and a path whose change-graph key carries no
+// docs target resolves to a tier set without the docs tier.
+//
+// Without this case the derivation can shrink back to the spec paths
+// alone and the assertion over the landed guards keeps passing, because
+// a path it never derives is a path it never resolves.
+//
+// spec: 28.1 (channel naming law), 28.3 (channel registers)
+func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
+	dir := t.TempDir()
+	guard := "package tier11_docs_test\n\n" +
+		"const held = \"proposals/9999_fix_a-document-a-guard-reads.md\"\n"
+	if err := os.WriteFile(filepath.Join(dir, channelGuardPrefix+"synthetic_test.go"), []byte(guard), 0o600); err != nil {
+		t.Fatalf("write the synthetic guard: %v", err)
+	}
+
+	paths, err := channelGuardSources(dir)
+	if err != nil {
+		t.Fatalf("read the sources of the synthetic guard: %v", err)
+	}
+	const held = "proposals/9999_fix_a-document-a-guard-reads.md"
+	if !containsString(paths, held) {
+		t.Fatalf("the synthetic guard resolves to %v, which omits the document it reads", paths)
+	}
+
+	globs := map[string]map[string][]string{
+		"spec/": {"docs": []string{"tests/tier11_docs/..."}},
+	}
+	if tiers := tiersForChangedPathIn(globs, held); containsString(tiers, "docs") {
+		t.Errorf("a change to %s selects %v under a graph with no key covering it, so an uncovered guard source reads as routed", held, tiers)
 	}
 }
 
@@ -102,6 +152,9 @@ func channelGuardSources(dir string) ([]string, error) {
 		for _, m := range specFileStemExpr.FindAllStringSubmatch(text, -1) {
 			found["spec/"+m[1]] = true
 		}
+		for _, m := range proposalPathExpr.FindAllString(text, -1) {
+			found[m] = true
+		}
 		for _, m := range toolingImportExpr.FindAllStringSubmatch(text, -1) {
 			found[m[1]] = true
 		}
@@ -112,6 +165,16 @@ func channelGuardSources(dir string) ([]string, error) {
 	}
 	sort.Strings(paths)
 	return paths, nil
+}
+
+// containsPrefixed reports whether list carries a path under prefix.
+func containsPrefixed(list []string, prefix string) bool {
+	for _, s := range list {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // containsString reports whether want is in list.

@@ -1036,8 +1036,11 @@ stated alternative before the first round.
   check excludes `_test.go` (line 398), so none of the five test files needs a `tests/change-graph.json`
   entry.
 - `tests/change-graph.json`, for the `docs` target on the `spec/` key and on the `scripts/specshift` key,
-  which is what makes an edit to a file a tier-11 guard reads select the docs tier under `--changed`, per
-  decision 5. No key gains an entry for a file this change stages.
+  and for a `proposals/` key whose `docs` target is `tests/tier11_docs/...`, which is what makes an edit to
+  a file a tier-11 guard reads select the docs tier under `--changed`, per decision 5. The proposal key
+  covers the document the ownership guard of §8 item 9 reads, so that guard runs on the one edit class that
+  can put two documents back in charge of creating `spec/28`. No key gains an entry for a file this change
+  stages.
 - `cmd/lenny-test/cmd_run_resolve_docs_test.go`, new, and `cmd/lenny-test/cmd_validate_test.go`, for the
   tier-1 cases over that routing: the first derives the files the tier-11 guards read from the guards
   themselves and asserts each selects the docs tier, and the second states the tiers each migration-tooling

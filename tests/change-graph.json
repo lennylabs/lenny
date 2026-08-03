@@ -553,6 +553,9 @@
       "static": ["tests/tier0_static/spec_link_check_test.go"],
       "docs": ["tests/tier11_docs/..."]
     },
+    "proposals/": {
+      "docs": ["tests/tier11_docs/..."]
+    },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
       "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."]
