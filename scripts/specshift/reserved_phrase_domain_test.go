@@ -77,3 +77,49 @@ func TestReservedPhraseClassDomainExcludesEveryRecordTheNamingLawNames(t *testin
 		}
 	}
 }
+
+// TestReservedPhraseCarrierBoundsMarkdownToTheNamedTreesAndTheRoot pins
+// the trees half of the domain, which the naming law states as the three
+// trees it names, a tracked Go file, and a tracked root-level markdown
+// document.
+//
+// A markdown document below the root and outside those trees is the one
+// class the root-level clause bounds, and it is the class no
+// extension-based case reaches: a chart values file, a Python source,
+// and a register are all rejected by their extension, so the predicate
+// could widen to every tracked markdown document anywhere in the tree
+// with each of them still answered false. The class read domain is
+// composed on top of this predicate and admits such a document, so the
+// trees half is stated here and nowhere else, and widening it would put
+// the pass and the naming lint over carriers the law does not govern
+// while the composed domain reported nothing.
+//
+// This is migration tooling rather than a platform behavior, so the case
+// carries no spec-section annotation.
+func TestReservedPhraseCarrierBoundsMarkdownToTheNamedTreesAndTheRoot(t *testing.T) {
+	t.Parallel()
+
+	for _, carrier := range []string{
+		"spec/28_communication-channels.md",
+		"docs/guides/authoring.md",
+		"schemas/README.md",
+		"README.md",
+		"TESTING.md",
+		"pkg/gateway/session.go",
+	} {
+		if !scope.ReservedPhraseCarrier(carrier) {
+			t.Errorf("the carrier predicate rejects %s, which the naming law places inside the prohibition's domain", carrier)
+		}
+	}
+
+	for _, outside := range []string{
+		"charts/lenny/README.md",
+		"tests/tier11_docs/notes.md",
+		"sdks/python/README.md",
+		"charts/lenny/values.yaml",
+	} {
+		if scope.ReservedPhraseCarrier(outside) {
+			t.Errorf("the carrier predicate admits %s, which the naming law leaves outside the prohibition's domain", outside)
+		}
+	}
+}

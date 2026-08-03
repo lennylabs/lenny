@@ -311,10 +311,19 @@ func assertN3DomainMatchesTheSharedPredicate(t *testing.T) {
 		}
 	}
 
+	// The rejects cover both halves of the domain sentence. A path whose
+	// extension places it outside answers the extensions half, and a
+	// markdown document standing under a tree N3 does not name answers the
+	// trees half: N3 carries markdown at the repository root and under the
+	// three trees it names, so a predicate that admitted every tracked
+	// markdown document anywhere would state a wider domain than the
+	// section while every extension case stayed green.
 	for _, outside := range []string{
 		"charts/lenny/values.yaml",
 		"sdks/python/lenny/agent.py",
 		"tests/registers/pinned-spec-literals.yaml",
+		"charts/lenny/README.md",
+		"tests/tier11_docs/notes.md",
 	} {
 		if scope.ReservedPhraseCarrier(outside) {
 			t.Errorf("the predicate admits %s, which N3 leaves outside the domain", outside)
