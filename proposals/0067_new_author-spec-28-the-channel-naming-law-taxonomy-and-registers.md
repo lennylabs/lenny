@@ -591,9 +591,10 @@ proposal does not author.
 
 **Target:** `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`: SPEC-1's
 Target list and Change text, SPEC-2's Target list and Change text, the §3.5 build-order bullet at line 316,
-the §4.8 lead-in at line 1036, and the §11 files-touched bullet at line 6089. The last three sit outside
-SPEC-1's and SPEC-2's text and each states that SPEC-1 creates the file, so a Target confined to the two
-sub-steps would leave the double ownership standing in three places.
+the §4.8 lead-in at line 1036, the §11 files-touched bullet at line 6089, and the heading-walker carve-out
+in SPEC-3's Change text at lines 2703 through 2705. The last four sit outside SPEC-1's and SPEC-2's text
+and each credits SPEC-1 with creating the file or authoring its four subsections, so a Target confined to
+the two sub-steps would leave the double ownership standing in four places.
 
 **Rationale:** 0064 SPEC-1 states that it creates the file this proposal creates and that it writes the
 four subsections this proposal writes. Left standing, an approved sub-step instructs an apply agent to
@@ -601,9 +602,11 @@ create a file that already exists and to author headings that are already there.
 spellings the naming table records and has no `spec/28` target to write them into, which is the gap that
 would otherwise force a different proposal to mint two normative identifiers.
 
-**Change (staged description).** Ten sentence-level edits, each leaving the rest of the sub-step intact.
-Items 1 through 3, 6, and 7 reach SPEC-1's Target list and Change text, items 4 and 5 reach SPEC-2's, and
-items 8 through 10 reach the three sentences outside the two sub-steps that state SPEC-1 creates the file.
+**Change (staged description).** Eleven sentence-level edits, each leaving the rest of the sub-step intact.
+Items 1 through 3, 6, and 7 reach SPEC-1's Target list and Change text, items 4 and 5 reach SPEC-2's,
+items 8 through 10 reach the three sentences outside every sub-step that state SPEC-1 creates the file, and
+item 11 reaches the sentence of SPEC-3's Change text that credits SPEC-1 with authoring the §28.1 through
+§28.4 sections. Item 11 restates an attribution and changes neither what SPEC-3 does nor what it produces.
 
 1. In SPEC-1's Target list (lines 1126 through 1128), replace
    `` `spec/28_communication-channels.md` §28.1 through §28.4 (new)`` with
@@ -658,8 +661,16 @@ items 8 through 10 reach the three sentences outside the two sub-steps that stat
     "`spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new." with a
     bullet stating that `spec/29_communication-scenarios.md` is new and that
     `spec/28_communication-channels.md` exists, created by proposal 0067, and is appended to by SPEC-3.
+11. In SPEC-3's Change text (lines 2703 through 2705), replace the clause "because SPEC-1 created them
+    together with their sections and wrote their key or their exceptions entry there" with a clause stating
+    that proposal 0067 created the §28.1 through §28.4 headings together with their sections and that
+    SPEC-1 wrote their key or their exceptions entry. The spec-map coverage for those headings stays with
+    SPEC-1, which its amended Change text still carries, and the conclusion that this sub-step neither
+    writes nor retires coverage for them is unchanged.
 
-No other sub-step instruction in proposal 0064 changes. Its status line and its remaining sub-steps are
+No other sub-step instruction in proposal 0064 changes, and no sub-step's instructed work changes: item 11
+corrects who is credited with sections that already exist and leaves SPEC-3's obligations as written.
+Proposal 0064's status line and its remaining sub-steps are
 untouched. Its §1 scope paragraph describes the two-proposal change at the level of the whole document, and
 its convergence record states decisions as they were made, so both are left as written.
 
@@ -917,6 +928,20 @@ stated alternative before the first round.
   item 4 gains an assertion that the domain N3 states matches the trees and extensions
   `scope.ReservedPhraseCarrier` admits.
 
+### Pass 5 (2026-08-03, automated)
+
+- **AMEND-1's ten edits left a sentence of 0064 SPEC-3's Change text crediting SPEC-1 with authoring the
+  §28.1 through §28.4 sections.** Lines 2703 through 2705 carve those four headings out of SPEC-3's
+  heading-walker seeding because "SPEC-1 created them together with their sections and wrote their key or
+  their exceptions entry there". The sentence sits in §6 and outside 0064's convergence record, and its
+  causal clause states the ownership AMEND-1 exists to move, so the amendment's closing obligation was
+  unmet while it stopped at ten edits and a grep over the file name alone did not reach it. AMEND-1's
+  Target now names the site, item 11 stages it, the item-range sentence and §12's per-file breakdown
+  account for eleven edits, and the exit check reads `SPEC-1` co-occurring with `28.1`, `28.4`, `created`,
+  and `sections` so that heading-level and section-level ownership claims are caught alongside file-level
+  ones. The half of the sentence assigning the spec-map key or the exceptions entry to SPEC-1 is correct
+  and is kept.
+
 ## 11. Open decisions for review
 
 1. **Whether to take the smaller route instead.** Amending 0064 SPEC-1 to split itself into a pass-free
@@ -944,12 +969,14 @@ stated alternative before the first round.
   stages them.
 - `spec/README.md`, for the §28 index row and the four subsection rows appended after the `27.10
   Roll-forward notes` row, exactly as SPEC-2 stages them.
-- `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, for the ten
+- `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, for the eleven
   sentence-level edits AMEND-1 states: five in SPEC-1's Target and Change text, which change its `spec/28`
   and `spec/README.md` obligations from authoring to confirmation and drop the stale index position claim,
   two in SPEC-2's Target and Change text, which give it the `spec/28` target and the obligation to write
-  the naming-table rows for the spellings it fixes, and three in §3.5, §4.8, and §11, which are the
-  remaining sentences stating that SPEC-1 creates the file.
+  the naming-table rows for the spellings it fixes, three in §3.5, §4.8, and §11, which are the
+  remaining sentences stating that SPEC-1 creates the file, and one in SPEC-3's heading-walker carve-out,
+  which credits proposal 0067 with the §28.1 through §28.4 sections while leaving their spec-map coverage
+  with SPEC-1.
 - `scripts/specshift/identifier/table_test.go` and `scripts/specshift/name/declare_test.go`, for the tier-1
   cases §8 items 1 and 2 state, added to the existing files.
 - `tests/tier11_docs/spec_28_index_rows_test.go`, `tests/tier11_docs/spec_28_reserved_phrase_test.go`, and
