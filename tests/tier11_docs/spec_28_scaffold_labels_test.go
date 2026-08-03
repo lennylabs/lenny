@@ -34,16 +34,45 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
-// scaffoldSweepPrefixes are the repo-relative path prefixes of the
-// artifacts the communication-channels work ships: the section itself,
-// the specification index that carries its rows, the migration tooling
-// that reads it, and the tier-11 checks that hold it.
-var scaffoldSweepPrefixes = []string{
-	"spec/28_communication-channels.md",
-	"spec/README.md",
-	"scripts/specshift/",
-	"tests/tier11_docs/spec_28_",
+// scaffoldSweepTarget is one tracked artifact the sweep reads. A file
+// the channel work owns outright is read whole. A shared record file the
+// work appends an entry to is read on the lines of that entry alone,
+// which are the lines naming one of the work's proposal documents,
+// because the records around it belong to the work that landed them.
+type scaffoldSweepTarget struct {
+	prefix  string
+	records []string
 }
+
+// reads reports whether a line of the target is inside the sweep.
+func (s scaffoldSweepTarget) reads(line string) bool {
+	if len(s.records) == 0 {
+		return true
+	}
+	for _, record := range s.records {
+		if strings.Contains(line, record) {
+			return true
+		}
+	}
+	return false
+}
+
+// scaffoldSweepTargets are the tracked artifacts the communication-
+// channels work ships or writes into: the section itself, the
+// specification index that carries its rows, the migration tooling that
+// reads it, the tier-11 checks that hold it, and the queue record the
+// work appends its hand-off note to.
+var scaffoldSweepTargets = []scaffoldSweepTarget{
+	{prefix: "spec/28_communication-channels.md"},
+	{prefix: "spec/README.md"},
+	{prefix: "scripts/specshift/"},
+	{prefix: "tests/tier11_docs/spec_28_"},
+	{prefix: queueRecordFile, records: []string{"0064", "0067"}},
+}
+
+// queueRecordFile is the shared proposal-queue record the channel work
+// appends its hand-off note to.
+const queueRecordFile = "PROPOSAL-QUEUE.md"
 
 // scaffoldFixtureDir is the directory name every fixture tree sits
 // under. A fixture records a text as it was written, so it is outside
@@ -80,23 +109,39 @@ func TestChannelArtifactsCarryNoProposalScaffoldingLabel(t *testing.T) {
 		t.Fatalf("list the tracked tree: %v", err)
 	}
 	read := scope.DirReader(root)
-	swept := 0
-	for _, target := range tracked {
-		if !inScaffoldSweep(target) {
+	swept := map[string]int{}
+	for _, path := range tracked {
+		target, inside := scaffoldSweepTargetOf(path)
+		if !inside {
 			continue
 		}
-		swept++
-		content, err := read(target)
+		content, err := read(path)
 		if err != nil {
-			t.Fatalf("read %s: %v", target, err)
+			t.Fatalf("read %s: %v", path, err)
 		}
+		lines := strings.Split(string(content), "\n")
 		for _, site := range scaffold.Find(string(content)) {
+			if !target.reads(lines[site.Line-1]) {
+				continue
+			}
 			t.Errorf("%s:%d carries the proposal-internal label %q; cite the specification section or describe the behaviour",
-				target, site.Line, site.Text)
+				path, site.Line, site.Text)
+		}
+		for _, line := range lines {
+			if target.reads(line) {
+				swept[target.prefix]++
+			}
 		}
 	}
-	if swept == 0 {
-		t.Fatalf("the sweep selected no tracked file out of %d, so it asserts nothing", len(tracked))
+	// Every target has to reach a line of the tree. A target that
+	// reaches none is an artifact the work writes and the sweep passes
+	// over, which is how a label ships inside the domain the check
+	// claims to enforce.
+	for _, target := range scaffoldSweepTargets {
+		if swept[target.prefix] == 0 {
+			t.Errorf("the sweep read no line under %s out of %d tracked file(s), so the artifact it names is outside the domain the check enforces",
+				target.prefix, len(tracked))
+		}
 	}
 }
 
@@ -133,17 +178,18 @@ func TestChannelWorkCommitsCarryNoProposalScaffoldingLabel(t *testing.T) {
 	}
 }
 
-// inScaffoldSweep reports whether a tracked path is inside the sweep.
-func inScaffoldSweep(target string) bool {
-	if strings.Contains(target, scaffoldFixtureDir) {
-		return false
+// scaffoldSweepTargetOf returns the sweep target a tracked path belongs
+// to, and whether the path is inside the sweep at all.
+func scaffoldSweepTargetOf(path string) (scaffoldSweepTarget, bool) {
+	if strings.Contains(path, scaffoldFixtureDir) {
+		return scaffoldSweepTarget{}, false
 	}
-	for _, prefix := range scaffoldSweepPrefixes {
-		if strings.HasPrefix(target, prefix) {
-			return true
+	for _, target := range scaffoldSweepTargets {
+		if strings.HasPrefix(path, target.prefix) {
+			return target, true
 		}
 	}
-	return false
+	return scaffoldSweepTarget{}, false
 }
 
 // commitMessages returns the whole message of every commit reachable
