@@ -135,6 +135,58 @@ func TestSection28OwnershipSweepReadsTheFilesTouchedList_spec_28(t *testing.T) {
 	}
 }
 
+// TestSection28OwnershipSweepReadsACreditedSentence_spec_28 plants a
+// sentence crediting the proposal that landed the section in one clause
+// and a sub-step of the renaming proposal in another, and requires it
+// reported.
+//
+// Every sentence the ownership transfer rewrote names the landing
+// proposal, so a sweep that excuses a whole sentence for naming it is
+// blind on exactly the text the transfer produced, and a partial revert
+// that restores a sub-step as the creating subject beside the credit
+// goes unreported. The credit covers the clause carrying it and no more.
+//
+// diagnosis: a failure means the ownership sweep reads the credit over
+// the whole sentence rather than over the clause carrying it, so a
+// sub-step restored as the creating subject alongside the credit is not
+// reported. Read the subject, the creation verb, and the moved object
+// within one clause.
+//
+// spec: §28, §28.3
+func TestSection28OwnershipSweepReadsACreditedSentence_spec_28(t *testing.T) {
+	document := readRenamingProposal(t)
+	subSteps := subStepNames(document)
+	if len(subSteps) == 0 {
+		t.Fatalf("%s publishes no sub-step under %q, so the case plants no subject", renamingProposalFile, changeSectionHeading)
+	}
+
+	reverted := subSteps[0] + " creates §28.1 through §28.4, which proposal 0067 confirms."
+	sites := ownershipSites(t, plantBelowFilesTouched(t, document, reverted))
+	if len(sites) != 1 {
+		t.Fatalf("a sentence crediting %s beside the landing proposal reported %d site(s), want one: %q", subSteps[0], len(sites), sites)
+	}
+	if !strings.Contains(sites[0], "creates §28.1 through §28.4") {
+		t.Errorf("the reported site is %q, which is not the planted sentence", sites[0])
+	}
+
+	credited := "Proposal 0067 created §28.1 through §28.4, and " + subSteps[0] + " renames the channels they name."
+	if sites := ownershipSites(t, plantBelowFilesTouched(t, document, credited)); len(sites) != 0 {
+		t.Errorf("a sentence crediting the proposal that landed the section reported %q", sites)
+	}
+}
+
+// plantBelowFilesTouched returns the document with one paragraph planted
+// below the files-touched heading, which sits inside the swept region.
+func plantBelowFilesTouched(t *testing.T, document, paragraph string) string {
+	t.Helper()
+	index := strings.Index(document, filesTouchedHeading)
+	if index < 0 {
+		t.Fatalf("%s carries no heading %q, so the case plants nothing inside the swept region", renamingProposalFile, filesTouchedHeading)
+	}
+	cut := index + len(filesTouchedHeading)
+	return document[:cut] + "\n\n" + paragraph + "\n" + document[cut:]
+}
+
 // TestSection28OwnershipRecordMatchesTheProposal_spec_28 sweeps the
 // durable record of what an apply run left open for a clause crediting
 // the renaming proposal with creating the section, its opening headings,
@@ -164,9 +216,6 @@ func TestSection28OwnershipRecordMatchesTheProposal_spec_28(t *testing.T) {
 	}
 
 	for _, sentence := range proseSentences(string(body)) {
-		if strings.Contains(strings.ToLower(sentence), ownerCreditPhrase) {
-			continue
-		}
 		if attributesCreation(sentence, subjects) || claimsTheSectionIsNew(sentence) {
 			t.Errorf("%s credits the renaming proposal with creating the section: %q", ownershipRecordFile, sentence)
 		}
@@ -224,9 +273,6 @@ func ownershipSites(t *testing.T, document string) []string {
 
 	var sites []string
 	for _, sentence := range proseSentences(region) {
-		if strings.Contains(strings.ToLower(sentence), ownerCreditPhrase) {
-			continue
-		}
 		if attributesCreation(sentence, subjects) || claimsTheSectionIsNew(sentence) {
 			sites = append(sites, sentence)
 		}
@@ -234,12 +280,23 @@ func ownershipSites(t *testing.T, document string) []string {
 	return sites
 }
 
-// ownerCreditPhrase is how the document credits the proposal that landed
-// the section, read case-insensitively because the document writes it
-// both mid-sentence and at the head of one. A sentence carrying it
-// states the corrected attribution, so it is read out rather than
-// reported.
+// ownerCreditPhrase is how a document credits the proposal that landed
+// the section, read case-insensitively because it is written both
+// mid-sentence and at the head of one. It is a competing subject rather
+// than a licence over the whole sentence: a clause carrying it credits
+// the landing proposal, and a neighbouring clause crediting a sub-step
+// of the renaming proposal instead is still a site.
 const ownerCreditPhrase = "proposal 0067"
+
+// A clause boundary is a semicolon or one of the conjunctions the
+// proposals join clauses with. Attribution is read inside one clause,
+// because every sentence the ownership transfer rewrote states two
+// attributions at once: the landing proposal created the section, and a
+// sub-step of the renaming proposal does something else with it.
+// Reading the three parts across the whole sentence would either report
+// every corrected sentence or, with the sentence excused for naming the
+// landing proposal, report none of them.
+var clauseBoundaryExpr = regexp.MustCompile(`;|,? \b(?:and|but|so|which|because|while|then|although|though|whereas)\b `)
 
 // claimsTheSectionIsNew reports whether one sentence states that the
 // renaming proposal lands the section file as a new file.
@@ -267,21 +324,30 @@ func subStepNames(document string) []string {
 	return names
 }
 
-// attributesCreation reports whether one sentence credits a subject of
-// the renaming proposal with creating the file, the four headings, or
-// the register. The three parts are read anywhere in the sentence rather
-// than in one order, because the document states the attribution in
-// several forms: a sub-step that creates a section, a section that
-// already exists from a sub-step, and a proposal that lands a file. A
-// negated verb is the one form that states the opposite, and it is read
-// out.
+// attributesCreation reports whether one clause of a sentence credits a
+// subject of the renaming proposal with creating the file, the four
+// headings, or the register. The three parts are read anywhere in the
+// clause rather than in one order, because the document states the
+// attribution in several forms: a sub-step that creates a section, a
+// section that already exists from a sub-step, and a proposal that lands
+// a file. Two clauses are read out. A clause naming the proposal that
+// landed the section attributes the creation to it, and a clause with a
+// negated verb states the opposite of an attribution.
 func attributesCreation(sentence string, subjects *regexp.Regexp) bool {
-	if negatedVerbExpr.MatchString(sentence) {
-		return false
+	for _, clause := range clauseBoundaryExpr.Split(sentence, -1) {
+		if strings.Contains(strings.ToLower(clause), ownerCreditPhrase) {
+			continue
+		}
+		if negatedVerbExpr.MatchString(clause) {
+			continue
+		}
+		if subjects.MatchString(clause) &&
+			creationVerbExpr.MatchString(clause) &&
+			creationObjExpr.MatchString(clause) {
+			return true
+		}
 	}
-	return subjects.MatchString(sentence) &&
-		creationVerbExpr.MatchString(sentence) &&
-		creationObjExpr.MatchString(sentence)
+	return false
 }
 
 // subjectMatcher returns the matcher for a subject the proposal
