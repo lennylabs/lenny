@@ -1,0 +1,6 @@
+Hold the ownership transfer to the sentences its amendment stages
+
+Revert the three edits that sit outside the amendment's target. The
+remaining edits are the staged set, and D8 records why the split stands.
+
+Refs: proposals/0067_new_author-spec-28-the-channel-naming-law-taxonomy-and-registers.md
