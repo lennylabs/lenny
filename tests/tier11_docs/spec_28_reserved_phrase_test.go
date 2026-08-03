@@ -22,48 +22,12 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
-// namingTableHeading is the heading of §28.3's naming table. A retired
-// spelling standing in the row that retires it is the declaration of
-// that spelling rather than a reference to the channel, so the rows of
-// that one table are the section's only exempt lines.
-//
-// spec: §28.3
-const namingTableHeading = "Naming table"
-
-// namingTableRowLines returns the 1-based source lines of the rows of
-// §28.3's naming table. A row is a table line standing between that
-// heading and the next heading of the section. The scan skips fenced
-// blocks for the same reason the heading scan does: a table drawn inside
-// a fence is example content and declares no spelling.
-//
-// spec: §28.3
-func namingTableRowLines(section string) map[int]bool {
-	rows := make(map[int]bool)
-	inTable := false
-	inFence := false
-	for i, line := range strings.Split(section, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			inFence = !inFence
-			continue
-		}
-		if inFence {
-			continue
-		}
-		if m := atxHeading.FindStringSubmatch(line); m != nil {
-			inTable = strings.TrimSpace(m[2]) == namingTableHeading
-			continue
-		}
-		if inTable && strings.HasPrefix(trimmed, "|") {
-			rows[i+1] = true
-		}
-	}
-	return rows
-}
-
-// reservedPhraseLinesOutsideTheNamingTable returns the source line of
-// every reserved noun phrase a section carries outside a naming-table
-// row, in source order.
+// reservedPhraseLines returns the source line of every reserved noun
+// phrase a section carries, in source order, wherever it stands. The
+// prohibition admits no exempt line: the naming table's rows declare a
+// retired identifier spelling, which is a separate class the identifier
+// pass exempts, and neither the name pass nor the naming lint carves a
+// table row out of the phrase prohibition.
 //
 // The matcher is the one the name pass and the naming lint read, so this
 // check and the lint enumerate one population, and the phrase itself is
@@ -75,16 +39,8 @@ func namingTableRowLines(section string) map[int]bool {
 // on.
 //
 // spec: §28.1
-func reservedPhraseLinesOutsideTheNamingTable(section string) []int {
-	exempt := namingTableRowLines(section)
-	var out []int
-	for _, line := range name.FindReservedPhrases(section) {
-		if exempt[line] {
-			continue
-		}
-		out = append(out, line)
-	}
-	return out
+func reservedPhraseLines(section string) []int {
+	return name.FindReservedPhrases(section)
 }
 
 // reservedPhraseSpecimen reads one specimen fixture and returns its
@@ -187,7 +143,7 @@ func TestSection28StatesN3WithoutViolatingIt_spec_28_1(t *testing.T) {
 	t.Run("hyphenated specimen", func(t *testing.T) {
 		assertSpecimenInProseIsReported(t, hyphenatedSpecimenFile)
 	})
-	t.Run("naming-table row exempt", func(t *testing.T) { assertNamingTableRowIsExempt(t) })
+	t.Run("naming-table row is no exemption", func(t *testing.T) { assertNamingTableRowIsNoExemption(t) })
 	t.Run("stated domain", func(t *testing.T) { assertN3DomainMatchesTheSharedPredicate(t) })
 }
 
@@ -197,13 +153,8 @@ func TestSection28StatesN3WithoutViolatingIt_spec_28_1(t *testing.T) {
 // spec: §28.1
 func assertSection28CarriesNoReservedPhrase(t *testing.T) {
 	t.Helper()
-	section := readChannelsSection(t)
-
-	if len(namingTableRowLines(section)) == 0 {
-		t.Fatalf("%s carries no naming-table row; the exemption this check applies is derived from none", channelsSpecFile)
-	}
-	for _, line := range reservedPhraseLinesOutsideTheNamingTable(section) {
-		t.Errorf("%s:%d carries a reserved noun phrase outside a naming-table row", channelsSpecFile, line)
+	for _, line := range reservedPhraseLines(readChannelsSection(t)) {
+		t.Errorf("%s:%d carries a reserved noun phrase", channelsSpecFile, line)
 	}
 }
 
@@ -218,39 +169,37 @@ func assertSpecimenInProseIsReported(t *testing.T, fixture string) {
 	specimen := reservedPhraseSpecimen(t, fixture)
 	section := "## 28.1 Naming law\n\nThe adapter opens the " + specimen + " to the runtime.\n"
 
-	got := reservedPhraseLinesOutsideTheNamingTable(section)
+	got := reservedPhraseLines(section)
 	if len(got) != 1 || got[0] != 3 {
 		t.Errorf("reserved-phrase lines for the %s specimen = %v, want [3]", fixture, got)
 	}
 }
 
-// assertNamingTableRowIsExempt pins both directions of the exemption: a
-// retired spelling standing in the row that retires it is a declaration
-// and is not reported, and the same spelling standing in the prose of
-// the same subsection is.
+// assertNamingTableRowIsNoExemption pins that the phrase prohibition
+// reaches §28.3's naming table like every other line of the section. The
+// table exempts a retired identifier spelling standing in the row that
+// retires it, and that exemption is the identifier pass's own and covers
+// that column alone. A reserved noun phrase written into any cell of a
+// row is a site the naming lint reports and no pass is scheduled to
+// write, so a check that passed over the table would report the section
+// clean while the lint reports it red.
 //
 // spec: §28.1, §28.3
-func assertNamingTableRowIsExempt(t *testing.T) {
+func assertNamingTableRowIsNoExemption(t *testing.T) {
 	t.Helper()
 	specimen := reservedPhraseSpecimen(t, hyphenatedSpecimenFile)
-	const header = "### " + namingTableHeading + "\n\n" +
+	const header = "### Naming table\n\n" +
 		"| channel | carrier | retired spelling | canonical spelling |\n" +
 		"|:--|:--|:--|:--|\n"
 
-	row := header + "| `CH-RUNTIMEOPS` | path | `" + specimen + "` | `runtime-ops-events` |\n"
-	if got := reservedPhraseLinesOutsideTheNamingTable(row); len(got) != 0 {
-		t.Errorf("naming-table row reported as a site: %v", got)
+	row := header + "| `CH-RUNTIMEOPS` | path | `retired-stem` | `" + specimen + "` |\n"
+	if got := reservedPhraseLines(row); len(got) != 1 || got[0] != 5 {
+		t.Errorf("reserved-phrase lines for a naming-table row carrying the phrase = %v, want [5]", got)
 	}
 
 	prose := header + "The adapter opens the " + specimen + " to the runtime.\n"
-	if got := reservedPhraseLinesOutsideTheNamingTable(prose); len(got) != 1 || got[0] != 5 {
+	if got := reservedPhraseLines(prose); len(got) != 1 || got[0] != 5 {
 		t.Errorf("prose under the naming-table heading = %v, want [5]", got)
-	}
-
-	fenced := "```\n" + header + "```\n" +
-		"| `CH-RUNTIMEOPS` | path | `" + specimen + "` | `runtime-ops-events` |\n"
-	if got := reservedPhraseLinesOutsideTheNamingTable(fenced); len(got) != 1 {
-		t.Errorf("table row outside a naming-table heading = %v, want one site", got)
 	}
 }
 
