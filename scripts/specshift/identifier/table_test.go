@@ -134,6 +134,31 @@ func TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3(t *testing.T) {
 	}
 }
 
+// sitesOutsideNamingRows returns the 1-based line of every retired
+// spelling one specification file carries outside the naming-table rows
+// that declare the spellings, in source order.
+//
+// It asks of the file the table is stated in the question the pass asks
+// of every other file: which occurrences are sites. A site there is an
+// occurrence with no entry in the sense register the pass reads, and the
+// register is keyed by file and by the position of the site within it,
+// so one introduced by a later edit aborts the pass before any write.
+// The walk and the exemption are the pass's own, read here through the
+// package's own predicates, so the case restates neither the spellings
+// nor the exemption. It stays with the case rather than on Table: the
+// pass resolves sites through findSites directly, so an exported form
+// would be a surface of the tooling that no pass and no gate enters.
+func sitesOutsideNamingRows(t *Table, target, content string) []int {
+	var lines []int
+	for _, s := range findSites(content, t.Retired()) {
+		if t.mentioned(target, s.start) {
+			continue
+		}
+		lines = append(lines, s.line)
+	}
+	return lines
+}
+
 // TestRetiredSpellingsStandOnlyInTheRowsThatRetireThem_spec_28_3 pins
 // the one exemption the pass grants inside the communication-channels
 // section: a retired spelling standing in the row that retires it is the
@@ -165,7 +190,7 @@ func TestRetiredSpellingsStandOnlyInTheRowsThatRetireThem_spec_28_3(t *testing.T
 		if err != nil {
 			t.Fatalf("read %s: %v", channelSection, err)
 		}
-		for _, line := range table.SitesOutsideNamingRows(channelSection, string(content)) {
+		for _, line := range sitesOutsideNamingRows(table, channelSection, string(content)) {
 			t.Errorf("%s:%d carries a retired spelling outside the row that retires it, which is a site with no sense-register entry",
 				channelSection, line)
 		}
@@ -182,7 +207,7 @@ func TestRetiredSpellingsStandOnlyInTheRowsThatRetireThem_spec_28_3(t *testing.T
 		if err != nil {
 			t.Fatalf("read the specimen section: %v", err)
 		}
-		got := table.SitesOutsideNamingRows(channelSection, string(content))
+		got := sitesOutsideNamingRows(table, channelSection, string(content))
 		if len(got) != 1 || got[0] != proseSiteLine {
 			t.Errorf("sites outside a naming-table row = %v, want [%d], the prose line naming the channel by its retired spelling",
 				got, proseSiteLine)

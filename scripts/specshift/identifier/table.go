@@ -241,29 +241,6 @@ func rowsIn(path, content string) ([]Row, [][2]int, error) {
 	return out, spans, nil
 }
 
-// SitesOutsideNamingRows returns the 1-based line of every retired
-// spelling one specification file carries outside the naming-table rows
-// that declare the spellings, in source order.
-//
-// It answers, for the file the table is stated in, the question the pass
-// asks of every other file: which occurrences are sites. A site there is
-// an occurrence with no entry in the sense register the pass reads, and
-// the register is keyed by file and by the position of the site within
-// it, so one introduced by a later edit aborts the pass before any
-// write. The walk is the pass's own, and the exemption is the one the
-// pass applies, so a caller holding the section to the rule restates
-// neither the spellings nor the exemption.
-func (t *Table) SitesOutsideNamingRows(target, content string) []int {
-	var lines []int
-	for _, s := range findSites(content, t.Retired()) {
-		if t.mentioned(target, s.start) {
-			continue
-		}
-		lines = append(lines, s.line)
-	}
-	return lines
-}
-
 // mentioned reports whether an offset of one file stands inside a
 // naming-table row.
 func (t *Table) mentioned(target string, at int) bool {
