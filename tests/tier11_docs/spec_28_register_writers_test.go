@@ -63,6 +63,28 @@ const (
 		"Redis/Postgres)."
 )
 
+// The two writer-set cells of §28.3, byte-exact and whole. Each writer is
+// pinned together with what it writes, so a cell that swaps the two roles,
+// widens one writer's set of columns, or names a third writer fails the
+// case even though every individual name it used to carry is still
+// present. §12.6 states a split-writer rule for `agent_pod_state` (the
+// WarmPoolController maintains the mirror and exactly `sessions_served`
+// and `scrub_failure_count` are gateway-written), and §4.6.3 assigns the
+// create, the status-subresource writes, and the hold-expiry delete to the
+// gateway and only the pod-termination and orphan-GC deletes to the
+// WarmPoolController leader; an unattributed name check cannot tell either
+// rule from its inverse.
+//
+// spec: §28.3, §12.6, §4.6.3
+const (
+	podStateWriterSetCell = "WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas " +
+		"for `sessions_served` and `scrub_failure_count`"
+
+	claimWriterSetCell = "Gateway replicas for the create, the status-subresource binding-state writes, and the " +
+		"hold-expiry delete, and the WarmPoolController leader for the deletes at pod termination and orphan " +
+		"garbage collection"
+)
+
 // registerTable is one table of §28.3, indexed by its header labels and
 // keyed by the identifier its first column carries. Reading a cell
 // through the header rather than through a fixed offset means a column
@@ -160,6 +182,24 @@ func (r registerTable) cell(identifier, column string) (string, error) {
 	return row[index], nil
 }
 
+// withCell returns a copy of the table carrying the given cell in place of
+// the one the specification landed, so a case can state what the check
+// must reject without editing spec/.
+//
+// spec: §28.3
+func (r registerTable) withCell(identifier, column, cell string) registerTable {
+	copied := registerTable{heading: r.heading, columns: r.columns, rows: map[string][]string{}}
+	for key, row := range r.rows {
+		copied.rows[key] = append([]string(nil), row...)
+	}
+	if row, ok := copied.rows[identifier]; ok {
+		if index, ok := r.columns[column]; ok && index < len(row) {
+			row[index] = cell
+		}
+	}
+	return copied
+}
+
 // requireCellContains holds one register cell to the substrings the
 // section it is derived from fixes.
 //
@@ -175,6 +215,38 @@ func requireCellContains(t *testing.T, table registerTable, identifier, column s
 			t.Errorf("§28.3's %s cell of %s is %q and states no %q", column, identifier, got, substring)
 		}
 	}
+}
+
+// requireCellEquals holds one register cell to the whole literal the
+// section it is derived from fixes. Equality is the check a derived cell
+// carrying an attribution needs: a containment check passes on a cell that
+// keeps every name it used to carry while reassigning what each one
+// writes.
+//
+// spec: §28.3
+func requireCellEquals(t *testing.T, table registerTable, identifier, column, want string) {
+	t.Helper()
+	if err := table.cellDivergence(identifier, column, want); err != nil {
+		t.Error(err)
+	}
+}
+
+// cellDivergence returns the divergence between one register cell and the
+// literal the section it is derived from fixes, or nil when the two agree.
+// The comparison is a separate function so a case can assert that a
+// mutated cell is rejected without failing itself.
+//
+// spec: §28.3
+func (r registerTable) cellDivergence(identifier, column, want string) error {
+	got, err := r.cell(identifier, column)
+	if err != nil {
+		return fmt.Errorf("read the %s cell of %s: %w", column, identifier, err)
+	}
+	if got != want {
+		return fmt.Errorf("§28.3's %s cell of %s is %q and the section it is derived from states %q",
+			column, identifier, got, want)
+	}
+	return nil
 }
 
 // readChannelsRegisters returns the link register and the register-entry
@@ -200,9 +272,10 @@ func readChannelsRegisters(t *testing.T) (links, entries registerTable) {
 // connection's own section disagree on who writes it or on how it is
 // carried. §28.3 derives three of its cells from the current spec/ text
 // rather than from the channel inventory its provenance column cites: a
-// writer set that drops the gateway replicas from `REG-PODSTATE` or the
-// WarmPoolController leader from `REG-CLAIM` describes a store nobody
-// writes the way §12.6 and §4.6.3 state it is written, and a
+// writer set that drops a writer from `REG-PODSTATE` or `REG-CLAIM`,
+// reassigns what one of them writes, or widens one writer's set of columns
+// describes a store nobody writes the way §12.6 and §4.6.3 state it is
+// written, and a
 // `LNK-INTERREPLICA` row that states another transport, dial direction,
 // or lifetime describes a connection §7.2 does not specify.
 //
@@ -213,6 +286,56 @@ func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
 	t.Run("pod state writer set", func(t *testing.T) { assertPodStateWriterSetMatchesStorage(t, entries) })
 	t.Run("claim writer set", func(t *testing.T) { assertClaimWriterSetMatchesOwnership(t, entries) })
 	t.Run("inter-replica link", func(t *testing.T) { assertInterReplicaLinkMatchesSessionLifecycle(t, links) })
+	t.Run("reassigned writer set", func(t *testing.T) { assertReassignedWriterSetIsRejected(t, entries) })
+}
+
+// assertReassignedWriterSetIsRejected holds the writer-set check itself to
+// the attribution §12.6 and §4.6.3 state, by feeding it writer sets that
+// keep every name and column the landed cells carry while reassigning what
+// each writer writes. Each of these describes a store written the way
+// neither section states, so each must be rejected: a check that only
+// looked for the names somewhere in the cell would accept all of them.
+//
+// spec: §28.3, §12.6, §4.6.3
+func assertReassignedWriterSetIsRejected(t *testing.T, entries registerTable) {
+	t.Helper()
+
+	for name, cases := range map[string]struct {
+		identifier string
+		want       string
+		reassigned []string
+	}{
+		"pod state": {
+			identifier: podStateRegisterEntry,
+			want:       podStateWriterSetCell,
+			reassigned: []string{
+				"WarmPoolController for `sessions_served` and `scrub_failure_count`, and gateway replicas " +
+					"for the mirrored `Sandbox` status columns",
+				"WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas " +
+					"for `sessions_served`, `scrub_failure_count`, and `phase`",
+			},
+		},
+		"claim": {
+			identifier: claimRegisterEntry,
+			want:       claimWriterSetCell,
+			reassigned: []string{
+				"WarmPoolController leader for the create, the status-subresource binding-state writes, and " +
+					"the hold-expiry delete, and the Gateway replicas for the deletes at pod termination and " +
+					"orphan garbage collection",
+				claimWriterSetCell + ", and the RuntimeAdapter for the binding-state writes",
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, cell := range cases.reassigned {
+				mutated := entries.withCell(cases.identifier, "Writer set", cell)
+				if err := mutated.cellDivergence(cases.identifier, "Writer set", cases.want); err == nil {
+					t.Errorf("the writer-set check accepts %q for %s, which reassigns what each writer writes",
+						cell, cases.identifier)
+				}
+			}
+		})
+	}
 }
 
 // assertPodStateWriterSetMatchesStorage holds `REG-PODSTATE`'s writer
@@ -223,12 +346,7 @@ func TestSection28RegisterWritersMatchTheSpec_spec_28_3(t *testing.T) {
 func assertPodStateWriterSetMatchesStorage(t *testing.T, entries registerTable) {
 	t.Helper()
 
-	requireCellContains(t, entries, podStateRegisterEntry, "Writer set", []string{
-		"WarmPoolController",
-		"gateway replicas",
-		"`sessions_served`",
-		"`scrub_failure_count`",
-	})
+	requireCellEquals(t, entries, podStateRegisterEntry, "Writer set", podStateWriterSetCell)
 
 	storage := specSection(t, filepath.Join(repoRoot(t), "spec", "12_storage-architecture.md"), "### 12.6 ")
 	requireAllContain(t, "§12.6 agent_pod_state writers", storage, []string{podStateGatewayWrittenSentence})
@@ -243,11 +361,7 @@ func assertPodStateWriterSetMatchesStorage(t *testing.T, entries registerTable) 
 func assertClaimWriterSetMatchesOwnership(t *testing.T, entries registerTable) {
 	t.Helper()
 
-	requireCellContains(t, entries, claimRegisterEntry, "Writer set", []string{
-		"Gateway replicas",
-		"WarmPoolController leader",
-		"pod termination and orphan garbage collection",
-	})
+	requireCellEquals(t, entries, claimRegisterEntry, "Writer set", claimWriterSetCell)
 
 	components := specSection(t, filepath.Join(repoRoot(t), "spec", "04_system-components.md"), "#### 4.6.3 ")
 	requireAllContain(t, "§4.6.3 SandboxClaim ownership row", components, []string{claimOwnershipRowSentence})
@@ -264,13 +378,7 @@ func assertClaimWriterSetMatchesOwnership(t *testing.T, entries registerTable) {
 func assertInterReplicaLinkMatchesSessionLifecycle(t *testing.T, links registerTable) {
 	t.Helper()
 
-	transport, err := links.cell(interReplicaLink, "Transport")
-	if err != nil {
-		t.Fatalf("read the transport cell of %s: %v", interReplicaLink, err)
-	}
-	if transport != "gRPC" {
-		t.Errorf("§28.3's transport cell of %s is %q, and §7.2 specifies gRPC", interReplicaLink, transport)
-	}
+	requireCellEquals(t, links, interReplicaLink, "Transport", "gRPC")
 	requireCellContains(t, links, interReplicaLink, "Dial direction", []string{"Forwarding replica"})
 	requireCellContains(t, links, interReplicaLink, "Lifetime", []string{"coordinating replica"})
 
