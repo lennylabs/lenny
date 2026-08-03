@@ -84,15 +84,26 @@ const (
 // first word: a scan over the whole rule would read an excluded tree as
 // a member of the domain.
 //
+// n3ExclusionAftermath closes the exclusion sentence, which opens where
+// the domain sentence ends. The sentence after it describes how the
+// section states the rule rather than naming a record, so the extraction
+// stops there for the same reason.
+//
 // spec: §28.1
 const (
-	n3DomainOpening   = "The prohibition's domain is"
-	n3DomainAftermath = "Outside that"
+	n3DomainOpening      = "The prohibition's domain is"
+	n3DomainAftermath    = "Outside that"
+	n3ExclusionAftermath = "This section describes"
 )
 
 // treeReference matches one backticked directory name, which is the form
 // N3's domain sentence names a whole tree in.
 var treeReference = regexp.MustCompile("`([a-z]+/)`")
+
+// excludedRecordReference matches one record N3's exclusion sentence
+// names, in the two forms it writes them: a root-level document by its
+// file name, and a directory by its name and a trailing slash.
+var excludedRecordReference = regexp.MustCompile("`([A-Za-z][A-Za-z0-9._-]*\\.md|[a-z]+/)`")
 
 // n3DomainSentence returns the sentence of §28.1's N3 that states the
 // prohibition's domain.
@@ -127,6 +138,51 @@ func n3DomainTrees(section string) ([]string, error) {
 	}
 	sort.Strings(trees)
 	return trees, nil
+}
+
+// n3ExclusionSentence returns the sentence of §28.1's N3 that names the
+// records the prohibition leaves outside its domain.
+//
+// spec: §28.1
+func n3ExclusionSentence(section string) (string, error) {
+	start := strings.Index(section, n3DomainAftermath)
+	if start < 0 {
+		return "", fmt.Errorf("§28.1 states no sentence opening %q", n3DomainAftermath)
+	}
+	rest := section[start:]
+	end := strings.Index(rest, n3ExclusionAftermath)
+	if end < 0 {
+		return "", fmt.Errorf("§28.1's exclusion sentence is not followed by one opening %q", n3ExclusionAftermath)
+	}
+	return rest[:end], nil
+}
+
+// n3ExcludedPaths returns one tracked path per record N3's exclusion
+// sentence names, so the assertion reads the section's own list rather
+// than a list restated here. A record named as a directory is answered
+// for through a path inside it: `proposals/` through a staged proposal,
+// and a fixture directory through a fixture under a tree the domain
+// otherwise carries, which is the position the exclusion has to hold in.
+//
+// spec: §28.1
+func n3ExcludedPaths(section string) (map[string]string, error) {
+	sentence, err := n3ExclusionSentence(section)
+	if err != nil {
+		return nil, err
+	}
+	paths := map[string]string{}
+	for _, m := range excludedRecordReference.FindAllStringSubmatch(sentence, -1) {
+		record := m[1]
+		switch {
+		case record == "testdata/":
+			paths[record] = "spec/testdata/specimen.md"
+		case strings.HasSuffix(record, "/"):
+			paths[record] = record + "0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md"
+		default:
+			paths[record] = record
+		}
+	}
+	return paths, nil
 }
 
 // diagnosis: a failure means spec/28_communication-channels.md carries a
@@ -309,6 +365,54 @@ func assertN3DomainMatchesTheSharedPredicate(t *testing.T) {
 	} {
 		if scope.ReservedPhraseCarrier(outside) {
 			t.Errorf("the predicate admits %s, which N3 leaves outside the domain", outside)
+		}
+	}
+
+	assertN3ExclusionsAreOutsideTheClassDomain(t, section)
+}
+
+// assertN3ExclusionsAreOutsideTheClassDomain holds the second half of
+// N3's domain statement, the records it places outside the prohibition,
+// to the domain the migration reads for the reserved-phrase class.
+//
+// The carrier predicate answers the first half alone. It admits every
+// tracked root-level markdown document, so the audit records, the two
+// root planning documents, and the build and queue records are inside it
+// and the exclusion sits elsewhere, composed on top through the class
+// read domain. Asserting the exclusion against the carrier predicate
+// would therefore assert nothing, and asserting nothing at all leaves a
+// record dropped from the excluded list disagreeing with the section
+// with no case reporting it.
+//
+// spec: §28.1
+func assertN3ExclusionsAreOutsideTheClassDomain(t *testing.T, section string) {
+	t.Helper()
+
+	excluded, err := n3ExcludedPaths(section)
+	if err != nil {
+		t.Fatalf("read the records N3 places outside the domain: %v", err)
+	}
+	// Each of the three forms the sentence writes has to be read, so a
+	// matcher that stopped recognizing one reports a shorter list rather
+	// than a clean one.
+	forms := map[string]string{
+		"a root-level record":  "BUILD-GAPS.md",
+		"the staged proposals": "proposals/",
+		"a fixture directory":  "testdata/",
+	}
+	for form, record := range forms {
+		if _, named := excluded[record]; !named {
+			t.Fatalf("N3's exclusion sentence names no %s, so the sweep read %d record(s): %v", form, len(excluded), excluded)
+		}
+	}
+
+	for record, path := range excluded {
+		readable, err := scope.ReadableForClass(scope.ClassReservedPhrase, path)
+		if err != nil {
+			t.Fatalf("read the class domain for %s: %v", path, err)
+		}
+		if readable {
+			t.Errorf("the reserved-phrase class reads %s, which N3 names as outside the prohibition's domain", record)
 		}
 	}
 }

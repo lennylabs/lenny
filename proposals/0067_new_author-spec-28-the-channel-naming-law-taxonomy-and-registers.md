@@ -744,8 +744,12 @@ a `// diagnosis:` comment, in the form the surrounding files use.
    and a second over the hyphenated compound. The same file asserts that the domain N3 states matches the
    domain `scope.ReservedPhraseCarrier` admits, by asserting that the predicate answers true for a path
    under each tree N3 names, for a tracked Go file, and for a tracked root-level markdown document other
-   than `README.md` and `TESTING.md`, and false for a path outside them, so the section and the shared
-   predicate cannot drift (`scripts/specshift/scope/scope.go` lines 480 through 489). This is the case that fails if a later edit quotes a specimen
+   than `README.md` and `TESTING.md`, and false for a path outside them, and by parsing N3's exclusion
+   sentence the same way and asserting that every record it names, in each of the three forms it writes
+   them, is answered false by the composed class domain
+   (`scope.ReadableForClass(scope.ClassReservedPhrase, path)`) rather than by the carrier predicate, which
+   admits every tracked root-level markdown document and therefore answers the domain half alone, so the
+   section and the shared predicate cannot drift (`scripts/specshift/scope/scope.go` lines 480 through 489). This is the case that fails if a later edit quotes a specimen
    into the section, which is the state that would leave 0064's naming lint red on the section that states
    its rule. `// diagnosis:` states that a failure means `spec/28` carries a site the naming lint will
    report and no pass is scheduled to write. `// spec: §28.1`.
@@ -987,6 +991,9 @@ stated alternative before the first round.
 - `scripts/specshift/identifier/table_test.go` and `scripts/specshift/name/declare_test.go`, for the tier-1
   cases §8 items 1 and 2 state, added to the existing files.
 - `tests/tier11_docs/spec_28_taxonomy_test.go`, new, for the tier-11 case §8 item 7 states.
+- `scripts/specshift/reserved_phrase_domain_test.go`, new, for the tier-1 half of §8 item 4: the records
+  the naming law places outside the prohibition are outside the reserved-phrase class's read domain, and
+  an ordinary carrier of each form it places inside stays in it.
 - `scripts/specshift/package_reachability_test.go`, new, for the tier-1 case §8 item 8 states. It carries
   no production code: the change adds a test file to the tooling and adds no package to it.
 - `tests/tier11_docs/spec_28_index_rows_test.go`, `tests/tier11_docs/spec_28_reserved_phrase_test.go`, and
