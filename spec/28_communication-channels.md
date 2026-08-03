@@ -158,8 +158,8 @@ reference to the channel.
 
 ## 28.4 Claim register
 
-Every normative statement this section makes about a mechanism carries a row in the claim register, with a
-status drawn from a closed set. `WIRED` means the mechanism is reachable from production code. `UNWIRED`
+Every normative statement this section makes about a mechanism carries a row in the claim register at
+`tests/claim-map.json`, with a status drawn from a closed set. `WIRED` means the mechanism is reachable from production code. `UNWIRED`
 means it is implemented and has no production caller. `ABSENT` means it is specified and not implemented.
 
 A `WIRED` row names the production surface that reaches the mechanism. A row whose status is not `WIRED`

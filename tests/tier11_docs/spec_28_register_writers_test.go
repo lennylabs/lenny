@@ -12,7 +12,10 @@
 // the case. These tests are NOT under a build tag because they exercise
 // the repository state directly — no external infrastructure required.
 //
-// spec: §28.3, §12.6, §4.6.3, §7.2
+// §28.4's own statement of where the claim register lives is pinned the
+// same way, as a byte-exact sentence.
+//
+// spec: §28.3, §28.4, §12.6, §4.6.3, §7.2
 
 package tier11_docs_test
 
@@ -83,6 +86,21 @@ const (
 	claimWriterSetCell = "Gateway replicas for the create, the status-subresource binding-state writes, and the " +
 		"hold-expiry delete, and the WarmPoolController leader for the deletes at pod termination and orphan " +
 		"garbage collection"
+)
+
+// The heading of the claim-register subsection and the sentence it opens
+// with, byte-exact once line wrapping is collapsed. §28.4 is the only
+// place the specification states where the claim register lives, and the
+// deferral case it records for the interval before the file lands cites
+// this sentence as where the location is stated, so a rewording that
+// drops the path leaves both without a source.
+//
+// spec: §28.4
+const (
+	claimRegisterHeading = "## 28.4 "
+
+	claimRegisterLocationSentence = "Every normative statement this section makes about a mechanism carries " +
+		"a row in the claim register at `tests/claim-map.json`, with a status drawn from a closed set."
 )
 
 // registerTable is one table of §28.3, indexed by its header labels and
@@ -335,6 +353,30 @@ func assertReassignedWriterSetIsRejected(t *testing.T, entries registerTable) {
 				}
 			}
 		})
+	}
+}
+
+// collapseWrapping returns text with every run of whitespace replaced by
+// a single space, so a sentence the specification wraps across source
+// lines compares as the one sentence it reads as.
+func collapseWrapping(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+// diagnosis: a failure means §28.4 no longer states where the claim
+// register lives. The section is the only normative statement of the
+// register's path, and the register's seed rows and validator are written
+// against that path, so a §28.4 that names no location leaves the file
+// with no specified home and leaves the deferral §28.4 records for the
+// interval before the file lands citing a sentence that does not exist.
+//
+// spec: §28.4
+func TestSection28ClaimRegisterNamesItsLocation_spec_28_4(t *testing.T) {
+	section := collapseWrapping(specSection(t, filepath.Join(repoRoot(t), "spec", channelsSpecFile), claimRegisterHeading))
+
+	if !strings.Contains(section, claimRegisterLocationSentence) {
+		t.Errorf("§28.4 does not open with %q; the section states no location for the claim register",
+			claimRegisterLocationSentence)
 	}
 }
 
