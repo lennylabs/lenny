@@ -1302,9 +1302,9 @@ channel" is exactly the phrase N3 bans, and
 
 Proposal 0067 wrote the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4
 subsections, at the depth the existing entries use, with the link text and the anchors §4.8 fixes, so this
-sub-step confirms those five rows are present and adds any that are missing. The link text and the anchor
-for each row come from the heading table in §4.8, which fixes the title and the derived anchor of every §28
-and §29 heading, so these rows carry `28. Communication Channels`, `28.1 Naming law`,
+sub-step confirms those five rows are present and adds any that are missing. Take the link text and the
+anchor for each row from the heading table in §4.8, which fixes the title and the derived anchor of every
+§28 and §29 heading, so these rows carry `28. Communication Channels`, `28.1 Naming law`,
 `28.2 Taxonomy and axes`, `28.3 Registers`, and `28.4 Claim register` with the anchors that table states.
 Proposal 0067 created `spec/28_communication-channels.md` with those five
 headings and wrote those rows before this sub-step runs, so every row resolves and no row in this proposal
@@ -1950,7 +1950,7 @@ runtime-operations frames §15.4.3 and §15.4.6 state as runtime obligations.
 
 Two gates land in this sub-step under §3.5, because this is the sub-step that supplies each one's route to
 green. The §28.8 matrix completeness check is a tier-0 gate, and it lands here because §28.8 is written
-here while the §28.3 register its bijection reads already exists from SPEC-1, so the bijection first holds
+here while the §28.3 register its bijection reads already exists from proposal 0067, so the bijection first holds
 at this sub-step's exit. The artifact-register supersession check is a tier-11 gate, and it lands here
 because the enumeration it forbids, the `schemas/README.md` table, is replaced here. Its read domain is stated rather than left to the implementation: the tracked markdown under
 `spec/`, `docs/`, and `schemas/`, together with the tracked root-level markdown documents N3 leaves in
@@ -2701,8 +2701,9 @@ headings, `## 29`, each `### N.M` subsection of `spec/29`, and the §4.4.1 throu
 through §4.7.11 headings this sub-step inserts into `spec/04`. The `spec/28` and `spec/29` headings are
 named in §4.8; the §4.4 and §4.7 titles are authored inside this sub-step from the paragraph subjects that
 survive the reduction, so their keys are written against the titles the insertion produces. The §28.1 through
-§28.4 headings are not among them, because SPEC-1 created them together with their sections and wrote their
-key or their exceptions entry there, so this sub-step neither writes nor retires coverage for them.
+§28.4 headings are not among them, because proposal 0067 created them together with their sections and
+SPEC-1 writes their key or their exceptions entry, so this sub-step neither writes nor retires coverage for
+them.
 Without this the walker is red at the exit of the
 sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
 existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193
