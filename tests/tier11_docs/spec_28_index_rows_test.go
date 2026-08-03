@@ -54,10 +54,21 @@ func specAnchorSlug(title string) string {
 
 // specSubsectionHeadings returns the level-2 heading titles of a spec
 // markdown document, in document order. Level-3 headings name tables
-// inside a subsection and carry no index row.
+// inside a subsection and carry no index row. A "## " line inside a
+// fenced code block is example content rather than a heading: it
+// produces no anchor and carries no index row, so the scan skips it.
 func specSubsectionHeadings(doc string) []string {
 	var titles []string
+	inFence := false
 	for _, line := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
 		if strings.HasPrefix(line, "## ") {
 			titles = append(titles, strings.TrimSpace(strings.TrimPrefix(line, "## ")))
 		}
@@ -125,6 +136,60 @@ func reconcileIndexRows(headings []string, rows []specIndexRow) (dangling, uncov
 func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("landed section", func(t *testing.T) { assertSection28IndexReconciles(t) })
 	t.Run("collapsed punctuation run", func(t *testing.T) { assertCollapsedAnchorIsReported(t) })
+	t.Run("fenced example line", func(t *testing.T) { assertFencedLineIsNotAHeading(t) })
+}
+
+// assertFencedLineIsNotAHeading pins that a "## " line inside a fenced
+// code block is example content and is never reported as a subsection
+// heading missing its index row. Without the fence guard the fenced
+// line is admitted as a heading, and the reconciliation blames the
+// index for a heading the section does not publish.
+//
+// spec: §28
+func assertFencedLineIsNotAHeading(t *testing.T) {
+	t.Helper()
+	for _, tc := range []struct {
+		name string
+		doc  string
+		want []string
+	}{
+		{
+			name: "backtick fence",
+			doc:  "## 28.1 Naming law\n\n```markdown\n## 28.99 Example heading\n```\n\n## 28.2 Taxonomy\n",
+			want: []string{"28.1 Naming law", "28.2 Taxonomy"},
+		},
+		{
+			name: "tilde fence",
+			doc:  "## 28.1 Naming law\n\n~~~\n## 28.99 Example heading\n~~~\n",
+			want: []string{"28.1 Naming law"},
+		},
+		{
+			name: "indented fence",
+			doc:  "## 28.1 Naming law\n\n  ```\n## 28.99 Example heading\n  ```\n",
+			want: []string{"28.1 Naming law"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := specSubsectionHeadings(tc.doc)
+			if len(got) != len(tc.want) {
+				t.Fatalf("specSubsectionHeadings = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("specSubsectionHeadings = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+
+	// A fenced example line admitted as a heading is reported as
+	// uncovered, blaming the index for content that is not a heading.
+	doc := "## 28.1 Naming law\n\n```markdown\n## 28.99 Example heading\n```\n"
+	rows := []specIndexRow{{title: "28.1 Naming law", anchor: "281-naming-law"}}
+	dangling, uncovered := reconcileIndexRows(specSubsectionHeadings(doc), rows)
+	if len(dangling) != 0 || len(uncovered) != 0 {
+		t.Errorf("fenced example reported against the index: dangling=%v uncovered=%v", dangling, uncovered)
+	}
 }
 
 // assertSection28IndexReconciles asserts both directions over the
