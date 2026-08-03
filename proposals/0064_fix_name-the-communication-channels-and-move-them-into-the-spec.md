@@ -5,10 +5,6 @@
   sub-step that was part of this proposal now lives there, for the sequencing reason §3.5 states. Applying
   this proposal against a tree without `scripts/specshift` and the registers means hand-editing the sites
   this document deliberately does not enumerate, which is how both earlier application attempts failed.
-  Also blocked on `proposals/0067_new_author-spec-28-the-channel-naming-law-taxonomy-and-registers.md`,
-  which must be applied before SPEC-1 and SPEC-2 run, because SPEC-1 confirms rather than authors
-  `spec/28_communication-channels.md` §28.1 through §28.4 and their `spec/README.md` rows, and SPEC-2
-  appends two naming-table rows to that file.
 - **Status:** **Approved (2026-07-31) by jaf sign-off.** Verified (2026-07-30), converged after 10
   adversarial review rounds (16 findings fixed) across 4 full-pool sweeps, the certifying sweep running
   every lens complete with zero confirmed findings. This supersedes the sign-off of 2026-07-29, which was
@@ -27,10 +23,8 @@
   writes code and the migrations below are that tooling's output. Step one gives every communication channel between the gateway, the
   agent pod, the adapter, and the runtime a single canonical identifier under a stated naming law, and
   retires the collision in which two unrelated mechanisms are both called a lifecycle channel. Step two
-  creates `spec/29_communication-scenarios.md` and appends §28.5 through §28.8 to
-  `spec/28_communication-channels.md`, which proposal 0067 created carrying the naming law and the three
-  registers, so that the two files are together the normative
-  home for the channel contract and the end-to-end traces, and the knowledge in
+  creates `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md` as the normative
+  home for the channel contract and the end-to-end traces, so the knowledge in
   `gateway-runtime-comms.md` stops being re-derived from source on every question. The tooling that performs both migrations
   mechanically is built by proposal 0065. This proposal enumerates no edit sites. Every
   reference in code, tests, schemas, charts, and documentation is located and rewritten by scripts this
@@ -46,11 +40,7 @@ applied. It builds `scripts/specshift` and its four passes, the registers each p
 that prove a rewrite complete. Every sub-step below is a run of one of those passes over a register rather
 than a hand edit, so applying this proposal against a tree that lacks them means hand-resolving sites this
 document deliberately does not enumerate. Two application attempts made before the split did exactly that
-and neither converged. Proposal 0067 must be applied before SPEC-1 and SPEC-2 run, for a separate reason:
-it creates `spec/28_communication-channels.md` carrying §28.1 through §28.4 and writes their
-`spec/README.md` rows, which SPEC-1 confirms rather than authors, and SPEC-2 appends its naming-table rows
-to that file. Applying either sub-step against a tree where 0067 has not landed leaves SPEC-1 with a
-confirmation that fails and SPEC-2 with a target file that does not exist.
+and neither converged.
 
 Two documents at the repository root are the source material, and an implementor should read both before
 starting. This proposal is shorter than either, and it does not restate them.
@@ -198,9 +188,8 @@ stale.
 
 ### 3.1 What lands
 
-This proposal lands `spec/29_communication-scenarios.md`, appends §28.5 through §28.8 to
-`spec/28_communication-channels.md`, which proposal 0067 created carrying the naming law and the three
-registers, and runs the migration of every reference to them over the tooling proposal 0065 builds.
+This proposal lands two new specification files, one naming law, three registers, and the tooling that
+migrates every reference to them.
 
 `spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
 three registers, the contract cards grouped by participant edge, the exclusivity model, the wire-contract
