@@ -1296,3 +1296,41 @@ func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
 		}
 	}
 }
+
+// TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier pins the
+// tiers the documents the tier-11 guards over the communication channel
+// section read select. The guards hold the record of who creates that
+// section to one proposal and to the durable record of what an apply run
+// left open, and a guard fires under `--changed` only when the file it
+// reads resolves to a key naming the docs tier. Neither document carries
+// code, so the docs tier is the whole set either one selects.
+//
+// spec: 28.1 (channel naming law); TESTING.md §5
+// (tests/change-graph.json maps source packages, schemas, migrations,
+// and chart templates to the tests that exercise them)
+func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
+	if err != nil {
+		t.Fatalf("read change graph: %v", err)
+	}
+	var doc struct {
+		Globs map[string]map[string][]string `json:"globs"`
+	}
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("parse change graph: %v", err)
+	}
+	for _, key := range []string{"proposals/", "PROPOSAL-QUEUE.md"} {
+		tiers, ok := doc.Globs[key]
+		if !ok {
+			t.Fatalf("the change graph has no entry for %s, so a guard reading it fires under no changed run", key)
+		}
+		names := make([]string, 0, len(tiers))
+		for tier := range tiers {
+			names = append(names, tier)
+		}
+		sort.Strings(names)
+		if got := strings.Join(names, ","); got != "docs" {
+			t.Errorf("%s selects %v; the tier it carries is docs", key, names)
+		}
+	}
+}

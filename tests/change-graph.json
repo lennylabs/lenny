@@ -556,6 +556,9 @@
     "proposals/": {
       "docs": ["tests/tier11_docs/..."]
     },
+    "PROPOSAL-QUEUE.md": {
+      "docs": ["tests/tier11_docs/..."]
+    },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
       "contract": ["tests/tier3_contract/rest_openai_chat/...", "tests/tier3_contract/rest_openai_responses/...", "tests/tier3_contract/multiprotocol_journey/..."]

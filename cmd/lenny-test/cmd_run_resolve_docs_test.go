@@ -27,16 +27,25 @@ const modulePath = "github.com/lennylabs/lenny/"
 // The forms a guard names a file it reads in: a specification path
 // written whole, a specification file named by its numbered stem and
 // joined to the spec directory at the call site, a proposal document
-// written whole, and an import of a package of the migration tooling.
+// written whole, a root-level markdown document bound to a name, and an
+// import of a package of the migration tooling.
 //
 // A guard over a proposal document holds the record of who creates a
 // specification file to one document, so the document it reads is a
 // source of the guard on the same terms as the section text is, and it
-// has to select the docs tier the same way.
+// has to select the docs tier the same way. The same guard reads the
+// durable record of what an apply run left open, which is a root-level
+// document, so that form is derived too.
+//
+// The root-level form reads a binding rather than any quoted file name,
+// because a guard also writes such a name as an argument to a predicate
+// it exercises. An argument names no file the guard reads and routes
+// nothing; a binding names the document the guard opens.
 var (
 	specPathExpr      = regexp.MustCompile(`spec/[A-Za-z0-9_.-]+\.md`)
 	specFileStemExpr  = regexp.MustCompile(`"(\d{2}_[a-z0-9-]+\.md)"`)
 	proposalPathExpr  = regexp.MustCompile(`proposals/[A-Za-z0-9_.-]+\.md`)
+	rootDocumentExpr  = regexp.MustCompile(`(?m)^(?:const |var )?\s*[A-Za-z][A-Za-z0-9_]*\s*=\s*"([A-Z][A-Z0-9-]*\.md)"`)
 	toolingImportExpr = regexp.MustCompile(`"` + regexp.QuoteMeta(modulePath) + `(scripts/[A-Za-z0-9_/-]+)"`)
 )
 
@@ -85,6 +94,14 @@ func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
 	if !containsPrefixed(paths, "proposals/") {
 		t.Fatalf("the guards under %s resolve to %v, which names no proposal document; the derivation reads no such path, so its routing is unasserted", channelGuardDir, paths)
 	}
+	// A guard also holds that record against the durable record of what
+	// an apply run left open, which is a root-level document rather than
+	// a path under a directory the graph already keys. Its absence means
+	// the derivation reads no such document, so the routing assertion
+	// below passes vacuously over that whole file class.
+	if !containsRootLevelDocument(paths) {
+		t.Fatalf("the guards under %s resolve to %v, which names no root-level document; the derivation reads no such path, so its routing is unasserted", channelGuardDir, paths)
+	}
 	for _, path := range paths {
 		tiers := tiersForChangedPathIn(doc.Globs, path)
 		if !containsString(tiers, "docs") {
@@ -107,7 +124,8 @@ func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
 func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 	dir := t.TempDir()
 	guard := "package tier11_docs_test\n\n" +
-		"const held = \"proposals/9999_fix_a-document-a-guard-reads.md\"\n"
+		"const held = \"proposals/9999_fix_a-document-a-guard-reads.md\"\n\n" +
+		"const record = \"A-RECORD-A-GUARD-READS.md\"\n"
 	if err := os.WriteFile(filepath.Join(dir, channelGuardPrefix+"synthetic_test.go"), []byte(guard), 0o600); err != nil {
 		t.Fatalf("write the synthetic guard: %v", err)
 	}
@@ -116,17 +134,35 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the sources of the synthetic guard: %v", err)
 	}
-	const held = "proposals/9999_fix_a-document-a-guard-reads.md"
-	if !containsString(paths, held) {
-		t.Fatalf("the synthetic guard resolves to %v, which omits the document it reads", paths)
-	}
-
 	globs := map[string]map[string][]string{
 		"spec/": {"docs": []string{"tests/tier11_docs/..."}},
 	}
-	if tiers := tiersForChangedPathIn(globs, held); containsString(tiers, "docs") {
-		t.Errorf("a change to %s selects %v under a graph with no key covering it, so an uncovered guard source reads as routed", held, tiers)
+	// Both forms a guard names a document it reads in: a path under a
+	// directory, and a root-level document. Each has to be derived, and
+	// each has to read as unrouted under a graph with no key covering it.
+	for _, held := range []string{
+		"proposals/9999_fix_a-document-a-guard-reads.md",
+		"A-RECORD-A-GUARD-READS.md",
+	} {
+		if !containsString(paths, held) {
+			t.Errorf("the synthetic guard resolves to %v, which omits %s, a document it reads", paths, held)
+			continue
+		}
+		if tiers := tiersForChangedPathIn(globs, held); containsString(tiers, "docs") {
+			t.Errorf("a change to %s selects %v under a graph with no key covering it, so an uncovered guard source reads as routed", held, tiers)
+		}
 	}
+}
+
+// containsRootLevelDocument reports whether list carries a root-level
+// markdown document.
+func containsRootLevelDocument(list []string) bool {
+	for _, s := range list {
+		if !strings.Contains(s, "/") && strings.HasSuffix(s, ".md") {
+			return true
+		}
+	}
+	return false
 }
 
 // channelGuardSources returns the tracked paths the tier-11 guards over
@@ -154,6 +190,9 @@ func channelGuardSources(dir string) ([]string, error) {
 		}
 		for _, m := range proposalPathExpr.FindAllString(text, -1) {
 			found[m] = true
+		}
+		for _, m := range rootDocumentExpr.FindAllStringSubmatch(text, -1) {
+			found[m[1]] = true
 		}
 		for _, m := range toolingImportExpr.FindAllStringSubmatch(text, -1) {
 			found[m[1]] = true
