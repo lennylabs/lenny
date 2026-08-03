@@ -188,9 +188,8 @@ stale.
 
 ### 3.1 What lands
 
-This proposal lands one new specification file, `spec/29_communication-scenarios.md`, together with the
-§28.5 through §28.8 sections it appends to the `spec/28_communication-channels.md` proposal 0067 created,
-and the tooling that migrates every reference to the naming law and the registers that file carries.
+This proposal lands two new specification files, one naming law, three registers, and the tooling that
+migrates every reference to them.
 
 `spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
 three registers, the contract cards grouped by participant edge, the exclusivity model, the wire-contract
@@ -1032,9 +1031,9 @@ residual is what makes them safe to be incomplete.
 
 Every heading `spec/28` and `spec/29` land is fixed here, with its exact title and the anchor that title
 produces. This subsection exists because three separate obligations in this proposal need the anchors
-before the sections that carry them are written: the `spec/README.md` index rows, the
+fixed before the sections that carry them are written: the `spec/README.md` index rows, the
 `tests/spec-map.json` keys, and the heading walker's predicate that a row's anchor resolves. The headings
-land across two sub-steps: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
+land in two changes: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
 §28.4, and SPEC-3 appends §28.5 through §28.8 to it and creates `spec/29_communication-scenarios.md`. This
 proposal and the remediation steps after it also cite a §28.5 card by its subsection number before SPEC-3
 runs. Without a title stated in advance, a row's link text and its anchor would be invented in whichever
@@ -1302,11 +1301,12 @@ channel" is exactly the phrase N3 bans, and
 `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 asserts that clause verbatim.
 
 Proposal 0067 wrote the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4
-subsections, at the depth the existing entries use, with the link text and the anchors §4.8 fixes, so this
-sub-step confirms those five rows are present and adds any that are missing. Take the link text and the
-anchor for each row from the heading table in §4.8, which fixes the title and the derived anchor of every
-§28 and §29 heading, so these rows carry `28. Communication Channels`, `28.1 Naming law`,
-`28.2 Taxonomy and axes`, `28.3 Registers`, and `28.4 Claim register` with the anchors that table states.
+subsections, at the depth the existing entries use, so this sub-step confirms those five rows are present
+and adds any that are missing. The confirmation predicate is the heading table in §4.8, which fixes the
+title and the derived anchor of every §28 and §29 heading: each row carries the link text
+`28. Communication Channels`, `28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, or
+`28.4 Claim register`, with the anchor that table states, and a row this sub-step adds takes its link text
+and its anchor from the same table.
 Proposal 0067 created `spec/28_communication-channels.md` with those five
 headings and wrote those rows before this sub-step runs, so every row resolves and no row in this proposal
 precedes its target file. Write for each of those headings the other
@@ -1951,8 +1951,8 @@ runtime-operations frames §15.4.3 and §15.4.6 state as runtime obligations.
 
 Two gates land in this sub-step under §3.5, because this is the sub-step that supplies each one's route to
 green. The §28.8 matrix completeness check is a tier-0 gate, and it lands here because §28.8 is written
-here while the §28.3 register its bijection reads already exists, created by proposal 0067 and completed
-by the naming-table rows SPEC-2 writes, so the bijection first holds at this sub-step's exit. The artifact-register supersession check is a tier-11 gate, and it lands here
+here while the §28.3 register its bijection reads already exists from SPEC-1, so the bijection first holds
+at this sub-step's exit. The artifact-register supersession check is a tier-11 gate, and it lands here
 because the enumeration it forbids, the `schemas/README.md` table, is replaced here. Its read domain is stated rather than left to the implementation: the tracked markdown under
 `spec/`, `docs/`, and `schemas/`, together with the tracked root-level markdown documents N3 leaves in
 scope, which is the markdown subset of the walk the naming lint reads. The predicate states the exemption
@@ -2702,9 +2702,8 @@ headings, `## 29`, each `### N.M` subsection of `spec/29`, and the §4.4.1 throu
 through §4.7.11 headings this sub-step inserts into `spec/04`. The `spec/28` and `spec/29` headings are
 named in §4.8; the §4.4 and §4.7 titles are authored inside this sub-step from the paragraph subjects that
 survive the reduction, so their keys are written against the titles the insertion produces. The §28.1 through
-§28.4 headings are not among them, because proposal 0067 created them with their sections and SPEC-1 wrote
-their `tests/spec-map.json` key or their `tests/spec-map-exceptions.yaml` entry there, so this sub-step
-neither writes nor retires coverage for them.
+§28.4 headings are not among them, because SPEC-1 created them together with their sections and wrote their
+key or their exceptions entry there, so this sub-step neither writes nor retires coverage for them.
 Without this the walker is red at the exit of the
 sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
 existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193
