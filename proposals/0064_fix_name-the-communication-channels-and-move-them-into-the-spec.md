@@ -188,9 +188,8 @@ stale.
 
 ### 3.1 What lands
 
-This proposal lands one new specification file, `spec/29_communication-scenarios.md`, appends to
-`spec/28_communication-channels.md`, which proposal 0067 created carrying the naming law and the three
-registers, and lands the tooling that migrates every reference to them.
+This proposal lands two new specification files, one naming law, three registers, and the tooling that
+migrates every reference to them.
 
 `spec/28_communication-channels.md` is the normative home. It carries the naming law and taxonomy, the
 three registers, the contract cards grouped by participant edge, the exclusivity model, the wire-contract
@@ -1034,7 +1033,7 @@ Every heading `spec/28` and `spec/29` land is fixed here, with its exact title a
 produces. This subsection exists because three separate obligations in this proposal need the anchors
 before the sections that carry them are written: the `spec/README.md` index rows, the
 `tests/spec-map.json` keys, and the heading walker's predicate that a row's anchor resolves. The headings
-land across two proposals: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
+land across two sub-steps: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
 §28.4, and SPEC-3 appends §28.5 through §28.8 to it and creates `spec/29_communication-scenarios.md`. This
 proposal and the remediation steps after it also cite a §28.5 card by its subsection number before SPEC-3
 runs. Without a title stated in advance, a row's link text and its anchor would be invented in whichever
@@ -2700,9 +2699,8 @@ headings, `## 29`, each `### N.M` subsection of `spec/29`, and the §4.4.1 throu
 through §4.7.11 headings this sub-step inserts into `spec/04`. The `spec/28` and `spec/29` headings are
 named in §4.8; the §4.4 and §4.7 titles are authored inside this sub-step from the paragraph subjects that
 survive the reduction, so their keys are written against the titles the insertion produces. The §28.1 through
-§28.4 headings are not among them, because proposal 0067 created them together with their sections and
-SPEC-1 wrote their key or their exceptions entry there, so this sub-step neither writes nor retires
-coverage for them.
+§28.4 headings are not among them, because SPEC-1 created them together with their sections and wrote their
+key or their exceptions entry there, so this sub-step neither writes nor retires coverage for them.
 Without this the walker is red at the exit of the
 sub-step that lands it, on headings that carry a `spec/README.md` row and no spec-map coverage. The
 existing accepted reason set is hard-coded at `cmd/lenny-test/cmd_validate_yaml.go` lines 185 through 193
