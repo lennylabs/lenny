@@ -1,4 +1,4 @@
-# 28. Communication Channels
+## 28. Communication Channels
 
 This section is the normative home for the communication channels between the gateway replicas, the agent
 pod, the adapter container, the runtime container, and the control plane. §28.1 states the law that fixes
@@ -7,7 +7,7 @@ records. §28.3 carries the registers of links, channels, and register entries, 
 table that records the spelling each carrier takes. §28.4 states the claim register, which records the
 implementation status of every statement this section makes.
 
-## 28.1 Naming law
+### 28.1 Naming law
 
 **N1.** A channel's canonical identifier is a mnemonic for the conversation it carries, chosen so that no
 two channels on the same boundary share a stem. The endpoint pair, the plane, the dial direction, the
@@ -63,7 +63,7 @@ permitted citation. A section that gives up content carries a permanent successo
 heading that now owns the content and the identifiers that moved. The citation resolver and the
 line-citation ratchet are the gates that hold this rule.
 
-## 28.2 Taxonomy and axes
+### 28.2 Taxonomy and axes
 
 An identifier is drawn from one of three classes, and the class fixes the columns the entry carries in
 §28.3.
@@ -85,7 +85,7 @@ Every channel records six axes.
 | Boundary | `intra-pod`, `gateway-to-pod`, `pod-to-gateway`, `pod-egress`, `gateway-to-store`, `inter-replica`, or `control-plane` | Closed set, and the grouping key of the contract cards, so a channel's boundary value and its card subsection carry the same string |
 | Exclusivity | The granularity plus the enforcing guard, or the guard named as missing | Records whether two gateway replicas can hold the channel at once. The per-channel values are stated with the contract cards |
 
-## 28.3 Registers
+### 28.3 Registers
 
 Three registers carry the entries of the three classes, one row per entry. The provenance column carries
 the entry number the channel inventory in `gateway-runtime-comms.md` assigns, so a reader can recover the
@@ -99,7 +99,7 @@ reads `None` when the connection carrying the channel is referred to by that cha
 case the channel row's transport column and the endpoint stated with the contract cards describe the
 connection, and the connection takes a link entry at the point a second channel row refers to it.
 
-### Link register
+#### Link register
 
 | Identifier | Participants | Dial direction | Transport | Endpoint | Lifetime | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -111,7 +111,7 @@ connection, and the connection takes a link entry at the point a second channel 
 cross-replica message routing it carries is not implemented. That status is recorded as an `ABSENT`
 claim-register row per §28.4 rather than as an absent transport in this register.
 
-### Channel register
+#### Channel register
 
 | Identifier | Link | Boundary | Plane | Dial direction | Authority direction | Transport | Message vocabulary | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|:--|:--|
@@ -130,7 +130,7 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 | `CH-EVENTRELAY` | None | `gateway-to-store` | State | Gateway | Gateway | Redis | Cross-replica session event backlog | C16 |
 | `CH-ADMISSION` | None | `control-plane` | Control | Admission webhook | Admission webhook | HTTP | Drain-readiness admission on pod eviction | C22 |
 
-### Register-entry register
+#### Register-entry register
 
 | Identifier | Store | Key or table | Writer set | Reader set | Semantics | Provenance |
 |:--|:--|:--|:--|:--|:--|:--|
@@ -140,7 +140,7 @@ claim-register row per §28.4 rather than as an absent transport in this registe
 | `REG-PODSTATE` | Postgres | `agent_pod_state` | WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas for `sessions_served` and `scrub_failure_count` | Gateway replicas | One row per pod. A read-optimized mirror carrying the pod phase the orphan-session reconciler reads, together with the gateway-written reuse counters the recycle disposition evaluates ([§12.6](12_storage-architecture.md#126-interface-design), [§4.7](04_system-components.md#47-runtime-adapter)) | C21 |
 | `REG-CLAIM` | Kubernetes API | `SandboxClaim` named `claim-<podName>` | Gateway replicas for the create, the status-subresource binding-state writes, and the hold-expiry delete, and the WarmPoolController leader for the deletes at pod termination and orphan garbage collection | Gateway replicas and controllers | Cluster-wide per-pod acquisition on first claim. The object carries no owner reference, so the controller's delete is the reclamation path for a claim its holder did not remove ([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)) | C17 |
 
-### Naming table
+#### Naming table
 
 The table records, per carrier, the spelling a channel whose identifier changed takes on that carrier. A
 retired spelling standing in the row that retires it is the declaration of that spelling rather than a
@@ -156,7 +156,7 @@ reference to the channel.
 | `CH-RUNTIMEOPS` | socket | `@lenny-lifecycle` | `@lenny-runtime-ops` |
 | `CH-RUNTIMEOPS` | path | `lifecycle-events` | `runtime-ops-events` |
 
-## 28.4 Claim register
+### 28.4 Claim register
 
 Every normative statement this section makes about a mechanism carries a row in the claim register at
 `tests/claim-map.json`, with a status drawn from a closed set. `WIRED` means the mechanism is reachable from production code. `UNWIRED`

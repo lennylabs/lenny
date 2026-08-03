@@ -113,7 +113,7 @@ const (
 //
 // spec: §28.4
 const (
-	claimRegisterHeading = "## 28.4 "
+	claimRegisterHeading = "### 28.4 "
 
 	claimRegisterLocationSentence = "Every normative statement this section makes about a mechanism carries " +
 		"a row in the claim register at `tests/claim-map.json`, with a status drawn from a closed set."

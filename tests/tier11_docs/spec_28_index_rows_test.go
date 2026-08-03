@@ -38,8 +38,8 @@ var indexRowPattern = regexp.MustCompile(`^\s*- \[([^\]]*)\]\(([^)#]+)(?:#([^)]*
 // that point into file, together with the link title of the file's own
 // unanchored section row. The section title is empty when the index
 // carries no such row. The title is returned rather than a presence bit
-// so the caller can hold the section row and the section's level-1
-// heading to the same one-to-one title rule the anchored rows follow.
+// so the caller can hold the section row and the section's own heading
+// to the same one-to-one title rule the anchored rows follow.
 func specIndexRowsFor(index, file string) (rows []specIndexRow, sectionTitle string) {
 	for _, line := range strings.Split(index, "\n") {
 		m := indexRowPattern.FindStringSubmatch(line)
@@ -55,17 +55,57 @@ func specIndexRowsFor(index, file string) (rows []specIndexRow, sectionTitle str
 	return rows, sectionTitle
 }
 
+// specHeadingNumber captures the dotted section number a numbered spec
+// heading opens with, whether or not a trailing dot follows it
+// (`28. Communication Channels`, `28.1 Naming law`, `28.5.1 Gateway-to-pod`).
+var specHeadingNumber = regexp.MustCompile(`^(\d+(?:\.\d+)*)\.?(?:\s|$)`)
+
+// numberedHeadingLevel returns the heading level a numbered spec heading
+// is published at, derived from the depth of its own section number: a
+// section number with no dot is a level-2 heading, and each further
+// component nests one level deeper, so §28 is `## 28.`, §28.1 is
+// `### 28.1`, and §28.5.1 is `#### 28.5.1`. The second result is false
+// for an unnumbered heading, whose level follows the numbered heading
+// enclosing it instead.
+//
+// The depth rule is what keeps a heading appended to the section later
+// landing as the sibling or the child its number states, rather than
+// nested under whichever heading happens to precede it.
+//
+// spec: §28
+func numberedHeadingLevel(title string) (int, bool) {
+	m := specHeadingNumber.FindStringSubmatch(title)
+	if m == nil {
+		return 0, false
+	}
+	return strings.Count(m[1], ".") + 2, true
+}
+
+// mustNumberedHeadingLevel is numberedHeadingLevel over a title this file
+// states, used to derive the levels below from the depth rule instead of
+// restating them as literals.
+func mustNumberedHeadingLevel(title string) int {
+	level, ok := numberedHeadingLevel(title)
+	if !ok {
+		panic("not a numbered spec heading: " + title)
+	}
+	return level
+}
+
 // sectionHeadingLevel is the heading level of the heading that names the
-// section as a whole, the one the index's unanchored row links to.
-const sectionHeadingLevel = 1
+// section as a whole, the one the index's unanchored row links to. It is
+// derived from the depth of the section's own number rather than fixed
+// here, so the constant cannot disagree with the rule the section is
+// held to.
+var sectionHeadingLevel = mustNumberedHeadingLevel("28. Communication Channels")
 
 // sectionRowMismatches returns one message per disagreement between the
-// index's unanchored section row and the section file's level-1
-// heading. The section is named once by its own heading and once by the
-// row that links to the file, and those two titles must match, exactly
-// as an anchored row's title must match the subsection heading it points
-// at. A file with no level-1 heading, or with more than one, is reported
-// too: the index row would then name no heading or an arbitrary one.
+// index's unanchored section row and the section file's own heading. The
+// section is named once by its own heading and once by the row that links
+// to the file, and those two titles must match, exactly as an anchored
+// row's title must match the subsection heading it points at. A file with
+// no section heading, or with more than one, is reported too: the index
+// row would then name no heading or an arbitrary one.
 //
 // spec: §28
 func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []string {
@@ -82,12 +122,13 @@ func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []str
 	}
 	switch {
 	case len(titles) == 0:
-		out = append(out, "the section file carries no level-1 heading for the index's section row to name")
+		out = append(out, fmt.Sprintf("the section file carries no level-%d heading for the index's section row to name",
+			sectionHeadingLevel))
 	case len(titles) > 1:
-		out = append(out, fmt.Sprintf("the section file carries more than one level-1 heading: %s",
-			strings.Join(titles, ", ")))
+		out = append(out, fmt.Sprintf("the section file carries more than one level-%d heading: %s",
+			sectionHeadingLevel, strings.Join(titles, ", ")))
 	case sectionTitle != "" && titles[0] != sectionTitle:
-		out = append(out, fmt.Sprintf("index section row %q names level-1 heading %q; the titles must match one to one",
+		out = append(out, fmt.Sprintf("index section row %q names section heading %q; the titles must match one to one",
 			sectionTitle, titles[0]))
 	}
 	return out
@@ -95,12 +136,14 @@ func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []str
 
 // subsectionHeadingLevel is the heading level of the numbered
 // subsections the index's anchored rows name, and the level that encloses
-// the register tables.
-const subsectionHeadingLevel = 2
+// the register tables. It follows from the depth rule for the same reason
+// sectionHeadingLevel does.
+var subsectionHeadingLevel = mustNumberedHeadingLevel("28.3 Registers")
 
 // registerTableLevel is the heading level the register tables of §28.3
-// are published at.
-const registerTableLevel = 3
+// are published at. They carry no number of their own, so they sit one
+// level below the numbered subsection enclosing them.
+var registerTableLevel = subsectionHeadingLevel + 1
 
 // registerSubsectionTitle is the level-2 heading that encloses the
 // section's register tables. The exemption below applies under this
@@ -128,8 +171,8 @@ var registerTableTitles = []string{
 // isRegisterTableHeading reports whether h is one of the register tables
 // the published index carries no anchored row for. The exemption is
 // scoped to the headings it describes rather than to their text: h must
-// be a level-3 heading, and the level-2 heading enclosing it must be
-// §28.3. A heading carrying a listed title at another level, or under
+// be a register-table heading, and the numbered subsection enclosing it
+// must be §28.3. A heading carrying a listed title at another level, or under
 // another subsection, falls back to the coverage rule and is reported as
 // carrying no index row, so the section can grow further subsections
 // without a listed title silently exempting a heading in one of them.
@@ -251,6 +294,43 @@ func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow, exempt 
 	return rec
 }
 
+// headingLevelMismatches returns one message per heading published at a
+// level the section-number depth rule does not admit. A numbered heading
+// sits at the level its own number's depth fixes, and an unnumbered
+// heading sits one level below the numbered heading enclosing it, so the
+// register tables of §28.3 sit one below §28.3.
+//
+// The rule is asserted per heading rather than assumed, because the level
+// is what fixes the nesting a later append lands in. A section written one
+// level shallower than its number states leaves its subsections at the
+// level a sibling section occupies, so a subsection appended afterwards at
+// the level its own number fixes nests inside its predecessor instead of
+// standing beside it. Every anchor is derived from the title alone, so no
+// anchor check reports this.
+//
+// spec: §28
+func headingLevelMismatches(headings []markdownHeading) []string {
+	var out []string
+	enclosing := 0
+	for _, h := range headings {
+		want, numbered := numberedHeadingLevel(h.text)
+		if numbered {
+			enclosing = want
+		} else if enclosing == 0 {
+			out = append(out, fmt.Sprintf("heading %q stands before any numbered heading, so no enclosing heading fixes its level", h.text))
+			continue
+		} else {
+			want = enclosing + 1
+		}
+		if h.level != want {
+			out = append(out, fmt.Sprintf("heading %q is published at level %d; the section-number depth fixes it at level %d",
+				h.text, h.level, want))
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // titleMismatches returns one message per anchored row whose title is
 // not the title of the single heading it points at, so the index and the
 // section name each subsection the same way. A row pointing at an
@@ -295,7 +375,8 @@ func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("ambiguous anchor", func(t *testing.T) { assertAmbiguousAnchorIsReported(t) })
 	t.Run("underscore kept", func(t *testing.T) { assertUnderscoreSurvivesTheSlugRule(t) })
 	t.Run("non-ascii letter kept", func(t *testing.T) { assertNonASCIILetterSurvivesTheSlugRule(t) })
-	t.Run("section row title", func(t *testing.T) { assertSectionRowNamesTheLevel1Heading(t) })
+	t.Run("section row title", func(t *testing.T) { assertSectionRowNamesTheSectionHeading(t) })
+	t.Run("heading levels follow the number depth", func(t *testing.T) { assertHeadingLevelsFollowTheNumberDepth(t) })
 }
 
 // assertNonASCIILetterSurvivesTheSlugRule pins the letter class of the
@@ -310,7 +391,7 @@ func assertNonASCIILetterSurvivesTheSlugRule(t *testing.T) {
 	if got, want := slugify("28.6 Café registers"), "286-café-registers"; got != want {
 		t.Errorf("slugify(%q) = %q, want %q", "28.6 Café registers", got, want)
 	}
-	doc := "## 28.6 Café registers\n"
+	doc := "### 28.6 Café registers\n"
 	rows := []specIndexRow{{title: "28.6 Café registers", anchor: "286-café-registers"}}
 	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
@@ -318,15 +399,15 @@ func assertNonASCIILetterSurvivesTheSlugRule(t *testing.T) {
 	}
 }
 
-// assertSectionRowNamesTheLevel1Heading pins that the index's unanchored
-// section row and the section's level-1 heading are held to the same
+// assertSectionRowNamesTheSectionHeading pins that the index's unanchored
+// section row and the section's own heading are held to the same
 // one-to-one title rule the anchored rows are. Reducing that row to a
 // presence check lets the heading and its index row be renamed
 // independently, which is exactly the index-versus-section title
 // disagreement this test reports.
 //
 // spec: §28
-func assertSectionRowNamesTheLevel1Heading(t *testing.T) {
+func assertSectionRowNamesTheSectionHeading(t *testing.T) {
 	t.Helper()
 
 	const index = "- [28. Communication Channels](28_communication-channels.md)\n" +
@@ -339,7 +420,7 @@ func assertSectionRowNamesTheLevel1Heading(t *testing.T) {
 		t.Fatalf("section row title = %q, want %q", sectionTitle, "28. Communication Channels")
 	}
 
-	matching := scanMarkdownHeadings("# 28. Communication Channels\n\n## 28.1 Naming law\n")
+	matching := scanMarkdownHeadings("## 28. Communication Channels\n\n### 28.1 Naming law\n")
 	if got := sectionRowMismatches(matching, sectionTitle); len(got) != 0 {
 		t.Errorf("matching section row and level-1 heading reported: %v", got)
 	}
@@ -352,27 +433,27 @@ func assertSectionRowNamesTheLevel1Heading(t *testing.T) {
 	}{
 		{
 			name:    "renamed heading",
-			doc:     "# 28. Communication channels\n\n## 28.1 Naming law\n",
+			doc:     "## 28. Communication channels\n\n### 28.1 Naming law\n",
 			title:   sectionTitle,
 			wantSub: "must match one to one",
 		},
 		{
 			name:    "missing section row",
-			doc:     "# 28. Communication Channels\n",
+			doc:     "## 28. Communication Channels\n",
 			title:   "",
 			wantSub: "no unanchored section row",
 		},
 		{
-			name:    "no level-1 heading",
-			doc:     "## 28.1 Naming law\n",
+			name:    "no section heading",
+			doc:     "### 28.1 Naming law\n",
 			title:   sectionTitle,
-			wantSub: "no level-1 heading",
+			wantSub: "carries no level-2 heading",
 		},
 		{
-			name:    "two level-1 headings",
-			doc:     "# 28. Communication Channels\n\n# 28. Communication Channels bis\n",
+			name:    "two section headings",
+			doc:     "## 28. Communication Channels\n\n## 28. Communication Channels bis\n",
 			title:   sectionTitle,
-			wantSub: "more than one level-1 heading",
+			wantSub: "more than one level-2 heading",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -400,17 +481,17 @@ func assertFencedLineIsNotAHeading(t *testing.T) {
 	}{
 		{
 			name: "backtick fence",
-			doc:  "## 28.1 Naming law\n\n```markdown\n## 28.99 Example heading\n```\n\n## 28.2 Taxonomy\n",
+			doc:  "### 28.1 Naming law\n\n```markdown\n### 28.99 Example heading\n```\n\n### 28.2 Taxonomy\n",
 			want: []string{"28.1 Naming law", "28.2 Taxonomy"},
 		},
 		{
 			name: "tilde fence",
-			doc:  "## 28.1 Naming law\n\n~~~\n## 28.99 Example heading\n~~~\n",
+			doc:  "### 28.1 Naming law\n\n~~~\n### 28.99 Example heading\n~~~\n",
 			want: []string{"28.1 Naming law"},
 		},
 		{
 			name: "indented fence",
-			doc:  "## 28.1 Naming law\n\n  ```\n## 28.99 Example heading\n  ```\n",
+			doc:  "### 28.1 Naming law\n\n  ```\n### 28.99 Example heading\n  ```\n",
 			want: []string{"28.1 Naming law"},
 		},
 	} {
@@ -432,7 +513,7 @@ func assertFencedLineIsNotAHeading(t *testing.T) {
 
 	// A fenced example line admitted as a heading is reported as
 	// uncovered, blaming the index for content that is not a heading.
-	doc := "## 28.1 Naming law\n\n```markdown\n## 28.99 Example heading\n```\n"
+	doc := "### 28.1 Naming law\n\n```markdown\n### 28.99 Example heading\n```\n"
 	rows := []specIndexRow{{title: "28.1 Naming law", anchor: "281-naming-law"}}
 	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 || len(rec.ambiguous) != 0 {
@@ -442,15 +523,15 @@ func assertFencedLineIsNotAHeading(t *testing.T) {
 
 // assertRowAtDeeperHeadingResolves pins that a row anchored at a heading
 // below the subsection level resolves. §28.3 publishes its register
-// tables under level-3 headings, and the index rows the section gains
-// later point at headings at that depth. Resolving rows against the
+// tables one level below the subsection, and the index rows the section
+// gains later point at headings at that depth. Resolving rows against the
 // subsection headings alone reports such a row as dangling even though
 // it resolves in a rendered document.
 //
 // spec: §28.3
 func assertRowAtDeeperHeadingResolves(t *testing.T) {
 	t.Helper()
-	doc := "# 28. Communication Channels\n\n## 28.3 Registers\n\n### Link register\n\n#### Gateway-to-pod\n"
+	doc := "## 28. Communication Channels\n\n### 28.3 Registers\n\n#### Link register\n\n##### Gateway-to-pod\n"
 	rows := []specIndexRow{
 		{title: "28.3 Registers", anchor: "283-registers"},
 		{title: "Link register", anchor: "link-register"},
@@ -467,8 +548,8 @@ func assertRowAtDeeperHeadingResolves(t *testing.T) {
 		t.Errorf("title cross-check reported a correct row: %v", got)
 	}
 
-	// The coverage direction runs over every heading below the level-1
-	// one, so dropping the two deeper rows leaves both headings reported.
+	// The coverage direction runs over every heading below the section
+	// heading, so dropping the two deeper rows leaves both headings reported.
 	// An unnumbered heading is reachable from the index only through a row
 	// of its own, and exempting it on its title stating no number lets a
 	// heading added under §28.3 go unreported.
@@ -498,14 +579,14 @@ func equalStrings(got, want []string) bool {
 // numbered subsection published below level 2, such as a contract card
 // added under §28.5, is unreachable from the published index when no row
 // names it, and that is the disagreement this file exists to report.
-// Keying coverage on depth exempts every heading deeper than level 2 and
-// leaves such a heading unreported.
+// Keying coverage on depth exempts every heading below the subsection
+// level and leaves such a heading unreported.
 //
 // spec: §28
 func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 	t.Helper()
 
-	doc := "# 28. Communication Channels\n\n## 28.5 Contract cards\n\n### 28.5.1 Intra-pod\n\n### Naming table\n"
+	doc := "## 28. Communication Channels\n\n### 28.5 Contract cards\n\n#### 28.5.1 Intra-pod\n\n#### Naming table\n"
 	rows := []specIndexRow{{title: "28.5 Contract cards", anchor: "285-contract-cards"}}
 
 	exempt := titleSet(registerTableTitles...)
@@ -518,12 +599,12 @@ func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 		t.Errorf("headings below level 2 not reported as missing an index row: %v", rec.uncovered)
 	}
 
-	// The section's own level-1 heading states no subsection number and is
+	// The section's own heading states no subsection number and is
 	// held to the unanchored section row instead, so it is never reported
 	// here even though it carries no anchored row.
 	for _, title := range rec.uncovered {
 		if title == "28. Communication Channels" {
-			t.Errorf("the section's level-1 heading was reported as missing an anchored index row")
+			t.Errorf("the section's own heading was reported as missing an anchored index row")
 		}
 	}
 
@@ -538,7 +619,7 @@ func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 
 // assertRegisterTableExemptionIsScopedToItsSubsection pins that the
 // register-table exemption is keyed on the heading's position rather than
-// on its title alone. Only a level-3 heading enclosed by §28.3 takes it.
+// on its title alone. Only a register-table heading enclosed by §28.3 takes it.
 // A heading carrying one of the same titles at another level, or under
 // another numbered subsection the section gains later, is unreachable
 // from the published index unless a row names it, so it is reported. A
@@ -550,7 +631,7 @@ func assertRegisterTableExemptionIsScopedToItsSubsection(t *testing.T) {
 	t.Helper()
 
 	exempt := titleSet(registerTableTitles...)
-	const head = "# 28. Communication Channels\n\n"
+	const head = "## 28. Communication Channels\n\n"
 	rows := []specIndexRow{
 		{title: "28.3 Registers", anchor: "283-registers"},
 		{title: "28.5 Contract cards", anchor: "285-contract-cards"},
@@ -562,28 +643,28 @@ func assertRegisterTableExemptionIsScopedToItsSubsection(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "level-3 under the registers subsection",
-			doc:  head + "## 28.3 Registers\n\n### Link register\n",
+			name: "register table under the registers subsection",
+			doc:  head + "### 28.3 Registers\n\n#### Link register\n",
 			want: nil,
 		},
 		{
 			name: "same title under another subsection",
-			doc:  head + "## 28.3 Registers\n\n## 28.5 Contract cards\n\n### Naming table\n",
+			doc:  head + "### 28.3 Registers\n\n### 28.5 Contract cards\n\n#### Naming table\n",
 			want: []string{"Naming table"},
 		},
 		{
 			name: "same title at the subsection level",
-			doc:  head + "## 28.3 Registers\n\n## Link register\n",
+			doc:  head + "### 28.3 Registers\n\n### Link register\n",
 			want: []string{"Link register"},
 		},
 		{
 			name: "same title below the register-table level",
-			doc:  head + "## 28.3 Registers\n\n### Link register\n\n#### Channel register\n",
+			doc:  head + "### 28.3 Registers\n\n#### Link register\n\n##### Channel register\n",
 			want: []string{"Channel register"},
 		},
 		{
 			name: "same title before any subsection heading",
-			doc:  head + "### Channel register\n\n## 28.3 Registers\n",
+			doc:  head + "#### Channel register\n\n### 28.3 Registers\n",
 			want: []string{"Channel register"},
 		},
 	} {
@@ -612,8 +693,8 @@ func assertRegisterTableExemptionIsScopedToItsSubsection(t *testing.T) {
 func assertRegisterTableExemptionIsClosed(t *testing.T) {
 	t.Helper()
 
-	const doc = "# 28. Communication Channels\n\n## 28.3 Registers\n\n" +
-		"### Link register\n\n### Channel register\n\n### Register-entry register\n\n### Naming table\n"
+	const doc = "## 28. Communication Channels\n\n### 28.3 Registers\n\n" +
+		"#### Link register\n\n#### Channel register\n\n#### Register-entry register\n\n#### Naming table\n"
 	rows := []specIndexRow{{title: "28.3 Registers", anchor: "283-registers"}}
 	exempt := titleSet(registerTableTitles...)
 
@@ -624,14 +705,14 @@ func assertRegisterTableExemptionIsClosed(t *testing.T) {
 
 	// A heading added under §28.3 and left out of both the index and the
 	// list is reported, rather than exempted for stating no number.
-	added := doc + "\n### Sense register\n"
+	added := doc + "\n#### Sense register\n"
 	rec = reconcileIndexRows(scanMarkdownHeadings(added), rows, exempt)
 	if len(rec.uncovered) != 1 || rec.uncovered[0] != "Sense register" {
 		t.Errorf("added register heading not reported as missing an index row: %v", rec.uncovered)
 	}
 
 	// Renaming a listed heading without updating the index reports it too.
-	renamed := strings.Replace(doc, "### Naming table\n", "### Naming tables\n", 1)
+	renamed := strings.Replace(doc, "#### Naming table\n", "#### Naming tables\n", 1)
 	rec = reconcileIndexRows(scanMarkdownHeadings(renamed), rows, exempt)
 	if len(rec.uncovered) != 1 || rec.uncovered[0] != "Naming tables" {
 		t.Errorf("renamed register heading not reported: %v", rec.uncovered)
@@ -659,7 +740,7 @@ func assertAmbiguousAnchorIsReported(t *testing.T) {
 
 	// Two subsection titles collapsing to one slug: "28.3 Registers" and
 	// "28.3: Registers" both derive "283-registers".
-	doc := "## 28.3 Registers\n\n## 28.3: Registers\n"
+	doc := "### 28.3 Registers\n\n### 28.3: Registers\n"
 	rows := []specIndexRow{{title: "28.3 Registers", anchor: "283-registers"}}
 	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.ambiguous) != 1 || !strings.Contains(rec.ambiguous[0], "283-registers") {
@@ -673,7 +754,7 @@ func assertAmbiguousAnchorIsReported(t *testing.T) {
 	}
 
 	// Two rows carrying one anchor are ambiguous in the index itself.
-	doc = "## 28.3 Registers\n"
+	doc = "### 28.3 Registers\n"
 	rows = []specIndexRow{
 		{title: "28.3 Registers", anchor: "283-registers"},
 		{title: "28.3 Registers", anchor: "283-registers"},
@@ -696,7 +777,7 @@ func assertUnderscoreSurvivesTheSlugRule(t *testing.T) {
 	if got, want := slugify("28.5 sessions_served"), "285-sessions_served"; got != want {
 		t.Errorf("slugify(%q) = %q, want %q", "28.5 sessions_served", got, want)
 	}
-	doc := "## 28.5 sessions_served\n"
+	doc := "### 28.5 sessions_served\n"
 	rows := []specIndexRow{{title: "28.5 sessions_served", anchor: "285-sessions_served"}}
 	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
@@ -753,6 +834,88 @@ func assertSection28IndexReconciles(t *testing.T) {
 	for _, msg := range sectionRowMismatches(headings, sectionTitle) {
 		t.Errorf("%s and spec/README.md disagree: %s", channelsSpecFile, msg)
 	}
+	for _, msg := range headingLevelMismatches(headings) {
+		t.Errorf("%s publishes a heading at the wrong level: %s", channelsSpecFile, msg)
+	}
+}
+
+// assertHeadingLevelsFollowTheNumberDepth pins every §28 heading to the
+// level its own section number's depth fixes, and the register tables to
+// one level below §28.3. The reject cases are the whole section written
+// one level shallower and a single subsection written one level shallower:
+// each derives exactly the anchors the correct levels derive, so the
+// index reconciliation, the title cross-check, and the slug rule all pass
+// over them while the section's nesting is wrong and a later append lands
+// inside its predecessor rather than beside it.
+//
+// spec: §28
+func assertHeadingLevelsFollowTheNumberDepth(t *testing.T) {
+	t.Helper()
+
+	for _, tc := range []struct {
+		name  string
+		title string
+		want  int
+	}{
+		{name: "section", title: "28. Communication Channels", want: 2},
+		{name: "subsection", title: "28.1 Naming law", want: 3},
+		{name: "contract card", title: "28.5.1 Gateway-to-pod", want: 4},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := numberedHeadingLevel(tc.title)
+			if !ok || got != tc.want {
+				t.Errorf("numberedHeadingLevel(%q) = %d, %v, want %d, true", tc.title, got, ok, tc.want)
+			}
+		})
+	}
+	if _, ok := numberedHeadingLevel("Link register"); ok {
+		t.Errorf("numberedHeadingLevel read a section number out of an unnumbered heading")
+	}
+
+	const correct = "## 28. Communication Channels\n\n### 28.3 Registers\n\n#### Link register\n\n" +
+		"### 28.5 Contract cards\n\n#### 28.5.1 Gateway-to-pod\n"
+	if got := headingLevelMismatches(scanMarkdownHeadings(correct)); len(got) != 0 {
+		t.Errorf("headings at the levels the number depth fixes were reported: %v", got)
+	}
+
+	for _, tc := range []struct {
+		name    string
+		doc     string
+		wantSub string
+	}{
+		{
+			name: "whole section one level shallower",
+			doc: "# 28. Communication Channels\n\n## 28.3 Registers\n\n### Link register\n\n" +
+				"## 28.5 Contract cards\n\n### 28.5.1 Gateway-to-pod\n",
+			wantSub: `heading "28. Communication Channels" is published at level 1`,
+		},
+		{
+			name:    "subsection one level shallower",
+			doc:     "## 28. Communication Channels\n\n## 28.3 Registers\n",
+			wantSub: `heading "28.3 Registers" is published at level 2`,
+		},
+		{
+			name:    "register table at the subsection level",
+			doc:     "## 28. Communication Channels\n\n### 28.3 Registers\n\n### Link register\n",
+			wantSub: `heading "Link register" is published at level 3`,
+		},
+		{
+			name:    "unnumbered heading before any numbered one",
+			doc:     "#### Link register\n\n## 28. Communication Channels\n",
+			wantSub: "stands before any numbered heading",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := headingLevelMismatches(scanMarkdownHeadings(tc.doc))
+			if len(got) == 0 {
+				t.Fatalf("a section written one level shallower was accepted")
+			}
+			joined := strings.Join(got, "; ")
+			if !strings.Contains(joined, tc.wantSub) {
+				t.Errorf("headingLevelMismatches = %v, want a message containing %q", got, tc.wantSub)
+			}
+		})
+	}
 }
 
 // assertCollapsedAnchorIsReported pins the derivation rule against the
@@ -780,7 +943,7 @@ func assertCollapsedAnchorIsReported(t *testing.T) {
 	// one hyphen must be reported as dangling. Were the derivation to
 	// collapse instead of delete, this row would resolve and the real
 	// rows would be the ones reported broken.
-	headings := []markdownHeading{{level: 2, text: "28.9 Registers (v2): keys"}}
+	headings := []markdownHeading{{level: subsectionHeadingLevel, text: "28.9 Registers (v2): keys"}}
 	rows := []specIndexRow{{title: "28.9 Registers (v2): keys", anchor: "289-registers-v2-keys"}}
 	collapsed := []specIndexRow{{title: "28.9 Registers (v2): keys", anchor: "28-9-registers-v2-keys"}}
 
