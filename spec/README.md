@@ -188,4 +188,5 @@
   - [27.8 Metrics](27_web-playground.md#278-metrics)
   - [27.9 Security considerations](27_web-playground.md#279-security-considerations)
   - [27.10 Roll-forward notes](27_web-playground.md#2710-roll-forward-notes)
+- [28. Communication Channels](28_communication-channels.md)
 
