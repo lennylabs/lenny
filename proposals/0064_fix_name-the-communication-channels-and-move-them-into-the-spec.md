@@ -313,9 +313,9 @@ this proposal.
    failed in exactly that way, the second reporting the reserved-phrase pass unappliable because the
    registers that resolve each site did not exist. §0 states the entry criterion this places on
    application.
-2. **Naming law, registers, and prose.** `spec/28_communication-channels.md` is created here carrying
-   §28.1 through §28.4, which are the law and the three registers, together with the reserved-word removal
-   and the
+2. **Naming law, registers, and prose.** Proposal 0067 created `spec/28_communication-channels.md`
+   carrying §28.1 through §28.4, which are the law and the three registers, and this sub-step carries the
+   reserved-word removal and the
    `spec/03` correction. No wire surface changes: the name pass writes `.proto` comments alone, and this
    sub-step runs `make generate-proto` so the committed stubs under `pkg/proto/` match them. The naming lint
    lands here, because this is the sub-step
@@ -1033,8 +1033,8 @@ Every heading `spec/28` and `spec/29` land is fixed here, with its exact title a
 produces. This subsection exists because three separate obligations in this proposal need the anchors
 before the sections that carry them are written: the `spec/README.md` index rows, the
 `tests/spec-map.json` keys, and the heading walker's predicate that a row's anchor resolves. The headings
-land across two sub-steps: SPEC-1 creates `spec/28_communication-channels.md` carrying §28.1 through §28.4,
-and SPEC-3 appends §28.5 through §28.8 to it and creates `spec/29_communication-scenarios.md`. This
+land across two proposals: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
+§28.4, and SPEC-3 appends §28.5 through §28.8 to it and creates `spec/29_communication-scenarios.md`. This
 proposal and the remediation steps after it also cite a §28.5 card by its subsection number before SPEC-3
 runs. Without a title stated in advance, a row's link text and its anchor would be invented in whichever
 sub-step happened to write the row, and an invented anchor resolves to nothing. Fixing the titles once,
@@ -1123,7 +1123,8 @@ completeness check is that every identifier in the §28.3 channel register has e
 
 ### SPEC-1. The naming law, the registers, and the prose correction
 
-**Target:** `spec/28_communication-channels.md` §28.1 through §28.4 (new), `spec/03_high-level-architecture.md`,
+**Target:** `spec/28_communication-channels.md` §28.1 through §28.4 (existing; created by proposal 0067,
+which this sub-step does not re-author), `spec/03_high-level-architecture.md`,
 `spec/README.md`, `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`,
 `tests/registers/reserved-phrase-senses.yaml`, the reserved bare noun phrases
 wherever they appear in the domain N3 states, which is `spec/`, `docs/`, `schemas/`, the Go doc comments
@@ -1138,9 +1139,11 @@ lifecycle channel, so every later step that names a channel has nothing to name 
 registers, and the reserved-word removal are the vocabulary the rest of this proposal and the remediation
 steps after it cite.
 
-**Change (staged description).** Write §28.1 through §28.4: the naming law N1 through N8, which includes
-the citation and successor-pointer rule N8 the citation gates enforce, the taxonomy and its axes, and
-the three registers with the full inventory. §28.1's statement of N4 carries the deferral clause §4.1
+**Change (staged description).** Proposal 0067 landed §28.1 through §28.4, which are the naming law N1
+through N8, the taxonomy and its axes, the three registers, the naming table, and the claim register, so
+this sub-step authors no heading there and its `spec/28` obligation is to confirm the four subsections are
+present before the name pass runs, because the pass indexes the declared identifier space out of that file.
+§28.1's statement of N4 carries the deferral clause §4.1
 states, which is that N4 binds the metric-label namespace and that the remediation step adding the adapter
 metrics endpoint and the catalog entries, R12, is the step that discharges the metric half, with a
 claim-register row naming R12. Without that clause §28.1 lands binding the metric-label namespace while
@@ -1297,13 +1300,13 @@ and tier 11 is the exit criterion of this sub-step. The rewrite of
 channel" is exactly the phrase N3 bans, and
 `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 asserts that clause verbatim.
 
-Add the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4 subsections, at
-the depth the existing entries use. Take the link text and the anchor for each row from the heading table
-in §4.8, which fixes the title and the derived anchor of every §28 and §29 heading, so these rows carry
-`28. Communication Channels`, `28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, and
-`28.4 Claim register` with the anchors that table states. The rows land in the same change that creates
-`spec/28_communication-channels.md` with those five headings, so every row this sub-step writes resolves at
-its exit and no row in this proposal precedes its target file. Write for each of those headings the other
+Proposal 0067 wrote the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4
+subsections, at the depth the existing entries use, carrying `28. Communication Channels`,
+`28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, and `28.4 Claim register` with the link text
+and the anchors the heading table in §4.8 fixes, so this sub-step confirms those five rows are present and
+adds any that are missing. Proposal 0067 created `spec/28_communication-channels.md` with those five
+headings and wrote those rows before this sub-step runs, so every row resolves and no row in this proposal
+precedes its target file. Write for each of those headings the other
 half of the walker's predicate as well, which is a `tests/spec-map.json` key naming the tests that encode
 the heading, on the rule SPEC-4 states for the numbered subsection headings it inserts over existing prose:
 a heading whose section is written at the same sub-step's exit takes a key. Where the tests a key would
@@ -1312,9 +1315,8 @@ entry instead, under the `pending-implementation` reason class proposal 0065 add
 `opened_at` fields, with the `blocker` naming TEST-1 and TEST-1 replacing the entry with a key in the same
 change that lands those cases. No entry for §28.1 through §28.4 names SPEC-3, because SPEC-3 writes none of
 that content. The file is
-hand-maintained and has no generator, and its last
-numbered entry today is §27.10 at line 190, so an appended section is invisible to a reader scanning the
-index until the rows are written.
+hand-maintained, has no generator, and already carries the §28 rows proposal 0067 appended, so a heading
+appended without a row is invisible to a reader scanning the index.
 
 Seed the heading walker's predicate to green in the same sub-step, which is a bounded job rather than a
 register entry. The seeding is stated over the walker's whole domain, which is every `## N` heading, every
@@ -1345,7 +1347,8 @@ N4, per §4.1, and SPEC-3 seeds the claim-register row with status `ABSENT` and 
 ### SPEC-2. The wire contract change
 
 **Target:** `schemas/lenny-adapter.proto`, `pkg/proto/` (regenerated rather than rewritten),
-`schemas/lenny-adapter-jsonl.schema.json`, the artifact-scope sentence at
+`schemas/lenny-adapter-jsonl.schema.json`, `spec/28_communication-channels.md`, for the naming-table rows
+this sub-step writes, the artifact-scope sentence at
 `spec/15_external-api-surface.md` line 1463, the normative field
 tables that name the colliding key, the adapter manifest emitter, the second manifest emitter in the
 external-adapter compliance harness, the three runtime SDKs, the adapter flag, the runtime author guide,
@@ -1368,7 +1371,12 @@ ambiguous while renaming only prose produces a worse state than either alternati
 **Change (staged description).** Rename the two colliding channels to their canonical identifiers across
 every machine-readable surface, by script, driven by the naming table in §28.3.
 
-The §28.3 table records the spelling each carrier takes, per N7. The adapter manifest key becomes
+The §28.3 table records the spelling each carrier takes, per N7. This sub-step writes the §28.3
+naming-table rows for every spelling it fixes that the table does not already carry, which are the
+`CH-RUNTIMEOPS` Go symbol stem and the `pkg/adapter/lifecyclechannel.go` file stem, while the
+`schemas/lifecycle-events.schema.json` schema-path row is already carried; it states both spellings here
+for the reason the paragraph gives below for the `CH-ADAPTEREVENTS` carriers, which is that each is derived
+from a naming rule and the derivation is written down once. The adapter manifest key becomes
 `runtimeOps`, in the camelCase form every sibling key in the §4.7 field set uses
 (`spec/04_system-components.md` lines 788 through 796), and the adapter flag becomes
 `--runtime-ops-socket` in lowercase kebab. The manifest spelling is stated here rather than read off the
@@ -6086,7 +6094,8 @@ question, and the re-review that follows treats them as closed.
 
 ## 11. Files touched on application
 
-- `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new.
+- `spec/29_communication-scenarios.md`, new. `spec/28_communication-channels.md` exists, created by
+  proposal 0067, and SPEC-3 appends to it.
 - `spec/03_high-level-architecture.md`, `spec/04_system-components.md`, and
   `spec/15_external-api-surface.md`, for the diagram correction, the reductions, and the successor
   pointers. `spec/15_external-api-surface.md` also carries nine hand-authored corrections for sentences
