@@ -93,24 +93,31 @@ func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []str
 	return out
 }
 
-// subsectionTitlePattern matches the title of a numbered subsection of
-// the section, the headings the index carries a row for. The property is
-// the number the title states rather than the heading's depth: numbered
-// subsections sit at level 2 here and at level 3 elsewhere in the tree
-// (spec/12_storage-architecture.md), so depth is not the tree's
-// convention. An unnumbered heading naming a table inside a subsection
-// carries no row of its own, but a row that does point at one resolves,
-// so the two directions run over different heading sets.
+// registerTableTitles are the headings inside §28.3 that name one of the
+// section's register tables. They are the only headings in the section
+// the published index carries no anchored row for, and the exemption is
+// closed: a heading added or renamed under §28.3 is reported until this
+// list and the index agree again, and a title listed here that does gain
+// an index row is reported too, so the list cannot outlive the gap it
+// records.
 //
-// spec: §28
-var subsectionTitlePattern = regexp.MustCompile(`^28\.\d`)
+// spec: §28.3
+var registerTableTitles = []string{
+	"Link register",
+	"Channel register",
+	"Register-entry register",
+	"Naming table",
+}
 
-// isIndexedSubsection reports whether a heading is a numbered subsection
-// of the section and therefore requires an index row, at any depth. The
-// section's own level-1 heading, "28. Communication Channels", states no
-// subsection number and is held to the unanchored section row instead.
-func isIndexedSubsection(h markdownHeading) bool {
-	return subsectionTitlePattern.MatchString(h.text)
+// titleSet turns a list of heading titles into the membership set
+// reconcileIndexRows takes, so a fixture case states its own exempt set
+// instead of reading the landed one.
+func titleSet(titles ...string) map[string]bool {
+	set := make(map[string]bool, len(titles))
+	for _, title := range titles {
+		set[title] = true
+	}
+	return set
 }
 
 // headingsByAnchor maps each derived anchor to the positions of every
@@ -140,20 +147,24 @@ func headingTitlesAt(headings []markdownHeading, idx []int) []string {
 // with the anchored index rows that point into it.
 type indexReconciliation struct {
 	dangling  []string // row anchors that resolve to no heading
-	uncovered []string // numbered subsection headings that carry no row
+	uncovered []string // headings that carry no row and are not exempt
 	ambiguous []string // anchors two headings derive, or two rows carry
+	// staleExempt holds the titles listed as taking no index row that do
+	// carry one, so the exempt list is closed in both directions.
+	staleExempt []string
 }
 
 // reconcileIndexRows compares a section's headings with the anchored
 // index rows that point into it. A row resolves against a heading of any
 // level, because a fragment pointing at a deeper heading resolves in a
-// rendered document. The coverage direction runs over the numbered
-// subsection headings at any depth, since those are the headings the
-// index carries a row for. Coverage is tracked per heading rather than per anchor, so one
-// row cannot cover two headings that collide on a slug.
+// rendered document. The coverage direction runs over every heading
+// below the section's own level-1 heading, which the unanchored section
+// row names instead, minus the titles in exempt. Coverage is tracked per
+// heading rather than per anchor, so one row cannot cover two headings
+// that collide on a slug.
 //
 // spec: §28
-func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow) indexReconciliation {
+func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow, exempt map[string]bool) indexReconciliation {
 	var rec indexReconciliation
 
 	bySlug := headingsByAnchor(headings)
@@ -185,7 +196,13 @@ func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow) indexRe
 	}
 
 	for i, h := range headings {
-		if isIndexedSubsection(h) && !covered[i] {
+		if h.level == sectionHeadingLevel {
+			continue
+		}
+		switch {
+		case exempt[h.text] && covered[i]:
+			rec.staleExempt = append(rec.staleExempt, h.text)
+		case !exempt[h.text] && !covered[i]:
 			rec.uncovered = append(rec.uncovered, h.text)
 		}
 	}
@@ -193,6 +210,7 @@ func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow) indexRe
 	sort.Strings(rec.dangling)
 	sort.Strings(rec.uncovered)
 	sort.Strings(rec.ambiguous)
+	sort.Strings(rec.staleExempt)
 	return rec
 }
 
@@ -222,10 +240,11 @@ func titleMismatches(headings []markdownHeading, rows []specIndexRow) []string {
 // diagnosis: a failure means spec/README.md's index and
 // spec/28_communication-channels.md disagree on a heading title or on
 // an anchor. Either a row points at a fragment no heading in the
-// section produces, or a numbered subsection heading was added or renamed
-// without its index row, or two headings derive one anchor, so a reader
-// following the published index lands nowhere, never reaches the
-// subsection, or reaches the wrong one.
+// section produces, or a heading was added or renamed without its index
+// row and without joining the register-table headings the index carries
+// no row for, or two headings derive one anchor, so a reader following
+// the published index lands nowhere, never reaches the heading, or
+// reaches the wrong one.
 //
 // spec: §28
 func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
@@ -234,6 +253,7 @@ func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("fenced example line", func(t *testing.T) { assertFencedLineIsNotAHeading(t) })
 	t.Run("deep heading resolves", func(t *testing.T) { assertRowAtDeeperHeadingResolves(t) })
 	t.Run("numbered deep heading needs a row", func(t *testing.T) { assertNumberedDeepHeadingNeedsAnIndexRow(t) })
+	t.Run("register-table exemption is closed", func(t *testing.T) { assertRegisterTableExemptionIsClosed(t) })
 	t.Run("ambiguous anchor", func(t *testing.T) { assertAmbiguousAnchorIsReported(t) })
 	t.Run("underscore kept", func(t *testing.T) { assertUnderscoreSurvivesTheSlugRule(t) })
 	t.Run("non-ascii letter kept", func(t *testing.T) { assertNonASCIILetterSurvivesTheSlugRule(t) })
@@ -254,7 +274,7 @@ func assertNonASCIILetterSurvivesTheSlugRule(t *testing.T) {
 	}
 	doc := "## 28.6 Café registers\n"
 	rows := []specIndexRow{{title: "28.6 Café registers", anchor: "286-café-registers"}}
-	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
 		t.Errorf("non-ASCII letter dropped from the derived anchor: %+v", rec)
 	}
@@ -376,7 +396,7 @@ func assertFencedLineIsNotAHeading(t *testing.T) {
 	// uncovered, blaming the index for content that is not a heading.
 	doc := "## 28.1 Naming law\n\n```markdown\n## 28.99 Example heading\n```\n"
 	rows := []specIndexRow{{title: "28.1 Naming law", anchor: "281-naming-law"}}
-	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 || len(rec.ambiguous) != 0 {
 		t.Errorf("fenced example reported against the index: %+v", rec)
 	}
@@ -398,7 +418,7 @@ func assertRowAtDeeperHeadingResolves(t *testing.T) {
 		{title: "Link register", anchor: "link-register"},
 		{title: "Gateway-to-pod", anchor: "gateway-to-pod"},
 	}
-	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 {
 		t.Errorf("row at a heading below the subsection level reported dangling: %v", rec.dangling)
 	}
@@ -409,12 +429,30 @@ func assertRowAtDeeperHeadingResolves(t *testing.T) {
 		t.Errorf("title cross-check reported a correct row: %v", got)
 	}
 
-	// The coverage direction runs over numbered subsections: an
-	// unnumbered table heading with no row of its own is not reported.
-	rec = reconcileIndexRows(scanMarkdownHeadings(doc), rows[:1])
-	if len(rec.uncovered) != 0 {
-		t.Errorf("unnumbered table heading reported as missing an index row: %v", rec.uncovered)
+	// The coverage direction runs over every heading below the level-1
+	// one, so dropping the two deeper rows leaves both headings reported.
+	// An unnumbered heading is reachable from the index only through a row
+	// of its own, and exempting it on its title stating no number lets a
+	// heading added under §28.3 go unreported.
+	rec = reconcileIndexRows(scanMarkdownHeadings(doc), rows[:1], nil)
+	want := []string{"Gateway-to-pod", "Link register"}
+	if !equalStrings(rec.uncovered, want) {
+		t.Errorf("uncovered = %v, want %v", rec.uncovered, want)
 	}
+}
+
+// equalStrings reports whether two sorted title lists hold the same
+// titles in the same order.
+func equalStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // assertNumberedDeepHeadingNeedsAnIndexRow pins the coverage direction to
@@ -432,7 +470,9 @@ func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 	doc := "# 28. Communication Channels\n\n## 28.5 Contract cards\n\n### 28.5.1 Intra-pod\n\n### Naming table\n"
 	rows := []specIndexRow{{title: "28.5 Contract cards", anchor: "285-contract-cards"}}
 
-	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	exempt := titleSet(registerTableTitles...)
+
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, exempt)
 	if len(rec.uncovered) != 1 || rec.uncovered[0] != "28.5.1 Intra-pod" {
 		t.Errorf("numbered subsection below level 2 not reported as missing an index row: %v", rec.uncovered)
 	}
@@ -448,8 +488,55 @@ func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
 
 	// Adding the row clears the report.
 	rows = append(rows, specIndexRow{title: "28.5.1 Intra-pod", anchor: "2851-intra-pod"})
-	if rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows); len(rec.uncovered) != 0 || len(rec.dangling) != 0 {
+	if rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, exempt); len(rec.uncovered) != 0 || len(rec.dangling) != 0 {
 		t.Errorf("covered numbered subsection still reported: %+v", rec)
+	}
+}
+
+// assertRegisterTableExemptionIsClosed pins that the set of headings the
+// published index carries no row for is exactly the register-table
+// headings of §28.3. The index names the section and its four numbered
+// subsections, and the register tables inside §28.3 are the headings that
+// stay out of it. Holding the exemption to that list keeps a heading added
+// or renamed under §28.3 reported instead of silently unreachable from the
+// index, and reports a listed title that does gain a row so the list
+// cannot outlive the gap it records.
+//
+// spec: §28.3
+func assertRegisterTableExemptionIsClosed(t *testing.T) {
+	t.Helper()
+
+	const doc = "# 28. Communication Channels\n\n## 28.3 Registers\n\n" +
+		"### Link register\n\n### Channel register\n\n### Register-entry register\n\n### Naming table\n"
+	rows := []specIndexRow{{title: "28.3 Registers", anchor: "283-registers"}}
+	exempt := titleSet(registerTableTitles...)
+
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, exempt)
+	if len(rec.uncovered) != 0 || len(rec.staleExempt) != 0 {
+		t.Errorf("the landed register-table headings were reported: %+v", rec)
+	}
+
+	// A heading added under §28.3 and left out of both the index and the
+	// list is reported, rather than exempted for stating no number.
+	added := doc + "\n### Sense register\n"
+	rec = reconcileIndexRows(scanMarkdownHeadings(added), rows, exempt)
+	if len(rec.uncovered) != 1 || rec.uncovered[0] != "Sense register" {
+		t.Errorf("added register heading not reported as missing an index row: %v", rec.uncovered)
+	}
+
+	// Renaming a listed heading without updating the index reports it too.
+	renamed := strings.Replace(doc, "### Naming table\n", "### Naming tables\n", 1)
+	rec = reconcileIndexRows(scanMarkdownHeadings(renamed), rows, exempt)
+	if len(rec.uncovered) != 1 || rec.uncovered[0] != "Naming tables" {
+		t.Errorf("renamed register heading not reported: %v", rec.uncovered)
+	}
+
+	// A listed title the index does carry a row for is reported as a stale
+	// exemption, so the list is closed in both directions.
+	withRow := append(rows, specIndexRow{title: "Naming table", anchor: "naming-table"})
+	rec = reconcileIndexRows(scanMarkdownHeadings(doc), withRow, exempt)
+	if len(rec.staleExempt) != 1 || rec.staleExempt[0] != "Naming table" {
+		t.Errorf("exempt heading carrying an index row not reported: %v", rec.staleExempt)
 	}
 }
 
@@ -468,7 +555,7 @@ func assertAmbiguousAnchorIsReported(t *testing.T) {
 	// "28.3: Registers" both derive "283-registers".
 	doc := "## 28.3 Registers\n\n## 28.3: Registers\n"
 	rows := []specIndexRow{{title: "28.3 Registers", anchor: "283-registers"}}
-	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.ambiguous) != 1 || !strings.Contains(rec.ambiguous[0], "283-registers") {
 		t.Errorf("colliding headings not reported: %v", rec.ambiguous)
 	}
@@ -485,7 +572,7 @@ func assertAmbiguousAnchorIsReported(t *testing.T) {
 		{title: "28.3 Registers", anchor: "283-registers"},
 		{title: "28.3 Registers", anchor: "283-registers"},
 	}
-	rec = reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	rec = reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.ambiguous) != 1 || !strings.Contains(rec.ambiguous[0], "more than one row") {
 		t.Errorf("duplicate index rows not reported: %v", rec.ambiguous)
 	}
@@ -505,7 +592,7 @@ func assertUnderscoreSurvivesTheSlugRule(t *testing.T) {
 	}
 	doc := "## 28.5 sessions_served\n"
 	rows := []specIndexRow{{title: "28.5 sessions_served", anchor: "285-sessions_served"}}
-	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows, nil)
 	if len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
 		t.Errorf("underscore dropped from the derived anchor: %+v", rec)
 	}
@@ -513,8 +600,11 @@ func assertUnderscoreSurvivesTheSlugRule(t *testing.T) {
 
 // assertSection28IndexReconciles asserts both directions over the
 // tracked tree: every anchored index row for the section resolves to a
-// heading, and every numbered subsection heading in the section carries
-// an index row.
+// heading, and every heading in the section carries an index row except
+// the register-table headings of §28.3, which are held to that exact
+// list.
+//
+// spec: §28
 func assertSection28IndexReconciles(t *testing.T) {
 	t.Helper()
 	root := repoRoot(t)
@@ -538,12 +628,15 @@ func assertSection28IndexReconciles(t *testing.T) {
 		t.Fatalf("%s carries no heading", channelsSpecFile)
 	}
 
-	rec := reconcileIndexRows(headings, rows)
+	rec := reconcileIndexRows(headings, rows, titleSet(registerTableTitles...))
 	for _, anchor := range rec.dangling {
 		t.Errorf("index row anchor #%s resolves to no heading in %s (headings: %v)", anchor, channelsSpecFile, headings)
 	}
 	for _, title := range rec.uncovered {
 		t.Errorf("heading %q in %s carries no index row in spec/README.md", title, channelsSpecFile)
+	}
+	for _, title := range rec.staleExempt {
+		t.Errorf("heading %q in %s carries an index row while it is listed as taking none", title, channelsSpecFile)
 	}
 	for _, msg := range rec.ambiguous {
 		t.Errorf("%s and spec/README.md carry an ambiguous anchor: %s", channelsSpecFile, msg)
@@ -585,10 +678,10 @@ func assertCollapsedAnchorIsReported(t *testing.T) {
 	rows := []specIndexRow{{title: "28.9 Registers (v2): keys", anchor: "289-registers-v2-keys"}}
 	collapsed := []specIndexRow{{title: "28.9 Registers (v2): keys", anchor: "28-9-registers-v2-keys"}}
 
-	if rec := reconcileIndexRows(headings, rows); len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
+	if rec := reconcileIndexRows(headings, rows, nil); len(rec.dangling) != 0 || len(rec.uncovered) != 0 {
 		t.Errorf("correct anchor reported broken: %+v", rec)
 	}
-	rec := reconcileIndexRows(headings, collapsed)
+	rec := reconcileIndexRows(headings, collapsed, nil)
 	if len(rec.dangling) != 1 || rec.dangling[0] != "28-9-registers-v2-keys" {
 		t.Errorf("collapsed anchor not reported dangling: %v", rec.dangling)
 	}
