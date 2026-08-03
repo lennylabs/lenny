@@ -1256,13 +1256,16 @@ func TestValidateChangeGraphFileExistenceProbesPerTierTargets(t *testing.T) {
 
 // TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers pins the tiers the
 // specification migration tooling selects. The tooling's gates are a
-// tier-0 static battery and tier-1 unit tests, so a change under
-// scripts/specshift/ or tests/registers/ must select those tiers and no
-// tier whose suite the tooling does not carry.
+// tier-0 static battery and tier-1 unit tests, and the shared
+// reserved-phrase predicate under scripts/specshift/scope also carries a
+// tier-11 case that ties it to the communication channel section's
+// domain, so scripts/specshift adds the docs tier. A change under
+// tests/registers/ selects the static and unit tiers alone. Neither key
+// selects a tier whose suite the tooling does not carry.
 //
-// spec: TESTING.md §5 (tests/change-graph.json maps source packages,
-// schemas, migrations, and chart templates to the tests that exercise
-// them)
+// spec: 28.1 (channel naming law); TESTING.md §5
+// (tests/change-graph.json maps source packages, schemas, migrations,
+// and chart templates to the tests that exercise them)
 func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(), "tests", "change-graph.json"))
 	if err != nil {
@@ -1274,6 +1277,10 @@ func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("parse change graph: %v", err)
 	}
+	want := map[string]string{
+		"scripts/specshift": "docs,static,unit",
+		"tests/registers":   "static,unit",
+	}
 	for _, key := range []string{"scripts/specshift", "tests/registers"} {
 		tiers, ok := doc.Globs[key]
 		if !ok {
@@ -1284,8 +1291,8 @@ func TestChangeGraphSpecshiftKeysSelectOnlyLandedTiers(t *testing.T) {
 			names = append(names, tier)
 		}
 		sort.Strings(names)
-		if strings.Join(names, ",") != "static,unit" {
-			t.Errorf("%s selects %v; the tooling carries a static and a unit tier only", key, names)
+		if got := strings.Join(names, ","); got != want[key] {
+			t.Errorf("%s selects %v; the tiers it carries are %s", key, names, want[key])
 		}
 	}
 }

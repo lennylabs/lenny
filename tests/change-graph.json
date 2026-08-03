@@ -376,7 +376,8 @@
     },
     "scripts/specshift": {
       "static": ["tests/tier0_static/..."],
-      "unit": ["scripts/specshift/..."]
+      "unit": ["scripts/specshift/..."],
+      "docs": ["tests/tier11_docs/..."]
     },
     "tests/testinfra/containers": {
       "component": ["tests/testinfra/containers/postgres_test.go"]
@@ -549,7 +550,8 @@
       "docs": ["tests/tier11_docs/..."]
     },
     "spec/": {
-      "static": ["tests/tier0_static/spec_link_check_test.go"]
+      "static": ["tests/tier0_static/spec_link_check_test.go"],
+      "docs": ["tests/tier11_docs/..."]
     },
     "pkg/gateway/environment/translator": {
       "unit": ["pkg/gateway/environment/translator/..."],
