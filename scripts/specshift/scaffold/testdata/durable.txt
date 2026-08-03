@@ -1,6 +1,0 @@
-// spec: §4.6.1 (warm pool controller), §12.3 (postgres ha)
-The §5.2 scrub runs step 7 after the workspace snapshot.
-The naming-law sub-step takes each row's link text from the heading table.
-The S256 code challenge and the S3 object store are named in the section.
-Refs: proposals/0067_new_author-spec-28-the-channel-naming-law-taxonomy-and-registers.md
-| `REG-CLAIM` | Kubernetes API | `SandboxClaim` | C17 |

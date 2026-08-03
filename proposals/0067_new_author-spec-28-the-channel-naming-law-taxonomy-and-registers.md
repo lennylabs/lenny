@@ -762,6 +762,15 @@ a `// diagnosis:` comment, in the form the surrounding files use.
 6. **No new line-citation test is added.** The line-citation ratchet already reads every tracked file and
    fails a file whose count rises, and `spec/28` enters at zero, so a line citation written into the
    section later fails tier 0 without a new predicate.
+7. **Every package of `scripts/specshift` is reachable from the migration command or from the static-tier
+   gate battery** (tier 1), in `scripts/specshift/package_reachability_test.go` as
+   `TestEveryMigrationToolingPackageIsReachableFromAnEntryPoint`. The case reads the import graph of the
+   tooling's non-test sources together with the tooling packages the static-tier gates import, and reports
+   every package neither entry point reaches. It holds the tooling to the rule that a package the change
+   adds carries a caller, so a package whose only importer is a consistency check elsewhere in the suite
+   fails the case rather than shipping with no pass and no gate entering it. The tooling implements the
+   migration's operational model rather than a specification behavior, so the case carries no `// spec:`
+   annotation, in the form `scripts/specshift/run_test.go` uses.
 
 Coverage: the change adds no Go lines, so the new-code coverage floor applies to the test files alone.
 Run `lenny-test --changed --max-tier 11` before declaring the change done, and
@@ -952,6 +961,8 @@ stated alternative before the first round.
   remaining sentences stating that SPEC-1 creates the file.
 - `scripts/specshift/identifier/table_test.go` and `scripts/specshift/name/declare_test.go`, for the tier-1
   cases §8 items 1 and 2 state, added to the existing files.
+- `scripts/specshift/package_reachability_test.go`, new, for the tier-1 case §8 item 7 states. It carries
+  no production code: the change adds a test file to the tooling and adds no package to it.
 - `tests/tier11_docs/spec_28_index_rows_test.go`, `tests/tier11_docs/spec_28_reserved_phrase_test.go`, and
   `tests/tier11_docs/spec_28_register_writers_test.go`, new, for the tier-11 cases §8 items 3, 4, and 5
   state. `tests/tier11_docs` is outside `componentAndAboveTierDirs` (`cmd/lenny-test/cmd_validate.go` lines
