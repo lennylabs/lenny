@@ -1,0 +1,7 @@
+Hold the ownership transfer to the sentences its amendment stages
+
+Revert the three edits that sit outside the amendment's target, so the
+staged edits and the applied change agree sentence by sentence. The
+naming-pass sub-step keeps the obligation it already carries.
+
+Refs: proposals/0067_new_author-spec-28-the-channel-naming-law-taxonomy-and-registers.md

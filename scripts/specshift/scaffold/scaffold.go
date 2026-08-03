@@ -18,6 +18,7 @@
 package scaffold
 
 import (
+	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -89,6 +90,36 @@ func find(content string, proposalContext bool) []Site {
 		}
 	}
 	return sites
+}
+
+// CommitScan is the outcome of reading the messages of the commits that
+// landed a body of work.
+type CommitScan struct {
+	// Read is the number of messages the scan read.
+	Read int
+	// Sites holds the labels of every message that carries one, keyed by
+	// the commit the message belongs to.
+	Sites map[string][]Site
+}
+
+// ScanCommits reads a set of commit messages, keyed by commit, and
+// returns the scaffolding label each one carries.
+//
+// It fails on an empty set rather than reporting a clean scan. A scan
+// that read no message asserts nothing: the revision selection it was
+// taken over no longer reaches the commits that landed the work, so a
+// message added afterwards carries any label past the check unreported.
+func ScanCommits(messages map[string]string) (CommitScan, error) {
+	if len(messages) == 0 {
+		return CommitScan{}, fmt.Errorf("scan the commit messages: the selection reached no commit, so the scan asserts nothing")
+	}
+	scan := CommitScan{Read: len(messages), Sites: map[string][]Site{}}
+	for commit, message := range messages {
+		if sites := FindInProposalText(message); len(sites) > 0 {
+			scan.Sites[commit] = sites
+		}
+	}
+	return scan, nil
 }
 
 // lineSites returns the labels of one line, in column order.

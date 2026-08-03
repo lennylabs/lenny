@@ -79,6 +79,44 @@ func TestFindInProposalTextReadsBareLabelsOffTheProposalLine(t *testing.T) {
 	assertSites(t, FindInProposalText(message), readWant(t, "message.want"))
 }
 
+// TestScanCommitsFailsOnASelectionThatReachedNoCommit asserts the
+// vacuity boundary: a scan of an empty set fails rather than reporting a
+// clean history. A caller whose revision selection stops reaching the
+// commits that landed the work otherwise reads the empty scan as
+// compliance, and every message added afterwards carries its labels past
+// the check unreported.
+func TestScanCommitsFailsOnASelectionThatReachedNoCommit(t *testing.T) {
+	scan, err := ScanCommits(nil)
+	if err == nil {
+		t.Fatalf("an empty selection scanned %d message(s) without failing", scan.Read)
+	}
+	if scan.Read != 0 {
+		t.Errorf("the failed scan reports %d message(s) read, want 0", scan.Read)
+	}
+}
+
+// TestScanCommitsReportsTheLabelsOfEveryMessage asserts that a scan
+// reads every message of the selection, reports the labels of the ones
+// that carry them keyed by commit, and keeps a message that carries none
+// out of the report.
+func TestScanCommitsReportsTheLabelsOfEveryMessage(t *testing.T) {
+	const labelled, clean = "a1b2c3", "d4e5f6"
+	scan, err := ScanCommits(map[string]string{
+		labelled: readFixture(t, "message.txt"),
+		clean:    readFixture(t, "message-clean.txt"),
+	})
+	if err != nil {
+		t.Fatalf("scan two commit messages: %v", err)
+	}
+	if scan.Read != 2 {
+		t.Errorf("the scan reports %d message(s) read, want 2", scan.Read)
+	}
+	if _, reported := scan.Sites[clean]; reported {
+		t.Errorf("the message carrying only durable references is reported as carrying %v", scan.Sites[clean])
+	}
+	assertSites(t, scan.Sites[labelled], readWant(t, "message.want"))
+}
+
 // assertSites compares the reported sites with the expected ones in
 // order.
 func assertSites(t *testing.T, got, want []Site) {

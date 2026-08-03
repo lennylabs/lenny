@@ -58,27 +58,12 @@ var channelWorkProposals = []string{
 	"proposals/0067_new_author-spec-28-the-channel-naming-law-taxonomy-and-registers.md",
 }
 
-// scaffoldCommitBase is the long-lived branch the range of the work is
-// taken against. The commits under check are those between the merge
-// base with it and HEAD.
-const scaffoldCommitBase = "main"
-
-// scaffoldResidualCommits are the landed commits whose messages carry a
-// label this check reports, keyed by full commit hash and held with the
-// rewording each one needs. Their messages name a sub-step of the
-// proposal that staged the ownership transfer instead of naming what the
-// sub-step does.
-//
-// They are registered rather than corrected because a message is fixed
-// only by rewriting the commit that carries it, which rewrites every
-// commit after it on the branch. The register keeps the check green over
-// the history that already exists while it fails on any commit added
-// after it, and an entry whose message no longer carries a label is
-// reported as stale so the register empties as the history is rewritten.
-var scaffoldResidualCommits = map[string]string{
-	"7db4b28b472b329292f476cfecc9ce649789ecd2": "name the sub-step that takes each `spec/README.md` row's link text and anchor from the §4.8 heading table by what it does",
-	"bd86ed81e7d4b498ce147a6cf9121b168ea99763": "name the sub-step holding the attribution clauses, and the sub-step they credit, by what each one does",
-}
+// scaffoldCommitRevision is the revision the commits of the work are
+// selected out of. Reachable history rather than a range against a
+// long-lived branch: a range taken against the merge base with that
+// branch empties the moment the work is integrated, and an empty range
+// is a check that no longer reads the commits it was written for.
+const scaffoldCommitRevision = "HEAD"
 
 // TestChannelArtifactsCarryNoProposalScaffoldingLabel sweeps the tracked
 // artifacts of the channel work for a proposal's own change-section,
@@ -126,41 +111,24 @@ func TestChannelArtifactsCarryNoProposalScaffoldingLabel(t *testing.T) {
 func TestChannelWorkCommitsCarryNoProposalScaffoldingLabel(t *testing.T) {
 	ctx := context.Background()
 	root := repoRoot(t)
-	base, err := mergeBase(ctx, root, scaffoldCommitBase)
-	if err != nil {
-		t.Skipf("no merge base with %s to take the range against: %v", scaffoldCommitBase, err)
-	}
-	read := 0
-	seen := make(map[string]bool)
+	messages := map[string]string{}
 	for _, proposal := range channelWorkProposals {
-		messages, err := commitMessages(ctx, root, base+"..HEAD", proposal)
+		found, err := commitMessages(ctx, root, scaffoldCommitRevision, proposal)
 		if err != nil {
 			t.Fatalf("read the commits referencing %s: %v", proposal, err)
 		}
-		read += len(messages)
-		for sha, message := range messages {
-			sites := scaffold.FindInProposalText(message)
-			if rewording, residual := scaffoldResidualCommits[sha]; residual {
-				seen[sha] = true
-				if len(sites) == 0 {
-					t.Errorf("commit %s is registered as needing to %s and carries no label; drop its entry from the residual register",
-						short(sha), rewording)
-				}
-				continue
-			}
-			for _, site := range sites {
-				t.Errorf("commit %s line %d carries the proposal-internal label %q; name the sub-step by what it does and cite the specification heading",
-					short(sha), site.Line, site.Text)
-			}
+		for sha, message := range found {
+			messages[sha] = message
 		}
 	}
-	if read == 0 {
-		t.Skipf("no commit between %s and HEAD references the channel work, so the range carries nothing to check", scaffoldCommitBase)
+	scan, err := scaffold.ScanCommits(messages)
+	if err != nil {
+		t.Fatalf("scan the commits of the channel work reachable from %s: %v", scaffoldCommitRevision, err)
 	}
-	for sha := range scaffoldResidualCommits {
-		if !seen[sha] {
-			t.Errorf("the residual register names commit %s, which the range between %s and HEAD does not carry; drop the entry or point it at the commit that replaced it",
-				short(sha), scaffoldCommitBase)
+	for sha, sites := range scan.Sites {
+		for _, site := range sites {
+			t.Errorf("commit %s line %d carries the proposal-internal label %q; name the sub-step by what it does and cite the specification heading",
+				short(sha), site.Line, site.Text)
 		}
 	}
 }
@@ -178,25 +146,16 @@ func inScaffoldSweep(target string) bool {
 	return false
 }
 
-// mergeBase returns the merge base of HEAD and a branch.
-func mergeBase(ctx context.Context, root, branch string) (string, error) {
-	out, err := exec.CommandContext(ctx, "git", "-C", root, "merge-base", "HEAD", branch).Output()
-	if err != nil {
-		return "", fmt.Errorf("git merge-base HEAD %s: %w", branch, err)
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-// commitMessages returns the whole message of every commit in a range
-// that names a path, keyed by full commit hash. The match is a
-// fixed string so a path's punctuation is read literally.
-func commitMessages(ctx context.Context, root, revRange, path string) (map[string]string, error) {
+// commitMessages returns the whole message of every commit reachable
+// from a revision that names a path, keyed by full commit hash. The
+// match is a fixed string so a path's punctuation is read literally.
+func commitMessages(ctx context.Context, root, revision, path string) (map[string]string, error) {
 	const recordSep = "\x1e"
 	const fieldSep = "\x1f"
-	out, err := exec.CommandContext(ctx, "git", "-C", root, "log", revRange,
+	out, err := exec.CommandContext(ctx, "git", "-C", root, "log", revision,
 		"--fixed-strings", "--grep="+path, "--format=%H"+fieldSep+"%B"+recordSep).Output()
 	if err != nil {
-		return nil, fmt.Errorf("git log %s: %w", revRange, err)
+		return nil, fmt.Errorf("git log %s: %w", revision, err)
 	}
 	messages := make(map[string]string)
 	for _, record := range strings.Split(string(out), recordSep) {
