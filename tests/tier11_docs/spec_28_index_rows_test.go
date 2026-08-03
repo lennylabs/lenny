@@ -93,11 +93,25 @@ func sectionRowMismatches(headings []markdownHeading, sectionTitle string) []str
 	return out
 }
 
-// indexSubsectionLevel is the heading level of the subsections the index
-// carries a row for. Deeper headings name tables inside a subsection and
-// carry no row of their own, but a row that does point at one resolves,
+// subsectionTitlePattern matches the title of a numbered subsection of
+// the section, the headings the index carries a row for. The property is
+// the number the title states rather than the heading's depth: numbered
+// subsections sit at level 2 here and at level 3 elsewhere in the tree
+// (spec/12_storage-architecture.md), so depth is not the tree's
+// convention. An unnumbered heading naming a table inside a subsection
+// carries no row of its own, but a row that does point at one resolves,
 // so the two directions run over different heading sets.
-const indexSubsectionLevel = 2
+//
+// spec: §28
+var subsectionTitlePattern = regexp.MustCompile(`^28\.\d`)
+
+// isIndexedSubsection reports whether a heading is a numbered subsection
+// of the section and therefore requires an index row, at any depth. The
+// section's own level-1 heading, "28. Communication Channels", states no
+// subsection number and is held to the unanchored section row instead.
+func isIndexedSubsection(h markdownHeading) bool {
+	return subsectionTitlePattern.MatchString(h.text)
+}
 
 // headingsByAnchor maps each derived anchor to the positions of every
 // heading that derives it. A slug two headings share makes a published
@@ -126,16 +140,16 @@ func headingTitlesAt(headings []markdownHeading, idx []int) []string {
 // with the anchored index rows that point into it.
 type indexReconciliation struct {
 	dangling  []string // row anchors that resolve to no heading
-	uncovered []string // subsection headings that carry no row
+	uncovered []string // numbered subsection headings that carry no row
 	ambiguous []string // anchors two headings derive, or two rows carry
 }
 
 // reconcileIndexRows compares a section's headings with the anchored
 // index rows that point into it. A row resolves against a heading of any
 // level, because a fragment pointing at a deeper heading resolves in a
-// rendered document. The coverage direction runs over the subsection
-// headings alone, since those are the headings the index carries a row
-// for. Coverage is tracked per heading rather than per anchor, so one
+// rendered document. The coverage direction runs over the numbered
+// subsection headings at any depth, since those are the headings the
+// index carries a row for. Coverage is tracked per heading rather than per anchor, so one
 // row cannot cover two headings that collide on a slug.
 //
 // spec: §28
@@ -171,7 +185,7 @@ func reconcileIndexRows(headings []markdownHeading, rows []specIndexRow) indexRe
 	}
 
 	for i, h := range headings {
-		if h.level == indexSubsectionLevel && !covered[i] {
+		if isIndexedSubsection(h) && !covered[i] {
 			rec.uncovered = append(rec.uncovered, h.text)
 		}
 	}
@@ -208,7 +222,7 @@ func titleMismatches(headings []markdownHeading, rows []specIndexRow) []string {
 // diagnosis: a failure means spec/README.md's index and
 // spec/28_communication-channels.md disagree on a heading title or on
 // an anchor. Either a row points at a fragment no heading in the
-// section produces, or a subsection heading was added or renamed
+// section produces, or a numbered subsection heading was added or renamed
 // without its index row, or two headings derive one anchor, so a reader
 // following the published index lands nowhere, never reaches the
 // subsection, or reaches the wrong one.
@@ -219,6 +233,7 @@ func TestSection28IndexRowsResolve_spec_28(t *testing.T) {
 	t.Run("collapsed punctuation run", func(t *testing.T) { assertCollapsedAnchorIsReported(t) })
 	t.Run("fenced example line", func(t *testing.T) { assertFencedLineIsNotAHeading(t) })
 	t.Run("deep heading resolves", func(t *testing.T) { assertRowAtDeeperHeadingResolves(t) })
+	t.Run("numbered deep heading needs a row", func(t *testing.T) { assertNumberedDeepHeadingNeedsAnIndexRow(t) })
 	t.Run("ambiguous anchor", func(t *testing.T) { assertAmbiguousAnchorIsReported(t) })
 	t.Run("underscore kept", func(t *testing.T) { assertUnderscoreSurvivesTheSlugRule(t) })
 	t.Run("non-ascii letter kept", func(t *testing.T) { assertNonASCIILetterSurvivesTheSlugRule(t) })
@@ -394,11 +409,47 @@ func assertRowAtDeeperHeadingResolves(t *testing.T) {
 		t.Errorf("title cross-check reported a correct row: %v", got)
 	}
 
-	// The coverage direction stays at the subsection level: a deeper
-	// heading with no row of its own is not reported.
+	// The coverage direction runs over numbered subsections: an
+	// unnumbered table heading with no row of its own is not reported.
 	rec = reconcileIndexRows(scanMarkdownHeadings(doc), rows[:1])
 	if len(rec.uncovered) != 0 {
-		t.Errorf("heading below the subsection level reported as missing an index row: %v", rec.uncovered)
+		t.Errorf("unnumbered table heading reported as missing an index row: %v", rec.uncovered)
+	}
+}
+
+// assertNumberedDeepHeadingNeedsAnIndexRow pins the coverage direction to
+// the numbered-subsection property rather than to heading depth. A
+// numbered subsection published below level 2, such as a contract card
+// added under §28.5, is unreachable from the published index when no row
+// names it, and that is the disagreement this file exists to report.
+// Keying coverage on depth exempts every heading deeper than level 2 and
+// leaves such a heading unreported.
+//
+// spec: §28
+func assertNumberedDeepHeadingNeedsAnIndexRow(t *testing.T) {
+	t.Helper()
+
+	doc := "# 28. Communication Channels\n\n## 28.5 Contract cards\n\n### 28.5.1 Intra-pod\n\n### Naming table\n"
+	rows := []specIndexRow{{title: "28.5 Contract cards", anchor: "285-contract-cards"}}
+
+	rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows)
+	if len(rec.uncovered) != 1 || rec.uncovered[0] != "28.5.1 Intra-pod" {
+		t.Errorf("numbered subsection below level 2 not reported as missing an index row: %v", rec.uncovered)
+	}
+
+	// The section's own level-1 heading states no subsection number and is
+	// held to the unanchored section row instead, so it is never reported
+	// here even though it carries no anchored row.
+	for _, title := range rec.uncovered {
+		if title == "28. Communication Channels" {
+			t.Errorf("the section's level-1 heading was reported as missing an anchored index row")
+		}
+	}
+
+	// Adding the row clears the report.
+	rows = append(rows, specIndexRow{title: "28.5.1 Intra-pod", anchor: "2851-intra-pod"})
+	if rec := reconcileIndexRows(scanMarkdownHeadings(doc), rows); len(rec.uncovered) != 0 || len(rec.dangling) != 0 {
+		t.Errorf("covered numbered subsection still reported: %+v", rec)
 	}
 }
 
@@ -462,8 +513,8 @@ func assertUnderscoreSurvivesTheSlugRule(t *testing.T) {
 
 // assertSection28IndexReconciles asserts both directions over the
 // tracked tree: every anchored index row for the section resolves to a
-// heading, and every subsection heading in the section carries an index
-// row.
+// heading, and every numbered subsection heading in the section carries
+// an index row.
 func assertSection28IndexReconciles(t *testing.T) {
 	t.Helper()
 	root := repoRoot(t)
@@ -530,7 +581,7 @@ func assertCollapsedAnchorIsReported(t *testing.T) {
 	// one hyphen must be reported as dangling. Were the derivation to
 	// collapse instead of delete, this row would resolve and the real
 	// rows would be the ones reported broken.
-	headings := []markdownHeading{{level: indexSubsectionLevel, text: "28.9 Registers (v2): keys"}}
+	headings := []markdownHeading{{level: 2, text: "28.9 Registers (v2): keys"}}
 	rows := []specIndexRow{{title: "28.9 Registers (v2): keys", anchor: "289-registers-v2-keys"}}
 	collapsed := []specIndexRow{{title: "28.9 Registers (v2): keys", anchor: "28-9-registers-v2-keys"}}
 
