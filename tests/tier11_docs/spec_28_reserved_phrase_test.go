@@ -37,14 +37,121 @@ import (
 // check and the lint enumerate one population, and the phrase itself is
 // never restated here: every tracked Go file is a carrier of the
 // prohibition, so a specimen written in this source would be a site of
-// the class the pass removes. The matcher applies the comment
-// continuation join before it runs, so a phrase wrapped across two
-// consecutive comment lines is one site reported on the line it opens
-// on.
+// the class the pass removes.
+//
+// The matcher joins two lines of a carrier only across that carrier's
+// comment marker, and a markdown prose wrap is a bare line break, so a
+// phrase whose two halves fall on either side of a wrap matches nothing.
+// The section is hard-wrapped, which makes that the form an ordinary
+// edit produces, so each run of wrapped prose is folded to one line here
+// before the matcher runs. The fold is applied on the way into the
+// matcher rather than inside it, because the matcher's per-file
+// occurrence order is what the sense registers are keyed by and a fold
+// there would renumber every site after a wrapped one.
+//
+// A site inside a folded run is reported on the line the run opens on,
+// which is the line the phrase stands on when it is not wrapped.
 //
 // spec: §28.1
 func reservedPhraseLines(section string) []int {
-	return name.FindReservedPhrases(section)
+	var lines []int
+	for _, run := range proseRuns(section) {
+		for range name.FindReservedPhrases(run.text) {
+			lines = append(lines, run.line)
+		}
+	}
+	return lines
+}
+
+// proseRun is one run of markdown source read as a single line: the
+// text with the wraps inside it folded away, and the source line the run
+// opens on.
+type proseRun struct {
+	text  string
+	line  int
+	opens markdownLine
+}
+
+// proseRuns splits markdown source into the runs the phrase matcher
+// reads, with each prose wrap folded away.
+//
+// A run is a paragraph line or a list item together with the lines that
+// wrap it. Every other line stands alone: a blank line, a fence
+// delimiter, a line inside a fenced block, a table row, and a heading
+// each carry text no wrap continues, and folding a table row into the
+// prose below it or two rows into each other would join cells that no
+// author wrote as one sentence.
+func proseRuns(section string) []proseRun {
+	var runs []proseRun
+	fenced := false
+	for i, line := range strings.Split(section, "\n") {
+		kind := classifyLine(line, fenced)
+		if kind == lineFence {
+			fenced = !fenced
+		}
+		if kind == lineProse && len(runs) > 0 {
+			if opening := runs[len(runs)-1].opens; opening == lineProse || opening == lineListItem {
+				runs[len(runs)-1].text = foldWrap(runs[len(runs)-1].text, line)
+				continue
+			}
+		}
+		runs = append(runs, proseRun{text: line, line: i + 1, opens: kind})
+	}
+	return runs
+}
+
+// foldWrap appends a wrapped line to the run it continues.
+//
+// The wrap becomes a space, which is what a markdown renderer writes it
+// as, except after a hyphen: a wrap falling immediately after the hyphen
+// of a compound leaves the two halves of that compound on either side of
+// the break, so folding a space in would produce a spelling the author
+// did not write and the matcher reads neither spelling at all.
+func foldWrap(run, line string) string {
+	continuation := strings.TrimSpace(line)
+	if strings.HasSuffix(run, "-") {
+		return run + continuation
+	}
+	return run + " " + continuation
+}
+
+// markdownLine names the markdown block a source line opens, which is
+// what decides whether the line below it wraps it.
+type markdownLine int
+
+const (
+	lineProse markdownLine = iota
+	lineBlank
+	lineFence
+	lineVerbatim
+	lineTable
+	lineHeading
+	lineListItem
+)
+
+// listItemExpr matches the marker a bulleted or numbered list item opens
+// with, which is a block of its own that the lines below it may wrap.
+var listItemExpr = regexp.MustCompile(`^\s*(?:[-*+]\s|\d+\.\s)`)
+
+// classifyLine classifies one source line, given whether it stands
+// inside a fenced block.
+func classifyLine(line string, fenced bool) markdownLine {
+	trimmed := strings.TrimSpace(line)
+	switch {
+	case strings.HasPrefix(trimmed, "```"), strings.HasPrefix(trimmed, "~~~"):
+		return lineFence
+	case fenced:
+		return lineVerbatim
+	case trimmed == "":
+		return lineBlank
+	case strings.HasPrefix(trimmed, "|"):
+		return lineTable
+	case strings.HasPrefix(trimmed, "#"):
+		return lineHeading
+	case listItemExpr.MatchString(line):
+		return lineListItem
+	}
+	return lineProse
 }
 
 // reservedPhraseSpecimen reads one specimen fixture and returns its
@@ -207,6 +314,12 @@ func TestSection28StatesN3WithoutViolatingIt_spec_28_1(t *testing.T) {
 	t.Run("hyphenated specimen", func(t *testing.T) {
 		assertSpecimenInProseIsReported(t, hyphenatedSpecimenFile)
 	})
+	t.Run("space-separated specimen across a wrap", func(t *testing.T) {
+		assertWrappedSpecimenInProseIsReported(t, spaceSeparatedSpecimenFile, wrapOverSeparator)
+	})
+	t.Run("hyphenated specimen across a wrap", func(t *testing.T) {
+		assertWrappedSpecimenInProseIsReported(t, hyphenatedSpecimenFile, wrapAfterSeparator)
+	})
 	t.Run("naming-table row is no exemption", func(t *testing.T) { assertNamingTableRowIsNoExemption(t) })
 	t.Run("stated domain", func(t *testing.T) { assertN3DomainMatchesTheSharedPredicate(t) })
 }
@@ -236,6 +349,57 @@ func assertSpecimenInProseIsReported(t *testing.T, fixture string) {
 	got := reservedPhraseLines(section)
 	if len(got) != 1 || got[0] != 3 {
 		t.Errorf("reserved-phrase lines for the %s specimen = %v, want [3]", fixture, got)
+	}
+}
+
+// The two positions a markdown wrap falls at inside a specimen. The
+// space-separated spelling wraps over its separator, which leaves the
+// two words on consecutive lines with no byte between them. The
+// hyphenated compound wraps after its hyphen, which leaves the hyphen at
+// the end of the first line, and that is the position a matcher reading
+// only the bare line break misses in both directions.
+const (
+	wrapOverSeparator  = false
+	wrapAfterSeparator = true
+)
+
+// wrapSpecimen returns the specimen with a markdown line break at its
+// separator, keeping the separator byte when the wrap falls after it.
+//
+// The separator is found in the fixture rather than written here,
+// because this source is a carrier of the prohibition and a specimen
+// written into it would be a site of the class the name pass removes.
+func wrapSpecimen(t *testing.T, specimen string, afterSeparator bool) string {
+	t.Helper()
+	at := strings.IndexAny(specimen, " -")
+	if at < 0 {
+		t.Fatalf("the specimen %q carries no separator to wrap at", specimen)
+	}
+	if afterSeparator {
+		return specimen[:at+1] + "\n" + specimen[at+1:]
+	}
+	return specimen[:at] + "\n" + specimen[at+1:]
+}
+
+// assertWrappedSpecimenInProseIsReported pins that a specimen split
+// across a markdown wrap is reported, on the line the wrapped paragraph
+// opens on.
+//
+// The section is hard-wrapped, so this is the form a site takes in it
+// far more often than the single-line form. Without this case the
+// landed-section assertion reads every paragraph up to its first line
+// break and reports a section clean that the naming lint reports red,
+// and no pass is scheduled to write the site it carries.
+//
+// spec: §28.1
+func assertWrappedSpecimenInProseIsReported(t *testing.T, fixture string, afterSeparator bool) {
+	t.Helper()
+	wrapped := wrapSpecimen(t, reservedPhraseSpecimen(t, fixture), afterSeparator)
+	section := "## 28.1 Naming law\n\nThe adapter opens the " + wrapped + " to the runtime.\n"
+
+	got := reservedPhraseLines(section)
+	if len(got) != 1 || got[0] != 3 {
+		t.Errorf("reserved-phrase lines for the %s specimen across a wrap = %v, want [3]", fixture, got)
 	}
 }
 
