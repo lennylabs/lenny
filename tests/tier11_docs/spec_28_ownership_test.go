@@ -38,11 +38,16 @@ const renamingProposalFile = "proposals/0064_fix_name-the-communication-channels
 
 // The headings that bracket the swept region of that document. The sweep
 // opens at the first numbered section, which leaves the status block and
-// the scope paragraph above it outside, and closes at the convergence
-// record.
+// the scope paragraph above it outside, and runs to the end of the
+// document with the convergence record excised. The record states
+// decisions as they were made, so it is a history of the review rather
+// than an instruction to an implementor; the sections below it, which
+// hold the open decisions and the files-touched list, carry attributions
+// an implementor reads and are swept.
 const (
-	sweptRegionOpening = "## 0."
-	sweptRegionClosing = "## 9. Resolved in adversarial review"
+	sweptRegionOpening       = "## 0."
+	convergenceRecordOpening = "## 9. Resolved in adversarial review"
+	convergenceRecordClosing = "## 10."
 )
 
 // changeSectionHeading is the heading the proposal publishes its
@@ -66,6 +71,15 @@ var (
 	negatedVerbExpr  = regexp.MustCompile(`\b(?:creates?|writes|authors?|lands|names)\b (?:none|no|neither)\b`)
 )
 
+// A files-touched bullet names a file and states whether it is new,
+// without naming a subject: the document is the subject of its own
+// files-touched list, so a bullet calling the section file new is an
+// attribution on its own terms and is read as one.
+var (
+	sectionFileExpr  = regexp.MustCompile("`?spec/28_communication-channels\\.md`?")
+	newFileClaimExpr = regexp.MustCompile(`\b(?:both new|new specification files?|is new|are new)\b|, new\b`)
+)
+
 // TestSection28OwnershipSitsInOneProposal_spec_28 sweeps the renaming
 // proposal for a clause crediting one of its own sub-steps with creating
 // the communication-channels section, its opening headings, or its
@@ -79,12 +93,68 @@ var (
 //
 // spec: §28, §28.3
 func TestSection28OwnershipSitsInOneProposal_spec_28(t *testing.T) {
+	document := readRenamingProposal(t)
+	for _, sentence := range ownershipSites(t, document) {
+		t.Errorf("%s credits one of its own sub-steps with creating the section: %q", renamingProposalFile, sentence)
+	}
+}
+
+// TestSection28OwnershipSweepReadsTheFilesTouchedList_spec_28 plants the
+// attribution the sweep exists to report into the files-touched list,
+// which sits below the convergence record, and requires it reported.
+//
+// A sweep that stops at the convergence record reads none of the
+// sections below it, and the files-touched list is where the document
+// states which specification files it lands as new. The planted bullet
+// is the form that list carried before ownership of the section moved,
+// so a sweep that reports it reads the whole document rather than its
+// first nine sections.
+//
+// diagnosis: a failure means the ownership sweep reads a truncated
+// document, so an attribution reinstated below the convergence record
+// goes unreported. Widen the swept region to the end of the document
+// with the convergence record excised.
+//
+// spec: §28, §28.3
+func TestSection28OwnershipSweepReadsTheFilesTouchedList_spec_28(t *testing.T) {
+	document := readRenamingProposal(t)
+	const planted = "\n- `spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new.\n"
+
+	index := strings.Index(document, filesTouchedHeading)
+	if index < 0 {
+		t.Fatalf("%s carries no heading %q, so the reject case plants nothing below the convergence record", renamingProposalFile, filesTouchedHeading)
+	}
+	cut := index + len(filesTouchedHeading)
+	sites := ownershipSites(t, document[:cut]+planted+document[cut:])
+
+	if len(sites) != 1 {
+		t.Fatalf("a files-touched bullet calling the section file new reported %d site(s), want one: %q", len(sites), sites)
+	}
+	if !strings.Contains(sites[0], "both new") {
+		t.Errorf("the reported site is %q, which is not the planted bullet", sites[0])
+	}
+}
+
+// filesTouchedHeading opens the section listing the files the renaming
+// proposal touches, which sits below the convergence record.
+const filesTouchedHeading = "## 11. Files touched on application"
+
+// readRenamingProposal returns the document the sweep reads.
+func readRenamingProposal(t *testing.T) string {
+	t.Helper()
 	body, err := os.ReadFile(filepath.Join(repoRoot(t), renamingProposalFile))
 	if err != nil {
 		t.Fatalf("read %s: %v", renamingProposalFile, err)
 	}
-	document := string(body)
+	return string(body)
+}
 
+// ownershipSites returns every sentence of the swept region that credits
+// a subject of the renaming proposal with creating the section, its
+// opening headings, or its register, or that states the section file is
+// one the proposal lands as new.
+func ownershipSites(t *testing.T, document string) []string {
+	t.Helper()
 	subSteps := subStepNames(document)
 	if len(subSteps) == 0 {
 		t.Fatalf("%s publishes no sub-step under %q, so the sweep reads no subject", renamingProposalFile, changeSectionHeading)
@@ -98,20 +168,30 @@ func TestSection28OwnershipSitsInOneProposal_spec_28(t *testing.T) {
 		t.Fatalf("read the swept region of %s: %v", renamingProposalFile, err)
 	}
 
+	var sites []string
 	for _, sentence := range proseSentences(region) {
-		if strings.Contains(sentence, ownerProposalNumber) {
+		if strings.Contains(strings.ToLower(sentence), ownerCreditPhrase) {
 			continue
 		}
-		if attributesCreation(sentence, subjects) {
-			t.Errorf("%s credits one of its own sub-steps with creating the section: %q", renamingProposalFile, sentence)
+		if attributesCreation(sentence, subjects) || claimsTheSectionIsNew(sentence) {
+			sites = append(sites, sentence)
 		}
 	}
+	return sites
 }
 
-// ownerProposalNumber is the number of the proposal that landed the
-// section. A clause naming it credits that proposal rather than one of
-// the renaming proposal's own sub-steps.
-const ownerProposalNumber = "0067"
+// ownerCreditPhrase is how the document credits the proposal that landed
+// the section, read case-insensitively because the document writes it
+// both mid-sentence and at the head of one. A sentence carrying it
+// states the corrected attribution, so it is read out rather than
+// reported.
+const ownerCreditPhrase = "proposal 0067"
+
+// claimsTheSectionIsNew reports whether one sentence states that the
+// renaming proposal lands the section file as a new file.
+func claimsTheSectionIsNew(sentence string) bool {
+	return sectionFileExpr.MatchString(sentence) && newFileClaimExpr.MatchString(sentence)
+}
 
 // subStepNames returns the sub-step labels the proposal publishes under
 // its change section, which are the subjects a clause attributes work to.
@@ -166,18 +246,35 @@ func subjectMatcher(subSteps []string) (*regexp.Regexp, error) {
 	return matcher, nil
 }
 
-// sweptRegion returns the part of the document the sweep reads.
+// sweptRegion returns the part of the document the sweep reads: from the
+// first numbered section to the end, with the convergence record cut
+// out. Truncating the document at the record instead would leave every
+// section below it unread, and the files-touched list down there states
+// which specification files the proposal lands as new.
 func sweptRegion(document string) (string, error) {
-	start := strings.Index(document, sweptRegionOpening)
-	if start < 0 {
+	var kept []string
+	opened, inRecord, closed := false, false, false
+	for _, line := range strings.Split(document, "\n") {
+		switch {
+		case strings.HasPrefix(line, convergenceRecordOpening):
+			inRecord = true
+			continue
+		case inRecord && strings.HasPrefix(line, convergenceRecordClosing):
+			inRecord, closed = false, true
+		case !opened && strings.HasPrefix(line, sweptRegionOpening):
+			opened = true
+		}
+		if opened && !inRecord {
+			kept = append(kept, line)
+		}
+	}
+	if !opened {
 		return "", fmt.Errorf("the document carries no heading opening %q", sweptRegionOpening)
 	}
-	rest := document[start:]
-	end := strings.Index(rest, sweptRegionClosing)
-	if end < 0 {
-		return "", fmt.Errorf("the document carries no heading %q", sweptRegionClosing)
+	if !closed {
+		return "", fmt.Errorf("the convergence record opening %q is closed by no heading %q", convergenceRecordOpening, convergenceRecordClosing)
 	}
-	return rest[:end], nil
+	return strings.Join(kept, "\n"), nil
 }
 
 // proseSentences returns the sentences of a markdown region, with the
