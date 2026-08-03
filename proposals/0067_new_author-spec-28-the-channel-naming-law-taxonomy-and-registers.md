@@ -618,15 +618,11 @@ items 8 through 10 reach the three sentences outside the two sub-steps that stat
    confirm the four subsections are present before the name pass runs, because the pass indexes the
    declared identifier space out of that file.
 3. In SPEC-1's Change text, replace the sentence beginning "Add the `spec/README.md` table-of-contents
-   rows for `spec/28` and its §28.1 through §28.4 subsections" with a sentence stating that proposal 0067
-   wrote those five rows at the depth the existing entries use, and that this sub-step confirms they are
-   present and adds any that are missing. The sentence after it, which begins "Take the link text and the
-   anchor for each row from the heading table in §4.8", is reworded from an instruction to write the rows
-   into the predicate the confirmation applies: the heading table in §4.8 states the link text and the
-   anchor each of the five rows carries, and a row this sub-step adds takes both from that table. The
-   remainder of that paragraph stages the `tests/spec-map.json` keys and the
-   `tests/spec-map-exceptions.yaml` entries for the same headings and the heading-walker seeding, which are
-   unchanged, and two further sentences that items 6 and 7 replace.
+   rows for `spec/28` and its §28.1 through §28.4 subsections" with a sentence stating that proposal 0067 wrote those five rows with the link text and anchors §4.8
+   fixes, and that this sub-step confirms they are present and adds any that are missing. The remainder of
+   that paragraph stages the `tests/spec-map.json` keys and the `tests/spec-map-exceptions.yaml` entries for
+   the same headings and the heading-walker seeding, which are unchanged, and two further sentences that
+   items 6 and 7 replace.
 4. In SPEC-2's Target list (lines 1347 through 1360), add `spec/28_communication-channels.md` to the
    enumeration, for the naming-table rows the sub-step writes.
 5. In SPEC-2's Change text, after the sentence
@@ -653,16 +649,11 @@ items 8 through 10 reach the three sentences outside the two sub-steps that stat
    correction." with a sentence stating that proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
    §28.4, which are the law and the three registers, and that this sub-step carries the reserved-word
    removal and the `spec/03` correction.
-9. In §4.8's lead-in (line 1036), replace the clause "The headings land across two sub-steps: SPEC-1
-   creates `spec/28_communication-channels.md` carrying §28.1 through §28.4," with a clause stating that
-   the headings land in two changes and that proposal 0067 created `spec/28_communication-channels.md`
-   carrying §28.1 through §28.4, because proposal 0067 is a separate proposal rather than a sub-step of
-   this one. The rest of that sentence, which states that SPEC-3 appends §28.5 through §28.8 and creates
-   `spec/29_communication-scenarios.md`, is unchanged, and the heading table itself is unchanged. The
-   sentence before it, which states that three obligations need the anchors before the sections that carry
-   them are written, becomes "need the anchors fixed before", because §28.1 through §28.4 are already
-   written and the obligation this subsection discharges is fixing each anchor in advance of the row,
-   the key, or the predicate that reads it.
+9. In §4.8's lead-in (line 1036), replace the clause "SPEC-1 creates
+   `spec/28_communication-channels.md` carrying §28.1 through §28.4," with a clause stating
+   that proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through §28.4. The rest of
+   that sentence, which states that SPEC-3 appends §28.5 through §28.8 and creates
+   `spec/29_communication-scenarios.md`, is unchanged, and the heading table itself is unchanged.
 10. In §11's files-touched list (line 6089), replace the bullet reading
     "`spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new." with a
     bullet stating that `spec/29_communication-scenarios.md` is new and that

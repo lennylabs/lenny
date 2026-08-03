@@ -1031,9 +1031,9 @@ residual is what makes them safe to be incomplete.
 
 Every heading `spec/28` and `spec/29` land is fixed here, with its exact title and the anchor that title
 produces. This subsection exists because three separate obligations in this proposal need the anchors
-fixed before the sections that carry them are written: the `spec/README.md` index rows, the
+before the sections that carry them are written: the `spec/README.md` index rows, the
 `tests/spec-map.json` keys, and the heading walker's predicate that a row's anchor resolves. The headings
-land in two changes: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
+land across two sub-steps: proposal 0067 created `spec/28_communication-channels.md` carrying §28.1 through
 §28.4, and SPEC-3 appends §28.5 through §28.8 to it and creates `spec/29_communication-scenarios.md`. This
 proposal and the remediation steps after it also cite a §28.5 card by its subsection number before SPEC-3
 runs. Without a title stated in advance, a row's link text and its anchor would be invented in whichever
@@ -1302,11 +1302,10 @@ channel" is exactly the phrase N3 bans, and
 
 Proposal 0067 wrote the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4
 subsections, at the depth the existing entries use, so this sub-step confirms those five rows are present
-and adds any that are missing. The confirmation predicate is the heading table in §4.8, which fixes the
-title and the derived anchor of every §28 and §29 heading: each row carries the link text
-`28. Communication Channels`, `28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, or
-`28.4 Claim register`, with the anchor that table states, and a row this sub-step adds takes its link text
-and its anchor from the same table.
+and adds any that are missing. Take the link text and the anchor for each row from the heading table
+in §4.8, which fixes the title and the derived anchor of every §28 and §29 heading, so these rows carry
+`28. Communication Channels`, `28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, and
+`28.4 Claim register` with the anchors that table states.
 Proposal 0067 created `spec/28_communication-channels.md` with those five
 headings and wrote those rows before this sub-step runs, so every row resolves and no row in this proposal
 precedes its target file. Write for each of those headings the other
