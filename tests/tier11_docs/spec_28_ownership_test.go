@@ -135,6 +135,60 @@ func TestSection28OwnershipSweepReadsTheFilesTouchedList_spec_28(t *testing.T) {
 	}
 }
 
+// TestSection28OwnershipRecordMatchesTheProposal_spec_28 sweeps the
+// durable record of what an apply run left open for a clause crediting
+// the renaming proposal with creating the section, its opening headings,
+// or its register, or calling the section file one that proposal lands
+// as new.
+//
+// The record and the proposal describe one transfer. A record stating
+// that the renaming proposal still creates the file outlives the clause
+// it describes once that clause is rewritten, and it is the artifact a
+// reader consults to find out what is still open, so it states the same
+// attribution the proposal does or it states nothing about it.
+//
+// diagnosis: a failure means the queue record and the proposal disagree
+// on which document creates the communication-channels section, so a
+// reader is told an ownership edit is outstanding that the tree already
+// carries. Close or rewrite the record to what remains open.
+//
+// spec: §28, §28.3
+func TestSection28OwnershipRecordMatchesTheProposal_spec_28(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), ownershipRecordFile))
+	if err != nil {
+		t.Fatalf("read %s: %v", ownershipRecordFile, err)
+	}
+	subjects, err := recordSubjectMatcher(subStepNames(readRenamingProposal(t)))
+	if err != nil {
+		t.Fatalf("build the subject matcher: %v", err)
+	}
+
+	for _, sentence := range proseSentences(string(body)) {
+		if strings.Contains(strings.ToLower(sentence), ownerCreditPhrase) {
+			continue
+		}
+		if attributesCreation(sentence, subjects) || claimsTheSectionIsNew(sentence) {
+			t.Errorf("%s credits the renaming proposal with creating the section: %q", ownershipRecordFile, sentence)
+		}
+	}
+}
+
+// ownershipRecordFile is the durable record of what each apply run left
+// open, which is where the ownership transfer was recorded as residue.
+const ownershipRecordFile = "PROPOSAL-QUEUE.md"
+
+// recordSubjectMatcher returns the matcher for a subject the record
+// attributes work to. The record names the renaming proposal by number
+// as well as by sub-step, because it is written from outside that
+// document.
+func recordSubjectMatcher(subSteps []string) (*regexp.Regexp, error) {
+	matcher, err := subjectMatcher(subSteps)
+	if err != nil {
+		return nil, err
+	}
+	return regexp.Compile(matcher.String() + `|proposal 0064|\b0064's\b`)
+}
+
 // filesTouchedHeading opens the section listing the files the renaming
 // proposal touches, which sits below the convergence record.
 const filesTouchedHeading = "## 11. Files touched on application"

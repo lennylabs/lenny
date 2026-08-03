@@ -1023,7 +1023,11 @@ stated alternative before the first round.
 - `scripts/specshift/identifier/table_test.go` and `scripts/specshift/name/declare_test.go`, for the tier-1
   cases §8 items 1 and 2 state, added to the existing files.
 - `tests/tier11_docs/spec_28_taxonomy_test.go`, new, for the tier-11 case §8 item 7 states.
-- `tests/tier11_docs/spec_28_ownership_test.go`, new, for the tier-11 case §8 item 9 states.
+- `tests/tier11_docs/spec_28_ownership_test.go`, new, for the tier-11 case §8 item 9 states. The same file
+  sweeps `PROPOSAL-QUEUE.md` with the same predicate, so the durable record of what an apply run left open
+  and the proposal it describes cannot state opposite things about who creates the section.
+- `PROPOSAL-QUEUE.md`, for the record of this transfer, which states that AMEND-1's thirteen edits landed
+  and that nothing on this axis is open.
 - `scripts/specshift/reserved_phrase_domain_test.go`, new, for the tier-1 half of §8 item 4: the records
   the naming law places outside the prohibition are outside the reserved-phrase class's read domain, and
   an ordinary carrier of each form it places inside stays in it.
