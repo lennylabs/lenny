@@ -17,6 +17,20 @@ import (
 // by.
 const noTableFixture = "testdata/noname"
 
+// embeddedFixture is a tree whose naming table states two rows, one
+// retiring a spelling the tree writes only inside a longer lowercase
+// word and one retiring a spelling the tree writes on token boundaries.
+const embeddedFixture = "testdata/embedded"
+
+// embeddedSpelling is the retired spelling the embedded fixture writes
+// only inside a longer lowercase word, so the site walk reads no
+// occurrence of it.
+const embeddedSpelling = "sample-token"
+
+// boundedSpelling is the retired spelling the embedded fixture writes on
+// token boundaries, so the site walk reads one occurrence of it.
+const boundedSpelling = "stray-token"
+
 // TestLoadTableReadsTheLandedNamingTable_spec_28_3 reads the naming
 // table out of the tracked tree and out of a tree that states no such
 // table.
@@ -81,17 +95,54 @@ func TestLoadTableReadsTheLandedNamingTable_spec_28_3(t *testing.T) {
 	})
 }
 
+// TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3 pins the
+// reachability count to the pass's own site walk.
+//
+// A retired spelling standing only inside a longer lowercase word is no
+// site, so the pass reaches none of its occurrences and the row resolves
+// nothing. A count taken by substring reads such a spelling as reachable
+// and passes the row, which is the class of unresolvable row the
+// reachability check exists to name.
+//
+// spec: §28.3
+func TestRetiredSpellingReachabilityIsTheSiteWalk_spec_28_3(t *testing.T) {
+	ctx := context.Background()
+	list, read := scope.DirLister(embeddedFixture), scope.DirReader(embeddedFixture)
+	table, err := LoadTable(ctx, list, read)
+	if err != nil {
+		t.Fatalf("read the naming table out of the specimen tree: %v", err)
+	}
+	counts, err := retiredSpellingsInWriteDomain(ctx, list, read, table)
+	if err != nil {
+		t.Fatalf("count the retired spellings of the write domain: %v", err)
+	}
+	if counts[embeddedSpelling] != 0 {
+		t.Errorf("%q stands only inside a longer lowercase word and was counted %d time(s), so a row the pass resolves no site for reads as reachable",
+			embeddedSpelling, counts[embeddedSpelling])
+	}
+	if counts[boundedSpelling] != 1 {
+		t.Errorf("%q stands on token boundaries once and was counted %d time(s)", boundedSpelling, counts[boundedSpelling])
+	}
+}
+
 // retiredSpellingsInWriteDomain counts, per retired spelling of the
-// table, the writable tracked files that carry it outside the
-// specification file the table is stated in. The declaring row is
-// excluded because every retired spelling stands in it by construction,
-// so counting it would satisfy the reachability check for a spelling
-// nothing else in the tree writes.
+// table, the sites the pass reads outside the specification file the
+// table is stated in. Counting is by the pass's own site walk rather
+// than by substring, so the count is the number of occurrences the pass
+// would act on: a spelling standing only inside a longer lowercase word
+// is no site, and a check reading it as one would pass a row the
+// substitution never reaches.
+//
+// The specification file the table is stated in is excluded because
+// every retired spelling stands in the row that retires it by
+// construction, so counting that row would satisfy the reachability
+// check for a spelling nothing else in the tree writes.
 func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read scope.FileReader, table *Table) (map[string]int, error) {
 	domain, err := scope.WriteDomain(ctx, list, scope.Identifier, read)
 	if err != nil {
 		return nil, err
 	}
+	retired := table.Retired()
 	counts := map[string]int{}
 	for _, target := range domain {
 		if strings.HasPrefix(target, channelSectionPrefix) {
@@ -101,11 +152,8 @@ func retiredSpellingsInWriteDomain(ctx context.Context, list scope.Lister, read 
 		if err != nil {
 			return nil, err
 		}
-		content := string(data)
-		for _, spelling := range table.Retired() {
-			if strings.Contains(content, spelling) {
-				counts[spelling]++
-			}
+		for _, s := range findSites(string(data), retired) {
+			counts[s.retired]++
 		}
 	}
 	return counts, nil
