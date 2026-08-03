@@ -1301,10 +1301,12 @@ channel" is exactly the phrase N3 bans, and
 `tests/tier11_docs/eviction_coordinator_route_consistency_test.go` line 69 asserts that clause verbatim.
 
 Proposal 0067 wrote the `spec/README.md` table-of-contents rows for `spec/28` and its §28.1 through §28.4
-subsections, at the depth the existing entries use, carrying `28. Communication Channels`,
-`28.1 Naming law`, `28.2 Taxonomy and axes`, `28.3 Registers`, and `28.4 Claim register` with the link text
-and the anchors the heading table in §4.8 fixes, so this sub-step confirms those five rows are present and
-adds any that are missing. Proposal 0067 created `spec/28_communication-channels.md` with those five
+subsections, at the depth the existing entries use, with the link text and the anchors §4.8 fixes, so this
+sub-step confirms those five rows are present and adds any that are missing. The link text and the anchor
+for each row come from the heading table in §4.8, which fixes the title and the derived anchor of every §28
+and §29 heading, so these rows carry `28. Communication Channels`, `28.1 Naming law`,
+`28.2 Taxonomy and axes`, `28.3 Registers`, and `28.4 Claim register` with the anchors that table states.
+Proposal 0067 created `spec/28_communication-channels.md` with those five
 headings and wrote those rows before this sub-step runs, so every row resolves and no row in this proposal
 precedes its target file. Write for each of those headings the other
 half of the walker's predicate as well, which is a `tests/spec-map.json` key naming the tests that encode
@@ -1373,9 +1375,7 @@ every machine-readable surface, by script, driven by the naming table in §28.3.
 
 The §28.3 table records the spelling each carrier takes, per N7. This sub-step writes the §28.3
 naming-table rows for every spelling it fixes that the table does not already carry, which are the
-`CH-RUNTIMEOPS` Go symbol stem, whose retired spelling is `LifecycleChannel` and whose canonical spelling
-is `RuntimeOps`, and the `CH-RUNTIMEOPS` file stem, whose retired spelling is `lifecyclechannel` at
-`pkg/adapter/lifecyclechannel.go` and whose canonical spelling is `runtimeops`, while the
+`CH-RUNTIMEOPS` Go symbol stem and the `pkg/adapter/lifecyclechannel.go` file stem, while the
 `schemas/lifecycle-events.schema.json` schema-path row is already carried; it states both spellings here
 for the reason the paragraph already gives for the `CH-ADAPTEREVENTS` carriers, which is that each is
 derived from a naming rule and the derivation is written down once. The adapter manifest key becomes
