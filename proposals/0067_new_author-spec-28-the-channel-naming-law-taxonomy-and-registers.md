@@ -590,13 +590,10 @@ proposal does not author.
 ### AMEND-1. Transfer ownership of `spec/28` in proposal 0064
 
 **Target:** `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`: SPEC-1's
-Target list and Change text, SPEC-2's Target list and Change text, the two attribution sentences inside
-SPEC-3's Change text at lines 1951 and 2702, the §3.1 lead sentence at line 190, the §3.5 build-order
-bullet at line 316, the §4.8 lead-in at line 1036, and the §11 files-touched bullet at line 6089. The last
-five sit outside SPEC-1's and SPEC-2's text and each states or presumes that SPEC-1 creates the file, so a
-Target confined to the two sub-steps would leave the double ownership standing in five places. The two
-SPEC-3 sites are attribution clauses inside that sub-step's rationale rather than instructions to its apply
-agent, so restating them leaves every SPEC-3 instruction as written.
+Target list and Change text, SPEC-2's Target list and Change text, the §3.5 build-order bullet at line 316,
+the §4.8 lead-in at line 1036, and the §11 files-touched bullet at line 6089. The last three sit outside
+SPEC-1's and SPEC-2's text and each states that SPEC-1 creates the file, so a Target confined to the two
+sub-steps would leave the double ownership standing in three places.
 
 **Rationale:** 0064 SPEC-1 states that it creates the file this proposal creates and that it writes the
 four subsections this proposal writes. Left standing, an approved sub-step instructs an apply agent to
@@ -604,10 +601,9 @@ create a file that already exists and to author headings that are already there.
 spellings the naming table records and has no `spec/28` target to write them into, which is the gap that
 would otherwise force a different proposal to mint two normative identifiers.
 
-**Change (staged description).** Thirteen sentence-level edits, each leaving the rest of the sub-step
-intact. Items 1 through 3, 6, and 7 reach SPEC-1's Target list and Change text, items 4 and 5 reach
-SPEC-2's, and items 8 through 13 reach the six sentences outside the two sub-steps that state or presume
-SPEC-1 creates the file.
+**Change (staged description).** Ten sentence-level edits, each leaving the rest of the sub-step intact.
+Items 1 through 3, 6, and 7 reach SPEC-1's Target list and Change text, items 4 and 5 reach SPEC-2's, and
+items 8 through 10 reach the three sentences outside the two sub-steps that state SPEC-1 creates the file.
 
 1. In SPEC-1's Target list (lines 1126 through 1128), replace
    `` `spec/28_communication-channels.md` §28.1 through §28.4 (new)`` with
@@ -662,27 +658,10 @@ SPEC-1 creates the file.
     "`spec/28_communication-channels.md` and `spec/29_communication-scenarios.md`, both new." with a
     bullet stating that `spec/29_communication-scenarios.md` is new and that
     `spec/28_communication-channels.md` exists, created by proposal 0067, and is appended to by SPEC-3.
-11. In SPEC-3's Change text (line 2702), replace the sentence beginning "The §28.1 through §28.4 headings
-    are not among them, because SPEC-1 created them together with their sections" with one stating that the
-    §28.1 through §28.4 headings are not among them because proposal 0067 authored those four sections and
-    SPEC-1 wrote their `tests/spec-map.json` key or their `tests/spec-map-exceptions.yaml` entry there, so
-    this sub-step neither writes nor retires coverage for them. The heading enumeration the sentence follows
-    and every SPEC-3 instruction around it are unchanged.
-12. In SPEC-3's Change text (line 1951), replace the clause "the §28.3 register its bijection reads already
-    exists from SPEC-1" with one stating that the §28.3 register the bijection reads already exists from
-    proposal 0067. The rest of the sentence, which states that the §28.8 matrix completeness check lands in
-    this sub-step because the bijection first holds at its exit, is unchanged.
-13. In §3.1's lead sentence (line 190), replace "This proposal lands two new specification files, one naming
-    law, three registers, and the tooling that migrates every reference to them." with a sentence stating
-    that the proposal lands one new specification file, `spec/29_communication-scenarios.md`, together with
-    the naming law, the three registers, and the tooling that migrates every reference to them. The
-    paragraphs that follow, which describe what `spec/28_communication-channels.md` carries as the normative
-    home, are unchanged, because they state the file's contents rather than its creation.
 
-No sub-step instruction in proposal 0064 changes. Its status line and its remaining sub-steps are
-untouched, and items 11 and 12 restate attribution clauses inside SPEC-3's rationale rather than anything
-SPEC-3 instructs. Its §1 scope paragraph describes the two-proposal change at the level of the whole
-document, and its convergence record states decisions as they were made, so both are left as written.
+No other sub-step instruction in proposal 0064 changes. Its status line and its remaining sub-steps are
+untouched. Its §1 scope paragraph describes the two-proposal change at the level of the whole document, and
+its convergence record states decisions as they were made, so both are left as written.
 
 ## 7. Non-goals
 
