@@ -65,9 +65,16 @@ var subStepHeading = regexp.MustCompile(`^### ([A-Za-z]+-\d+)\.`)
 // the file as a new specification file, the four headings the section
 // opens with, and the register they carry. A negated verb states the
 // opposite of an attribution, so a clause carrying one is not a site.
+//
+// The new-specification-file object is a claim over more than one file.
+// The renaming proposal still lands one specification file of its own,
+// the scenarios section, so a singular claim is that file and reading it
+// as an attribution would report a sentence the transfer left true. A
+// claim naming the communication-channels file itself is read by the
+// files-touched rule below, which matches on the path.
 var (
 	creationVerbExpr = regexp.MustCompile(`\b(?:creates?|created|authors?|authored|writes|wrote|lands|landed|exists|existed)\b`)
-	creationObjExpr  = regexp.MustCompile(`new specification files?|§28\.1 through §28\.4|the §28\.3 register`)
+	creationObjExpr  = regexp.MustCompile(`(?:both|two) new specification files?|new specification files\b|§28\.1 through §28\.4|the §28\.3 register`)
 	negatedVerbExpr  = regexp.MustCompile(`\b(?:creates?|writes|authors?|lands|names)\b (?:none|no|neither)\b`)
 )
 
@@ -169,9 +176,35 @@ func TestSection28OwnershipSweepReadsACreditedSentence_spec_28(t *testing.T) {
 		t.Errorf("the reported site is %q, which is not the planted sentence", sites[0])
 	}
 
+	// The credit standing in the same clause as the sub-step is the form a
+	// partial revert takes, because every sentence the transfer rewrote
+	// names the landing proposal already. A credit read as an exemption
+	// over its clause reports neither of these.
+	for _, reverted := range []string{
+		subSteps[0] + " creates §28.1 through §28.4 as proposal 0067 states.",
+		"This sub-step creates the §28.3 register under proposal 0067.",
+	} {
+		sites := ownershipSites(t, plantBelowFilesTouched(t, document, reverted))
+		if len(sites) != 1 {
+			t.Errorf("the sentence %q reported %d site(s), want one: %q", reverted, len(sites), sites)
+			continue
+		}
+		if !strings.Contains(sites[0], "creates") {
+			t.Errorf("the reported site is %q, which is not the planted sentence", sites[0])
+		}
+	}
+
 	credited := "Proposal 0067 created §28.1 through §28.4, and " + subSteps[0] + " renames the channels they name."
 	if sites := ownershipSites(t, plantBelowFilesTouched(t, document, credited)); len(sites) != 0 {
 		t.Errorf("a sentence crediting the proposal that landed the section reported %q", sites)
+	}
+
+	// A sub-step standing before a verb whose nearer subject is the credit
+	// is no attribution, so the sweep reads the subject rather than the
+	// presence of a sub-step name.
+	appends := subSteps[0] + " appends its subsections to the §28.1 through §28.4 headings proposal 0067 creates."
+	if sites := ownershipSites(t, plantBelowFilesTouched(t, document, appends)); len(sites) != 0 {
+		t.Errorf("a sentence whose creation verb takes the landing proposal as its subject reported %q", sites)
 	}
 }
 
@@ -283,10 +316,21 @@ func ownershipSites(t *testing.T, document string) []string {
 // ownerCreditPhrase is how a document credits the proposal that landed
 // the section, read case-insensitively because it is written both
 // mid-sentence and at the head of one. It is a competing subject rather
-// than a licence over the whole sentence: a clause carrying it credits
-// the landing proposal, and a neighbouring clause crediting a sub-step
-// of the renaming proposal instead is still a site.
+// than a licence over the sentence or over the clause carrying it: it
+// stands for the landing proposal where it is the subject of the
+// creation verb, and a sub-step of the renaming proposal standing nearer
+// before that verb is the subject instead, whichever clause the credit
+// falls in.
+//
+// Every sentence the ownership transfer rewrote names the landing
+// proposal, so a credit read as a licence over its whole clause excuses
+// exactly the sentences the transfer produced: a partial revert
+// restoring a sub-step as the creating subject keeps the credit standing
+// beside it and goes unreported.
 const ownerCreditPhrase = "proposal 0067"
+
+// ownerCreditExpr matches that credit wherever it stands in a clause.
+var ownerCreditExpr = regexp.MustCompile(`(?i)` + regexp.QuoteMeta(ownerCreditPhrase))
 
 // A clause boundary is a semicolon or one of the conjunctions the
 // proposals join clauses with. Attribution is read inside one clause,
@@ -326,28 +370,70 @@ func subStepNames(document string) []string {
 
 // attributesCreation reports whether one clause of a sentence credits a
 // subject of the renaming proposal with creating the file, the four
-// headings, or the register. The three parts are read anywhere in the
-// clause rather than in one order, because the document states the
-// attribution in several forms: a sub-step that creates a section, a
-// section that already exists from a sub-step, and a proposal that lands
-// a file. Two clauses are read out. A clause naming the proposal that
-// landed the section attributes the creation to it, and a clause with a
-// negated verb states the opposite of an attribution.
+// headings, or the register. The moved object is read anywhere in the
+// clause rather than in one position, because the document names it in
+// several: a sub-step that creates a section, a section that already
+// exists from a sub-step, and a proposal that lands a file. A clause
+// with a negated verb is read out, because a clause stating that a
+// sub-step writes none of that content states the opposite of an
+// attribution.
 func attributesCreation(sentence string, subjects *regexp.Regexp) bool {
 	for _, clause := range clauseBoundaryExpr.Split(sentence, -1) {
-		if strings.Contains(strings.ToLower(clause), ownerCreditPhrase) {
+		if negatedVerbExpr.MatchString(clause) || !creationObjExpr.MatchString(clause) {
 			continue
 		}
-		if negatedVerbExpr.MatchString(clause) {
-			continue
-		}
-		if subjects.MatchString(clause) &&
-			creationVerbExpr.MatchString(clause) &&
-			creationObjExpr.MatchString(clause) {
+		if subjectOfCreation(clause, subjects) {
 			return true
 		}
 	}
 	return false
+}
+
+// subjectOfCreation reports whether a subject of the renaming proposal
+// is the subject of a creation verb of the clause.
+//
+// The subject of a verb is the nearer of the two candidates standing
+// before it: a sub-step of the renaming proposal, or the credit to the
+// proposal that landed the section. Reading the credit as an exemption
+// over the whole clause instead would excuse a clause whose creating
+// subject is a sub-step merely because the credit stands somewhere after
+// it, which is the double-ownership state the transfer ended.
+func subjectOfCreation(clause string, subjects *regexp.Regexp) bool {
+	subjectsAt := matchOffsets(subjects, clause)
+	creditsAt := matchOffsets(ownerCreditExpr, clause)
+	for _, verb := range matchOffsets(creationVerbExpr, clause) {
+		subject := lastOffsetBefore(subjectsAt, verb)
+		if subject < 0 {
+			continue
+		}
+		if lastOffsetBefore(creditsAt, verb) > subject {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+// matchOffsets returns the start offset of every match of an expression
+// in a clause, in source order.
+func matchOffsets(expr *regexp.Regexp, clause string) []int {
+	var offsets []int
+	for _, m := range expr.FindAllStringIndex(clause, -1) {
+		offsets = append(offsets, m[0])
+	}
+	return offsets
+}
+
+// lastOffsetBefore returns the greatest offset standing before another,
+// or -1 when none does.
+func lastOffsetBefore(offsets []int, at int) int {
+	last := -1
+	for _, offset := range offsets {
+		if offset < at {
+			last = offset
+		}
+	}
+	return last
 }
 
 // subjectMatcher returns the matcher for a subject the proposal
