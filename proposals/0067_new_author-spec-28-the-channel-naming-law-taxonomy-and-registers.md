@@ -777,7 +777,17 @@ a `// diagnosis:` comment, in the form the surrounding files use.
 6. **No new line-citation test is added.** The line-citation ratchet already reads every tracked file and
    fails a file whose count rises, and `spec/28` enters at zero, so a line citation written into the
    section later fails tier 0 without a new predicate.
-7. **Every package of `scripts/specshift` is reachable from the migration command or from the static-tier
+7. **§28.2's class table fixes the columns each register of §28.3 carries, and its transport and boundary
+   axes are closed sets** (tier 11), in `tests/tier11_docs/spec_28_taxonomy_test.go` as
+   `TestSection28TaxonomyFixesTheRegisterColumns_spec_28_2`. The case reads §28.2's two tables and
+   reconciles them with the three registers: the column set each register carries, less its identifier key
+   and its provenance column, equals the column list §28.2 states for that class, and every channel row's
+   Transport and Boundary cell is a member of the set §28.2 closes for that axis. It carries a reject case
+   per half, a register whose column is renamed and a channel row stating a transport and a boundary
+   outside the closed sets, so a check that only looked for the landed strings cannot pass.
+   `// diagnosis:` states that a failure means §28.2 and §28.3 no longer describe the same registers.
+   `// spec: §28.2, §28.3`.
+8. **Every package of `scripts/specshift` is reachable from the migration command or from the static-tier
    gate battery** (tier 1), in `scripts/specshift/package_reachability_test.go` as
    `TestEveryMigrationToolingPackageIsReachableFromAnEntryPoint`. The case reads the import graph of the
    tooling's non-test sources together with the tooling packages the static-tier gates import, and reports
@@ -976,7 +986,8 @@ stated alternative before the first round.
   remaining sentences stating that SPEC-1 creates the file.
 - `scripts/specshift/identifier/table_test.go` and `scripts/specshift/name/declare_test.go`, for the tier-1
   cases §8 items 1 and 2 state, added to the existing files.
-- `scripts/specshift/package_reachability_test.go`, new, for the tier-1 case §8 item 7 states. It carries
+- `tests/tier11_docs/spec_28_taxonomy_test.go`, new, for the tier-11 case §8 item 7 states.
+- `scripts/specshift/package_reachability_test.go`, new, for the tier-1 case §8 item 8 states. It carries
   no production code: the change adds a test file to the tooling and adds no package to it.
 - `tests/tier11_docs/spec_28_index_rows_test.go`, `tests/tier11_docs/spec_28_reserved_phrase_test.go`, and
   `tests/tier11_docs/spec_28_register_writers_test.go`, new, for the tier-11 cases §8 items 3, 4, and 5
