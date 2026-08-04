@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -979,6 +980,102 @@ func TestKeyWriteDomainFailsWhenTheRekeyChannelSelectsNoRegister(t *testing.T) {
 	}
 	if _, err := scope.KeyWriteDomain(context.Background(), list, scope.Pass("unknown"), read); err == nil {
 		t.Fatal("KeyWriteDomain for an unknown pass returned no error")
+	}
+}
+
+// underDir reports whether a tracked path sits under a directory, matched
+// on the segment terminator so a sibling whose name merely starts with
+// the directory name is outside it.
+func underDir(target, dir string) bool {
+	return strings.HasPrefix(target, strings.TrimSuffix(dir, "/")+"/")
+}
+
+// TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath pins the
+// axis a confinement is matched against on the second write channel. A
+// register joins the key-write domain by where the register file itself
+// sits, and the paths its entries are keyed by are never consulted. A
+// fixture that discriminates on its entries' paths therefore pins nothing:
+// it can neither make the channel run nor make it skip, and a confinement
+// case wired to it would record a rule the tool does not implement.
+func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
+	t.Parallel()
+	// Membership is the register's own path against the rule.
+	for target, want := range map[string]bool{
+		"tests/registers/line-citations.yaml": true,
+		"tests/change-graph.json":             true,
+		"tests/spec-map.json":                 true,
+		// A register-shaped document whose entries are keyed by paths
+		// under the specification directory, sitting outside the register
+		// directory. Its entries do not put it in the channel.
+		"scripts/specshift/testdata/registers/valid.yaml": false,
+		"spec/04_system-components.md":                    false,
+	} {
+		if got := scope.KeyWritable(target); got != want {
+			t.Errorf("KeyWritable(%q) = %v, want %v", target, got, want)
+		}
+	}
+
+	list, read := treeDomain(t)
+	domain, err := scope.KeyWriteDomain(context.Background(), list, scope.Identifier, read)
+	if err != nil {
+		t.Fatalf("KeyWriteDomain(identifier) over the fixture tree: %v", err)
+	}
+	want := []string{
+		"tests/registers/line-citation-resolution.yaml",
+		"tests/registers/line-citations.yaml",
+	}
+	if !reflect.DeepEqual(domain, want) {
+		t.Fatalf("the key-write domain over the fixture tree is %v, want %v", domain, want)
+	}
+	// The domain sits wholly outside the specification directory, which is
+	// what makes both halves of a confined run reachable over this tree: a
+	// run confined to that directory selects no register and skips the
+	// channel, and a run that excludes it retains the whole domain, so the
+	// channel's own emptiness guard still decides that run.
+	var confinedToSpec, outsideSpec []string
+	for _, target := range domain {
+		if underDir(target, "spec/") {
+			confinedToSpec = append(confinedToSpec, target)
+			continue
+		}
+		outsideSpec = append(outsideSpec, target)
+	}
+	if len(confinedToSpec) != 0 {
+		t.Errorf("a run confined to the specification directory still selects %v, so the skipped channel is unreachable", confinedToSpec)
+	}
+	if !reflect.DeepEqual(outsideSpec, want) {
+		t.Errorf("a run that excludes the specification directory selects %v, want the whole domain %v", outsideSpec, want)
+	}
+}
+
+// TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames pins what
+// the flat register fixture directory holds. Every file in it is passed
+// straight to a loader as the -register argument, and none of it is part
+// of any walked tree, so a fixture placed here can never enter a file
+// domain. A fixture meant to exercise the key-rewrite channel belongs in
+// a walked tree at a path the path-keyed register rule matches.
+func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
+	t.Parallel()
+	named := map[string]bool{
+		"malformed.yaml":           true,
+		"no-entries-block.yaml":    true,
+		"pass-line-citations.yaml": true,
+		"pass-malformed.yaml":      true,
+		"valid.yaml":               true,
+		"wrong-kind.yaml":          true,
+	}
+	entries, err := os.ReadDir(fixtureRegisters)
+	if err != nil {
+		t.Fatalf("read %s: %v", fixtureRegisters, err)
+	}
+	for _, e := range entries {
+		if !named[e.Name()] {
+			t.Errorf("%s holds %s, which no loader case names and which no tree walk lists", fixtureRegisters, e.Name())
+		}
+		delete(named, e.Name())
+	}
+	for missing := range named {
+		t.Errorf("%s no longer holds %s, which a loader case names", fixtureRegisters, missing)
 	}
 }
 
