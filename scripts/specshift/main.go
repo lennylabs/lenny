@@ -42,6 +42,11 @@
 // confinements partition the domain cover it between them. -domain takes
 // both flags as optional and prints the whole write domain when neither
 // is given, so an operator measures a confinement before applying it.
+//
+// A run of a pass reports the confinement it ran under, the files it
+// planned, and the register entries it deferred because their files lie
+// outside that confinement, so an entry the complementary run still owes
+// stands in the output rather than being inferred from the command line.
 package main
 
 import (
@@ -233,7 +238,28 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 	if opts.apply {
 		mode = "applied"
 	}
-	fmt.Fprintf(out, "%s pass (%s): %d file(s)\n", opts.pass, mode, len(diff.Files))
+	reportRun(out, opts.pass, mode, harness.Confine, rewriter, diff)
+	return nil
+}
+
+// redGates is the sentence a run carrying deferred entries closes with.
+// The gates it names read the whole tree, so each one stays red for as
+// long as one part of the partition carries the retired population,
+// however clean the run that just finished reported itself to be.
+const redGates = "the naming lint, the identifier-resolution gate, the fragment-link gate, " +
+	"the per-class residual scans, and tier 11 stay red until every deferred entry is " +
+	"covered by a complementary run"
+
+// reportRun writes what one run of a pass did: the confinement it ran
+// under, the files it planned, and the register entries it left to the
+// complementary run.
+//
+// The confinement is named rather than left to be inferred from the
+// command line, because the run's own output is what an operator and the
+// agent that issued the command read, and a confined run's clean exit
+// says nothing about the entries it never looked at.
+func reportRun(out io.Writer, p scope.Pass, mode string, c *pass.Confinement, r pass.Rewriter, diff pass.Diff) {
+	fmt.Fprintf(out, "%s pass (%s) under %s: %d file(s) planned\n", p, mode, c, len(diff.Files))
 	for _, f := range diff.Files {
 		if f.To != "" {
 			fmt.Fprintf(out, "  %s -> %s\n", f.Path, f.To)
@@ -241,7 +267,36 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 		}
 		fmt.Fprintf(out, "  %s\n", f.Path)
 	}
-	return nil
+	reportDeferred(out, c, r)
+}
+
+// reportDeferred names the register entries the confinement put outside
+// the run, by count and by the distinct files they are keyed to, and
+// states which gates stay red until a complementary run covers them.
+//
+// For the name and the identifier passes the entries are the ones the
+// claimed-entry check skipped, and for the line and the anchor passes,
+// which carry no such check, they are the ones nothing checks in either
+// direction. The report is the only signal in the second case, and the
+// only signal of an under-consumed register in the first.
+//
+// A run that deferred nothing says so rather than closing on the
+// standing sentence, whose subject would not exist.
+func reportDeferred(out io.Writer, c *pass.Confinement, r pass.Rewriter) {
+	confined, ok := r.(pass.Confined)
+	if !ok {
+		return
+	}
+	entries, files := confined.Deferred(), confined.DeferredFiles()
+	if len(entries) == 0 {
+		fmt.Fprintf(out, "no register entry is deferred: %s covers the file of every entry\n", c)
+		return
+	}
+	fmt.Fprintf(out, "%d register entr(ies) deferred as outside %s, in %d file(s):\n", len(entries), c, len(files))
+	for _, target := range files {
+		fmt.Fprintf(out, "  %s\n", target)
+	}
+	fmt.Fprintln(out, redGates)
 }
 
 // reportAbort turns a fail-closed abort into an operator-facing message

@@ -6257,6 +6257,364 @@ func TestAConfinedRunReportsItsDeferredEntriesSortedByFileAndPosition(t *testing
 	})
 }
 
+// TestTheTwoPassesWithNoClaimCheckReportTheirDeferredEntries pins the
+// report for the line and the anchor passes, which carry no
+// claimed-entry check. Nothing holds either register to the tree in
+// either direction, so an entry outside the confinement is neither
+// consumed nor rejected and a replayed run over the tree it already
+// rewrote finds no site, plans an empty diff, and exits zero. The report
+// is the only signal that an entry is uncovered, and the replay is the
+// outcome it compensates for.
+//
+// The anchor half asserts a non-empty deferred list because the anchor
+// pass loads its sense register on the first file of the walk: a list
+// derived before the walk reads a nil register and reports nothing
+// deferred over a register that spans both sides of the confinement.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestTheTwoPassesWithNoClaimCheckReportTheirDeferredEntries(t *testing.T) {
+	t.Parallel()
+	t.Run("the line pass", func(t *testing.T) {
+		t.Parallel()
+		const composeOnly = "compose/"
+		confine := pass.NewConfinement([]string{composeOnly}, nil)
+		root := lineTree(t, "tree")
+		r, diff := applyConfinedLinePass(t, root, "tree.yaml", confine)
+		if len(diff.Files) == 0 {
+			t.Fatal("the confined line run planned no file, so the fixture does not exercise the report")
+		}
+		deferred := r.Deferred()
+		if len(deferred) == 0 {
+			t.Fatal("the confined line run defers no per-file count, so the register does not span the confinement")
+		}
+		assertDeferredReport(t, scope.Line, confine, r, diff)
+		// The replay: the pass holds no entry to the tree, so a second
+		// run over the half it rewrote reports zero files rather than
+		// aborting on the counts it consumed.
+		replay, replayDiff := applyConfinedLinePass(t, root, "tree.yaml", confine)
+		if len(replayDiff.Files) != 0 {
+			t.Errorf("the replayed line run planned %v, want an empty diff", replayDiff.Paths())
+		}
+		if got := replay.Deferred(); !reflect.DeepEqual(got, deferred) {
+			t.Errorf("the replayed line run defers %v, want the same entries as the first run %v", got, deferred)
+		}
+	})
+	t.Run("the anchor pass", func(t *testing.T) {
+		t.Parallel()
+		const sdksOnly = "sdks/"
+		confine := pass.NewConfinement([]string{sdksOnly}, nil)
+		root := anchorTree(t, "tree")
+		r, diff := applyConfinedAnchorPass(t, root, "tree.json", confine)
+		if len(diff.Files) == 0 {
+			t.Fatal("the confined anchor run planned no file, so the fixture does not exercise the report")
+		}
+		// The register's specification-side entry is the one this run
+		// leaves to the complementary one. A deferred list read before
+		// the walk reads a register that is still nil and is empty here.
+		want := []string{"spec/07_session-lifecycle.md occurrence 1"}
+		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
+			t.Errorf("the confined anchor run defers %v, want %v", got, want)
+		}
+		assertDeferredReport(t, scope.Anchor, confine, r, diff)
+		replay, replayDiff := applyConfinedAnchorPass(t, root, "tree.json", confine)
+		if len(replayDiff.Files) != 0 {
+			t.Errorf("the replayed anchor run planned %v, want an empty diff", replayDiff.Paths())
+		}
+		if got := replay.Deferred(); !reflect.DeepEqual(got, want) {
+			t.Errorf("the replayed anchor run defers %v, want %v", got, want)
+		}
+	})
+}
+
+// applyConfinedLinePass runs the line pass over the tree at root under a
+// confinement, through the writing path, and returns the pass it drove
+// with the diff it applied.
+func applyConfinedLinePass(t *testing.T, root, register string, confine *pass.Confinement) (*line.Rewriter, pass.Diff) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = confine
+	r := lineRewriter(t, root, register)
+	diff, err := h.Apply(context.Background(), r)
+	if err != nil {
+		t.Fatalf("the confined line run failed: %v", err)
+	}
+	return r, diff
+}
+
+// applyConfinedAnchorPass runs the anchor pass over the tree at root
+// under a confinement, through the writing path, and returns the pass it
+// drove with the diff it applied.
+func applyConfinedAnchorPass(t *testing.T, root, moves string, confine *pass.Confinement) (*anchor.Rewriter, pass.Diff) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = confine
+	r := anchorRewriter(t, root, moves)
+	diff, err := h.Apply(context.Background(), r)
+	if err != nil {
+		t.Fatalf("the confined anchor run failed: %v", err)
+	}
+	return r, diff
+}
+
+// assertDeferredReport holds one run's report to the confinement it ran
+// under, the number of files it planned, the file of every entry it
+// deferred, and the standing sentence naming the gates that stay red
+// until a complementary run covers them.
+func assertDeferredReport(t *testing.T, p scope.Pass, c *pass.Confinement, r pass.Rewriter, diff pass.Diff) {
+	t.Helper()
+	confined, ok := r.(pass.Confined)
+	if !ok {
+		t.Fatalf("the %s pass takes no confinement, so it reports nothing deferred", p)
+	}
+	var out bytes.Buffer
+	reportRun(&out, p, "applied", c, r, diff)
+	want := []string{
+		c.String(),
+		fmt.Sprintf("%d file(s) planned", len(diff.Files)),
+		fmt.Sprintf("%d register entr(ies) deferred", len(confined.Deferred())),
+		redGates,
+	}
+	want = append(want, confined.DeferredFiles()...)
+	for _, sentence := range want {
+		if !strings.Contains(out.String(), sentence) {
+			t.Errorf("the %s pass report does not name %q:\n%s", p, sentence, out.String())
+		}
+	}
+}
+
+// TestAConfinedRunReportsItsConfinementAndTheEntriesItDeferred pins the
+// report a confined run closes with, which is the whole compensating
+// signal for the relaxed claimed-entry check. A run that consumed one
+// half of its register exits zero, so without the report a confined run
+// reads as a clean pass over a register it did not consume, and an
+// entry no run covers is visible nowhere.
+//
+// The register spans both halves of the partition, so the run's deferred
+// entries and the entries it checked sum to the register's entry count,
+// which is what a dropped or under-counted deferred list breaks.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestAConfinedRunReportsItsConfinementAndTheEntriesItDeferred(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = specOnly
+	r := nameRewriter(t, root, "tree.yaml")
+	diff, err := h.Apply(context.Background(), r)
+	if err != nil {
+		t.Fatalf("the specification-confined name run failed: %v", err)
+	}
+	inside, outside, outsideFiles := splitSenseRegister(t, filepath.Join(fixtureNamePass, "registers", "tree.yaml"), specOnly)
+	if len(inside) == 0 || len(outside) == 0 {
+		t.Fatalf("the fixture register does not span the confinement: %d entr(ies) inside, %d outside", len(inside), len(outside))
+	}
+	deferred := r.Deferred()
+	if !reflect.DeepEqual(deferred, outside) {
+		t.Errorf("the run defers %v, want the register's entries outside the confinement %v", deferred, outside)
+	}
+	if got := r.DeferredFiles(); !reflect.DeepEqual(got, outsideFiles) {
+		t.Errorf("the run defers entries in %v, want %v", got, outsideFiles)
+	}
+	// The register is consumed by the two runs between them: what this
+	// run checked is what it did not defer, and the two counts sum to
+	// the whole register.
+	checked := len(inside)
+	if len(deferred)+checked != len(inside)+len(outside) {
+		t.Errorf("the run defers %d entr(ies) and checks %d, which do not sum to the register's %d",
+			len(deferred), checked, len(inside)+len(outside))
+	}
+	var out bytes.Buffer
+	reportRun(&out, scope.Name, "applied", specOnly, r, diff)
+	want := []string{
+		"-only spec/",
+		fmt.Sprintf("%d file(s) planned", len(diff.Files)),
+		fmt.Sprintf("%d register entr(ies) deferred", len(deferred)),
+		redGates,
+	}
+	want = append(want, outsideFiles...)
+	for _, sentence := range want {
+		if !strings.Contains(out.String(), sentence) {
+			t.Errorf("the report does not name %q:\n%s", sentence, out.String())
+		}
+	}
+}
+
+// TestAConfinedRunNamesTheDistinctFilesOfTheEntriesItDeferred pins the
+// second half of what the report renders. A register keys several
+// entries to one file, and the identifier register keys a file name
+// beside the occurrences of the same carrier, so the deferred files are
+// fewer than the deferred entries and the report states both. The files
+// are derived from the register rather than parsed back out of the entry
+// descriptions, which name a position beside the file.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestAConfinedRunNamesTheDistinctFilesOfTheEntriesItDeferred(t *testing.T) {
+	t.Parallel()
+	r, err := applyConfinedIDPass(t, idTree(t, "tree"), "tree.yaml", specOnly)
+	if err != nil {
+		t.Fatalf("the specification-confined identifier run failed: %v", err)
+	}
+	files := r.DeferredFiles()
+	if len(files) == 0 || len(files) >= len(r.Deferred()) {
+		t.Fatalf("the run defers %d entr(ies) in %d file(s), which does not exercise a file carrying several entries",
+			len(r.Deferred()), len(files))
+	}
+	seen := map[string]bool{}
+	var want []string
+	for _, entry := range r.Deferred() {
+		target, _, _ := strings.Cut(entry, " ")
+		if !seen[target] {
+			seen[target] = true
+			want = append(want, target)
+		}
+	}
+	if !reflect.DeepEqual(files, want) {
+		t.Errorf("the run defers entries in %v, want the distinct files of its entries %v", files, want)
+	}
+}
+
+// TestARunReportsTheDeferredEntriesOfThePassItDrove pins that the run
+// itself renders the report rather than the report being reachable only
+// from a caller holding the pass. The stub defers entries whatever the
+// tree carries, so a run that dropped the report renders none of them.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestARunReportsTheDeferredEntriesOfThePassItDrove(t *testing.T) {
+	t.Parallel()
+	stub := &confinedRewriter{
+		suffixRewriter: suffixRewriter{p: scope.Line, suffix: "// rewritten\n", registerKind: "line-citations"},
+		deferred:       []string{"spec/04_system-components.md 2 citation(s)"},
+		deferredFiles:  []string{"spec/04_system-components.md"},
+	}
+	passes := func(string) map[scope.Pass]pass.Rewriter {
+		return map[scope.Pass]pass.Rewriter{scope.Line: stub}
+	}
+	var out bytes.Buffer
+	err := runWith(context.Background(), passes, []string{
+		"-root", fixtureTreeRoot(t),
+		"-pass", "line",
+		"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
+		"-except", "spec/",
+	}, &out)
+	if err != nil {
+		t.Fatalf("the confined run failed: %v", err)
+	}
+	if stub.confined != specExcept.String() {
+		t.Errorf("the run confined the pass to %q, want %q", stub.confined, specExcept.String())
+	}
+	for _, sentence := range []string{
+		"-except spec/",
+		"1 register entr(ies) deferred",
+		"spec/04_system-components.md",
+		redGates,
+	} {
+		if !strings.Contains(out.String(), sentence) {
+			t.Errorf("the run's report does not name %q:\n%s", sentence, out.String())
+		}
+	}
+}
+
+// TestARunThatDefersNothingReportsThatRatherThanTheRedGates pins the
+// other side of the report. The standing sentence names the gates that
+// stay red until a complementary run covers the deferred entries, so a
+// run whose confinement covers every entry's file states that instead:
+// the sentence would otherwise stand over a population that does not
+// exist.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestARunThatDefersNothingReportsThatRatherThanTheRedGates(t *testing.T) {
+	t.Parallel()
+	root := nameTree(t, "tree")
+	whole := pass.NewConfinement(nil, []string{"proposals/"})
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = whole
+	r := nameRewriter(t, root, "tree.yaml")
+	diff, err := h.Apply(context.Background(), r)
+	if err != nil {
+		t.Fatalf("the name run over the whole register failed: %v", err)
+	}
+	if got := r.Deferred(); len(got) != 0 {
+		t.Fatalf("the run defers %v under a confinement covering every entry's file", got)
+	}
+	var out bytes.Buffer
+	reportRun(&out, scope.Name, "applied", whole, r, diff)
+	if !strings.Contains(out.String(), "no register entry is deferred") {
+		t.Errorf("the report does not state that nothing was deferred:\n%s", out.String())
+	}
+	if strings.Contains(out.String(), redGates) {
+		t.Errorf("the report carries the red-gate sentence with nothing deferred:\n%s", out.String())
+	}
+}
+
+// splitSenseRegister reads a per-occurrence sense register and returns
+// its entry descriptions on each side of a confinement, together with
+// the distinct files of the entries outside it, in the order a pass
+// publishes them. A case derives the expected report from the register
+// rather than restating it, so an entry added to the fixture is covered
+// rather than silently unasserted.
+func splitSenseRegister(t *testing.T, path string, c *pass.Confinement) (inside, outside, outsideFiles []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the register %s: %v", path, err)
+	}
+	var doc struct {
+		Entries []struct {
+			File       string `yaml:"file"`
+			Occurrence int    `yaml:"occurrence"`
+		} `yaml:"entries"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse the register %s: %v", path, err)
+	}
+	entries := append([]struct {
+		File       string `yaml:"file"`
+		Occurrence int    `yaml:"occurrence"`
+	}(nil), doc.Entries...)
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].File != entries[j].File {
+			return entries[i].File < entries[j].File
+		}
+		return entries[i].Occurrence < entries[j].Occurrence
+	})
+	seen := map[string]bool{}
+	for _, entry := range entries {
+		where := fmt.Sprintf("%s occurrence %d", entry.File, entry.Occurrence)
+		if c.Covers(entry.File) {
+			inside = append(inside, where)
+			continue
+		}
+		outside = append(outside, where)
+		if !seen[entry.File] {
+			seen[entry.File] = true
+			outsideFiles = append(outsideFiles, entry.File)
+		}
+	}
+	return inside, outside, outsideFiles
+}
+
+// confinedRewriter is a stub pass that takes a confinement and publishes
+// a fixed deferred list, so a case drives the report through the run
+// itself over the tracked fixture tree.
+type confinedRewriter struct {
+	suffixRewriter
+	deferred      []string
+	deferredFiles []string
+	// confined records the confinement the run handed the pass.
+	confined string
+}
+
+func (c *confinedRewriter) Confine(confinement *pass.Confinement) { c.confined = confinement.String() }
+
+func (c *confinedRewriter) Deferred() []string { return c.deferred }
+
+func (c *confinedRewriter) DeferredFiles() []string { return c.deferredFiles }
+
 // TestAReplayedConfinedRunAbortsOnTheEntriesItAlreadyConsumed pins the
 // other direction of the same filter, which is what keeps a repeated
 // invocation of one confinement loud. The entries of the confined half

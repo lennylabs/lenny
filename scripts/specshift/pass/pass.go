@@ -252,6 +252,13 @@ type Confined interface {
 	// checked by neither run until the complementary one lands and the
 	// entry would otherwise be silently unconsumed.
 	Deferred() []string
+	// DeferredFiles names the distinct tracked paths those entries are
+	// keyed to, in path order. The run reports the files rather than
+	// re-parsing them out of the entry descriptions, because an entry
+	// names its position in the file as well as the file and the two
+	// registers that carry no per-occurrence key state something else
+	// again.
+	DeferredFiles() []string
 }
 
 // KeyRewriter is the second write channel, which a pass that renames a

@@ -155,6 +155,13 @@ func (r *Rewriter) Deferred() []string {
 	return append([]string(nil), r.deferred...)
 }
 
+// DeferredFiles returns the distinct files those entries are keyed to,
+// in path order. It is derived from the register rather than from the
+// entry descriptions, which name an entry's position beside the file.
+func (r *Rewriter) DeferredFiles() []string {
+	return r.confine.Exclude(sortedKeys(r.senses))
+}
+
 // LoadRegister reads and validates the per-site senses that drive the
 // pass. A missing or malformed register fails rather than loading as an
 // empty one: a run with no senses would rewrite no file and report the

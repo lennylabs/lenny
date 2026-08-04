@@ -72,6 +72,15 @@ type Rewriter struct {
 	registerPath string
 	counts       map[string]int
 
+	// confine is the part of the write domain this run may write, nil
+	// when the run covers the whole of it. The pass runs no check that
+	// reads the register in the direction the walk does not cover, so
+	// the confinement narrows nothing here: it is held so the run
+	// reports the per-file counts it leaves to the complementary run,
+	// which for this pass is the only signal that an entry is
+	// uncovered.
+	confine *pass.Confinement
+
 	// resolver indexes the sections under spec/. It is built on the
 	// first file that carries a citation rather than at construction,
 	// because a run over a tree with no citation left needs no index.
@@ -87,6 +96,47 @@ func New(list scope.Lister, read scope.FileReader) *Rewriter {
 
 // Pass names the write domain the pass runs in.
 func (r *Rewriter) Pass() scope.Pass { return scope.Line }
+
+// Confine states the part of the write domain this run writes. The pass
+// carries no claimed-entry check, so nothing holds a register entry to
+// the tree in either direction and the confinement decides which
+// per-file counts this run reports as deferred.
+func (r *Rewriter) Confine(c *pass.Confinement) { r.confine = c }
+
+// Deferred returns the per-file counts this run left to the
+// complementary one, in path order, one entry per file the register
+// keys. The register is read from the command line before the walk, so
+// the list is derivable at any point of the run.
+//
+// Nothing else reports these entries. An entry outside the confinement
+// is neither consumed nor rejected, and a replayed run over an
+// already-rewritten tree finds no citation, plans an empty diff, and
+// exits zero, so a count no run covers is visible in this list alone.
+func (r *Rewriter) Deferred() []string {
+	files := r.DeferredFiles()
+	entries := make([]string, 0, len(files))
+	for _, target := range files {
+		entries = append(entries, fmt.Sprintf("%s %d citation(s)", target, r.counts[target]))
+	}
+	return entries
+}
+
+// DeferredFiles returns the files those counts are keyed to, in path
+// order. The register carries one entry per file, so the two lists are
+// the same length.
+func (r *Rewriter) DeferredFiles() []string {
+	return r.confine.Exclude(sortedCounts(r.counts))
+}
+
+// sortedCounts returns the files the register keys, in path order.
+func sortedCounts(counts map[string]int) []string {
+	out := make([]string, 0, len(counts))
+	for target := range counts {
+		out = append(out, target)
+	}
+	sort.Strings(out)
+	return out
+}
 
 // LoadRegister reads and validates the per-file counts that drive the
 // pass. A missing or malformed register fails rather than loading as an

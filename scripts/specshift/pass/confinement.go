@@ -68,6 +68,25 @@ func (c *Confinement) Filter(domain []string) []string {
 	return confined
 }
 
+// Exclude returns the members of a path list the confinement does not
+// cover, in the order the list gave them. It is the complement of Filter
+// and is what a pass derives its deferred register entries from: an
+// entry keyed to a path this run does not cover is the complementary
+// run's to consume. A nil confinement covers everything, so it excludes
+// nothing.
+func (c *Confinement) Exclude(paths []string) []string {
+	if c == nil {
+		return nil
+	}
+	var outside []string
+	for _, target := range paths {
+		if !c.Covers(target) {
+			outside = append(outside, target)
+		}
+	}
+	return outside
+}
+
 // String renders the confinement for an operator-facing message, so a
 // run names what it ran under rather than leaving it to be inferred from
 // the command line.

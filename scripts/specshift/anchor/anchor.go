@@ -96,6 +96,15 @@ type Rewriter struct {
 	// properties of that tree.
 	senses map[string]map[int]Sense
 
+	// confine is the part of the write domain this run may write, nil
+	// when the run covers the whole of it. The pass runs no check that
+	// reads the sense register in the direction the walk does not cover,
+	// so the confinement narrows nothing here: it is held so the run
+	// reports the sense entries it leaves to the complementary run,
+	// which for this pass is the only signal that an entry is
+	// uncovered.
+	confine *pass.Confinement
+
 	// tree indexes the anchors the markdown documents of the tree
 	// declare. It is built on the first file the pass reads rather than
 	// at construction, because the pass reads the tree it rewrites. The
@@ -110,6 +119,41 @@ func New(list scope.Lister, read scope.FileReader) *Rewriter {
 
 // Pass names the write domain the pass runs in.
 func (r *Rewriter) Pass() scope.Pass { return scope.Anchor }
+
+// Confine states the part of the write domain this run writes. The pass
+// carries no claimed-entry check, so nothing holds a sense entry to the
+// tree in either direction and the confinement decides which entries
+// this run reports as deferred.
+func (r *Rewriter) Confine(c *pass.Confinement) { r.confine = c }
+
+// Deferred returns the sense entries this run left to the complementary
+// one, sorted by file path and, within a file, by occurrence.
+//
+// The sense register is read out of the tree on the first file of the
+// walk, so the list is derived after the walk rather than before it. The
+// harness fails a confinement that selects no file, so a run that
+// reaches its report walked at least one file and holds the register in
+// full.
+//
+// Nothing else reports these entries. An entry outside the confinement
+// is neither consumed nor rejected, and a replayed run over an
+// already-rewritten tree finds no site, plans an empty diff, and exits
+// zero, so an entry no run covers is visible in this list alone.
+func (r *Rewriter) Deferred() []string {
+	var entries []string
+	for _, target := range r.DeferredFiles() {
+		for _, occurrence := range sortedOccurrences(r.senses[target]) {
+			entries = append(entries, fmt.Sprintf("%s occurrence %d", target, occurrence))
+		}
+	}
+	return entries
+}
+
+// DeferredFiles returns the distinct files those entries are keyed to,
+// in path order.
+func (r *Rewriter) DeferredFiles() []string {
+	return r.confine.Exclude(sortedKeys(r.senses))
+}
 
 // LoadRegister reads and validates the anchor-move map that drives the
 // pass. A missing or malformed map fails rather than loading as an empty
