@@ -8,12 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -9066,8 +9070,8 @@ func TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain(t *testing
 }
 
 // pinnedLiteralsPath and sensePath are the two registers driving the
-// name pass, as repo-relative paths. The case below reads them out of
-// the committed tree and asserts nothing about their presence: the
+// name pass, as repo-relative paths. The cases below read them out of
+// the committed tree and assert nothing about their presence: the
 // migration empties the sense register at the end of its rewrite, and a
 // case asserting either register exists would turn red at that point.
 const (
@@ -9075,17 +9079,29 @@ const (
 	sensePath          = "tests/registers/reserved-phrase-senses.yaml"
 )
 
-// senseRegister mirrors the sense register's document, on the same terms.
-type senseRegister struct {
+// pinnedRegister mirrors the pinned-literal register's document, on the
+// terms its loader states: a carrier and the 1-based position of one of
+// its string literals among every string literal the file holds in
+// source order.
+type pinnedRegister struct {
 	Entries []struct {
-		File       string `yaml:"file"`
-		Occurrence int    `yaml:"occurrence"`
+		File    string `yaml:"file"`
+		Literal int    `yaml:"literal"`
 	} `yaml:"entries"`
 }
 
+// canonicalIdentifierExpr matches a canonical identifier standing on
+// word boundaries inside a longer text, which the naming law writes
+// uppercase and hyphenated under one of the class prefixes. It is the
+// spelling the name pass's declaration index reads a table cell and a
+// replacement text against, restated here because that statement of it
+// is unexported and the case below reads the committed tree from
+// outside the package.
+var canonicalIdentifierExpr = regexp.MustCompile(`\b(?:LNK|CH|REG)-[A-Z0-9]+(?:-[A-Z0-9]+)*\b`)
+
 // treeCarries reports whether the tree holds one register, which the
 // name pass reads beside the sense register. A register the tree does
-// not carry is a state the case reports nothing over rather than a
+// not carry is a state a case reports nothing over rather than a
 // failure, on the same terms readRegister states.
 func treeCarries(t *testing.T, root, path string) bool {
 	t.Helper()
@@ -9118,6 +9134,122 @@ func readRegister(t *testing.T, root, path string, doc any) bool {
 	return true
 }
 
+// goStringLiteralTexts returns the text of every string literal a Go
+// carrier holds, in source order, which is the order the pinned-literal
+// register's positions are numbered in. A literal whose spelling
+// unquotes is read unquoted, and one that does not is read as it stands,
+// because the predicate below asks what the literal carries rather than
+// what it evaluates to.
+func goStringLiteralTexts(t *testing.T, target, content string) []string {
+	t.Helper()
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, target, content, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		t.Fatalf("parse %s: %v", target, err)
+	}
+	type literal struct {
+		at   int
+		text string
+	}
+	var found []literal
+	ast.Inspect(file, func(n ast.Node) bool {
+		lit, ok := n.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			return true
+		}
+		text := lit.Value
+		if unquoted, err := strconv.Unquote(text); err == nil {
+			text = unquoted
+		}
+		found = append(found, literal{at: fset.Position(lit.Pos()).Offset, text: text})
+		return true
+	})
+	sort.Slice(found, func(i, j int) bool { return found[i].at < found[j].at })
+	out := make([]string, 0, len(found))
+	for _, l := range found {
+		out = append(out, l.text)
+	}
+	return out
+}
+
+// TestEveryPinnedLiteralEntryNamesALiteralThePassCanWrite holds the
+// committed pinned-literal register to the tree it is read against.
+//
+// The register is the one input of the name pass whose mis-seeding does
+// not fail closed. The pass's claimed-entry check on it reports an entry
+// only when its position is above the count of literals its carrier
+// holds, so an in-range but wrong position leaves the literal it was
+// seeded for outside the pass: the run exits zero with that literal
+// unwritten, and the tier-11 reconciliation reports it only after the
+// specification prose it pins has been rewritten.
+//
+// The predicate is a disjunction, which is what makes the case hold at
+// every point of the migration. Before the rewrite the literal pins
+// specification prose carrying a reserved noun phrase. After it, the same
+// literal carries the canonical identifier the pass wrote there. Nothing
+// empties this register and its loader refuses an empty entries list, so
+// a predicate holding on one side alone would go red on the other.
+//
+// It ranges over the register's entries and asserts no completeness
+// conjunct. A tier-11 carrier also holds diagnostic messages that carry a
+// reserved noun phrase and pin nothing, and registering one would make it
+// a site the pass admits and rewrites, which is what naming the literals
+// rather than walking them exists to prevent. It asserts neither the
+// register's presence nor its non-emptiness.
+//
+// spec: §28.1
+func TestEveryPinnedLiteralEntryNamesALiteralThePassCanWrite(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	var pinned pinnedRegister
+	if !readRegister(t, root, pinnedLiteralsPath, &pinned) {
+		t.Skipf("not-yet-applicable: the tree carries no %s", pinnedLiteralsPath)
+	}
+	literals := map[string][]string{}
+	for _, entry := range pinned.Entries {
+		texts, read := literals[entry.File]
+		if !read {
+			content, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(entry.File)))
+			if err != nil {
+				t.Errorf("%s names %s, which the tree does not carry: %v", pinnedLiteralsPath, entry.File, err)
+				continue
+			}
+			texts = goStringLiteralTexts(t, entry.File, string(content))
+			literals[entry.File] = texts
+		}
+		if entry.Literal < 1 || entry.Literal > len(texts) {
+			t.Errorf("%s names %s literal %d, and the file carries %d string literal(s)",
+				pinnedLiteralsPath, entry.File, entry.Literal, len(texts))
+			continue
+		}
+		text := texts[entry.Literal-1]
+		if len(name.FindReservedPhrases(text)) > 0 || canonicalIdentifierExpr.MatchString(text) {
+			continue
+		}
+		t.Errorf("%s names %s literal %d, which carries neither a reserved noun phrase nor a canonical identifier, so the entry resolves no position the pass writes",
+			pinnedLiteralsPath, entry.File, entry.Literal)
+	}
+}
+
+// claimedEntryReason is the sentence a pass fails a run with when the
+// tree carries no site for an entry the register keys inside the run's
+// confinement.
+const claimedEntryReason = "no site in the tree claims"
+
+// claimedEntryAbort reports whether a run failed that way.
+//
+// It is how a case resolves a register's claims against the tree: the
+// answer comes from the site enumeration the pass itself walks, which
+// applies the word-boundary rule, the markdown-anchor-identifier
+// exclusion, and the one-comment rule on top of the phrase matcher. A
+// count taken from the matcher alone is at or above the pass's for the
+// same file, so a carrier whose only residual match sits inside an
+// anchor identifier, or is folded across two markdown lines, reads as
+// still claimed there while the pass carries no site for the claim.
+func claimedEntryAbort(err error) bool {
+	return err != nil && strings.Contains(err.Error(), claimedEntryReason)
+}
+
 // TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes
 // drives the name pass over the committed tree under the confinement the
 // specification phase of the rewrite uses, so a mis-seeded occurrence
@@ -9142,23 +9274,23 @@ func readRegister(t *testing.T, root, path string, doc any) bool {
 func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
-	var senses senseRegister
-	if !readRegister(t, root, sensePath, &senses) {
+	if !treeCarries(t, root, sensePath) {
 		t.Skipf("not-yet-applicable: the tree carries no %s", sensePath)
 	}
 	if !treeCarries(t, root, pinnedLiteralsPath) {
 		t.Skipf("not-yet-applicable: the tree carries no %s", pinnedLiteralsPath)
 	}
-	if !treeStillClaims(t, root, senses) {
-		t.Skipf("not-yet-applicable: the tree no longer carries a site for every %s entry under spec/", sensePath)
-	}
 	var out bytes.Buffer
-	if err := run(context.Background(), []string{
+	err := run(context.Background(), []string{
 		"-root", root,
 		"-pass", "name",
 		"-register", filepath.Join(root, sensePath),
 		"-only", "spec/",
-	}, &out); err != nil {
+	}, &out)
+	if claimedEntryAbort(err) {
+		t.Skipf("not-yet-applicable: the tree no longer carries a site for every %s entry under spec/: %v", sensePath, err)
+	}
+	if err != nil {
 		t.Fatalf("the specification-confined dry run of the name pass over the seeded registers failed: %v", err)
 	}
 	if !strings.Contains(out.String(), "dry run") {
@@ -9166,35 +9298,36 @@ func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testi
 	}
 }
 
-// treeStillClaims reports whether every specification-keyed entry of the
-// sense register still has a site in the tree to resolve against.
+// TestAnAnchorIdentifierMatchClaimsNoSiteForARegisterEntry pins the
+// difference between the phrase matcher's positions and the pass's
+// sites, which is what a case resolving a register's claims against the
+// tree has to read.
 //
-// The count is taken with the exported phrase matcher rather than with
-// the pass's own site enumeration, which is unexported. The matcher
-// reads every position of a text, so its count is at or above the pass's
-// for the same file, and the guard is therefore conservative in the
-// direction that matters: it holds the case back only where the tree has
-// lost sites the register still claims.
-func treeStillClaims(t *testing.T, root string, senses senseRegister) bool {
-	t.Helper()
-	read := scope.DirReader(root)
-	claimed := map[string]int{}
-	for _, entry := range senses.Entries {
-		if !strings.HasPrefix(entry.File, "spec/") {
-			continue
-		}
-		if entry.Occurrence > claimed[entry.File] {
-			claimed[entry.File] = entry.Occurrence
-		}
+// The carrier's one match stands inside a markdown anchor identifier,
+// which the naming law places outside the matcher, so the file carries no
+// site and the entry keyed to its first occurrence claims nothing. The
+// matcher still reports a position there, so a claim resolved from the
+// matcher's count reads the file as still claimed while the run aborts.
+//
+// spec: §28.1 (N3, the naming law: a markdown anchor identifier is
+// outside the matcher)
+func TestAnAnchorIdentifierMatchClaimsNoSiteForARegisterEntry(t *testing.T) {
+	t.Parallel()
+	const carrier = "spec/91_anchor-only.md"
+	text := readFixtureFile(t, filepath.Join(fixtureNamePass, "anchoronly", filepath.FromSlash(carrier)))
+	if got := len(name.FindReservedPhrases(text)); got < 1 {
+		t.Fatalf("the fixture carries %d matcher position(s), so it does not reproduce the state the claim is resolved in", got)
 	}
-	for target, highest := range claimed {
-		content, err := read(target)
-		if err != nil {
-			return false
-		}
-		if len(name.FindReservedPhrases(string(content))) < highest {
-			return false
-		}
+	root := nameTree(t, "anchoronly")
+	before := treeSnapshot(t, root)
+	_, err := applyConfinedNamePass(t, root, "anchor-only.yaml", specOnly)
+	if !claimedEntryAbort(err) {
+		t.Fatalf("the run over a register claiming the occurrence an anchor identifier holds reported %v, want the claimed-entry abort", err)
 	}
-	return true
+	if !strings.Contains(err.Error(), carrier) {
+		t.Errorf("the failure does not name %s: %v", carrier, err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the failed run wrote to the tree")
+	}
 }

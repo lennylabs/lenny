@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MIT
+#
+# A register claiming the first occurrence of a carrier whose only
+# matcher position stands inside a markdown anchor identifier. The
+# anchor identifier is outside the matcher, so the file carries no site
+# and the claim resolves against nothing.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: spec/91_anchor-only.md
+    occurrence: 1
+    identifiers:
+      - LNK-GWCONTROL
