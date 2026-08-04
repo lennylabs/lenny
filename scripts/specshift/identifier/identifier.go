@@ -486,23 +486,13 @@ func carriersOf(rows []Row) string {
 //
 // The file name is the one site class a pass reads outside the walk, so
 // it takes the confinement here rather than through the filtered
-// domain. A carrier the confinement excludes is neither moved nor
-// aborted on by this run, and the complementary run, which is the run
-// that performs the move, takes both. Its symbol record is skipped with
-// it: the record is consumed by the key-rewrite channel, which a
-// confinement covering no path-keyed register skips as well.
-//
-// The move itself is planned for every tracked carrier, whether the
-// confinement covers it or not, because the moves have a second consumer
-// inside the confined walk: the site enumeration of a path-keyed
-// register holds out the spans a moved path occupies, so a moves set
-// filtered by the confinement would count a retired spelling standing in
-// such a key as an ordinary site and enumerate a covered register
-// differently depending on which carriers the confinement excluded. The
-// register's occurrence numbers are keyed against one enumeration, so it
-// is the confinement-independent one. The move is written by whichever
-// run covers the carrier: the harness asks for a move only over the
-// files of its own confined domain.
+// domain. A path the confinement does not cover is skipped whole: this
+// run neither moves it, nor records its symbols, nor aborts on it, and
+// the complementary run, which is the run that performs the move, takes
+// all three. Skipping the move with the abort is what keeps the key
+// channel honest, because the moves are what a path-keyed register is
+// rekeyed against and a key moved for a carrier that stands still would
+// name a path no run ever creates.
 func (r *Rewriter) planRenames(ctx context.Context, tracked map[string]bool) (map[string]string, map[string]string, error) {
 	moves := map[string]string{}
 	symbols := map[string]string{}
@@ -518,21 +508,18 @@ func (r *Rewriter) planRenames(ctx context.Context, tracked map[string]bool) (ma
 		if !writable {
 			continue
 		}
-		covered := r.confine.Covers(target)
+		if !r.confine.Covers(target) {
+			continue
+		}
 		move, abort := r.moveOf(target)
 		if abort != nil {
-			if covered {
-				aborts = append(aborts, abort)
-			}
+			aborts = append(aborts, abort)
 			continue
 		}
 		moved := target
 		if move != "" {
 			moves[target] = move
 			moved = move
-		}
-		if !covered {
-			continue
 		}
 		if err := r.recordSymbols(target, moved, symbols); err != nil {
 			return nil, nil, err

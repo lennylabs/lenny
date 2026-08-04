@@ -8077,33 +8077,36 @@ func TestAConfinedIdentifierRunPlansNoRenameOutsideItsConfinement(t *testing.T) 
 	})
 }
 
-// TestAConfinedIdentifierRunEnumeratesAPathKeyedRegisterAsAnUnconfinedRunDoes
-// pins the site enumeration of a path-keyed register against the
-// confinement. The enumeration holds out the spans the key rewrite owns,
-// which are the whole-scalar occurrences of the paths the run moves, so
-// a rename plan filtered by the confinement would count the retired
-// spelling standing in such a key as an ordinary site. The register's
-// occurrence numbers are keyed against one enumeration, so a run
-// confined to a register whose keys name a carrier outside the
-// confinement resolves the same sites as an unconfined run: it rewrites
-// the glob key through its entry, moves the exact key through the key
-// channel, and enumerates no third site to abort on.
+// TestAConfinedIdentifierRunRekeysNoRegisterForACarrierItLeavesInPlace
+// pins the rename planning's skip against the key-rewrite channel. The
+// moves are what a path-keyed register is rekeyed against, so planning
+// the move of a carrier the confinement excludes would write that
+// register's key at a path this run never creates and exit clean, with
+// the carrier standing at its retired name. Skipping the excluded
+// carrier whole leaves its exact key unmoved, and the key then stands as
+// an ordinary site of the register, which the register carries no entry
+// for and the run aborts on with nothing written.
 //
-// spec: §28.1 (N4, the naming law: every entry resolves a site of the
-// tree to a spelling the table states)
-func TestAConfinedIdentifierRunEnumeratesAPathKeyedRegisterAsAnUnconfinedRunDoes(t *testing.T) {
+// spec: §28.1 (N4, the naming law: the file-name stem of a carrier is
+// the channel's identifier)
+func TestAConfinedIdentifierRunRekeysNoRegisterForACarrierItLeavesInPlace(t *testing.T) {
 	t.Parallel()
 	const keyed = "tests/change-graph.json"
+	const carrier = "pkg/adapter/lifecyclechannel.go"
 	root := idTree(t, "tree")
+	before := treeSnapshot(t, root)
 	confine := pass.NewConfinement([]string{keyed}, nil)
-	if _, err := applyConfinedIDPass(t, root, "tree.yaml", confine); err != nil {
-		t.Fatalf("the run confined to %s failed: %v", keyed, err)
+	_, err := applyConfinedIDPass(t, root, "tree.yaml", confine)
+	if err == nil {
+		t.Fatalf("the run confined to %s rekeyed it for a carrier it leaves in place", keyed)
 	}
-	assertRewritten(t, root, keyed)
-	// The carriers the confinement excludes are the complementary run's
-	// to move, so this run planned their moves without writing them.
-	carrier := filepath.FromSlash("pkg/adapter/lifecyclechannel.go")
-	if _, err := os.Stat(filepath.Join(root, carrier)); err != nil {
+	if _, ok := pass.AsAbort(err); !ok {
+		t.Fatalf("the failure is not a fail-closed abort: %v", err)
+	}
+	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+		t.Error("the aborted run left the tree modified")
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(carrier))); err != nil {
 		t.Errorf("the confined run moved a carrier outside its confinement: %v", err)
 	}
 }
