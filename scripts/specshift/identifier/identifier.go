@@ -107,6 +107,19 @@ type Rewriter struct {
 	moves   map[string]string
 	symbols map[string]string
 
+	// confine is the part of the write domain this run may write, nil
+	// when the run covers the whole of it. It filters the two reads the
+	// walk does not cover: the claimed-entry check, which holds the
+	// whole register to the tree, and the rename planning, which runs
+	// over the whole tracked tree before the walk begins.
+	confine *pass.Confinement
+
+	// deferred names the register entries the confinement put outside
+	// this run, in register order. They are the complementary run's to
+	// check, and the run reports them so an entry no run covers is
+	// visible rather than silently unconsumed.
+	deferred []string
+
 	// prepared records that the one-per-run preparation has been
 	// attempted, and prepErr the outcome it reached. The outcome is
 	// memoized whether it succeeded or failed, because the preparation
@@ -126,6 +139,16 @@ func New(list scope.Lister, read scope.FileReader) *Rewriter {
 
 // Pass names the write domain the pass runs in.
 func (r *Rewriter) Pass() scope.Pass { return scope.Identifier }
+
+// Confine states the part of the write domain this run writes, which
+// the claimed-entry check and the rename planning are held to.
+func (r *Rewriter) Confine(c *pass.Confinement) { r.confine = c }
+
+// Deferred returns the register entries this run left to the
+// complementary one, in register order.
+func (r *Rewriter) Deferred() []string {
+	return append([]string(nil), r.deferred...)
+}
 
 // LoadRegister reads and validates the per-site senses that drive the
 // pass. A missing or malformed register fails rather than loading as an
@@ -460,6 +483,14 @@ func carriersOf(rows []Row) string {
 // retired spelling and that the register does not record aborts the run,
 // so a carrier is never left named after a channel that no longer exists
 // and never moved on a guess.
+//
+// The file name is the one site class a pass reads outside the walk, so
+// it takes the confinement here rather than through the filtered
+// domain. A carrier the confinement excludes is neither moved nor
+// aborted on by this run, and the complementary run, which is the run
+// that performs the move, takes both. Its symbol record is skipped with
+// it: the record is consumed by the key-rewrite channel, which a
+// confinement covering no path-keyed register skips as well.
 func (r *Rewriter) planRenames(ctx context.Context, tracked map[string]bool) (map[string]string, map[string]string, error) {
 	moves := map[string]string{}
 	symbols := map[string]string{}
@@ -467,6 +498,9 @@ func (r *Rewriter) planRenames(ctx context.Context, tracked map[string]bool) (ma
 	for _, target := range sortedTracked(tracked) {
 		if err := ctx.Err(); err != nil {
 			return nil, nil, fmt.Errorf("plan the identifier renames: %w", err)
+		}
+		if !r.confine.Covers(target) {
+			continue
 		}
 		writable, err := scope.Writable(scope.Identifier, target, r.read)
 		if err != nil {
@@ -587,11 +621,26 @@ func (r *Rewriter) recordSymbols(target, moved string, symbols map[string]string
 // check, the run exits zero having reported the completed migration it
 // never performed. An off-by-one enumeration and a misspelled path are
 // the two ways an entry lands in that position.
+//
+// An entry whose file the run's confinement does not cover is deferred
+// rather than checked, because this run neither reaches its site nor
+// writes its file, and the complementary run checks it. The filter is
+// the confinement rather than the set of files this run planned sites
+// for: an entry whose file the confinement covers and whose sites a
+// prior run over the same confinement already consumed still fails,
+// which is what makes a replayed run loud rather than a silent no-op.
 func (r *Rewriter) checkClaimed(ctx context.Context, tracked map[string]bool) error {
 	var unclaimed []string
+	r.deferred = nil
 	for _, target := range sortedKeys(r.senses) {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("check the identifier sense register against the tree: %w", err)
+		}
+		if !r.confine.Covers(target) {
+			for _, at := range sortedPositions(r.senses[target]) {
+				r.deferred = append(r.deferred, r.senses[target][at].where())
+			}
+			continue
 		}
 		sites, reason, err := r.claimableSites(target, tracked)
 		if err != nil {

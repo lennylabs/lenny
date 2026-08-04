@@ -220,6 +220,35 @@ type Rewriter interface {
 	Rewrite(ctx context.Context, path string, content []byte) ([]byte, error)
 }
 
+// Confined is the optional interface a pass implements when a check it
+// runs reads a register entry the walk never reaches. The harness hands
+// the run's confinement to such a pass before the walk begins, and a
+// nil confinement states that the run covers the whole write domain.
+//
+// The entries the walk does reach need no confinement, because the
+// walk is already filtered. The claimed-entry checks read the whole
+// register in the other direction, so without the confinement a run
+// confined to one part of the domain would report every entry the
+// complementary run owns as an entry no site claims. The identifier
+// pass's file-name rename planning is in the same position: it runs
+// over the whole tracked tree before the walk begins.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined passes apply
+// across the tree)
+type Confined interface {
+	// Confine states the confinement the run is under. The pass keeps
+	// the predicate rather than the file list, so an entry whose file
+	// the confinement covers is checked whether or not this run planned
+	// a site for it.
+	Confine(c *Confinement)
+	// Deferred names the register entries the confinement put outside
+	// the run, which the complementary run checks. A pass that takes the
+	// predicate owes the run this list, because a deferred entry is
+	// checked by neither run until the complementary one lands and the
+	// entry would otherwise be silently unconsumed.
+	Deferred() []string
+}
+
 // KeyRewriter is the second write channel, which a pass that renames a
 // file implements. It rewrites the per-file keys of the path-keyed
 // test-infrastructure registers a rename invalidates.
@@ -297,6 +326,12 @@ func NewHarnessOver(list scope.Lister, read scope.FileReader, write func(string,
 func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	if h.List == nil || h.Read == nil {
 		return Diff{}, fmt.Errorf("plan %s pass: harness is missing a lister or a reader", r.Pass())
+	}
+	// The confinement reaches the pass before the walk, because the
+	// checks that read it run on the first file the walk hands the pass
+	// and, for the rename planning, before that file is read.
+	if confined, ok := r.(Confined); ok {
+		confined.Confine(h.Confine)
 	}
 	domain, err := scope.WriteDomain(ctx, h.List, r.Pass(), h.Read)
 	if err != nil {

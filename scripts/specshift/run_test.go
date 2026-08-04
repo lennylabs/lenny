@@ -6099,6 +6099,363 @@ func TestNamePassFailsAPinnedLiteralEntryNoLiteralClaims(t *testing.T) {
 	}
 }
 
+// applyConfinedNamePass runs the name pass over the tree at root under a
+// confinement, through the writing path, and returns the pass it drove
+// together with the error a fail-closed case expects. The pass is
+// returned so a case reads the entries the confinement deferred, and the
+// run writes so a case that expects an abort covers a run that had a
+// writer.
+func applyConfinedNamePass(t *testing.T, root, register string, confine *pass.Confinement) (*name.Rewriter, error) {
+	t.Helper()
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = confine
+	r := nameRewriter(t, root, register)
+	_, err := h.Apply(context.Background(), r)
+	return r, err
+}
+
+// writeFixtureFile writes one tracked path into a copied fixture tree,
+// creating the directories it sits under.
+func writeFixtureFile(t *testing.T, root, target, content string) {
+	t.Helper()
+	full := filepath.Join(root, filepath.FromSlash(target))
+	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+		t.Fatalf("create the directory of %s: %v", target, err)
+	}
+	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", target, err)
+	}
+}
+
+// specOnly and specExcept are the two halves of the partition the
+// migration runs a pass over: the specification carriers in one phase
+// and every other carrier in the other.
+var (
+	specOnly   = pass.NewConfinement([]string{"spec/"}, nil)
+	specExcept = pass.NewConfinement(nil, []string{"spec/"})
+)
+
+// TestAConfinedRunCompletesOverTheHalfAPriorRunAlreadyRewrote pins the
+// behavior the confined claimed-entry check exists for. The register
+// spans both halves of the partition, so after the first run has
+// consumed and rewritten the sites of its half, the entries it consumed
+// name files whose sites are gone. The complementary run neither reaches
+// those files nor writes them, so it defers those entries to the run
+// that owns them and completes, and it names them so an entry no run
+// covers is visible rather than silently unconsumed. Against an
+// unfiltered check the second run aborts on every entry the first
+// applied, which is the failure that makes a two-phase migration
+// impossible.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestAConfinedRunCompletesOverTheHalfAPriorRunAlreadyRewrote(t *testing.T) {
+	t.Parallel()
+	t.Run("the name pass", func(t *testing.T) {
+		t.Parallel()
+		root := nameTree(t, "tree")
+		if _, err := applyConfinedNamePass(t, root, "tree.yaml", specOnly); err != nil {
+			t.Fatalf("the specification-confined name run failed: %v", err)
+		}
+		r, err := applyConfinedNamePass(t, root, "tree.yaml", specExcept)
+		if err != nil {
+			t.Fatalf("the complementary name run failed over the rewritten tree: %v", err)
+		}
+		// The register's specification-keyed entries are the two the
+		// first run consumed, and they are the ones this run defers.
+		want := []string{"spec/13_security-model.md occurrence 1", "spec/16_observability.md occurrence 1"}
+		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
+			t.Errorf("the complementary name run defers %v, want %v", got, want)
+		}
+	})
+	t.Run("the identifier pass", func(t *testing.T) {
+		t.Parallel()
+		const docsOnly = "docs/"
+		root := idTree(t, "tree")
+		if _, err := applyConfinedIDPass(t, root, "tree.yaml", pass.NewConfinement([]string{docsOnly}, nil)); err != nil {
+			t.Fatalf("the documentation-confined identifier run failed: %v", err)
+		}
+		r, err := applyConfinedIDPass(t, root, "tree.yaml", pass.NewConfinement(nil, []string{docsOnly}))
+		if err != nil {
+			t.Fatalf("the complementary identifier run failed over the rewritten tree: %v", err)
+		}
+		want := []string{"docs/reference/channels.md occurrence 1"}
+		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
+			t.Errorf("the complementary identifier run defers %v, want %v", got, want)
+		}
+	})
+}
+
+// TestAReplayedConfinedRunAbortsOnTheEntriesItAlreadyConsumed pins the
+// other direction of the same filter, which is what keeps a repeated
+// invocation of one confinement loud. The entries of the confined half
+// are checked against the tree on every run, so a second run over the
+// half it already rewrote finds the sites gone and aborts with the tree
+// byte-identical. A check filtered by the files the run planned sites
+// for would defer exactly those entries and turn the replay into a
+// silent no-op that reports a completed migration.
+//
+// spec: §28.1 (N3 and N4, the naming law: the register is held to the
+// tree in both directions inside the confinement)
+func TestAReplayedConfinedRunAbortsOnTheEntriesItAlreadyConsumed(t *testing.T) {
+	t.Parallel()
+	t.Run("the name pass", func(t *testing.T) {
+		t.Parallel()
+		root := nameTree(t, "tree")
+		if _, err := applyConfinedNamePass(t, root, "tree.yaml", specOnly); err != nil {
+			t.Fatalf("the specification-confined name run failed: %v", err)
+		}
+		before := treeSnapshot(t, root)
+		_, err := applyConfinedNamePass(t, root, "tree.yaml", specOnly)
+		if err == nil {
+			t.Fatal("the replayed name run reported a clean pass over the entries it had consumed")
+		}
+		if !strings.Contains(err.Error(), "spec/13_security-model.md occurrence 1") {
+			t.Errorf("the failure does not name the consumed entry: %v", err)
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the replayed run wrote to the tree")
+		}
+	})
+	t.Run("the identifier pass", func(t *testing.T) {
+		t.Parallel()
+		const docsOnly = "docs/"
+		root := idTree(t, "tree")
+		confine := pass.NewConfinement([]string{docsOnly}, nil)
+		if _, err := applyConfinedIDPass(t, root, "tree.yaml", confine); err != nil {
+			t.Fatalf("the documentation-confined identifier run failed: %v", err)
+		}
+		before := treeSnapshot(t, root)
+		_, err := applyConfinedIDPass(t, root, "tree.yaml", confine)
+		if err == nil {
+			t.Fatal("the replayed identifier run reported a clean pass over the entries it had consumed")
+		}
+		if !strings.Contains(err.Error(), "docs/reference/channels.md occurrence 1") {
+			t.Errorf("the failure does not name the consumed entry: %v", err)
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the replayed run wrote to the tree")
+		}
+	})
+}
+
+// TestAConfinedRunAbortsAtAnUnregisteredSiteInsideItAndNotOutsideIt pins
+// the fail-closed rule per confinement, over each class of site a pass
+// reads: an occurrence in the content, for both passes, and the file
+// name the identifier pass moves the carrier for. A site the register
+// does not resolve is read by the run whose confinement covers its
+// carrier, which aborts with the tree byte-identical, and is left to the
+// complementary run, which does not read it and does not abort. The
+// hand-correction population is enumerated between the two runs rather
+// than lost by either.
+//
+// spec: §28.1 (N3 and N4, the naming law: an unresolved site aborts the
+// run that reaches it)
+func TestAConfinedRunAbortsAtAnUnregisteredSiteInsideItAndNotOutsideIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		class string
+		run   func(t *testing.T, confine *pass.Confinement) (string, error)
+		names string
+	}{
+		{
+			"an occurrence of a reserved phrase",
+			func(t *testing.T, confine *pass.Confinement) (string, error) {
+				root := nameTree(t, "fail/unregistered")
+				_, err := applyConfinedNamePass(t, root, "fail-unregistered.yaml", confine)
+				return root, err
+			},
+			"pkg/carrier/unregistered.go",
+		},
+		{
+			"an occurrence of a retired spelling",
+			func(t *testing.T, confine *pass.Confinement) (string, error) {
+				root := idTree(t, "fail/unregistered")
+				_, err := applyConfinedIDPass(t, root, "fail-unregistered.yaml", confine)
+				return root, err
+			},
+			"pkg/adapter/unregistered.go",
+		},
+		{
+			"a file name carrying a retired spelling",
+			func(t *testing.T, confine *pass.Confinement) (string, error) {
+				root := idTree(t, "fail/unregisteredpath")
+				_, err := applyConfinedIDPass(t, root, "fail-unregisteredpath.yaml", confine)
+				return root, err
+			},
+			"pkg/adapter/lifecyclechannel.go",
+		},
+	} {
+		t.Run(tc.class, func(t *testing.T) {
+			t.Parallel()
+			t.Run("inside the confinement", func(t *testing.T) {
+				t.Parallel()
+				root, err := tc.run(t, specExcept)
+				if err == nil {
+					t.Fatal("the run reached the unregistered site and reported a clean pass")
+				}
+				abort, ok := pass.AsAbort(err)
+				if !ok {
+					t.Fatalf("the failure is not a fail-closed abort: %v", err)
+				}
+				if abort.Path != tc.names {
+					t.Errorf("the abort names %s, want %s", abort.Path, tc.names)
+				}
+				if got := treeSnapshot(t, root); got[filepath.FromSlash(tc.names)] == "" {
+					t.Errorf("the aborted run removed %s from the tree", tc.names)
+				}
+			})
+			t.Run("outside the confinement", func(t *testing.T) {
+				t.Parallel()
+				if _, err := tc.run(t, specOnly); err != nil {
+					t.Errorf("the complementary run aborted at a site outside its confinement: %v", err)
+				}
+			})
+		})
+	}
+}
+
+// TestAConfinedNameRunFailsWhenTheDeclarationSourceIsAbsentOrEmpty pins
+// that no confinement relaxes the declared-identifier index. A tree
+// carrying no communication-channels file, and one whose file declares
+// no identifier, both fail the run before any file is written and name
+// the file the space is read from, so a future edit that empties or
+// removes the declaring section is reported rather than rewritten
+// against an empty space.
+//
+// spec: §28.1 (N3, the naming law: the identifier space is declared in
+// the communication-channels registers)
+func TestAConfinedNameRunFailsWhenTheDeclarationSourceIsAbsentOrEmpty(t *testing.T) {
+	t.Parallel()
+	const declaring = "spec/28_communication-channels.md"
+	for _, tc := range []struct {
+		state   string
+		declare string
+	}{
+		{"a tree carrying no declaring file", ""},
+		{"a declaring file stating no identifier", "# 28. Communication Channels\n\nThis fixture declares no identifier.\n"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			copyTreeInto(t, filepath.Join(fixtureNamePass, "fail/undeclared"), root)
+			if tc.declare != "" {
+				writeFixtureFile(t, root, declaring, tc.declare)
+			}
+			before := treeSnapshot(t, root)
+			_, err := applyConfinedNamePass(t, root, "fail-undeclared.yaml", pass.NewConfinement([]string{"pkg/"}, nil))
+			if err == nil {
+				t.Fatalf("the confined name run proceeded over %s", tc.state)
+			}
+			if !strings.Contains(err.Error(), "spec/28") {
+				t.Errorf("the failure does not name the declaring file: %v", err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}
+
+// TestTheConfinementFiltersThePinnedLiteralClaimCheck pins the same
+// filter over the second driving register of the name pass. Both of the
+// claim check's abort conditions stay live for a carrier the run covers,
+// and neither is produced by a prior rewrite, so an implementation that
+// skipped every pinned entry under any confinement would drop the one
+// check this register has and still satisfy the cases over the sense
+// register.
+//
+// spec: §28.1 (N3, the naming law: the literals that pin the
+// specification are resolved per occurrence before the substitution
+// runs)
+func TestTheConfinementFiltersThePinnedLiteralClaimCheck(t *testing.T) {
+	t.Parallel()
+	const head = "kind: pinned-spec-literals\nversion: 1\nentries:\n"
+	for _, tc := range []struct {
+		entry string
+		body  string
+		names string
+	}{
+		{
+			"a position above the literal count",
+			head + "  - file: tests/tier11_docs/route_test.go\n    literal: 9\n",
+			"literal 9",
+		},
+		{
+			"a file the tree does not carry",
+			head + "  - file: tests/tier11_docs/absent_test.go\n    literal: 1\n",
+			"tests/tier11_docs/absent_test.go",
+		},
+	} {
+		t.Run(tc.entry, func(t *testing.T) {
+			t.Parallel()
+			t.Run("under a confinement covering its carrier", func(t *testing.T) {
+				t.Parallel()
+				root := nameTree(t, "tree")
+				writePinnedRegister(t, root, tc.body)
+				before := treeSnapshot(t, root)
+				_, err := applyConfinedNamePass(t, root, "tree.yaml", pass.NewConfinement([]string{"tests/tier11_docs/"}, nil))
+				if err == nil {
+					t.Fatalf("the confined run accepted %s in the pinned-literal register", tc.entry)
+				}
+				if !strings.Contains(err.Error(), tc.names) {
+					t.Errorf("the failure does not name the entry %q: %v", tc.names, err)
+				}
+				if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+					t.Error("the failed run wrote to the tree")
+				}
+			})
+			t.Run("under a confinement covering no carrier of it", func(t *testing.T) {
+				t.Parallel()
+				root := nameTree(t, "tree")
+				writePinnedRegister(t, root, tc.body)
+				if _, err := applyConfinedNamePass(t, root, "tree.yaml", specOnly); err != nil {
+					t.Errorf("the confined run held a pinned entry outside it to the tree: %v", err)
+				}
+			})
+		})
+	}
+}
+
+// TestTheDeclaredIdentifierCheckReadsTheWholeRegister pins the one
+// check §4.1 leaves unfiltered. An entry naming an identifier the
+// specification declares nowhere fails the run whichever half of the
+// partition its carrier sits in, so a misspelled code-side entry is
+// reported by the specification-phase run rather than surfacing a phase
+// later, once the specification half has been committed.
+//
+// spec: §28.1 (N3, the naming law: an identifier the specification
+// declares is what replaces a site)
+func TestTheDeclaredIdentifierCheckReadsTheWholeRegister(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name    string
+		confine *pass.Confinement
+	}{
+		{"outside the confinement", specOnly},
+		{"inside the confinement", specExcept},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := nameTree(t, "tree")
+			before := treeSnapshot(t, root)
+			_, err := applyConfinedNamePass(t, root, "confined-undeclared.yaml", tc.confine)
+			if err == nil {
+				t.Fatal("the confined run accepted an entry naming an undeclared identifier")
+			}
+			if !strings.Contains(err.Error(), "CH-NOSUCHCONVERSATION") {
+				t.Errorf("the failure does not name the undeclared identifier: %v", err)
+			}
+			if !strings.Contains(err.Error(), "pkg/carrier/carrier.go occurrence 1") {
+				t.Errorf("the failure does not name the entry that carries it: %v", err)
+			}
+			if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+				t.Error("the failed run wrote to the tree")
+			}
+		})
+	}
+}
+
 // The anchor pass cases run over their own fixture tree, held under
 // testdata/anchorpass/ for the reason the citation fixtures under
 // testdata/citations/ are: testdata/ is outside the read domain of every
@@ -7650,6 +8007,65 @@ func TestIdentifierPassFailsAnEntryTheNamingTableOrTheTreeDoesNotBack(t *testing
 			}
 		})
 	}
+}
+
+// applyConfinedIDPass runs the identifier pass over the tree at root
+// under a confinement, through the writing path, and returns the pass it
+// drove together with the error a fail-closed case expects. The pass is
+// returned so a case reads the entries the confinement deferred.
+func applyConfinedIDPass(t *testing.T, root, register string, confine *pass.Confinement) (*identifier.Rewriter, error) {
+	t.Helper()
+	h := idHarness(root)
+	h.Confine = confine
+	r := idRewriter(t, root, register)
+	_, err := h.Apply(context.Background(), r)
+	return r, err
+}
+
+// TestAConfinedIdentifierRunPlansNoRenameOutsideItsConfinement pins the
+// filter over the one site class a pass reads outside the walk. The
+// rename planning runs over the whole tracked tree before the walk
+// begins, so an unfiltered plan aborts on a file-name carrier the
+// confinement excludes before the confined run reads a single file of
+// its own half. The confined run leaves that carrier where it stands,
+// and the complementary run, which is the run that performs the move,
+// takes the abort.
+//
+// spec: §28.1 (N4, the naming law: the file-name stem of a carrier is
+// the channel's identifier)
+func TestAConfinedIdentifierRunPlansNoRenameOutsideItsConfinement(t *testing.T) {
+	t.Parallel()
+	const carrier = "pkg/adapter/lifecyclechannel.go"
+	t.Run("outside the confinement", func(t *testing.T) {
+		t.Parallel()
+		root := idTree(t, "fail/unregisteredpath")
+		before := treeSnapshot(t, root)
+		if _, err := applyConfinedIDPass(t, root, "fail-unregisteredpath.yaml", specOnly); err != nil {
+			t.Fatalf("the specification-confined run planned a rename outside its confinement: %v", err)
+		}
+		if got := treeSnapshot(t, root); got[filepath.FromSlash(carrier)] != before[filepath.FromSlash(carrier)] {
+			t.Errorf("the confined run wrote %s, which sits outside its confinement", carrier)
+		}
+	})
+	t.Run("inside the confinement", func(t *testing.T) {
+		t.Parallel()
+		root := idTree(t, "fail/unregisteredpath")
+		before := treeSnapshot(t, root)
+		_, err := applyConfinedIDPass(t, root, "fail-unregisteredpath.yaml", specExcept)
+		if err == nil {
+			t.Fatal("the complementary run moved a file name no entry resolves")
+		}
+		abort, ok := pass.AsAbort(err)
+		if !ok {
+			t.Fatalf("the failure is not a fail-closed abort: %v", err)
+		}
+		if abort.Path != carrier {
+			t.Errorf("the abort names %s, want %s", abort.Path, carrier)
+		}
+		if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
+			t.Error("the aborted run left the tree modified")
+		}
+	})
 }
 
 // TestIdentifierPassFailsWhenTheTreeCarriesNoNamingTable pins that the

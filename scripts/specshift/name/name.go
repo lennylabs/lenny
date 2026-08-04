@@ -118,6 +118,19 @@ type Rewriter struct {
 	// space, because both are properties of that tree.
 	pinned map[string]map[int]bool
 
+	// confine is the part of the write domain this run may write, nil
+	// when the run covers the whole of it. The claimed-entry checks read
+	// the register in the direction the walk does not cover, so they
+	// hold an entry to the tree only where this run is the run that
+	// writes its file.
+	confine *pass.Confinement
+
+	// deferred names the register entries the confinement put outside
+	// this run, in register order. They are the complementary run's to
+	// check, and the run reports them so an entry no run covers is
+	// visible rather than silently unconsumed.
+	deferred []string
+
 	// declared is the identifier space the specification declares,
 	// indexed on the first file the pass reads rather than at
 	// construction, because the pass reads the tree it rewrites. The
@@ -132,6 +145,16 @@ func New(list scope.Lister, read scope.FileReader) *Rewriter {
 
 // Pass names the write domain the pass runs in.
 func (r *Rewriter) Pass() scope.Pass { return scope.Name }
+
+// Confine states the part of the write domain this run writes, which
+// the claimed-entry checks hold their entries to.
+func (r *Rewriter) Confine(c *pass.Confinement) { r.confine = c }
+
+// Deferred returns the register entries this run left to the
+// complementary one, in register order.
+func (r *Rewriter) Deferred() []string {
+	return append([]string(nil), r.deferred...)
+}
 
 // LoadRegister reads and validates the per-site senses that drive the
 // pass. A missing or malformed register fails rather than loading as an
@@ -274,11 +297,26 @@ func (r *Rewriter) checkRegister(ctx context.Context) error {
 // file granularity for a register that carries no entry. An off-by-one
 // enumeration and a misspelled path are the two ways an entry lands in
 // that position.
+//
+// An entry whose file the run's confinement does not cover is deferred
+// rather than checked, because this run neither reaches its site nor
+// writes its file, and the complementary run checks it. The filter is
+// the confinement rather than the set of files this run planned sites
+// for: an entry whose file the confinement covers and whose sites a
+// prior run over the same confinement already consumed still fails,
+// which is what makes a replayed run loud rather than a silent no-op.
 func (r *Rewriter) checkClaimed(ctx context.Context, tracked map[string]bool) error {
 	var unclaimed []string
+	r.deferred = nil
 	for _, target := range sortedKeys(r.senses) {
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("check the reserved-phrase sense register against the tree: %w", err)
+		}
+		if !r.confine.Covers(target) {
+			for _, occurrence := range sortedOccurrences(r.senses[target]) {
+				r.deferred = append(r.deferred, fmt.Sprintf("%s occurrence %d", target, occurrence))
+			}
+			continue
 		}
 		reason, err := r.unclaimedReason(target, tracked)
 		if err != nil {

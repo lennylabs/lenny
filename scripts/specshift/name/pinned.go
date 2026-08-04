@@ -161,9 +161,18 @@ func (r *Rewriter) loadPinned(tracked map[string]bool) error {
 // literals its file holds. Either way the entry names no position, so
 // the site it was seeded for would be left unwritten by a run that
 // exited zero.
+//
+// An entry whose carrier the run's confinement does not cover is left
+// to the complementary run, as an entry of the sense register is. Both
+// abort conditions stay live inside the confinement: neither is
+// produced by a prior rewrite, so a run that skipped every pinned entry
+// would drop the one compensating check this register has.
 func (r *Rewriter) checkPinnedClaimed(pinned map[string]map[int]bool, tracked map[string]bool) error {
 	var unclaimed []string
 	for _, target := range sortedPinnedFiles(pinned) {
+		if !r.confine.Covers(target) {
+			continue
+		}
 		if !tracked[target] {
 			unclaimed = append(unclaimed, fmt.Sprintf("%s (the tree carries no such file)", target))
 			continue

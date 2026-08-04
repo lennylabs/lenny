@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: MIT
+#
+# One entry is keyed to a specification carrier and names an identifier
+# the specification fixture declares; the other is keyed to a code
+# carrier and names one it declares nowhere. A run confined to either
+# half of the tree fails on the second entry, because the declared
+# identifier check reads the whole register rather than the confinement.
+kind: reserved-phrase-senses
+version: 1
+entries:
+  - file: spec/13_security-model.md
+    occurrence: 1
+    identifiers:
+      - LNK-GWCONTROL
+  - file: pkg/carrier/carrier.go
+    occurrence: 1
+    identifiers:
+      - CH-NOSUCHCONVERSATION
