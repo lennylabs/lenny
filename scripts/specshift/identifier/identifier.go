@@ -107,21 +107,6 @@ type Rewriter struct {
 	moves   map[string]string
 	symbols map[string]string
 
-	// keyPaths are the carrier paths the whole migration moves and
-	// keyRefs the symbol references it renames, both over the whole
-	// tracked tree, including the carriers this run leaves to the
-	// complementary one and the carriers whose destination the register
-	// leaves unresolved. They are what the site enumeration holds
-	// the key channel's spans out by, because a key's span belongs to
-	// that channel as a property of the carrier the key names rather
-	// than of the confinement the run took. Held out from the performed
-	// pair alone, the site set of a register the run covers would depend
-	// on which other carriers the run covers, and a key whose carrier
-	// the complementary run moves would stand as an ordinary site the
-	// site rule writes a carrier spelling over part of.
-	keyPaths []string
-	keyRefs  []string
-
 	// confine is the part of the write domain this run may write, nil
 	// when the run covers the whole of it. It filters the two reads the
 	// walk does not cover: the claimed-entry check, which holds the
@@ -287,12 +272,11 @@ func (r *Rewriter) prepareOnce(ctx context.Context) error {
 		return err
 	}
 	r.table = table
-	planned, err := r.planRenames(ctx, tracked)
+	moves, symbols, err := r.planRenames(ctx, tracked)
 	if err != nil {
 		return err
 	}
-	r.moves, r.symbols = planned.moves, planned.symbols
-	r.keyPaths, r.keyRefs = planned.keyPaths, planned.keyRefs
+	r.moves, r.symbols = moves, symbols
 	return r.checkClaimed(ctx, tracked)
 }
 
@@ -328,24 +312,17 @@ func (r *Rewriter) checkChannels(table *Table) error {
 // register entry for it would key the enumeration of a specification
 // file to the size of the table inside it.
 //
-// A spelling standing in a key the key rewrite owns is not one of them
-// either. The key channel is authoritative over those spans: it writes
-// the path the migration moves the file to, whereas the site rule would
+// A spelling standing in a key the key rewrite already moves is not one
+// of them either. The key channel is authoritative over those spans: it
+// writes the path the run moved the file to, whereas the site rule would
 // write a carrier spelling over part of that path, and a register entry
 // demanded for every such key would state a sense the move already
-// carries. The spans are held out for every carrier of the tree rather
-// than for the ones this run moves, so the site set of a file the
-// confinement covers is a property of that file alone. Enumerated from
-// the performed moves, the same register would carry one site set under
-// a confinement that covers the carrier its key names and another under
-// one that does not, and the run's fail-closed contract over a covered
-// file would turn on which unrelated paths the run took. Every other
-// occurrence a path-keyed register writes, a
+// carries. Every other occurrence a path-keyed register writes, a
 // section title or a wildcard glob key among them, is an ordinary site
 // and is resolved through the register like any other.
 func (r *Rewriter) contentSites(target, content string) []site {
 	all := findSites(content, r.table.Retired())
-	keys := keySpans(target, content, r.keyPaths, r.keyRefs)
+	keys := keySpans(target, content, r.moves, r.symbols)
 	out := make([]site, 0, len(all))
 	for _, s := range all {
 		if r.table.mentioned(target, s.start) || withinSpan(keys, s.start) {
@@ -505,24 +482,13 @@ func carriersOf(rows []Row) string {
 	return strings.Join(names, ", ")
 }
 
-// renames is what the rename planning produces: the file moves and the
-// symbol renames this run performs, and the carrier paths and symbol
-// references the whole migration moves, which is what the site
-// enumeration holds the key channel's spans out by.
-type renames struct {
-	moves    map[string]string
-	symbols  map[string]string
-	keyPaths []string
-	keyRefs  []string
-}
-
 // planRenames computes the file moves and the symbol renames the run
-// performs, and the wider pair the key channel owns the spans of.
+// performs.
 //
-// All of them are computed before any file is rewritten. A move is what
-// the path-keyed registers are rekeyed against, and a register outside
-// the site-rewrite domain is reached by a channel that never walks the
-// file that moved, so a set filled during the walk would rekey against
+// Both are computed before any file is rewritten. A move is what the
+// path-keyed registers are rekeyed against, and a register outside the
+// site-rewrite domain is reached by a channel that never walks the file
+// that moved, so a set filled during the walk would rekey against
 // whichever moves the walk had reached by then.
 //
 // A tracked file inside the write domain whose own name carries a
@@ -531,71 +497,50 @@ type renames struct {
 // and never moved on a guess.
 //
 // The file name is the one site class a pass reads outside the walk, so
-// it takes the confinement here rather than through the filtered domain.
-// The confinement holds the two things the run performs: a path it does
-// not cover is neither moved nor aborted on, and the complementary run,
-// which is the run that performs the move, takes both. Withholding the
-// move with the abort is what keeps the key channel honest, because the
-// moves are what a path-keyed register is rekeyed against and a key
-// moved for a carrier that stands still would name a path no run ever
-// creates.
-//
-// The carrier is recorded among the key channel's paths either way, and
-// so is a carrier whose destination the register leaves unresolved,
-// because the span its key stands in belongs to that channel however the
-// run is confined. Recorded per run, a register the run covers would
-// carry one site set under a confinement that covers the carrier its key
-// names and another under one that does not, and an entry seeded to
-// resolve the second set would write a carrier spelling over part of a
-// path the key channel owns.
-func (r *Rewriter) planRenames(ctx context.Context, tracked map[string]bool) (renames, error) {
-	out := renames{moves: map[string]string{}, symbols: map[string]string{}}
-	refs := map[string]bool{}
+// it takes the confinement here rather than through the filtered
+// domain. A path the confinement does not cover is skipped whole: this
+// run neither moves it, nor records its symbols, nor aborts on it, and
+// the complementary run, which is the run that performs the move, takes
+// all three. Skipping the move with the abort is what keeps the key
+// channel honest, because the moves are what a path-keyed register is
+// rekeyed against and a key moved for a carrier that stands still would
+// name a path no run ever creates.
+func (r *Rewriter) planRenames(ctx context.Context, tracked map[string]bool) (map[string]string, map[string]string, error) {
+	moves := map[string]string{}
+	symbols := map[string]string{}
 	var aborts []*pass.Abort
 	for _, target := range sortedTracked(tracked) {
 		if err := ctx.Err(); err != nil {
-			return renames{}, fmt.Errorf("plan the identifier renames: %w", err)
+			return nil, nil, fmt.Errorf("plan the identifier renames: %w", err)
 		}
 		writable, err := scope.Writable(scope.Identifier, target, r.read)
 		if err != nil {
-			return renames{}, err
+			return nil, nil, err
 		}
 		if !writable {
 			continue
 		}
-		covered := r.confine.Covers(target)
+		if !r.confine.Covers(target) {
+			continue
+		}
 		move, abort := r.moveOf(target)
 		if abort != nil {
-			out.keyPaths = append(out.keyPaths, target)
-			if covered {
-				aborts = append(aborts, abort)
-			}
+			aborts = append(aborts, abort)
 			continue
 		}
 		moved := target
 		if move != "" {
-			out.keyPaths = append(out.keyPaths, target)
-			if covered {
-				out.moves[target] = move
-			}
+			moves[target] = move
 			moved = move
 		}
-		renamed, err := r.recordSymbols(target, moved)
-		if err != nil {
-			return renames{}, err
-		}
-		for old, now := range renamed {
-			refs[old] = true
-			if covered {
-				out.symbols[old] = now
-			}
+		if err := r.recordSymbols(target, moved, symbols); err != nil {
+			return nil, nil, err
 		}
 	}
-	out.keyRefs = sortedKeys(refs)
 	if err := pass.Aborted(aborts); err != nil {
-		return renames{}, err
+		return nil, nil, err
 	}
-	return out, nil
+	return moves, symbols, nil
 }
 
 // moveOf returns the path a carrier moves to, the empty string when its
@@ -629,11 +574,9 @@ func (r *Rewriter) moveOf(target string) (string, *pass.Abort) {
 	return splice(target, edits), nil
 }
 
-// recordSymbols returns the symbol references one Go carrier's
+// recordSymbols records the symbol references one Go carrier's
 // substitutions retire, keyed by the reference the spec map writes,
-// which is `<declaring file>::<symbol>`. The caller records them against
-// the run's confinement, so one file's renames are computed the same way
-// whether this run performs them or the complementary one does.
+// which is `<declaring file>::<symbol>`.
 //
 // The reference is keyed by symbol rather than by path, and a tier-0
 // check resolves each one against its declaring file, so a renamed
@@ -644,20 +587,19 @@ func (r *Rewriter) moveOf(target string) (string, *pass.Abort) {
 // another file of it, which is the collision the sense register exists
 // for, and a token-keyed record would rewrite each reference to
 // whichever of the two the walk reached last.
-func (r *Rewriter) recordSymbols(target, moved string) (map[string]string, error) {
+func (r *Rewriter) recordSymbols(target, moved string, symbols map[string]string) error {
 	if filepath.Ext(target) != ".go" || len(r.senses[target]) == 0 {
-		return nil, nil
+		return nil
 	}
 	content, err := r.read(target)
 	if err != nil {
-		return nil, fmt.Errorf("read %s for the identifier symbol rename: %w", target, err)
+		return fmt.Errorf("read %s for the identifier symbol rename: %w", target, err)
 	}
 	text := string(content)
 	declared, err := declaredNameSpans(target, text)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	symbols := map[string]string{}
 	for i, s := range r.contentSites(target, text) {
 		entry, ok := r.senses[target][i+1]
 		if !ok || entry.NotAChannel {
@@ -679,7 +621,7 @@ func (r *Rewriter) recordSymbols(target, moved string) (map[string]string, error
 			symbols[target+"::"+before] = moved + "::" + after
 		}
 	}
-	return symbols, nil
+	return nil
 }
 
 // checkClaimed reports every register entry no site in the tree claims,

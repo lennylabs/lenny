@@ -47,30 +47,22 @@ func rekey(target string, content []byte, moves, symbols map[string]string) []by
 }
 
 // keySpans returns the byte spans of one register's content that the key
-// rewrite owns, which are the whole-scalar occurrences of each path the
-// migration moves and of each symbol reference it renames.
+// rewrite owns, which are the whole-scalar occurrences of each moved path
+// and each renamed symbol reference.
 //
 // The site rewrite holds these spans out of its own enumeration, so a key
-// the move writes is not also resolved as a channel reference and
+// the move already writes is not also resolved as a channel reference and
 // is not written twice under two rules. A file the key rewrite does not
 // reach carries no such span, so its whole content is site material.
-//
-// The paths and the references are the migration's rather than one run's:
-// a carrier the confinement leaves to the complementary run owns its keys
-// there as it does here, and a carrier whose destination the register
-// does not yet resolve owns them too, because the span is the key
-// channel's either way and the site rule would write a carrier spelling
-// over part of the path. Held out per run, the site set of a register the
-// run covers would turn on which unrelated carriers the run covers.
-func keySpans(target, content string, paths, refs []string) [][2]int {
+func keySpans(target, content string, moves, symbols map[string]string) [][2]int {
 	if !scope.KeyWritable(target) {
 		return nil
 	}
 	var spans [][2]int
-	for _, old := range refs {
+	for _, old := range sortedKeys(symbols) {
 		spans = append(spans, matchSpans(referenceExpr(old), content)...)
 	}
-	for _, old := range paths {
+	for _, old := range sortedKeys(moves) {
 		for _, expr := range scalarExprs(target, old) {
 			spans = append(spans, matchSpans(expr, content)...)
 		}
