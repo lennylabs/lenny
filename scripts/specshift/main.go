@@ -29,8 +29,19 @@
 //	  -root <path>       repo root (default: the git toplevel of the cwd)
 //	  -pass <name>       name, identifier, anchor, or line
 //	  -register <path>   the pass's register
+//	  -only <path>       confine the run to a tracked path or directory
+//	                     prefix, repeatable
+//	  -except <path>     exclude a tracked path or directory prefix from
+//	                     the run, repeatable
 //	  -apply             write the diff (default: dry run, write nothing)
 //	  -domain            print the pass's write domain and exit
+//
+// A run of a pass requires at least one of -only and -except, because an
+// unconfined run writes every file of the pass's write domain, which is
+// wider than the commit scope some invocations sit inside. Two runs whose
+// confinements partition the domain cover it between them. -domain takes
+// both flags as optional and prints the whole write domain when neither
+// is given, so an operator measures a confinement before applying it.
 package main
 
 import (
@@ -63,8 +74,26 @@ type options struct {
 	root     string
 	pass     scope.Pass
 	register string
+	only     []string
+	except   []string
 	apply    bool
 	domain   bool
+}
+
+// stringList collects a repeatable string flag in the order the command
+// line states its values. An empty value is refused rather than recorded,
+// because a confinement value matching nothing would leave a run to fail
+// on the zero-file guard with no path to name.
+type stringList []string
+
+func (l *stringList) String() string { return strings.Join(*l, " ") }
+
+func (l *stringList) Set(value string) error {
+	if value == "" {
+		return errors.New("the value is empty")
+	}
+	*l = append(*l, value)
+	return nil
 }
 
 // builtPasses returns the pass implementations over the tree at root.
@@ -103,6 +132,9 @@ func parseArgs(ctx context.Context, args []string) (options, error) {
 	root := fs.String("root", "", "repo root (default: the git toplevel of the working directory)")
 	name := fs.String("pass", "", "pass to run: "+passNames())
 	registerPath := fs.String("register", "", "the register that drives the pass")
+	var only, except stringList
+	fs.Var(&only, "only", "confine the run to a tracked path or directory prefix (repeatable)")
+	fs.Var(&except, "except", "exclude a tracked path or directory prefix from the run (repeatable)")
 	apply := fs.Bool("apply", false, "write the diff (default: dry run, write nothing)")
 	domain := fs.Bool("domain", false, "print the pass's write domain and exit")
 	if err := fs.Parse(args); err != nil {
@@ -127,6 +159,8 @@ func parseArgs(ctx context.Context, args []string) (options, error) {
 		root:     resolved,
 		pass:     p,
 		register: *registerPath,
+		only:     only,
+		except:   except,
 		apply:    *apply,
 		domain:   *domain,
 	}, nil
@@ -158,8 +192,16 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 	}
 	passes := passesFor(opts.root)
 	harness := pass.NewHarness(opts.root)
+	harness.Confine = pass.NewConfinement(opts.only, opts.except)
 	if opts.domain {
 		return printWriteDomain(ctx, harness, opts.pass, out)
+	}
+	// A run of a pass states the part of the write domain it covers. An
+	// unconfined run writes every file of that domain, which is wider
+	// than the commit scope an invocation may sit inside, so it is a
+	// usage error rather than a default.
+	if len(opts.only) == 0 && len(opts.except) == 0 {
+		return fmt.Errorf("-only or -except is required to run the %s pass: a run that is not confined writes every file of the pass's write domain", opts.pass)
 	}
 	if opts.register == "" {
 		return fmt.Errorf("-register is required to run the %s pass", opts.pass)
@@ -224,16 +266,22 @@ func reportAbort(err error) error {
 	return fmt.Errorf("aborted with the tree unchanged at %s", strings.Join(lines, "; "))
 }
 
-// printWriteDomain prints the tracked paths the pass may write.
+// printWriteDomain prints the tracked paths the pass may write under the
+// harness's confinement, and names that confinement in the count line.
+// The measurement is the one surface that admits an unconfined run, so it
+// is where an operator compares a confinement against the whole domain
+// before applying it, and where a pair of confinements is checked to
+// partition the domain.
 func printWriteDomain(ctx context.Context, h *pass.Harness, p scope.Pass, out io.Writer) error {
 	domain, err := scope.WriteDomain(ctx, h.List, p, h.Read)
 	if err != nil {
 		return err
 	}
+	domain = h.Confine.Filter(domain)
 	sort.Strings(domain)
 	for _, target := range domain {
 		fmt.Fprintln(out, target)
 	}
-	fmt.Fprintf(out, "# %d file(s) in the %s pass write domain\n", len(domain), p)
+	fmt.Fprintf(out, "# %d file(s) in the %s pass write domain (%s)\n", len(domain), p, h.Confine)
 	return nil
 }

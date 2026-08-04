@@ -267,6 +267,11 @@ type Harness struct {
 	// move channel alone, so a harness driving a pass that moves no file
 	// needs none.
 	Remove func(path string) error
+	// Confine narrows the walk to the tracked paths one run may write.
+	// It is nil-able, and a nil confinement covers the whole write
+	// domain, so a caller that sets none drives the pass over everything
+	// the domain returned.
+	Confine *Confinement
 }
 
 // NewHarness returns a harness over the tracked tree at root.
@@ -297,6 +302,17 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	if err != nil {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
+	// The confinement filters the domain rather than redefining it, so
+	// the exclusion lists and the generated-artifact rule still decide
+	// membership and the run writes a subset of what an unconfined run
+	// would. The zero-file guard is kept over the filtered result and
+	// names the confinement: a confinement matching no file is an
+	// operator error, and without the guard the run would report the
+	// empty diff of a completed migration.
+	domain = h.Confine.Filter(domain)
+	if len(domain) == 0 {
+		return Diff{}, fmt.Errorf("plan %s pass: the confinement %s selected zero files of the write domain", r.Pass(), h.Confine)
+	}
 	var diff Diff
 	// A site the pass cannot resolve is collected rather than returned,
 	// so one dry run names every site of the walk that needs hand
@@ -314,13 +330,18 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	}
 	// The registers outside the site-rewrite domain take the key rewrite
 	// alone, in the same diff, so a run that renames a file leaves them
-	// byte-identical apart from the moved key.
+	// byte-identical apart from the moved key. The channel's own
+	// emptiness guard is asked over the whole key-write domain, and the
+	// confinement then decides whether this run covers a path-keyed
+	// register: a run that covers none skips the channel rather than
+	// failing, because a register outside the confinement is the
+	// complementary run's to rewrite.
 	if _, ok := r.(KeyRewriter); ok {
 		keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
 		if err != nil {
 			return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 		}
-		for _, target := range keyed {
+		for _, target := range h.Confine.Filter(keyed) {
 			if err := h.planInto(ctx, &diff, r, target, false); err != nil {
 				sites, ok := AllAborts(err)
 				if !ok {

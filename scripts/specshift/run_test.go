@@ -1216,6 +1216,7 @@ func TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite(t *testing.T) {
 		"-root", fixtureTreeRoot(t),
 		"-pass", "line",
 		"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
+		"-except", "spec/",
 	}, &out)
 	if err != nil {
 		t.Fatalf("run over the pass's own register: %v", err)
@@ -1241,10 +1242,15 @@ func TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite(t *testing.T) {
 		{"a malformed register", filepath.Join(fixtureRegisters, "pass-malformed.yaml")},
 	} {
 		var rejected bytes.Buffer
+		// The confinement is supplied so the run reaches the loader: the
+		// confinement check sits ahead of it, and an unconfined run would
+		// keep both assertions below while pinning the usage error rather
+		// than the register rejection each case names.
 		err := runWith(context.Background(), passes, []string{
 			"-root", fixtureTreeRoot(t),
 			"-pass", "line",
 			"-register", tc.register,
+			"-except", "spec/",
 		}, &rejected)
 		if err == nil {
 			t.Errorf("run with %s returned no error", tc.name)
@@ -1774,20 +1780,34 @@ func TestRunPrintsTheWriteDomainOverTheTrackedTree(t *testing.T) {
 }
 
 // TestRunReportsAPassThatIsNotBuiltRatherThanAnEmptyDiff pins that the
-// driver names an unbuilt pass instead of reporting a completed run.
+// driver names an unbuilt pass instead of reporting a completed run. The
+// run is driven over a pass table the requested pass is absent from,
+// because every pass the committed table carries is built, so a request
+// for one of them reaches that pass's own register loader instead of the
+// branch this case pins.
 func TestRunReportsAPassThatIsNotBuiltRatherThanAnEmptyDiff(t *testing.T) {
 	t.Parallel()
+	built := func(string) map[scope.Pass]pass.Rewriter {
+		return map[scope.Pass]pass.Rewriter{
+			scope.Line: &suffixRewriter{p: scope.Line, suffix: "// rewritten\n", registerKind: "line-citations"},
+		}
+	}
 	var out bytes.Buffer
-	err := run(context.Background(), []string{
+	err := runWith(context.Background(), built, []string{
 		"-root", repoRoot(t),
 		"-pass", "anchor",
 		"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
+		"-except", "spec/",
 	}, &out)
 	if err == nil {
 		t.Fatal("run with a pass that is not built returned no error")
 	}
-	if !strings.Contains(err.Error(), "anchor") {
-		t.Errorf("the error does not name the requested pass: %v", err)
+	// The assertion names the unbuilt-pass wording rather than the pass
+	// name alone. The pass name appears in every usage error the checks
+	// ahead of this one return, so a run that stopped before the pass
+	// table was consulted would satisfy a name-only assertion.
+	if !strings.Contains(err.Error(), "anchor") || !strings.Contains(err.Error(), "is not built") {
+		t.Errorf("the error does not report the requested pass as unbuilt: %v", err)
 	}
 	if out.Len() != 0 {
 		t.Errorf("run with a pass that is not built wrote %q", out.String())
@@ -1799,8 +1819,313 @@ func TestRunReportsAPassThatIsNotBuiltRatherThanAnEmptyDiff(t *testing.T) {
 func TestRunRequiresARegister(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	if err := run(context.Background(), []string{"-root", repoRoot(t), "-pass", "line"}, &out); err == nil {
+	err := run(context.Background(), []string{"-root", repoRoot(t), "-pass", "line", "-except", "spec/"}, &out)
+	if err == nil {
 		t.Fatal("run with no register returned no error")
+	}
+	if !strings.Contains(err.Error(), "-register") {
+		t.Errorf("the error does not name the missing register: %v", err)
+	}
+}
+
+// TestRunRequiresAWriteConfinement pins that a run of a pass states the
+// part of the write domain it covers. An unconfined run writes every file
+// of that domain, which is wider than the commit scope an invocation may
+// sit inside, so the confinement is required rather than defaulted, and
+// the check sits ahead of the register load so a run that supplies a
+// register and no confinement stops here too.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestRunRequiresAWriteConfinement(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"no register either", []string{"-root", repoRoot(t), "-pass", "line"}},
+		{"a register and no confinement", []string{
+			"-root", repoRoot(t),
+			"-pass", "line",
+			"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
+		}},
+	} {
+		var out bytes.Buffer
+		err := run(context.Background(), tc.args, &out)
+		if err == nil {
+			t.Fatalf("run with %s returned no error", tc.name)
+		}
+		if !strings.Contains(err.Error(), "-only or -except is required") {
+			t.Errorf("run with %s did not report the missing confinement: %v", tc.name, err)
+		}
+		if out.Len() != 0 {
+			t.Errorf("run with %s wrote %q", tc.name, out.String())
+		}
+	}
+	// An empty confinement value is refused at the flag rather than
+	// recorded, because it names no path and would leave the run to fail
+	// on the zero-file guard with nothing to report.
+	var empty bytes.Buffer
+	if err := run(context.Background(), []string{"-root", repoRoot(t), "-pass", "line", "-only", ""}, &empty); err == nil {
+		t.Error("a run whose confinement value is empty returned no error")
+	}
+	// The measurement keeps both flags optional, because it writes
+	// nothing and is where a confinement is compared against the whole
+	// domain before it is applied.
+	var measured bytes.Buffer
+	if err := run(context.Background(), []string{"-root", fixtureTreeRoot(t), "-pass", "line", "-domain"}, &measured); err != nil {
+		t.Fatalf("the unconfined domain measurement: %v", err)
+	}
+}
+
+// domainRun measures one pass's write domain over the fixture tree under
+// a confinement, and returns the paths it printed with its count line.
+func domainRun(t *testing.T, confinement ...string) ([]string, string) {
+	t.Helper()
+	var out bytes.Buffer
+	args := append([]string{"-root", fixtureTreeRoot(t), "-pass", "line", "-domain"}, confinement...)
+	if err := run(context.Background(), args, &out); err != nil {
+		t.Fatalf("run -domain %v: %v", confinement, err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	count := lines[len(lines)-1]
+	if !strings.HasPrefix(count, "#") {
+		t.Fatalf("the domain measurement printed no count line: %q", out.String())
+	}
+	return lines[:len(lines)-1], count
+}
+
+// TestTheConfinedDomainsOfAPartitionReconstructTheWriteDomain pins the
+// covering obligation the two-run protocol rests on: the confinements a
+// sub-step issues must partition the pass's write domain, so every file
+// and every register entry is covered by exactly one of them. The
+// measurement is the surface that admits an unconfined run, which is why
+// the comparison is written over it, and the case fails unless the
+// measurement applies the confinement.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestTheConfinedDomainsOfAPartitionReconstructTheWriteDomain(t *testing.T) {
+	t.Parallel()
+	whole, wholeCount := domainRun(t)
+	inSpec, specCount := domainRun(t, "-only", "spec/")
+	outsideSpec, _ := domainRun(t, "-except", "spec/")
+	if len(inSpec) == 0 || len(outsideSpec) == 0 {
+		t.Fatalf("the partition has an empty half: %v and %v", inSpec, outsideSpec)
+	}
+	union := membership(append(append([]string{}, inSpec...), outsideSpec...))
+	if len(union) != len(inSpec)+len(outsideSpec) {
+		t.Errorf("the two halves intersect: %v and %v", inSpec, outsideSpec)
+	}
+	if len(union) != len(whole) {
+		t.Errorf("the union of the two halves is %v, want the whole domain %v", union, whole)
+	}
+	for _, target := range whole {
+		if !union[target] {
+			t.Errorf("neither half of the partition covers %s", target)
+		}
+	}
+	// The count line names the confinement the measurement ran under, so
+	// the two halves are told apart in an operator's output.
+	if !strings.Contains(specCount, "-only spec/") {
+		t.Errorf("the count line does not name the confinement: %q", specCount)
+	}
+	if !strings.Contains(wholeCount, "the whole write domain") {
+		t.Errorf("the unconfined count line does not name the whole domain: %q", wholeCount)
+	}
+}
+
+// TestTheConfinementMatchesByPathSegmentRatherThanBySubstring pins the
+// match rule at its boundary. A confinement matched by character prefix
+// covers a sibling directory whose name begins with the confined
+// directory's name and a saved copy whose path extends a named carrier's
+// path, which is a specification-phase run writing outside the scope its
+// commit covers. Every whole-path case passes under either rule, so the
+// near misses are what decide it.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestTheConfinementMatchesByPathSegmentRatherThanBySubstring(t *testing.T) {
+	t.Parallel()
+	const (
+		nearDir  = "spec-notes/design-note.md"
+		nearFile = "pkg/carrier/carrier.go.bak"
+	)
+	wholeDomain, _ := domainRun(t)
+	whole := membership(wholeDomain)
+	for _, near := range []string{nearDir, nearFile} {
+		if !whole[near] {
+			t.Fatalf("the fixture tree no longer carries the near miss %s in the write domain", near)
+		}
+	}
+	for _, tc := range []struct {
+		name       string
+		confine    []string
+		want       []string
+		wantAbsent []string
+	}{
+		{
+			name:       "a directory admitted with no separator",
+			confine:    []string{"-only", "spec"},
+			want:       []string{"spec/04_system-components.md", "spec/13_security-model.md"},
+			wantAbsent: []string{nearDir},
+		},
+		{
+			name:       "a file admitted by its whole path",
+			confine:    []string{"-only", "pkg/carrier/carrier.go"},
+			want:       []string{"pkg/carrier/carrier.go"},
+			wantAbsent: []string{nearFile},
+		},
+		{
+			name:       "a directory excluded with no separator",
+			confine:    []string{"-except", "spec"},
+			want:       []string{nearDir},
+			wantAbsent: []string{"spec/04_system-components.md"},
+		},
+		{
+			name:       "a file excluded by its whole path",
+			confine:    []string{"-except", "pkg/carrier/carrier.go"},
+			want:       []string{nearFile},
+			wantAbsent: []string{"pkg/carrier/carrier.go"},
+		},
+		{
+			// Both flags together: a path is covered when some admission
+			// matches it and no exclusion does.
+			name:       "an admission narrowed by an exclusion",
+			confine:    []string{"-only", "spec", "-except", "spec/13_security-model.md"},
+			want:       []string{"spec/04_system-components.md"},
+			wantAbsent: []string{"spec/13_security-model.md", nearDir, nearFile},
+		},
+	} {
+		paths, _ := domainRun(t, tc.confine...)
+		confined := membership(paths)
+		for _, target := range tc.want {
+			if !confined[target] {
+				t.Errorf("%s: the confined domain omits %s", tc.name, target)
+			}
+		}
+		for _, target := range tc.wantAbsent {
+			if confined[target] {
+				t.Errorf("%s: the confined domain admits %s, so the match is by substring", tc.name, target)
+			}
+		}
+	}
+}
+
+// TestAConfinedApplyWritesTheConfinedHalfAndLeavesTheRestByteIdentical
+// pins the property the two-run protocol rests on, over the applied tree
+// rather than over the planned diff: a pass that planned correctly and
+// wrote widely still fails this case. A specification-phase run that
+// wrote outside the specification directory would put files the phase's
+// commit does not cover into the working tree.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestAConfinedApplyWritesTheConfinedHalfAndLeavesTheRestByteIdentical(t *testing.T) {
+	t.Parallel()
+	root := copyFixtureTree(t)
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = pass.NewConfinement([]string{"spec/"}, nil)
+	r := &suffixRewriter{p: scope.Line, suffix: "// rewritten\n"}
+
+	before := treeSnapshot(t, root)
+	diff, err := h.Apply(context.Background(), r)
+	if err != nil {
+		t.Fatalf("apply the confined run: %v", err)
+	}
+	written := membership(diff.Paths())
+	for _, target := range []string{"spec/04_system-components.md", "spec/13_security-model.md"} {
+		if !written[target] {
+			t.Errorf("the confined run did not write %s", target)
+		}
+	}
+	after := treeSnapshot(t, root)
+	for target, content := range before {
+		if underDir(target, "spec/") {
+			if after[target] == content {
+				t.Errorf("the confined run left %s inside the confinement unchanged", target)
+			}
+			continue
+		}
+		if after[target] != content {
+			t.Errorf("the confined run wrote %s, which sits outside the confinement", target)
+		}
+	}
+}
+
+// TestAConfinementMatchingNoFileFailsWithTheZeroFileGuard pins the empty
+// case. A confinement that selects nothing is an operator error, and a
+// run that reported its empty diff would read as a completed migration,
+// which is the same failure the write domain's own zero-inspection guard
+// exists for.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestAConfinementMatchingNoFileFailsWithTheZeroFileGuard(t *testing.T) {
+	t.Parallel()
+	stub := &suffixRewriter{p: scope.Line, suffix: "// rewritten\n", registerKind: "line-citations"}
+	passes := func(string) map[scope.Pass]pass.Rewriter {
+		return map[scope.Pass]pass.Rewriter{scope.Line: stub}
+	}
+	var out bytes.Buffer
+	err := runWith(context.Background(), passes, []string{
+		"-root", fixtureTreeRoot(t),
+		"-pass", "line",
+		"-register", filepath.Join(fixtureRegisters, "pass-line-citations.yaml"),
+		"-only", "no-such-directory/",
+	}, &out)
+	if err == nil {
+		t.Fatal("a run whose confinement matches no file returned no error")
+	}
+	if !strings.Contains(err.Error(), "-only no-such-directory/") {
+		t.Errorf("the error does not name the confinement: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("the run reported %q rather than failing on the guard", out.String())
+	}
+}
+
+// TestTheKeyRewriteChannelRunsWhereTheConfinementCoversARegister pins
+// both halves of the second write channel under a confinement. The
+// path-keyed registers of the fixture tree sit outside the specification
+// directory, so a run confined to that directory covers none of them and
+// skips the channel rather than failing its emptiness guard, and the
+// complementary run retains the whole channel with that guard intact.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func TestTheKeyRewriteChannelRunsWhereTheConfinementCoversARegister(t *testing.T) {
+	t.Parallel()
+	registers := []string{
+		"tests/registers/line-citation-resolution.yaml",
+		"tests/registers/line-citations.yaml",
+	}
+	for _, tc := range []struct {
+		name    string
+		confine *pass.Confinement
+		want    bool
+	}{
+		{"confined to the specification directory", pass.NewConfinement([]string{"spec/"}, nil), false},
+		{"confined away from it", pass.NewConfinement(nil, []string{"spec/"}), true},
+	} {
+		root := copyFixtureTree(t)
+		h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+		h.Confine = tc.confine
+		r := &renamingRewriter{
+			suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+			from:           "pkg/carrier/carrier.go",
+			to:             "pkg/carrier/renamed.go",
+		}
+		diff, err := h.Plan(context.Background(), r)
+		if err != nil {
+			t.Fatalf("plan the run %s: %v", tc.name, err)
+		}
+		planned := membership(diff.Paths())
+		for _, reg := range registers {
+			if planned[reg] != tc.want {
+				t.Errorf("the run %s plans %s: %v, want %v", tc.name, reg, planned[reg], tc.want)
+			}
+		}
 	}
 }
 
