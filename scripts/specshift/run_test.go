@@ -1068,10 +1068,12 @@ func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 // straight to a loader as the -register argument, and none of it is part
 // of any walked tree, so a fixture placed here can never enter a file
 // domain. A fixture meant to exercise the key-rewrite channel belongs in
-// a walked tree at a path the path-keyed register rule matches.
-//
-// spec: §28.1 (N3, the naming law: the fixture trees sit outside every
-// read and write domain, and this directory is not walked at all)
+// a walked tree at a path the path-keyed register rule matches. The
+// exclusion this case rests on is the scope package's testdata segment
+// rule, which holds every fixture directory outside every read and write
+// domain. That rule is a migration-tooling convention of this repository
+// rather than a rule the naming law states, so this case carries no
+// spec-section annotation.
 func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
 	t.Parallel()
 	named := map[string]bool{
