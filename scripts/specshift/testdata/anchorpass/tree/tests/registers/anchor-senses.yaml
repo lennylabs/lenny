@@ -6,6 +6,13 @@
 kind: anchor-senses
 version: 1
 entries:
+  # The specification-side carrier's one citation names the framing,
+  # which moved with the channel. It sits on the other side of the
+  # specification directory from the entries below, so a run confined to
+  # that directory resolves this one and holds the rest.
+  - file: spec/07_session-lifecycle.md
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2851-ch-adapterbinary
   # The first citation of this carrier names the message format the
   # carve-out keeps in place, so it resolves to the surviving heading
   # rather than to the channel contract card the map names.

@@ -5720,6 +5720,38 @@ func TestAnchorPassResolvesACitationOfCarvedOutMaterialToTheSurvivingHeading(t *
 	assertRedirected(t, root, "sdks/runtime/go/runtime/types.go")
 }
 
+// TestAnchorPassResolvesBareCitationsCarriedOnBothSidesOfTheSpecificationDirectory
+// pins that the sense register decides citations on both sides of the
+// specification directory in one run. A specification file and a code
+// carrier each hold a bare citation of the same retired section, and the
+// register records one occurrence for each, so the run redirects both
+// and the register's entries partition when a run is confined to one
+// side. A register whose every entry sat on one side would report the
+// same result whether the run read the register per carrier or read it
+// whole.
+//
+// spec: §28.1 (N8, the citation rule: a citation names the heading that
+// defines the material it cites)
+func TestAnchorPassResolvesBareCitationsCarriedOnBothSidesOfTheSpecificationDirectory(t *testing.T) {
+	t.Parallel()
+	root := anchorTree(t, "tree")
+	applyAnchorPass(t, root, "tree.json")
+	for _, target := range []string{
+		"spec/07_session-lifecycle.md",
+		"sdks/runtime/go/runtime/types.go",
+	} {
+		t.Run(target, func(t *testing.T) {
+			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
+			if strings.Contains(after, "§15.4.1") {
+				t.Errorf("%s still cites the retired §15.4.1 after the anchor pass:\n%s", target, after)
+			}
+			if !strings.Contains(after, "§28.5.1") {
+				t.Errorf("%s carries no citation of the heading the material moved to:\n%s", target, after)
+			}
+		})
+	}
+}
+
 // TestAnchorPassAbortsAtACitationTheSenseRegisterDoesNotRecord pins the
 // fail-closed rule the citation class rests on. An occurrence the sense
 // register does not carry aborts the run non-zero, names the file and
