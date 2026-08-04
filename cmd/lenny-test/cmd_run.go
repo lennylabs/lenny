@@ -578,8 +578,15 @@ func runStaticTier() (string, string) {
 			cmd := exec.Command(path, "-l", "-local", "github.com/lennylabs/lenny", ".")
 			cmd.Dir = repoRoot()
 			out, err := cmd.CombinedOutput()
-			body := strings.TrimSpace(string(out))
-			if err != nil {
+			// A testdata/ tree is fixture material rather than source: the go
+			// tool ignores it by convention, and a fixture is often malformed
+			// on purpose, so a parse failure there is the fixture working. Drop
+			// every reported line whose path lies under a testdata/ directory,
+			// for both the unordered-imports list and the parse errors, and
+			// judge the check on what is left. A real source file is reported
+			// and fails exactly as before.
+			body := dropTestdataLines(string(out))
+			if err != nil && body != "" {
 				return body, err
 			}
 			if body != "" {
@@ -1644,4 +1651,37 @@ func repoRoot() string {
 		}
 		dir = parent
 	}
+}
+
+// dropTestdataLines removes every line of a tool's output whose leading
+// path lies under a testdata/ directory, and returns what is left with
+// surrounding whitespace trimmed.
+//
+// A testdata/ tree is fixture material rather than compiled source. The go
+// tool ignores it by convention, and a fixture is frequently malformed on
+// purpose: scripts/specshift's confinement cases, for one, prove that a
+// confined run never opens a carrier outside its confinement by making that
+// carrier unparseable, so a run that opened it would fail. A repository-wide
+// formatter walks those files anyway and reports them, which would fail a
+// tier-0 check on a fixture doing its job. Filtering by path keeps the check
+// exact for real source.
+func dropTestdataLines(out string) string {
+	var kept []string
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		path := trimmed
+		if i := strings.IndexByte(path, ':'); i >= 0 {
+			path = path[:i]
+		}
+		path = filepath.ToSlash(path)
+		if path == "testdata" || strings.HasPrefix(path, "testdata/") ||
+			strings.Contains(path, "/testdata/") || strings.HasSuffix(path, "/testdata") {
+			continue
+		}
+		kept = append(kept, trimmed)
+	}
+	return strings.Join(kept, "\n")
 }
