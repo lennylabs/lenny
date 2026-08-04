@@ -1071,11 +1071,27 @@ func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 // a walked tree at a path the path-keyed register rule matches. The
 // exclusion this case rests on is the scope package's testdata segment
 // rule, which holds every fixture directory outside every read and write
-// domain. That rule is a migration-tooling convention of this repository
-// rather than a rule the naming law states, so this case carries no
-// spec-section annotation.
+// domain, so a loader case naming the file by path is the only way a
+// fixture here is ever reached.
+//
+// spec: §28.1 (N3, the naming law: every testdata/ directory is outside
+// the prohibition's domain)
 func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
 	t.Parallel()
+	// The exclusion the placement rule rests on: a path under a fixture
+	// directory is in no read domain and in no write channel, so nothing
+	// but an explicit -register argument reaches one.
+	for _, target := range []string{
+		fixtureRegisters + "/valid.yaml",
+		fixtureTree + "/spec/04_system-components.md",
+	} {
+		if scope.Readable(target) {
+			t.Errorf("Readable(%q) = true, want false: a fixture path is outside every read domain", target)
+		}
+		if scope.KeyWritable(target) {
+			t.Errorf("KeyWritable(%q) = true, want false: a fixture path is outside the key-write channel", target)
+		}
+	}
 	named := map[string]bool{
 		"malformed.yaml":           true,
 		"no-entries-block.yaml":    true,
