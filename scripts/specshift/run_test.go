@@ -9310,15 +9310,16 @@ func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testi
 // the same tree, so the specification slice of the register is checkable
 // with no scratch worktree.
 //
-// The case is guarded on the same three states the name run's case is
-// guarded on and asserts none of them. It reports nothing when the tree
-// carries no such register, and nothing when the tree no longer claims
-// the register's specification-keyed entries, which is the window
-// between the specification-confined run and its complement: the run has
-// already rewritten those carriers while the register that names them is
-// appended to and emptied only afterwards, so every entry then claims an
-// occurrence above its file's site count and the claimed-entry check
-// fails the run by design.
+// The case is guarded on two states and asserts neither. It reports
+// nothing when the tree carries no such register, and nothing when the
+// tree no longer claims the register's specification-keyed entries. The
+// name run's case carries a third guard because that pass reads a second
+// register; the identifier pass reads one. The second guard covers the
+// window between the specification-confined run and its complement: the
+// run has already rewritten those carriers while the register that names
+// them is appended to and emptied only afterwards, so every entry then
+// claims an occurrence above its file's site count and the claimed-entry
+// check fails the run by design.
 //
 // spec: §28.1
 func TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes(t *testing.T) {
