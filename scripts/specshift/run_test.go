@@ -9481,6 +9481,46 @@ func claimedEntryAbort(err error) bool {
 	return err != nil && strings.Contains(err.Error(), claimedEntryReason)
 }
 
+// claimedEntryList is the text a claimed-entry abort closes its sentence
+// with, ahead of the per-entry reasons it lists.
+const claimedEntryList = "it never performed: "
+
+// emptiedCarrierExpr matches the one per-entry reason an already
+// rewritten carrier produces: the file carries no site of the pass's
+// class at all. A mis-seeded occurrence over a carrier the pass has not
+// reached reports a non-zero count instead, and a misspelled path
+// reports that the tree carries no such file.
+var emptiedCarrierExpr = regexp.MustCompile(`\(the file carries 0 (?:reserved-phrase|retired-spelling) site\(s\)\)$`)
+
+// emptiedCarrierAbort reports whether a claimed-entry abort names only
+// carriers the pass has already emptied, which is the window between a
+// sub-step's two confined runs and the terminal state the rewrite leaves
+// a register in.
+//
+// The predicate reads the abort's per-entry reasons rather than the fact
+// of the abort, so it separates those two states from the mis-seeded
+// occurrence number the confined dry runs exist to catch. The reasons
+// come from the site enumeration the pass itself walks, which applies
+// the word-boundary rule, the markdown-anchor-identifier exclusion, and
+// the one-comment rule on top of the phrase matcher, so a count taken
+// from the matcher alone would read a carrier as still claimed where the
+// pass carries no site for the claim.
+func emptiedCarrierAbort(err error) bool {
+	if !claimedEntryAbort(err) {
+		return false
+	}
+	_, listed, found := strings.Cut(err.Error(), claimedEntryList)
+	if !found {
+		return false
+	}
+	for _, entry := range strings.Split(listed, "; ") {
+		if !emptiedCarrierExpr.MatchString(strings.TrimSpace(entry)) {
+			return false
+		}
+	}
+	return true
+}
+
 // TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes
 // drives the name pass over the committed tree under the confinement the
 // specification phase of the rewrite uses, so a mis-seeded occurrence
@@ -9494,12 +9534,18 @@ func claimedEntryAbort(err error) bool {
 // The case is guarded on three states and asserts none of them. It
 // reports nothing when the tree carries neither register, which is the
 // terminal state the rewrite leaves the sense register in. It also
-// reports nothing when the tree no longer claims the register's
-// specification-keyed entries, which is the window between the
-// specification-confined run and its complement: the run has already
+// reports nothing when every carrier the register keys under spec/
+// carries no reserved-phrase site at all, which is the window between
+// the specification-confined run and its complement: the run has already
 // rewritten those carriers while the register that names them is emptied
 // only afterwards, so every entry then claims an occurrence above its
-// file's site count and the claimed-entry check fails the run by design.
+// file's now-zero site count and the claimed-entry check fails the run by
+// design.
+//
+// The window guard reads the abort's per-entry reasons rather than the
+// fact of the abort, because a mis-seeded occurrence number fails the run
+// through the same check. An entry whose carrier still holds sites, or
+// whose carrier the tree does not hold, fails the case.
 //
 // spec: §28.1
 func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testing.T) {
@@ -9518,8 +9564,8 @@ func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testi
 		"-register", filepath.Join(root, sensePath),
 		"-only", "spec/",
 	}, &out)
-	if claimedEntryAbort(err) {
-		t.Skipf("not-yet-applicable: the tree no longer carries a site for every %s entry under spec/: %v", sensePath, err)
+	if emptiedCarrierAbort(err) {
+		t.Skipf("not-yet-applicable: the tree carries no reserved-phrase site at all in the files %s keys under spec/: %v", sensePath, err)
 	}
 	if err != nil {
 		t.Fatalf("the specification-confined dry run of the name pass over the seeded registers failed: %v", err)
@@ -9540,15 +9586,17 @@ func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testi
 // with no scratch worktree.
 //
 // The case is guarded on two states and asserts neither. It reports
-// nothing when the tree carries no such register, and nothing when the
-// tree no longer claims the register's specification-keyed entries. The
-// name run's case carries a third guard because that pass reads a second
-// register; the identifier pass reads one. The second guard covers the
-// window between the specification-confined run and its complement: the
-// run has already rewritten those carriers while the register that names
-// them is appended to and emptied only afterwards, so every entry then
-// claims an occurrence above its file's site count and the claimed-entry
-// check fails the run by design.
+// nothing when the tree carries no such register, and nothing when every
+// carrier the register keys under spec/ carries no retired-spelling site
+// at all. The name run's case carries a third guard because that pass
+// reads a second register; the identifier pass reads one. The second
+// guard covers the window between the specification-confined run and its
+// complement: the run has already rewritten those carriers while the
+// register that names them is appended to and emptied only afterwards, so
+// every entry then claims an occurrence above its file's now-zero site
+// count and the claimed-entry check fails the run by design. The guard
+// reads the abort's per-entry reasons, so a mis-seeded occurrence over a
+// carrier that still holds sites fails the case rather than skipping it.
 //
 // spec: §28.1
 func TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes(t *testing.T) {
@@ -9564,8 +9612,8 @@ func TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes(t *
 		"-register", filepath.Join(root, identifierSensePath),
 		"-only", "spec/",
 	}, &out)
-	if claimedEntryAbort(err) {
-		t.Skipf("not-yet-applicable: the tree no longer carries a site for every %s entry under spec/: %v", identifierSensePath, err)
+	if emptiedCarrierAbort(err) {
+		t.Skipf("not-yet-applicable: the tree carries no retired-spelling site at all in the files %s keys under spec/: %v", identifierSensePath, err)
 	}
 	if err != nil {
 		t.Fatalf("the specification-confined dry run of the identifier pass over the seeded register failed: %v", err)
@@ -9573,6 +9621,145 @@ func TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes(t *
 	if !strings.Contains(out.String(), "dry run") {
 		t.Errorf("the run reported %q, which does not name the dry run that planned it", out.String())
 	}
+}
+
+// misSeededOccurrence is an occurrence number above the site count any
+// carrier of the committed tree holds, so an entry carrying it is
+// mis-seeded whatever the file it is keyed to.
+const misSeededOccurrence = 9999
+
+// perturbedRegister writes a copy of one committed register whose last
+// specification-keyed entry claims a mis-seeded occurrence, and returns
+// the copy's path. Every other field is carried over as written, so the
+// copy differs from the committed register in that one number.
+func perturbedRegister(t *testing.T, root, path string) string {
+	t.Helper()
+	var doc map[string]any
+	if !readRegister(t, root, path, &doc) {
+		t.Skipf("not-yet-applicable: the tree carries no %s", path)
+	}
+	entries, ok := doc["entries"].([]any)
+	if !ok {
+		t.Fatalf("%s carries no entries list to perturb", path)
+	}
+	perturbed := ""
+	for at := len(entries) - 1; at >= 0 && perturbed == ""; at-- {
+		entry, ok := entries[at].(map[string]any)
+		if !ok {
+			continue
+		}
+		file, _ := entry["file"].(string)
+		if !strings.HasPrefix(file, "spec/") {
+			continue
+		}
+		if _, keyed := entry["occurrence"]; !keyed {
+			continue
+		}
+		entry["occurrence"] = misSeededOccurrence
+		perturbed = file
+	}
+	if perturbed == "" {
+		t.Skipf("not-yet-applicable: %s keys no occurrence under spec/", path)
+	}
+	data, err := yaml.Marshal(doc)
+	if err != nil {
+		t.Fatalf("write the perturbed copy of %s: %v", path, err)
+	}
+	copied := filepath.Join(t.TempDir(), filepath.Base(path))
+	if err := os.WriteFile(copied, data, 0o600); err != nil {
+		t.Fatalf("write the perturbed copy of %s: %v", path, err)
+	}
+	return copied
+}
+
+// TestAMisSeededOccurrenceFailsTheSpecificationConfinedRunsRatherThanSkippingThem
+// holds the window guard of the two specification-confined dry runs to
+// the state it exists for.
+//
+// Both runs abort when the tree carries no site for an entry their
+// register keys, and that abort is the state the guard skips on as well
+// as the failure the runs exist to surface. A guard that reads the fact
+// of the abort therefore reports nothing over the mis-seeded occurrence
+// number it is the gate for, which leaves that class of mis-seeding
+// detected only mid-application. The case drives each pass over a copy of
+// its committed register carrying one mis-seeded occurrence and asserts
+// the run aborts on it and that the guard does not take the abort for the
+// emptied-carrier window.
+//
+// spec: §28.1
+func TestAMisSeededOccurrenceFailsTheSpecificationConfinedRunsRatherThanSkippingThem(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	for _, tc := range []struct {
+		pass     string
+		register string
+	}{
+		{pass: "name", register: sensePath},
+		{pass: "identifier", register: identifierSensePath},
+	} {
+		t.Run(tc.pass, func(t *testing.T) {
+			t.Parallel()
+			if tc.pass == "name" && !treeCarries(t, root, pinnedLiteralsPath) {
+				t.Skipf("not-yet-applicable: the tree carries no %s", pinnedLiteralsPath)
+			}
+			var out bytes.Buffer
+			err := run(context.Background(), []string{
+				"-root", root,
+				"-pass", tc.pass,
+				"-register", perturbedRegister(t, root, tc.register),
+				"-only", "spec/",
+			}, &out)
+			if err == nil {
+				t.Fatalf("the specification-confined dry run of the %s pass over a mis-seeded copy of %s exited zero", tc.pass, tc.register)
+			}
+			if !claimedEntryAbort(err) {
+				t.Fatalf("the run over a mis-seeded copy of %s reported %v, want the claimed-entry abort", tc.register, err)
+			}
+			if emptiedCarrierAbort(err) {
+				t.Errorf("the window guard takes the mis-seeded occurrence for an emptied carrier, so the confined run reports nothing over it: %v", err)
+			}
+		})
+	}
+}
+
+// TestAnEmptiedCarrierAbortIsTheWindowTheConfinedRunsSkipOn pins the
+// other direction of the same guard, which is the state the confined dry
+// runs report nothing over: the sub-step has rewritten the carriers its
+// register keys while the register that names them is emptied only
+// afterwards, so every entry claims an occurrence above a site count of
+// zero.
+//
+// A replayed confined run reproduces that state exactly, so the case
+// drives one through each pass over a fixture tree rather than composing
+// the abort text by hand.
+//
+// spec: §28.1 (N3 and N4, the naming law: the register is held to the
+// tree in both directions inside the confinement)
+func TestAnEmptiedCarrierAbortIsTheWindowTheConfinedRunsSkipOn(t *testing.T) {
+	t.Parallel()
+	t.Run("the name pass", func(t *testing.T) {
+		t.Parallel()
+		root := nameTree(t, "tree")
+		if _, err := applyConfinedNamePass(t, root, "tree.yaml", specOnly); err != nil {
+			t.Fatalf("the specification-confined name run failed: %v", err)
+		}
+		_, err := applyConfinedNamePass(t, root, "tree.yaml", specOnly)
+		if !emptiedCarrierAbort(err) {
+			t.Errorf("the replayed name run over the carriers it emptied reported %v, which the window guard does not read as the emptied-carrier state", err)
+		}
+	})
+	t.Run("the identifier pass", func(t *testing.T) {
+		t.Parallel()
+		root := idTree(t, "tree")
+		confine := pass.NewConfinement([]string{"docs/"}, nil)
+		if _, err := applyConfinedIDPass(t, root, "tree.yaml", confine); err != nil {
+			t.Fatalf("the documentation-confined identifier run failed: %v", err)
+		}
+		_, err := applyConfinedIDPass(t, root, "tree.yaml", confine)
+		if !emptiedCarrierAbort(err) {
+			t.Errorf("the replayed identifier run over the carriers it emptied reported %v, which the window guard does not read as the emptied-carrier state", err)
+		}
+	})
 }
 
 // TestAnAnchorIdentifierMatchClaimsNoSiteForARegisterEntry pins the
