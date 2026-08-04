@@ -1007,9 +1007,11 @@ func underDir(target, dir string) bool {
 // sits, and the paths its entries are keyed by are never consulted. A
 // fixture that discriminates on its entries' paths therefore pins nothing:
 // it can neither make the channel run nor make it skip, and a confinement
-// case wired to it would record a rule the tool does not implement. The
-// membership axis is a migration-tooling convention owned by the scope
-// package, so this case carries no spec-section annotation.
+// case wired to it would record a rule the tool does not implement.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it, so the register carrying those keys is the
+// carrier the channel selects)
 func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 	t.Parallel()
 	// Membership is the register's own path against the rule.
@@ -1066,9 +1068,10 @@ func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 // straight to a loader as the -register argument, and none of it is part
 // of any walked tree, so a fixture placed here can never enter a file
 // domain. A fixture meant to exercise the key-rewrite channel belongs in
-// a walked tree at a path the path-keyed register rule matches. The rule
-// is this test package's own fixture layout, so this case carries no
-// spec-section annotation.
+// a walked tree at a path the path-keyed register rule matches.
+//
+// spec: §28.1 (N3, the naming law: the fixture trees sit outside every
+// read and write domain, and this directory is not walked at all)
 func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
 	t.Parallel()
 	named := map[string]bool{
