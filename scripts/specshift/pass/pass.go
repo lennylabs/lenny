@@ -357,9 +357,16 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 // path-keyed register has nothing to rekey, and that register is the
 // complementary run's to rewrite, so the channel is skipped rather than
 // asked to answer for a domain this run does not reach. A run whose
-// confinement does cover one takes the channel unchanged, including the
-// key-write domain's own emptiness guard, which reports a tree that
-// carries no register outside the site-rewrite domain.
+// confinement does cover one reaches the key-write domain's own
+// emptiness guard, which reports a tree that carries no register outside
+// the site-rewrite domain, and the guard names the confinement that made
+// the run reach it.
+//
+// The confinement then filters the domain, so this channel writes only
+// paths the confinement covers and the run narrows rather than widens.
+// A register the confinement covers and the key-write domain excludes
+// sits inside the filtered site-rewrite domain, where planInto rekeys it
+// inline, so filtering here leaves no key unmoved.
 func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) ([]*Abort, error) {
 	covers, err := h.coversKeyedRegister(ctx)
 	if err != nil {
@@ -370,16 +377,10 @@ func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) (
 	}
 	keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
 	if err != nil {
-		return nil, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+		return nil, fmt.Errorf("plan %s pass under the confinement %s: %w", r.Pass(), h.Confine, err)
 	}
+	keyed = h.Confine.Filter(keyed)
 	var aborts []*Abort
-	// The domain is walked whole rather than filtered by the confinement.
-	// The confinement's one decision on this channel is whether the
-	// channel runs, taken above; filtering here would sit after the only
-	// guard that protects the channel, so a confinement covering a
-	// path-keyed register that the key-write domain excludes would clear
-	// the guard and then rekey nothing, which is the completed-rekey
-	// report over registers never opened that the guard exists to stop.
 	for _, target := range keyed {
 		if err := h.planInto(ctx, diff, r, target, false); err != nil {
 			sites, ok := AllAborts(err)

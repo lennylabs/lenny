@@ -2177,6 +2177,13 @@ func TestTheKeyRewriteChannelSkipsBeforeItsEmptinessGuardIsAsked(t *testing.T) {
 			if !strings.Contains(err.Error(), "no path-keyed register") {
 				t.Errorf("the run %s failed on something other than the emptiness guard: %v", tc.name, err)
 			}
+			// The confinement is what decided the run would reach this
+			// guard, so the message states it and the failure of a
+			// confined run reads differently from that of an unconfined
+			// one over the same tree.
+			if !strings.Contains(err.Error(), tc.confine.String()) {
+				t.Errorf("the run %s failed without naming its confinement %s: %v", tc.name, tc.confine, err)
+			}
 			continue
 		}
 		if err != nil {
@@ -2185,21 +2192,21 @@ func TestTheKeyRewriteChannelSkipsBeforeItsEmptinessGuardIsAsked(t *testing.T) {
 	}
 }
 
-// TestTheRunningKeyRewriteChannelWalksTheWholeKeyWriteDomain pins that
-// the confinement decides whether the second write channel runs and
-// never which of its registers the run opens. The tree carries two
-// path-keyed registers: one inside the site-rewrite domain, which the
-// key-write domain therefore excludes, and one outside it, which is the
-// whole of that domain. A confinement that covers the first and excludes
-// the second makes the channel run, because it covers a path-keyed
-// register, and a channel that then filtered its domain by the same
-// confinement would clear the emptiness guard on the unfiltered domain
-// and rekey nothing, leaving the site walk to move a carrier whose keys
-// never move.
+// TestTheKeyRewriteChannelWritesOnlyRegistersTheConfinementCovers pins
+// that a confined run never writes outside its confinement on the second
+// write channel either. The tree carries two path-keyed registers: one
+// inside the site-rewrite domain, which the key-write domain therefore
+// excludes, and one outside it, which is the whole of that domain. A
+// confinement covering the first and excluding the second makes the
+// channel run, and the run must leave the excluded register alone; the
+// register it does cover takes its key rewrite inline on the site walk,
+// so nothing goes unrekeyed. The complementary confinement covers the
+// excluded register and rekeys it.
 //
 // spec: §28.1 (N4, the naming law: the run that moves a carrier moves
-// every key written for it)
-func TestTheRunningKeyRewriteChannelWalksTheWholeKeyWriteDomain(t *testing.T) {
+// every key written for it, and a run writes only what it was confined
+// to)
+func TestTheKeyRewriteChannelWritesOnlyRegistersTheConfinementCovers(t *testing.T) {
 	t.Parallel()
 	const keyed = "tests/registers/line-citations.yaml"
 	tree := map[string]string{
@@ -2209,15 +2216,8 @@ func TestTheRunningKeyRewriteChannelWalksTheWholeKeyWriteDomain(t *testing.T) {
 		// excludes it and covering it is what makes the channel run.
 		"tests/registers/reserved-phrase-senses.yaml": "kind: reserved-phrase-senses\nentries: []\n",
 		// Outside the site-rewrite domain, so it is the whole key-write
-		// domain, and the confinement excludes it.
+		// domain.
 		keyed: "kind: line-citations\nfiles:\n  pkg/carrier/carrier.go: 1\n",
-	}
-	h := pass.NewHarnessOver(mapLister(tree), mapReader(tree), func(string, []byte) error { return nil })
-	h.Confine = pass.NewConfinement(nil, []string{keyed})
-	r := &renamingRewriter{
-		suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
-		from:           "pkg/carrier/carrier.go",
-		to:             "pkg/carrier/renamed.go",
 	}
 	keys, err := scope.KeyWriteDomain(context.Background(), mapLister(tree), scope.Identifier, mapReader(tree))
 	if err != nil {
@@ -2226,12 +2226,28 @@ func TestTheRunningKeyRewriteChannelWalksTheWholeKeyWriteDomain(t *testing.T) {
 	if !reflect.DeepEqual(keys, []string{keyed}) {
 		t.Fatalf("the key-write domain is %v, want %v, so the case pins nothing", keys, []string{keyed})
 	}
-	diff, err := h.Plan(context.Background(), r)
-	if err != nil {
-		t.Fatalf("plan the confined run: %v", err)
-	}
-	if !membership(diff.Paths())[keyed] {
-		t.Errorf("the running channel did not rekey %s, so the confinement filtered the key-write domain", keyed)
+	for _, tc := range []struct {
+		name    string
+		confine *pass.Confinement
+		want    bool
+	}{
+		{"excluding the key-write domain", pass.NewConfinement(nil, []string{keyed}), false},
+		{"covering the key-write domain", pass.NewConfinement(nil, []string{"spec/"}), true},
+	} {
+		h := pass.NewHarnessOver(mapLister(tree), mapReader(tree), func(string, []byte) error { return nil })
+		h.Confine = tc.confine
+		r := &renamingRewriter{
+			suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+			from:           "pkg/carrier/carrier.go",
+			to:             "pkg/carrier/renamed.go",
+		}
+		diff, err := h.Plan(context.Background(), r)
+		if err != nil {
+			t.Fatalf("plan the run %s: %v", tc.name, err)
+		}
+		if got := membership(diff.Paths())[keyed]; got != tc.want {
+			t.Errorf("the run %s plans %s: %v, want %v", tc.name, keyed, got, tc.want)
+		}
 	}
 }
 
