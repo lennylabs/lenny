@@ -1267,15 +1267,30 @@ func TestRunDrivesAPassWithTheRegisterKeyedForItsRewrite(t *testing.T) {
 
 // TestRunRejectsAnUnknownPassName pins that the driver names the passes
 // it carries rather than running nothing.
+//
+// The confinement is supplied so the case pins the rejection rather than
+// the required-confinement usage error: every caller that names a pass
+// carries one, so the reason a run stopped is the reason the case names.
+// The assertion reads every pass name and the rejected value, because a
+// single pass name also appears in the usage errors the run returns after
+// the command line parses, which a name-only assertion would accept.
 func TestRunRejectsAnUnknownPassName(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	err := run(context.Background(), []string{"-root", repoRoot(t), "-pass", "reduction"}, &out)
+	err := run(context.Background(), []string{"-root", repoRoot(t), "-pass", "reduction", "-except", "spec/"}, &out)
 	if err == nil {
 		t.Fatal("run with an unknown pass returned no error")
 	}
-	if !strings.Contains(err.Error(), "identifier") {
-		t.Errorf("the error does not name the passes the driver carries: %v", err)
+	for _, p := range scope.Passes() {
+		if !strings.Contains(err.Error(), string(p)) {
+			t.Errorf("the error does not name the %s pass the driver carries: %v", p, err)
+		}
+	}
+	if !strings.Contains(err.Error(), "reduction") {
+		t.Errorf("the error does not name the pass the command line requested: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Errorf("run with an unknown pass wrote %q", out.String())
 	}
 }
 
@@ -2250,6 +2265,99 @@ func TestTheKeyRewriteChannelWalksTheWholeKeyWriteDomainOnceItRuns(t *testing.T)
 		if !membership(diff.Paths())[keyed] {
 			t.Errorf("the run %s leaves %s unrekeyed", tc.name, keyed)
 		}
+	}
+}
+
+// TestAConfinementNamingNoPathSegmentCoversNothing pins the boundary of
+// the segment match. A value that names no path segment, which is what a
+// bare separator reduces to, covers nothing rather than everything: the
+// match is written as a prefix terminated by the separator, and an empty
+// prefix would match every tracked path and turn such a value into an
+// unconfined run. The zero-file guard is what an operator then sees.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestAConfinementNamingNoPathSegmentCoversNothing(t *testing.T) {
+	t.Parallel()
+	root := copyFixtureTree(t)
+	h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
+	h.Confine = pass.NewConfinement([]string{"/"}, nil)
+	if h.Confine.Covers("spec/04_system-components.md") {
+		t.Error("a confinement naming no path segment covers a tracked path")
+	}
+	_, err := h.Plan(context.Background(), &suffixRewriter{p: scope.Line, suffix: "// rewritten\n"})
+	if err == nil {
+		t.Fatal("the run reached no zero-file guard")
+	}
+	if !strings.Contains(err.Error(), "-only /") {
+		t.Errorf("the guard does not name the confinement: %v", err)
+	}
+}
+
+// TestAnUnconfinedRunDefersNoRegisterEntry pins the complement a pass
+// derives its deferred report from over the run that has no confinement.
+// The whole write domain is covered, so no entry is another run's to
+// consume and the deferred list is empty. A complement that returned its
+// whole input for an absent confinement would have every domain
+// measurement report every entry as outstanding.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestAnUnconfinedRunDefersNoRegisterEntry(t *testing.T) {
+	t.Parallel()
+	var none *pass.Confinement
+	paths := []string{"spec/04_system-components.md", "pkg/carrier/carrier.go"}
+	if outside := none.Exclude(paths); len(outside) != 0 {
+		t.Errorf("the unconfined run defers %v; it covers the whole write domain", outside)
+	}
+	for _, target := range paths {
+		if !none.Covers(target) {
+			t.Errorf("the unconfined run does not cover %s", target)
+		}
+	}
+}
+
+// TestTheKeyRewriteChannelReportsATreeItCannotList pins that the
+// decision on the second write channel fails closed on a tree it cannot
+// enumerate. The channel asks whether the confinement covers a
+// path-keyed register, which it answers by listing the tracked tree, and
+// a lister that fails leaves that question unanswered. Reporting no
+// coverage would skip the channel silently and leave a moved carrier's
+// keys stale with the run exiting clean, so the failure is returned and
+// names the pass it stopped.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func TestTheKeyRewriteChannelReportsATreeItCannotList(t *testing.T) {
+	t.Parallel()
+	tree := map[string]string{
+		"spec/28_communication-channels.md": "# Channels\n\npkg/carrier/carrier.go\n",
+		"pkg/carrier/carrier.go":            "package carrier\n",
+	}
+	listed := 0
+	failing := func(ctx context.Context) ([]string, error) {
+		listed++
+		if listed == 1 {
+			return mapLister(tree)(ctx)
+		}
+		return nil, errors.New("the tracked tree is unreadable")
+	}
+	h := pass.NewHarnessOver(failing, mapReader(tree), func(string, []byte) error { return nil })
+	h.Confine = pass.NewConfinement(nil, []string{"spec/"})
+	r := &renamingRewriter{
+		suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+		from:           "pkg/carrier/carrier.go",
+		to:             "pkg/carrier/renamed.go",
+	}
+	_, err := h.Plan(context.Background(), r)
+	if err == nil {
+		t.Fatal("the run over a tree the lister fails on returned no error")
+	}
+	if !strings.Contains(err.Error(), "list tracked tree") {
+		t.Errorf("the error does not report the listing that failed: %v", err)
+	}
+	if !strings.Contains(err.Error(), string(scope.Identifier)) {
+		t.Errorf("the error does not name the pass it stopped: %v", err)
 	}
 }
 
