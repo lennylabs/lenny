@@ -24,17 +24,17 @@ const (
 // of its own packages resolves to the directory that package sits in.
 const modulePath = "github.com/lennylabs/lenny/"
 
-// The forms a guard names a routed file it reads in: a specification
-// path written whole, a specification file named by its numbered stem
-// and joined to the spec directory at the call site, and an import of a
-// package of the migration tooling. Each of those three classes sits
-// under a change-graph key, so each one's routing is assertable.
+// The forms a guard names a file it reads in: a specification path
+// written whole, a specification file named by its numbered stem and
+// joined to the spec directory at the call site, an import of a package
+// of the migration tooling, a proposal document, and a root-level
+// markdown record. Every one of those classes sits under a change-graph
+// key, so every one's routing is assertable.
 //
-// A guard also reads two documents outside those classes, a proposal
-// document and a root-level markdown record. Neither sits under a
-// canonical root the change-graph path validator accepts, so neither is
-// keyed and neither routes. Those two forms are derived separately below
-// and held to that decision rather than to the docs tier.
+// The root-level form reads a binding rather than any quoted file name,
+// because a guard also writes such a name as an argument to a predicate
+// it exercises. An argument names no file the guard reads; a binding
+// names the document the guard opens.
 var (
 	specPathExpr      = regexp.MustCompile(`spec/[A-Za-z0-9_.-]+\.md`)
 	specFileStemExpr  = regexp.MustCompile(`"(\d{2}_[a-z0-9-]+\.md)"`)
@@ -46,17 +46,19 @@ var (
 // TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier pins the
 // change-graph routing that the tier-11 guards over the communication
 // channel section depend on. Those guards read the section text, the
-// spec index, the sections that name a register writer, and the shared
-// predicates of the migration tooling, and they hold each derived cell
+// spec index, the sections that name a register writer, the shared
+// predicates of the migration tooling, the proposal that records who
+// creates the section, and the root-level record of what an apply run
+// left open, and they hold each derived cell
 // to a byte-exact literal so an edit to either side fails the case. That
 // only stops drift when an edit to those files selects the docs tier,
 // because `--changed` resolves a changed path against the change-graph
 // keys and `--max-tier` caps the resolved set rather than adding to it.
 //
 // The files are derived from the guards themselves rather than listed
-// here, so a guard added over a specification file or a tooling package
-// whose change-graph key names no docs target fails this case instead of
-// landing unhooked.
+// here, so a guard added over a specification file, a tooling package,
+// or a document whose change-graph key names no docs target fails this
+// case instead of landing unhooked.
 //
 // spec: 28.1 (channel naming law), 28.3 (channel registers)
 func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
@@ -79,6 +81,17 @@ func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
 	// passes vacuously over every package a guard imports.
 	if !containsPrefixed(paths, "scripts/") {
 		t.Fatalf("the guards under %s resolve to %v, which names no tooling package; the derivation reads no such path, so its routing is unasserted", channelGuardDir, paths)
+	}
+	// The ownership guards hold the record of who creates the section to
+	// one proposal document and to the root-level record of what an apply
+	// run left open. Both are edited by the very changes those guards
+	// exist to catch, so an unrouted edit to either is the failure this
+	// case pins; their absence from the derivation would pass it silently.
+	if !containsPrefixed(paths, "proposals/") {
+		t.Fatalf("the guards under %s resolve to %v, which names no proposal document", channelGuardDir, paths)
+	}
+	if !containsRootLevelDocument(paths) {
+		t.Fatalf("the guards under %s resolve to %v, which names no root-level document", channelGuardDir, paths)
 	}
 	for _, path := range paths {
 		tiers := tiersForChangedPathIn(globs, path)
@@ -104,7 +117,9 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 	guard := "package tier11_docs_test\n\n" +
 		"import _ \"" + modulePath + "scripts/specshift/unrouted\"\n\n" +
 		"const held = \"spec/99_a-section-a-guard-reads.md\"\n\n" +
-		"const stem = \"98_a-section-named-by-its-stem.md\"\n"
+		"const stem = \"98_a-section-named-by-its-stem.md\"\n\n" +
+		"const staged = \"proposals/0099_a-proposal-a-guard-reads.md\"\n\n" +
+		"const record = \"A-RECORD-A-GUARD-READS.md\"\n"
 	if err := os.WriteFile(filepath.Join(dir, channelGuardPrefix+"synthetic_test.go"), []byte(guard), 0o600); err != nil {
 		t.Fatalf("write the synthetic guard: %v", err)
 	}
@@ -122,6 +137,8 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 		"spec/99_a-section-a-guard-reads.md",
 		"spec/98_a-section-named-by-its-stem.md",
 		"scripts/specshift/unrouted",
+		"proposals/0099_a-proposal-a-guard-reads.md",
+		"A-RECORD-A-GUARD-READS.md",
 	} {
 		if !containsString(paths, held) {
 			t.Errorf("the synthetic guard resolves to %v, which omits %s, a source it reads", paths, held)
@@ -133,46 +150,26 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 	}
 }
 
-// TestTheDocumentsTheChannelGuardsReadOutsideTheKeyedRootsSelectNoTier
-// pins the standing decision about the two documents the channel guards
-// read that no change-graph key covers: the proposal that records who
-// creates the section, and the root-level record of what an apply run
-// left open. Both sit outside the canonical roots the change-graph path
-// validator accepts, so keying them would fail the static tier, and
-// neither is keyed. An edit that touches one of them alone therefore
-// selects no tier and fires none of the guards that read it.
+// TestTheDocumentRootsTheChannelGuardsReadAreCanonicalChangeGraphKeys
+// pins the half of the routing the change graph cannot state on its own.
+// The proposal tree and the root-level ownership record carry no code,
+// so they were once outside the canonical roots the change-graph path
+// validator accepts, and a key on either one failed the static tier.
+// Keying them is what lets an edit to a document a guard reads select
+// the docs tier at all.
 //
-// The case asserts that dependence rather than leaving it silent: the
-// documents are derived from the guards, each is held to an empty tier
-// set, and a graph keyed on either one is held to fail the validator
-// that rejects it. A later change that brings one of those documents
-// under a key fails here, which is the point at which the routing
-// assertion above should grow to cover it.
+// A narrowing of the validator's canonical roots that drops either entry
+// fails here, ahead of the silent outcome it would otherwise produce:
+// the keys are removed to keep the static tier green, and the guards
+// that read those documents stop firing under `--changed`.
 //
 // spec: 28.1 (channel naming law), 28.3 (channel registers); TESTING.md
 // §5 (tests/change-graph.json maps source packages, schemas,
 // migrations, and chart templates to the tests that exercise them)
-func TestTheDocumentsTheChannelGuardsReadOutsideTheKeyedRootsSelectNoTier(t *testing.T) {
-	globs := readChangeGraphGlobs(t)
-
-	documents, err := channelGuardUnkeyedDocuments(filepath.Join(repoRoot(), channelGuardDir))
-	if err != nil {
-		t.Fatalf("read the unkeyed documents the channel guards hold: %v", err)
-	}
-	// Both forms have to be derived, or the assertions below run over a
-	// short list and say nothing about the class they omit.
-	if !containsPrefixed(documents, "proposals/") {
-		t.Fatalf("the guards under %s resolve to %v, which names no proposal document", channelGuardDir, documents)
-	}
-	if !containsRootLevelDocument(documents) {
-		t.Fatalf("the guards under %s resolve to %v, which names no root-level document", channelGuardDir, documents)
-	}
-	for _, document := range documents {
-		if tiers := tiersForChangedPathIn(globs, document); len(tiers) != 0 {
-			t.Errorf("a change to %s selects %v; it is keyed now, so the docs-tier routing assertion has to cover it", document, tiers)
-		}
-		if res := validateChangeGraphPathsOverKey(t, document); res.ok {
-			t.Errorf("a change graph keyed on %s passes the path validator, so the key it was denied is now available to it", document)
+func TestTheDocumentRootsTheChannelGuardsReadAreCanonicalChangeGraphKeys(t *testing.T) {
+	for _, key := range []string{"proposals/", "PROPOSAL-QUEUE.md"} {
+		if res := validateChangeGraphPathsOverKey(t, key); !res.ok {
+			t.Errorf("a change graph keyed on %s fails the path validator (%s), so an edit to a document the guards read routes to no tier", key, res.detail)
 		}
 	}
 }
@@ -225,9 +222,8 @@ func containsRootLevelDocument(list []string) bool {
 	return false
 }
 
-// channelGuardSources returns the tracked paths under a change-graph key
-// that the tier-11 guards over the communication channel section read,
-// sorted and deduplicated.
+// channelGuardSources returns the tracked paths that the tier-11 guards
+// over the communication channel section read, sorted and deduplicated.
 func channelGuardSources(dir string) ([]string, error) {
 	return channelGuardPaths(dir, func(text string, found map[string]bool) {
 		for _, m := range specPathExpr.FindAllString(text, -1) {
@@ -239,18 +235,6 @@ func channelGuardSources(dir string) ([]string, error) {
 		for _, m := range toolingImportExpr.FindAllStringSubmatch(text, -1) {
 			found[m[1]] = true
 		}
-	})
-}
-
-// channelGuardUnkeyedDocuments returns the documents those same guards
-// read that no change-graph key covers, sorted and deduplicated.
-//
-// The root-level form reads a binding rather than any quoted file name,
-// because a guard also writes such a name as an argument to a predicate
-// it exercises. An argument names no file the guard reads; a binding
-// names the document the guard opens.
-func channelGuardUnkeyedDocuments(dir string) ([]string, error) {
-	return channelGuardPaths(dir, func(text string, found map[string]bool) {
 		for _, m := range proposalPathExpr.FindAllString(text, -1) {
 			found[m] = true
 		}

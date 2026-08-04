@@ -1035,6 +1035,11 @@ func readPendingPaths(path string) map[string]bool {
 // reference yet-to-ship packages are tolerated with a per-glob
 // `phase:` marker (today simply accept anything under the canonical
 // roots).
+//
+// The canonical roots also cover the documentation trees the tier-11
+// batteries read, `proposals/` and the root-level `PROPOSAL-QUEUE.md`
+// among them, because a guard that reads a document fires under
+// `--changed` only when an edit to that document resolves to a key.
 func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
 	data, err := os.ReadFile(changeGraphPath)
 	if err != nil {
@@ -1049,11 +1054,12 @@ func validateChangeGraphPaths(changeGraphPath, root string) checkResult {
 	misshaped := []string{}
 	knownRoots := []string{
 		"pkg/", "schemas/", "migrations/", "charts/", "cmd/", "tests/", "docs/", "spec/",
-		"sdks/", "scripts/", "compose/", "deploy/", ".github/",
+		"sdks/", "scripts/", "compose/", "deploy/", ".github/", "proposals/",
 	}
 	knownFiles := map[string]bool{
 		"buf.yaml": true, "buf.gen.yaml": true, "go.mod": true, "go.sum": true,
 		".golangci.yml": true, "Makefile": true, "TESTING.md": true, "README.md": true,
+		"PROPOSAL-QUEUE.md": true,
 	}
 	for key := range doc.Globs {
 		if knownFiles[key] {
