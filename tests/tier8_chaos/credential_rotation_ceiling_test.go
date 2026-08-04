@@ -12,7 +12,7 @@
 // faulted credential reachable at the provider. The unit coverage in
 // pkg/adapter/rotationgate_test.go drives the adapter server in-package with
 // an internal fake runtime; this chaos test drives the real adapter.Server
-// and the real adapter.LifecycleChannel over a real Unix-socket connection
+// and the real adapter.RuntimeOps over a real Unix-socket connection
 // with an external runtime peer that speaks the §4.7 JSONL lifecycle
 // protocol and deliberately withholds the completion frame, so the ceiling,
 // the proactive_renewal exemption, and the ack-timeout fallback are pinned
@@ -147,7 +147,7 @@ func startAdapter(t *testing.T, pool string) (*adapter.Server, string, *recordin
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socketPath := filepath.Join(sockDir, "lc.sock")
-	lc, err := adapter.NewLifecycleChannel(socketPath)
+	lc, err := adapter.NewRuntimeOps(socketPath)
 	if err != nil {
 		t.Fatalf("new lifecycle channel: %v", err)
 	}

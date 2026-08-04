@@ -151,10 +151,12 @@ reference to the channel.
 | `CH-ADAPTEREVENTS` | proto-rpc | `LifecycleChannel` | `AdapterEvents` |
 | `CH-ADAPTEREVENTS` | go-symbol | `LifecycleChannel` | `AdapterEvents` |
 | `CH-ADAPTEREVENTS` | path | `controlchannel` | `adapterevents` |
+| `CH-RUNTIMEOPS` | go-symbol | `LifecycleChannel` | `RuntimeOps` |
 | `CH-RUNTIMEOPS` | manifest-key | `lifecycleChannel` | `runtimeOps` |
 | `CH-RUNTIMEOPS` | flag | `lifecycle-socket` | `runtime-ops-socket` |
 | `CH-RUNTIMEOPS` | socket | `@lenny-lifecycle` | `@lenny-runtime-ops` |
 | `CH-RUNTIMEOPS` | path | `lifecycle-events` | `runtime-ops-events` |
+| `CH-RUNTIMEOPS` | path | `lifecyclechannel` | `runtimeops` |
 
 ### 28.4 Claim register
 

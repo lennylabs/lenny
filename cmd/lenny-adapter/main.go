@@ -148,7 +148,7 @@ func main() {
 	runtimeSocket := flag.String("runtime-socket", "",
 		"abstract Unix socket the adapter binds for the §4.7 sidecar runtime transport; "+
 			"the runtime container dials it")
-	lifecycleSocket := flag.String("lifecycle-socket", "",
+	lifecycleSocket := flag.String("runtime-ops-socket", "",
 		"Unix socket path for the §15.4.6 runtime lifecycle channel; empty disables it")
 	mcpSocket := flag.String("mcp-socket", "",
 		"§9.1/§4.7 abstract Unix socket the platform MCP server binds for a type:agent "+
@@ -368,9 +368,9 @@ func main() {
 	// §15.4.6: when a lifecycle socket is configured, the adapter listens
 	// on it for the Full-level runtime's lifecycle connection and
 	// advertises it in the session manifest.
-	var lifecycle *adapter.LifecycleChannel
+	var lifecycle *adapter.RuntimeOps
 	if *lifecycleSocket != "" {
-		lifecycle, err = adapter.NewLifecycleChannel(*lifecycleSocket)
+		lifecycle, err = adapter.NewRuntimeOps(*lifecycleSocket)
 		if err != nil {
 			log.Fatalf("lenny-adapter: %v", err)
 		}
@@ -386,10 +386,10 @@ func main() {
 	// session (§6.1 one session per pod) at fold time via CurrentSessionID.
 	//
 	// This runs before the lifecycle Run goroutine is launched below, so
-	// the sink is assigned to the lock-free LifecycleChannel.usage field
+	// the sink is assigned to the lock-free RuntimeOps.usage field
 	// before the read loop that reads it starts. That ordering is the
 	// invariant the field relies on in place of a lock (see
-	// LifecycleChannel.SetUsageSink); wiring after the Run goroutine would
+	// RuntimeOps.SetUsageSink); wiring after the Run goroutine would
 	// race the read loop and violate it.
 	adapter.WireDirectModeUsage(adapterSrv, lifecycle)
 

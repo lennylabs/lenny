@@ -513,7 +513,7 @@
       "conformance": ["cmd/lenny-compliance/..."],
       "integration": ["tests/tier4_integration/streaming_reconnect_test.go"]
     },
-    "schemas/lifecycle-events.schema.json": {
+    "schemas/runtime-ops-events.schema.json": {
       "static": ["tests/tier0_static/schemas_test.go"],
       "conformance": ["cmd/lenny-compliance/..."]
     },

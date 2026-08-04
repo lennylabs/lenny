@@ -115,12 +115,12 @@ func TestWriteSessionManifestIncludesMCPNonce(t *testing.T) {
 	}
 }
 
-func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
+func TestWriteSessionManifestRuntimeOps(t *testing.T) {
 	dir := t.TempDir()
 	srv := &Server{WorkspaceRoot: "/workspace/current", ManifestDir: dir}
 
 	// A Basic-level adapter has no lifecycle channel; the manifest omits
-	// the lifecycleChannel object entirely.
+	// the runtimeOps object entirely.
 	if _, err := srv.writeSessionManifest(manifestInputs{sessionID: "sess-basic"}); err != nil {
 		t.Fatalf("writeSessionManifest: %v", err)
 	}
@@ -128,15 +128,15 @@ func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read manifest: %v", err)
 	}
-	if strings.Contains(string(raw), "lifecycleChannel") {
-		t.Error("Basic-level manifest should omit lifecycleChannel")
+	if strings.Contains(string(raw), "runtimeOps") {
+		t.Error("Basic-level manifest should omit runtimeOps")
 	}
 
 	// With a lifecycle channel configured, the manifest advertises its
 	// socket so a Full-level runtime can dial it.
-	lc, err := NewLifecycleChannel(shortSocketName(t, "lifecycle.sock"))
+	lc, err := NewRuntimeOps(shortSocketName(t, "lifecycle.sock"))
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	defer lc.Close()
 	srv.Lifecycle = lc
@@ -152,11 +152,11 @@ func TestWriteSessionManifestLifecycleChannel(t *testing.T) {
 	if err := json.Unmarshal(b, &m); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
-	if m.LifecycleChannel == nil {
-		t.Fatal("Full-level manifest omits lifecycleChannel")
+	if m.RuntimeOps == nil {
+		t.Fatal("Full-level manifest omits runtimeOps")
 	}
-	if m.LifecycleChannel.Socket != lc.SocketPath() {
-		t.Errorf("lifecycleChannel.socket = %q, want %q", m.LifecycleChannel.Socket, lc.SocketPath())
+	if m.RuntimeOps.Socket != lc.SocketPath() {
+		t.Errorf("runtimeOps.socket = %q, want %q", m.RuntimeOps.Socket, lc.SocketPath())
 	}
 }
 

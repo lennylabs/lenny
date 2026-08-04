@@ -32,7 +32,7 @@ func credLease(id, provider, payload string) *adapterv1.CredentialLease {
 	}
 }
 
-func TestRotateCredentialsNotifiesLifecycleChannel(t *testing.T) {
+func TestRotateCredentialsNotifiesRuntimeOps(t *testing.T) {
 	s := credServer(t)
 	ctx := context.Background()
 	if _, err := s.AssignCredentials(ctx, &adapterv1.AssignCredentialsRequest{

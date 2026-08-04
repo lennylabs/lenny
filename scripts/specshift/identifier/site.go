@@ -37,7 +37,7 @@ type site struct {
 // assigned in.
 //
 // Matching is by whole token rather than by substring. The left boundary
-// admits an underscore, so the generated `Adapter_LifecycleChannelServer`
+// admits an underscore, so the generated `Adapter_AdapterEventsServer`
 // stem is one site, and the right boundary admits an uppercase byte, so
 // a compound written in camel case is one site as well. A spelling
 // standing inside a longer lowercase word is no site.

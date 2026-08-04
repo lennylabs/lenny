@@ -92,7 +92,7 @@ The validator runs a set of test categories for the declared level. Each higher 
 
 | Category | What it asserts |
 |----------|-----------------|
-| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-lifecycle`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-runtime-ops`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
 | checkpoint quiesce/resume | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. |
 | interrupt acknowledgement | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
 | credential rotation handling | A runtime that declares `credential_rotation` support re-reads refreshed credentials on `credentials_rotated` and services the next message without a restart. |
@@ -107,7 +107,7 @@ Each failure is classified as `schema_violation`, `timeout`, `missing_capability
 Alongside running the declared level's categories, the validator probes the running runtime to determine the level it actually demonstrates, then compares the two:
 
 - It starts the runtime with the full Full-level fixture set available: the CH-RUNTIMEOPS listening, the platform MCP server and connector fixtures reachable, and the manifest written.
-- If the runtime completes the `lifecycle_capabilities` / `lifecycle_support` exchange on `@lenny-lifecycle` within the grace window, the observed level is at least Full.
+- If the runtime completes the `lifecycle_capabilities` / `lifecycle_support` exchange on `@lenny-runtime-ops` within the grace window, the observed level is at least Full.
 - Otherwise, if it connects to the platform MCP server and presents a valid `_lennyNonce` during `initialize`, the observed level is at least Standard.
 - Otherwise the observed level is Basic.
 

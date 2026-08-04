@@ -17,37 +17,37 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// fakeControlStream is the server side of the §4.7 LifecycleChannel bidi
+// fakeControlStream is the server side of the §4.7 AdapterEvents bidi
 // stream. It captures envelopes the adapter sends and lets the test drive
 // the inbound (gateway→adapter) direction and the stream context.
 type fakeControlStream struct {
 	grpc.ServerStream
 	ctx  context.Context
-	sent chan *adapterv1.LifecycleChannelResponse
+	sent chan *adapterv1.AdapterEventsResponse
 	recv chan recvResult
 }
 
 type recvResult struct {
-	req *adapterv1.LifecycleChannelRequest
+	req *adapterv1.AdapterEventsRequest
 	err error
 }
 
 func newFakeControlStream(ctx context.Context) *fakeControlStream {
 	return &fakeControlStream{
 		ctx:  ctx,
-		sent: make(chan *adapterv1.LifecycleChannelResponse, 16),
+		sent: make(chan *adapterv1.AdapterEventsResponse, 16),
 		recv: make(chan recvResult),
 	}
 }
 
 func (f *fakeControlStream) Context() context.Context { return f.ctx }
 
-func (f *fakeControlStream) Send(r *adapterv1.LifecycleChannelResponse) error {
+func (f *fakeControlStream) Send(r *adapterv1.AdapterEventsResponse) error {
 	f.sent <- r
 	return nil
 }
 
-func (f *fakeControlStream) Recv() (*adapterv1.LifecycleChannelRequest, error) {
+func (f *fakeControlStream) Recv() (*adapterv1.AdapterEventsRequest, error) {
 	select {
 	case r := <-f.recv:
 		return r.req, r.err
@@ -56,7 +56,7 @@ func (f *fakeControlStream) Recv() (*adapterv1.LifecycleChannelRequest, error) {
 	}
 }
 
-// awaitRegistration blocks until the LifecycleChannel handler has attached
+// awaitRegistration blocks until the AdapterEvents handler has attached
 // its event sink so emitted events are not dropped.
 func awaitRegistration(t *testing.T, s *Server) {
 	t.Helper()
@@ -89,8 +89,8 @@ func recvEvent(t *testing.T, stream *fakeControlStream) controlEvent {
 }
 
 // spec: §4.7 lines 652-662 — every adapter→gateway control event is
-// surfaced on the LifecycleChannel stream with its type and fields.
-func TestLifecycleChannelEmitsControlEvents_spec_4_7(t *testing.T) {
+// surfaced on the AdapterEvents stream with its type and fields.
+func TestAdapterEventsEmitsControlEvents_spec_4_7(t *testing.T) {
 	s := New("served")
 	s.mu.Lock()
 	s.sessionID = "sess-1"
@@ -100,7 +100,7 @@ func TestLifecycleChannelEmitsControlEvents_spec_4_7(t *testing.T) {
 	defer cancel()
 	stream := newFakeControlStream(ctx)
 	done := make(chan error, 1)
-	go func() { done <- s.LifecycleChannel(stream) }()
+	go func() { done <- s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 
 	s.EmitRateLimited("anthropic")
@@ -136,7 +136,7 @@ func TestLifecycleChannelEmitsControlEvents_spec_4_7(t *testing.T) {
 
 	cancel()
 	if err := <-done; status.Code(err) != codes.Canceled && err != context.Canceled {
-		t.Errorf("LifecycleChannel returned %v, want context cancellation", err)
+		t.Errorf("AdapterEvents returned %v, want context cancellation", err)
 	}
 }
 
@@ -155,17 +155,17 @@ func TestControlEventDroppedWhenNoStream_spec_4_7(t *testing.T) {
 
 // spec: §6.1 one-session-per-pod — a second concurrent control stream is
 // rejected so events fan out to a single gateway connection.
-func TestLifecycleChannelRejectsSecondStream_spec_4_7(t *testing.T) {
+func TestAdapterEventsRejectsSecondStream_spec_4_7(t *testing.T) {
 	s := New("served")
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	first := newFakeControlStream(ctx)
-	go func() { _ = s.LifecycleChannel(first) }()
+	go func() { _ = s.AdapterEvents(first) }()
 	awaitRegistration(t, s)
 
 	second := newFakeControlStream(context.Background())
-	if err := s.LifecycleChannel(second); status.Code(err) != codes.FailedPrecondition {
-		t.Errorf("second LifecycleChannel = %v, want FailedPrecondition", status.Code(err))
+	if err := s.AdapterEvents(second); status.Code(err) != codes.FailedPrecondition {
+		t.Errorf("second AdapterEvents = %v, want FailedPrecondition", status.Code(err))
 	}
 }
 
@@ -190,7 +190,7 @@ func TestEmitFinalUsageOnShutdownPath_spec_4_7(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	stream := newFakeControlStream(ctx)
-	go func() { _ = s.LifecycleChannel(stream) }()
+	go func() { _ = s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 
 	s.emitFinalUsage(context.Background(), "sess-fin")
@@ -213,21 +213,21 @@ func TestEmitFinalUsageNoMeterIsNoop_spec_4_7(t *testing.T) {
 }
 
 // spec: §4.7 lines 661-662 — a gateway frame that closes the stream
-// (io.EOF on Recv) ends LifecycleChannel cleanly.
-func TestLifecycleChannelClosesOnGatewayEOF_spec_4_7(t *testing.T) {
+// (io.EOF on Recv) ends AdapterEvents cleanly.
+func TestAdapterEventsClosesOnGatewayEOF_spec_4_7(t *testing.T) {
 	s := New("served")
 	stream := newFakeControlStream(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- s.LifecycleChannel(stream) }()
+	go func() { done <- s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 
 	stream.recv <- recvResult{err: io.EOF}
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Errorf("LifecycleChannel on EOF = %v, want nil", err)
+			t.Errorf("AdapterEvents on EOF = %v, want nil", err)
 		}
 	case <-time.After(2 * time.Second):
-		t.Fatal("LifecycleChannel did not return on gateway EOF")
+		t.Fatal("AdapterEvents did not return on gateway EOF")
 	}
 }

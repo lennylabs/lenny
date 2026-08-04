@@ -17,7 +17,7 @@ import (
 // TestSignalFilesUpdatedEmitsFrame asserts the §7.4 line 433 files_updated
 // lifecycle signal reaches a connected runtime. F-7.4.6.
 func TestSignalFilesUpdatedEmitsFrame_spec_7_4_433(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	if err := lc.SignalFilesUpdated(); err != nil {
@@ -34,9 +34,9 @@ func TestSignalFilesUpdatedEmitsFrame_spec_7_4_433(t *testing.T) {
 // sentinel rather than panicking, so FinalizeWorkspace can ignore it.
 // F-7.4.6.
 func TestSignalFilesUpdatedNoRuntimeIsBenign_spec_7_4_433(t *testing.T) {
-	lc, err := NewLifecycleChannel(shortSocketName(t, "lc.sock"))
+	lc, err := NewRuntimeOps(shortSocketName(t, "lc.sock"))
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	t.Cleanup(func() { _ = lc.Close() })
 	// No Run, no runtime connection: writeFrame has no encoder.
@@ -65,7 +65,7 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 		t.Fatal(err)
 	}
 
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 	srv := &Server{WorkspaceRoot: root, StagingDir: staging, Lifecycle: lc}
 
@@ -117,7 +117,7 @@ func TestFinalizeWorkspacePreStartDoesNotSignal_spec_7_4_433(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "stale.txt"), []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 	srv := &Server{WorkspaceRoot: root, Lifecycle: lc}
 

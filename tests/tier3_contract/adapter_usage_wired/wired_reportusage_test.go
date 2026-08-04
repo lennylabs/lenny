@@ -87,9 +87,9 @@ func wiredAdapter(t *testing.T) (adapterv1.AdapterClient, string) {
 	t.Helper()
 
 	sock := shortSocket(t, "lifecycle.sock")
-	lc, err := adapter.NewLifecycleChannel(sock)
+	lc, err := adapter.NewRuntimeOps(sock)
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	lcCtx, lcCancel := context.WithCancel(context.Background())
 	t.Cleanup(lcCancel)

@@ -234,9 +234,9 @@ func TestWireDirectModeUsageInstallsMeterAndSink_spec_11_2(t *testing.T) {
 	s.mu.Lock()
 	s.sessionID = "sess-wire"
 	s.mu.Unlock()
-	lc, err := NewLifecycleChannel(shortSocketName(t, "wire.sock"))
+	lc, err := NewRuntimeOps(shortSocketName(t, "wire.sock"))
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	t.Cleanup(func() { _ = lc.Close() })
 	m := WireDirectModeUsage(s, lc)

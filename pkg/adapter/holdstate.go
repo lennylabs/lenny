@@ -54,7 +54,7 @@ type holdState struct {
 var coordinatorHoldAllowedMethods = map[string]bool{
 	"/lenny.adapter.v1.Adapter/CoordinatorFence": true,
 	"/lenny.adapter.v1.Adapter/NegotiateVersion": true,
-	"/lenny.adapter.v1.Adapter/LifecycleChannel": true,
+	"/lenny.adapter.v1.Adapter/AdapterEvents":    true,
 	"/grpc.health.v1.Health/Check":               true,
 	"/grpc.health.v1.Health/Watch":               true,
 }
@@ -78,7 +78,7 @@ func (s *Server) coordinatorHoldTimeout() time.Duration {
 }
 
 // onCoordinatorChannelClosed is invoked when the gateway control stream
-// (LifecycleChannel) ends. When the pod still holds an active session the
+// (AdapterEvents) ends. When the pod still holds an active session the
 // closed stream is the §10.1 coordinator-loss signal: the coordinating
 // gateway replica crashed or partitioned (the gRPC keepalive at
 // 10s/5s — §11.3 lines 205-206 — surfaces the dead connection within one
@@ -250,7 +250,7 @@ func (s *Server) holdStateUnaryInterceptor(ctx context.Context, req any, info *g
 }
 
 // holdStateStreamInterceptor is the streaming counterpart of
-// holdStateUnaryInterceptor. The LifecycleChannel is allowlisted so a new
+// holdStateUnaryInterceptor. The AdapterEvents is allowlisted so a new
 // coordinator can re-attach the control stream; Attach and
 // PrepareWorkspace are rejected like any other operational RPC.
 //

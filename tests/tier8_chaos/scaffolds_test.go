@@ -214,7 +214,7 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 // §12.8 rotation failure — covered structurally by:
 //   - pkg/adapter/credentials.go (credentials_rotated /
 //     credentials_acknowledged handshake; unit tests).
-//   - pkg/adapter/lifecyclechannel.go (CH-RUNTIMEOPS).
+//   - pkg/adapter/runtimeops.go (CH-RUNTIMEOPS).
 //   - sdks/runtime/go/runtime/lifecycle.go.
 //
 // Live rotation-failure exercise needs the fault-injection knob on
@@ -222,7 +222,7 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the tier-8 ops backlog.
 func TestRotationFailure(t *testing.T) {
-	t.Logf("§12.8: pkg/adapter credential-rotation handshake + lifecyclechannel + sdks/runtime/go/runtime/lifecycle. Rotate fault injection on the ops backlog.")
+	t.Logf("§12.8: pkg/adapter credential-rotation handshake + runtimeops + sdks/runtime/go/runtime/lifecycle. Rotate fault injection on the ops backlog.")
 }
 
 // §12.8 deny-list propagation under Redis outage — covered by:

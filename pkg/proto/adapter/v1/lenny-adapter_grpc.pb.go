@@ -58,7 +58,7 @@ const (
 	Adapter_DemoteSDK_FullMethodName                   = "/lenny.adapter.v1.Adapter/DemoteSDK"
 	Adapter_NegotiateVersion_FullMethodName            = "/lenny.adapter.v1.Adapter/NegotiateVersion"
 	Adapter_GetObservedIntegrationLevel_FullMethodName = "/lenny.adapter.v1.Adapter/GetObservedIntegrationLevel"
-	Adapter_LifecycleChannel_FullMethodName            = "/lenny.adapter.v1.Adapter/LifecycleChannel"
+	Adapter_AdapterEvents_FullMethodName               = "/lenny.adapter.v1.Adapter/AdapterEvents"
 )
 
 // AdapterClient is the client API for Adapter service.
@@ -190,7 +190,7 @@ type AdapterClient interface {
 	// `coordination_generation` against the last fenced generation, quiesces
 	// tool-call dispatch, and holds the quiesced state open while the
 	// gateway drives the Checkpoint stream against the held pod. The adapter
-	// acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
+	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
 	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
 	// quiescence. The RPC return value mirrors the ack so a synchronous
@@ -239,11 +239,11 @@ type AdapterClient interface {
 	// integrationLevel and reject an underperforming runtime
 	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(ctx context.Context, in *GetObservedIntegrationLevelRequest, opts ...grpc.CallOption) (*GetObservedIntegrationLevelResponse, error)
-	// LifecycleChannel is a bidirectional stream the adapter uses to surface
+	// AdapterEvents is a bidirectional stream the adapter uses to surface
 	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
 	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
 	// the event taxonomy.
-	LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error)
+	AdapterEvents(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse], error)
 }
 
 type adapterClient struct {
@@ -493,18 +493,18 @@ func (c *adapterClient) GetObservedIntegrationLevel(ctx context.Context, in *Get
 	return out, nil
 }
 
-func (c *adapterClient) LifecycleChannel(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse], error) {
+func (c *adapterClient) AdapterEvents(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[3], Adapter_LifecycleChannel_FullMethodName, cOpts...)
+	stream, err := c.cc.NewStream(ctx, &Adapter_ServiceDesc.Streams[3], Adapter_AdapterEvents_FullMethodName, cOpts...)
 	if err != nil {
 		return nil, err
 	}
-	x := &grpc.GenericClientStream[LifecycleChannelRequest, LifecycleChannelResponse]{ClientStream: stream}
+	x := &grpc.GenericClientStream[AdapterEventsRequest, AdapterEventsResponse]{ClientStream: stream}
 	return x, nil
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_LifecycleChannelClient = grpc.BidiStreamingClient[LifecycleChannelRequest, LifecycleChannelResponse]
+type Adapter_AdapterEventsClient = grpc.BidiStreamingClient[AdapterEventsRequest, AdapterEventsResponse]
 
 // AdapterServer is the server API for Adapter service.
 // All implementations should embed UnimplementedAdapterServer
@@ -635,7 +635,7 @@ type AdapterServer interface {
 	// `coordination_generation` against the last fenced generation, quiesces
 	// tool-call dispatch, and holds the quiesced state open while the
 	// gateway drives the Checkpoint stream against the held pod. The adapter
-	// acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
+	// acknowledges via `CheckpointBarrierAck` on the AdapterEvents
 	// control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
 	// only after that gateway-driven stream terminates, then releases
 	// quiescence. The RPC return value mirrors the ack so a synchronous
@@ -684,11 +684,11 @@ type AdapterServer interface {
 	// integrationLevel and reject an underperforming runtime
 	// (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
 	GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error)
-	// LifecycleChannel is a bidirectional stream the adapter uses to surface
+	// AdapterEvents is a bidirectional stream the adapter uses to surface
 	// Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
 	// credentials_acknowledged, deadline_approaching). See spec §15.4 for
 	// the event taxonomy.
-	LifecycleChannel(grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]) error
+	AdapterEvents(grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]) error
 }
 
 // UnimplementedAdapterServer should be embedded to have
@@ -767,8 +767,8 @@ func (UnimplementedAdapterServer) NegotiateVersion(context.Context, *NegotiateVe
 func (UnimplementedAdapterServer) GetObservedIntegrationLevel(context.Context, *GetObservedIntegrationLevelRequest) (*GetObservedIntegrationLevelResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetObservedIntegrationLevel not implemented")
 }
-func (UnimplementedAdapterServer) LifecycleChannel(grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]) error {
-	return status.Error(codes.Unimplemented, "method LifecycleChannel not implemented")
+func (UnimplementedAdapterServer) AdapterEvents(grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]) error {
+	return status.Error(codes.Unimplemented, "method AdapterEvents not implemented")
 }
 func (UnimplementedAdapterServer) testEmbeddedByValue() {}
 
@@ -1171,12 +1171,12 @@ func _Adapter_GetObservedIntegrationLevel_Handler(srv interface{}, ctx context.C
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Adapter_LifecycleChannel_Handler(srv interface{}, stream grpc.ServerStream) error {
-	return srv.(AdapterServer).LifecycleChannel(&grpc.GenericServerStream[LifecycleChannelRequest, LifecycleChannelResponse]{ServerStream: stream})
+func _Adapter_AdapterEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AdapterServer).AdapterEvents(&grpc.GenericServerStream[AdapterEventsRequest, AdapterEventsResponse]{ServerStream: stream})
 }
 
 // This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
-type Adapter_LifecycleChannelServer = grpc.BidiStreamingServer[LifecycleChannelRequest, LifecycleChannelResponse]
+type Adapter_AdapterEventsServer = grpc.BidiStreamingServer[AdapterEventsRequest, AdapterEventsResponse]
 
 // Adapter_ServiceDesc is the grpc.ServiceDesc for Adapter service.
 // It's only intended for direct use with grpc.RegisterService,
@@ -1285,8 +1285,8 @@ var Adapter_ServiceDesc = grpc.ServiceDesc{
 			ClientStreams: true,
 		},
 		{
-			StreamName:    "LifecycleChannel",
-			Handler:       _Adapter_LifecycleChannel_Handler,
+			StreamName:    "AdapterEvents",
+			Handler:       _Adapter_AdapterEvents_Handler,
 			ServerStreams: true,
 			ClientStreams: true,
 		},

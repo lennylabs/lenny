@@ -141,7 +141,7 @@ func tiersForGroup(name string) []tierPlan {
 		}
 	case "phase-2.8-gate":
 		return []tierPlan{
-			{name: "static", notes: "streaming-echo + lifecycle-events schema compile; examples validate"},
+			{name: "static", notes: "streaming-echo + runtime-ops-events schema compile; examples validate"},
 			{name: "unit", notes: "no new unit packages — streaming-echo behaviour is covered by the conformance battery"},
 			{name: "conformance", subsets: []string{"full"}, notes: "lenny-compliance --level full against cmd/runtimes/streaming-echo"},
 		}

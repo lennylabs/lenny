@@ -122,16 +122,16 @@ func TestInterruptReportsARuntimeFailure(t *testing.T) {
 
 // startLifecycle creates a CH-RUNTIMEOPS on a temporary socket and
 // runs it; Run is torn down on test cleanup.
-func startLifecycle(t *testing.T) *adapter.LifecycleChannel {
+func startLifecycle(t *testing.T) *adapter.RuntimeOps {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "lc-*")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.RemoveAll(dir) })
-	lc, err := adapter.NewLifecycleChannel(filepath.Join(dir, "lifecycle.sock"))
+	lc, err := adapter.NewRuntimeOps(filepath.Join(dir, "lifecycle.sock"))
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -154,7 +154,7 @@ type lifecycleRuntime struct {
 
 // dialLifecycle dials lc as a runtime, completes the handshake, and
 // blocks until the adapter has recorded the runtime's capabilities.
-func dialLifecycle(t *testing.T, lc *adapter.LifecycleChannel) *lifecycleRuntime {
+func dialLifecycle(t *testing.T, lc *adapter.RuntimeOps) *lifecycleRuntime {
 	t.Helper()
 	conn, err := net.Dial("unix", lc.SocketPath())
 	if err != nil {
@@ -196,7 +196,7 @@ func (lr *lifecycleRuntime) send(m map[string]any) {
 	}
 }
 
-func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
+func TestInterruptCleanUsesRuntimeOps(t *testing.T) {
 	s, rt := startedSession(t, "sess-1")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
@@ -238,7 +238,7 @@ func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
 
 // spec: §11.3 line 240 — DEADLINE_APPROACHING is delivered over the
 // CH-RUNTIMEOPS. F-11.3.5.
-func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) {
+func TestSignalDeadlineDeliversOverRuntimeOps_spec_11_3_240(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc
@@ -329,7 +329,7 @@ func TestSignalDeadlineRejectsAnUnassignedSession_spec_11_3_240(t *testing.T) {
 	}
 }
 
-func TestInterruptCleanTimesOutOnLifecycleChannel(t *testing.T) {
+func TestInterruptCleanTimesOutOnRuntimeOps(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
 	lc := startLifecycle(t)
 	s.Lifecycle = lc

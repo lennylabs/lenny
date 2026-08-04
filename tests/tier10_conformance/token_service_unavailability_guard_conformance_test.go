@@ -150,7 +150,7 @@ func TestExtendCredentialLeaseConformanceTimerOnly_spec_4_9(t *testing.T) {
 	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
 	socketPath := filepath.Join(sockDir, "lc.sock")
 
-	lc, err := adapter.NewLifecycleChannel(socketPath)
+	lc, err := adapter.NewRuntimeOps(socketPath)
 	if err != nil {
 		t.Fatalf("new lifecycle channel: %v", err)
 	}

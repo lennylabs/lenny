@@ -76,3 +76,6 @@ tests/testinfra/kind/minio-ca.gen.crt
 .itest.log
 .covss.log
 .covmr.log
+
+# One-off operator workflow for the channel migration; deleted when it completes.
+.claude/workflows/apply-0064.js

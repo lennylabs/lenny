@@ -251,7 +251,7 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 	}
 
 	// Attach a fake control-event sink so we can observe the ack emit
-	// without standing up the gRPC LifecycleChannel stream.
+	// without standing up the gRPC AdapterEvents stream.
 	sink := make(chan controlEvent, 4)
 	s.controlMu.Lock()
 	s.controlSink = sink
@@ -311,7 +311,7 @@ func TestCheckpointBarrierAcksEchoedCheckpointID(t *testing.T) {
 			t.Fatalf("control event fields: %+v", ev)
 		}
 		// Round-trip JSON marshal so we exercise the wire encoding the
-		// LifecycleChannel uses.
+		// AdapterEvents uses.
 		buf, err := json.Marshal(ev)
 		if err != nil {
 			t.Fatalf("marshal control event: %v", err)

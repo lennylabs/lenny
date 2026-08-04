@@ -151,7 +151,7 @@ Everything in Basic, plus a local connection to a tool server that the platform 
 
 Everything in Standard, plus a CH-RUNTIMEOPS: a second local connection that carries operational signals:
 
-- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-lifecycle`).
+- Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-runtime-ops`).
 - Supports cooperative checkpoints: the platform asks the runtime to quiesce, the runtime replies when it's at a safe point, the snapshot is captured, and the platform signals completion.
 - Survives pod failures with consistent checkpoints.
 - Handles interrupts cleanly via `interrupt_request` / `interrupt_acknowledged`.

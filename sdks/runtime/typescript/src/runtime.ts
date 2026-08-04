@@ -408,7 +408,7 @@ class Session {
       }
     }
     if (levelRank(this.cfg.level) >= levelRank("full")) {
-      if (!this.manifest?.lifecycleChannel?.socket) {
+      if (!this.manifest?.runtimeOps?.socket) {
         this.cfg.logger(
           "runtime: no lifecycle channel in the manifest; lifecycle features disabled",
         );

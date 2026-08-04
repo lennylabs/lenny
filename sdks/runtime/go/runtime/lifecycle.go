@@ -106,10 +106,10 @@ func WithLifecycleHandlers(opts ...LifecycleOption) Option {
 // lifecycle_support handshake, and starts the event loop. cancel stops
 // the frame loop when the adapter sends a terminate event.
 func (s *session) dialLifecycle(ctx context.Context, cancel context.CancelFunc) (*Lifecycle, error) {
-	if s.manifest == nil || s.manifest.LifecycleChannel == nil || s.manifest.LifecycleChannel.Socket == "" {
+	if s.manifest == nil || s.manifest.RuntimeOps == nil || s.manifest.RuntimeOps.Socket == "" {
 		return nil, errors.New("adapter manifest has no lifecycle channel socket")
 	}
-	conn, err := dialUnixSocket(ctx, s.manifest.LifecycleChannel.Socket, s.cfg.dialTimeout)
+	conn, err := dialUnixSocket(ctx, s.manifest.RuntimeOps.Socket, s.cfg.dialTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("dial lifecycle socket: %w", err)
 	}

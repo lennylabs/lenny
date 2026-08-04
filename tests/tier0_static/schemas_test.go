@@ -34,7 +34,7 @@ func TestPhase1SchemasParse(t *testing.T) {
 		"schemas/messagepart.schema.json",
 		"schemas/lenny-adapter-jsonl.schema.json",
 		"schemas/workspaceplan-v1.json",
-		"schemas/lifecycle-events.schema.json",
+		"schemas/runtime-ops-events.schema.json",
 		// spec: §11.7 line 365 — per-version audit-event registry.
 		"schemas/audit-events/v1.json",
 	}
@@ -137,15 +137,15 @@ func TestMessagePartExamplesValidate(t *testing.T) {
 //
 //	fields), 11.2 (direct-mode usage source)
 //
-// diagnosis: a lifecycle-events example failed to validate against
+// diagnosis: a runtime-ops-events example failed to validate against
 //
-//	schemas/lifecycle-events.schema.json. Verify the envelope
+//	schemas/runtime-ops-events.schema.json. Verify the envelope
 //	shape, the `type` discriminator, and the capability enum.
 //	The llm_request_completed.tokens example exercises the
 //	optional §4.7 inputTokens/outputTokens direct-mode source.
 func TestLifecycleEventExamplesValidate(t *testing.T) {
 	t.Parallel()
-	validator := schematest.Compile(t, "schemas/lifecycle-events.schema.json")
+	validator := schematest.Compile(t, "schemas/runtime-ops-events.schema.json")
 
 	root := schematest.RepoRoot(t)
 	for _, name := range []string{

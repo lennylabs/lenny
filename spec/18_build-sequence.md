@@ -162,7 +162,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 **Deliverables.**
 
 - `cmd/runtimes/streaming-echo` Full-level reference runtime, inheriting the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adding a CH-RUNTIMEOPS client over a Unix socket. The runtime handles `lifecycle_capabilities`, `lifecycle_support`, `checkpoint_request`, `checkpoint_ready`, `interrupt_request`, `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/lifecycle-events.schema.json` (CH-RUNTIMEOPS envelope) with example fixtures under `schemas/examples/lifecycle.*.json`.
+- `schemas/runtime-ops-events.schema.json` (CH-RUNTIMEOPS envelope) with example fixtures under `schemas/examples/lifecycle.*.json`.
 - `cmd/lenny-compliance --level full` battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, `credentials_rotated`, and `deadline_signal`).
 
 **Prerequisites.** Phase 2.5 exit gate.

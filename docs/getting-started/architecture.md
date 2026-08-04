@@ -269,7 +269,7 @@ Each agent pod contains two processes:
 - Exposes the gRPC/HTTP+mTLS interface that the gateway uses for lifecycle control.
 - Writes the adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, credential file paths, and configuration.
 - Hosts the intra-pod MCP servers (platform tools, per-connector tools) as abstract Unix socket listeners.
-- Manages the CH-RUNTIMEOPS (`@lenny-lifecycle`) for runtimes that implement the Full integration level.
+- Manages the CH-RUNTIMEOPS (`@lenny-runtime-ops`) for runtimes that implement the Full integration level.
 - Handles workspace staging, setup command execution, and checkpoint orchestration.
 
 **Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:

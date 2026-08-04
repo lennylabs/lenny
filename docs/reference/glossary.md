@@ -48,6 +48,21 @@ A session state entered when automatic retry attempts are exhausted or `maxResum
 
 ## C
 
+### CH-ADAPTEREVENTS
+{: #ch-adapterevents }
+
+The gRPC bidirectional stream over which a pod's runtime adapter surfaces operational events to the gateway. The adapter emits `RATE_LIMITED`, `AUTH_EXPIRED`, `PROVIDER_UNAVAILABLE`, `LEASE_REJECTED`, `AdapterTerminating`, `FINAL_USAGE_REPORT`, and `CheckpointBarrierAck` on it. The gateway opens the stream and the adapter originates the messages. See [Internal API](../api/internal).
+
+### CH-RUNTIMEOPS
+{: #ch-runtimeops }
+
+The bidirectional JSON Lines stream over an abstract Unix socket between a pod's runtime adapter and a Full-level runtime. It carries the checkpoint, interrupt, credential-rotation, and deadline-approaching frames. The runtime connects as a client and the adapter listens. The socket is separate from the stdin/stdout message channel the agent binary reads. See [Adapter Contract](adapter-contract).
+
+### Channel Identifiers
+{: #lifecycle-channel }
+
+The canonical names of the communication channels between the gateway, the adapter, and the runtime. The adapter-to-gateway gRPC event stream is [CH-ADAPTEREVENTS](#ch-adapterevents) and the intra-pod operations socket is [CH-RUNTIMEOPS](#ch-runtimeops).
+
 ### Compliance Profile
 {: #compliance-profile }
 
@@ -202,11 +217,6 @@ A container runtime that uses lightweight virtual machines for strong isolation.
 {: #lease }
 
 See [Credential Lease](#credential-lease).
-
-### CH-RUNTIMEOPS
-{: #lifecycle-channel }
-
-The gRPC bidirectional stream between the gateway and a pod's runtime adapter. Used for control-plane signals: session start/stop, interrupt, checkpoint requests, credential rotation, and workspace notifications. Distinct from the data-plane stdin/stdout pipe.
 
 ### LLM Proxy
 {: #llm-proxy }

@@ -699,7 +699,7 @@ The adapter communicates with the runtime binary via two mechanisms:
 
 **No workspace MCP server.** Workspace is materialized to `/workspace/current` before the runtime starts. The runtime accesses it via the filesystem directly.
 
-**Part B — CH-RUNTIMEOPS** — bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`) for operational signals. The socket path is advertised in the adapter manifest (`lifecycleChannel.socket`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`:
+**Part B — CH-RUNTIMEOPS** — bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-runtime-ops`) for operational signals. The socket path is advertised in the adapter manifest (`runtimeOps.socket`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`:
 
 ```
 Adapter → Runtime:  lifecycle_capabilities, checkpoint_request,
@@ -736,7 +736,7 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 {
   "version": 1,
   "platformMcpServer": { "socket": "@lenny-platform-mcp" },
-  "lifecycleChannel": { "socket": "@lenny-lifecycle" },
+  "runtimeOps": { "socket": "@lenny-runtime-ops" },
   "connectorServers": [{ "id": "github", "socket": "@lenny-connector-github" }],
   "runtimeMcpServers": [],
   "adapterLocalTools": [
@@ -787,8 +787,8 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 | `version`                   | `integer`          | Yes      | Schema version. Currently `1`. Runtimes MUST reject any `version` value higher than the highest version they understand (every increment is breaking; see forward-compatibility rule below).                                                                                                                                                                                                               | All (if reading manifest) |
 | `platformMcpServer`         | `object`           | Yes      | Platform MCP server endpoint.                                                                                                                                                                                                                                                               | Standard, Full            |
 | `platformMcpServer.socket`  | `string`           | Yes      | Abstract Unix socket name (e.g., `@lenny-platform-mcp`).                                                                                                                                                                                                                                    | Standard, Full            |
-| `lifecycleChannel`          | `object`           | Yes      | CH-RUNTIMEOPS endpoint.                                                                                                                                                                                                                                                                 | Full                      |
-| `lifecycleChannel.socket`   | `string`           | Yes      | Abstract Unix socket name (e.g., `@lenny-lifecycle`).                                                                                                                                                                                                                                       | Full                      |
+| `runtimeOps`          | `object`           | Yes      | CH-RUNTIMEOPS endpoint.                                                                                                                                                                                                                                                                 | Full                      |
+| `runtimeOps.socket`   | `string`           | Yes      | Abstract Unix socket name (e.g., `@lenny-runtime-ops`).                                                                                                                                                                                                                                       | Full                      |
 | `connectorServers`          | `array`            | Yes      | Per-connector MCP servers. Empty array `[]` if no connectors are authorized. Never absent.                                                                                                                                                                                                  | Standard, Full            |
 | `connectorServers[].id`     | `string`           | Yes      | Connector identifier.                                                                                                                                                                                                                                                                       | Standard, Full            |
 | `connectorServers[].socket` | `string`           | Yes      | Abstract Unix socket name for this connector.                                                                                                                                                                                                                                               | Standard, Full            |
@@ -813,7 +813,7 @@ Optional. Runtimes that don't open it operate in fallback-only mode. Versioned b
 
 - **Basic** — The runtime does not need to read the adapter manifest for core operation — it operates purely on stdin/stdout. The four built-in adapter-local tools (`read_file`, `write_file`, `list_dir`, `delete_file`) are a fixed contract: Basic-level runtimes may hardcode their names and schemas without reading the manifest. Basic-level runtimes that wish to discover custom adapter-local tools added by non-standard adapters may optionally read the `adapterLocalTools` array from the manifest.
 - **Standard** — The runtime reads `platformMcpServer.socket`, `connectorServers`, and `mcpNonce` to connect to and authenticate with local MCP servers.
-- **Full** — Standard fields plus `lifecycleChannel.socket`.
+- **Full** — Standard fields plus `runtimeOps.socket`.
 
 **Forward compatibility:** Runtimes must silently ignore unknown top-level fields. The adapter may add new fields in future versions without incrementing `version`. A `version` increment indicates a breaking change to existing field semantics.
 

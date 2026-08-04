@@ -82,14 +82,14 @@ type lifecycleFrame struct {
 	OutputTokens int64 `json:"outputTokens,omitempty"`
 }
 
-// LifecycleChannel is the adapter side of the §4.7 CH-RUNTIMEOPS:
+// RuntimeOps is the adapter side of the §4.7 CH-RUNTIMEOPS:
 // a Unix-socket server the Full-level agent runtime dials to receive
 // checkpoint, interrupt, credential-rotation, deadline, and terminate
 // signals and to acknowledge them. The adapter listens; the runtime
 // connects once per pod. The socket address (a file path or, on Linux,
 // an abstract `@`-prefixed name) is published to the runtime through
-// the adapter manifest's lifecycleChannel.socket field.
-type LifecycleChannel struct {
+// the adapter manifest's runtimeOps.socket field.
+type RuntimeOps struct {
 	listener net.Listener
 
 	ready chan struct{} // closed once the handshake completes
@@ -128,15 +128,15 @@ type tokenSink interface {
 	AddTokens(inputTokens, outputTokens int64)
 }
 
-// NewLifecycleChannel listens on socketPath for the runtime's lifecycle
+// NewRuntimeOps listens on socketPath for the runtime's lifecycle
 // connection. socketPath is a filesystem path or, on Linux, an abstract
 // socket name beginning with `@`.
-func NewLifecycleChannel(socketPath string) (*LifecycleChannel, error) {
+func NewRuntimeOps(socketPath string) (*RuntimeOps, error) {
 	l, err := net.Listen("unix", socketPath)
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle channel listen %s: %w", socketPath, err)
 	}
-	return &LifecycleChannel{
+	return &RuntimeOps{
 		listener: l,
 		ready:    make(chan struct{}),
 		done:     make(chan struct{}),
@@ -146,7 +146,7 @@ func NewLifecycleChannel(socketPath string) (*LifecycleChannel, error) {
 }
 
 // SocketPath is the address the runtime dials to reach the channel.
-func (lc *LifecycleChannel) SocketPath() string {
+func (lc *RuntimeOps) SocketPath() string {
 	return lc.listener.Addr().String()
 }
 
@@ -155,7 +155,7 @@ func (lc *LifecycleChannel) SocketPath() string {
 // is set once before Run starts (the adapter wiring in
 // cmd/lenny-adapter), so it does not race with the read loop. A nil sink
 // leaves token folding a no-op (the Basic/Standard and dev paths).
-func (lc *LifecycleChannel) SetUsageSink(sink tokenSink) {
+func (lc *RuntimeOps) SetUsageSink(sink tokenSink) {
 	lc.usage = sink
 }
 
@@ -172,7 +172,7 @@ func (lc *LifecycleChannel) SetUsageSink(sink tokenSink) {
 //
 // spec: §4.7 lines 836-842 — the Full-level CH-RUNTIMEOPS is rebound
 // per runtime process rather than torn down after the first disconnect.
-func (lc *LifecycleChannel) Run(ctx context.Context) error {
+func (lc *RuntimeOps) Run(ctx context.Context) error {
 	defer close(lc.done)
 	stop := context.AfterFunc(ctx, func() { _ = lc.Close() })
 	defer stop()
@@ -200,7 +200,7 @@ func (lc *LifecycleChannel) Run(ctx context.Context) error {
 
 // serveConn binds conn as the active runtime connection, completes the
 // handshake, and serves frames until the connection ends.
-func (lc *LifecycleChannel) serveConn(conn net.Conn) error {
+func (lc *RuntimeOps) serveConn(conn net.Conn) error {
 	ready := make(chan struct{})
 	lc.mu.Lock()
 	if lc.closed {
@@ -228,7 +228,7 @@ func (lc *LifecycleChannel) serveConn(conn net.Conn) error {
 // fresh (unclosed) ready channel so requests block until the next
 // handshake, zeroes the per-provider in-flight counters, and fails every
 // request still waiting on the connection that just ended.
-func (lc *LifecycleChannel) resetConn() {
+func (lc *RuntimeOps) resetConn() {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if lc.conn != nil {
@@ -251,7 +251,7 @@ func (lc *LifecycleChannel) resetConn() {
 }
 
 // isClosed reports whether Close has been called.
-func (lc *LifecycleChannel) isClosed() bool {
+func (lc *RuntimeOps) isClosed() bool {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return lc.closed
@@ -260,7 +260,7 @@ func (lc *LifecycleChannel) isClosed() bool {
 // currentReady returns the channel that closes when the active
 // connection's handshake completes. It is recreated per connection, so
 // callers capture it under the lock before waiting.
-func (lc *LifecycleChannel) currentReady() chan struct{} {
+func (lc *RuntimeOps) currentReady() chan struct{} {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return lc.ready
@@ -269,7 +269,7 @@ func (lc *LifecycleChannel) currentReady() chan struct{} {
 // handshake sends the adapter's lifecycle_capabilities and reads the
 // runtime's lifecycle_support reply, recording the capabilities the
 // runtime declared.
-func (lc *LifecycleChannel) handshake(r *bufio.Reader) error {
+func (lc *RuntimeOps) handshake(r *bufio.Reader) error {
 	if err := lc.writeFrame(lifecycleFrame{
 		Type:            "lifecycle_capabilities",
 		ProtocolVersion: lifecycleProtocolVersion,
@@ -346,7 +346,7 @@ func lifecycleMajor(v string) int {
 // llm_request_started / llm_request_completed adjust the per-provider
 // in-flight counter (§4.7 line 820). Unknown frame types are ignored for
 // forward compatibility.
-func (lc *LifecycleChannel) readLoop(r *bufio.Reader) error {
+func (lc *RuntimeOps) readLoop(r *bufio.Reader) error {
 	for {
 		frame, err := readLifecycleFrame(r)
 		if err != nil {
@@ -384,7 +384,7 @@ func (lc *LifecycleChannel) readLoop(r *bufio.Reader) error {
 // by delta and mirrors the value to the lenny_llm_inflight_requests
 // gauge. The count never goes below zero, so a spurious
 // llm_request_completed (no matching start) is a no-op (§4.7 line 820).
-func (lc *LifecycleChannel) adjustInflight(provider string, delta int) {
+func (lc *RuntimeOps) adjustInflight(provider string, delta int) {
 	if provider == "" {
 		return
 	}
@@ -401,7 +401,7 @@ func (lc *LifecycleChannel) adjustInflight(provider string, delta int) {
 // InflightCount reports the number of outbound LLM requests the runtime
 // has reported started without a matching completion for provider. The
 // Full-level credential-rotation gate (§4.7) waits for it to reach zero.
-func (lc *LifecycleChannel) InflightCount(provider string) int {
+func (lc *RuntimeOps) InflightCount(provider string) int {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return lc.inflight[provider]
@@ -410,7 +410,7 @@ func (lc *LifecycleChannel) InflightCount(provider string) int {
 // deliver wakes the request waiting on key with a successful result.
 // The pending channel is buffered, so the send never blocks even when
 // the request has already abandoned the wait.
-func (lc *LifecycleChannel) deliver(key string) {
+func (lc *RuntimeOps) deliver(key string) {
 	lc.mu.Lock()
 	ch, ok := lc.pending[key]
 	if ok {
@@ -424,7 +424,7 @@ func (lc *LifecycleChannel) deliver(key string) {
 // runtime replies checkpoint_ready for the same id, ctx is cancelled,
 // or the channel closes. deadlineMs is the runtime's quiesce budget
 // (§4.4); the caller bounds the wait with ctx.
-func (lc *LifecycleChannel) RequestCheckpoint(ctx context.Context, checkpointID string, deadlineMs int32) error {
+func (lc *RuntimeOps) RequestCheckpoint(ctx context.Context, checkpointID string, deadlineMs int32) error {
 	return lc.request(ctx, "ckpt:"+checkpointID, lifecycleFrame{
 		Type:         "checkpoint_request",
 		CheckpointID: checkpointID,
@@ -435,7 +435,7 @@ func (lc *LifecycleChannel) RequestCheckpoint(ctx context.Context, checkpointID 
 // CompleteCheckpoint tells the runtime the checkpoint the adapter
 // requested has been stored, so the runtime resumes. status is "ok" or
 // "failed"; reason carries the failure detail when status is "failed".
-func (lc *LifecycleChannel) CompleteCheckpoint(checkpointID, status, reason string) error {
+func (lc *RuntimeOps) CompleteCheckpoint(checkpointID, status, reason string) error {
 	return lc.writeFrame(lifecycleFrame{
 		Type:         "checkpoint_complete",
 		CheckpointID: checkpointID,
@@ -447,7 +447,7 @@ func (lc *LifecycleChannel) CompleteCheckpoint(checkpointID, status, reason stri
 // RequestInterrupt sends an interrupt_request and blocks until the
 // runtime replies interrupt_acknowledged for the same id, ctx is
 // cancelled, or the channel closes.
-func (lc *LifecycleChannel) RequestInterrupt(ctx context.Context, interruptID string, deadlineMs int32) error {
+func (lc *RuntimeOps) RequestInterrupt(ctx context.Context, interruptID string, deadlineMs int32) error {
 	return lc.request(ctx, "int:"+interruptID, lifecycleFrame{
 		Type:        "interrupt_request",
 		InterruptID: interruptID,
@@ -459,7 +459,7 @@ func (lc *LifecycleChannel) RequestInterrupt(ctx context.Context, interruptID st
 // rewritten credential file and blocks until the runtime replies
 // credentials_acknowledged for the same lease, ctx is cancelled, or the
 // channel closes (§4.7 credential rotation).
-func (lc *LifecycleChannel) RotateCredentials(ctx context.Context, provider, credentialsPath, leaseID string) error {
+func (lc *RuntimeOps) RotateCredentials(ctx context.Context, provider, credentialsPath, leaseID string) error {
 	return lc.request(ctx, "cred:"+leaseID, lifecycleFrame{
 		Type:            "credentials_rotated",
 		Provider:        provider,
@@ -471,7 +471,7 @@ func (lc *LifecycleChannel) RotateCredentials(ctx context.Context, provider, cre
 // SignalDeadlineApproaching warns the runtime that the session is
 // nearing expiry or budget exhaustion so it wraps up work. remainingMs
 // is the time left; trigger is one of "session_age", "budget", "idle".
-func (lc *LifecycleChannel) SignalDeadlineApproaching(remainingMs int32, trigger string) error {
+func (lc *RuntimeOps) SignalDeadlineApproaching(remainingMs int32, trigger string) error {
 	return lc.writeFrame(lifecycleFrame{
 		Type:        "deadline_approaching",
 		RemainingMs: remainingMs,
@@ -483,7 +483,7 @@ func (lc *LifecycleChannel) SignalDeadlineApproaching(remainingMs int32, trigger
 // is one of "session_complete", "budget_exhausted", "eviction",
 // "operator". The adapter sends SIGTERM if the runtime has not exited
 // when the deadline elapses.
-func (lc *LifecycleChannel) Terminate(deadlineMs int32, reason string) error {
+func (lc *RuntimeOps) Terminate(deadlineMs int32, reason string) error {
 	return lc.writeFrame(lifecycleFrame{
 		Type:       "terminate",
 		DeadlineMs: deadlineMs,
@@ -499,13 +499,13 @@ func (lc *LifecycleChannel) Terminate(deadlineMs int32, reason string) error {
 // (the pre-start path, before the agent dials the channel) writeFrame
 // returns errLifecycleNotConnected, which the caller treats as a no-op.
 // spec: §7.4 line 433 — F-7.4.6.
-func (lc *LifecycleChannel) SignalFilesUpdated() error {
+func (lc *RuntimeOps) SignalFilesUpdated() error {
 	return lc.writeFrame(lifecycleFrame{Type: "files_updated"})
 }
 
 // Supports reports whether the runtime declared a capability in the
 // handshake. It returns false before the handshake completes.
-func (lc *LifecycleChannel) Supports(capability string) bool {
+func (lc *RuntimeOps) Supports(capability string) bool {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	return lc.supported[capability]
@@ -518,7 +518,7 @@ func (lc *LifecycleChannel) Supports(capability string) bool {
 // already done. A non-positive wait checks the current state without
 // blocking. The §5.1 observed-integration-level probe uses it to decide
 // whether the runtime opened the CH-RUNTIMEOPS (Full level).
-func (lc *LifecycleChannel) WaitHandshake(ctx context.Context, wait time.Duration) bool {
+func (lc *RuntimeOps) WaitHandshake(ctx context.Context, wait time.Duration) bool {
 	ready := lc.currentReady()
 	select {
 	case <-ready:
@@ -544,7 +544,7 @@ func (lc *LifecycleChannel) WaitHandshake(ctx context.Context, wait time.Duratio
 
 // request registers a pending acknowledgement under key, sends frame,
 // and waits for the runtime's reply.
-func (lc *LifecycleChannel) request(ctx context.Context, key string, frame lifecycleFrame) error {
+func (lc *RuntimeOps) request(ctx context.Context, key string, frame lifecycleFrame) error {
 	select {
 	case <-lc.currentReady():
 	case <-lc.done:
@@ -579,14 +579,14 @@ func (lc *LifecycleChannel) request(ctx context.Context, key string, frame lifec
 }
 
 // cancelPending drops a pending acknowledgement that will not arrive.
-func (lc *LifecycleChannel) cancelPending(key string) {
+func (lc *RuntimeOps) cancelPending(key string) {
 	lc.mu.Lock()
 	delete(lc.pending, key)
 	lc.mu.Unlock()
 }
 
 // writeFrame encodes one JSONL frame to the runtime.
-func (lc *LifecycleChannel) writeFrame(f lifecycleFrame) error {
+func (lc *RuntimeOps) writeFrame(f lifecycleFrame) error {
 	lc.mu.Lock()
 	defer lc.mu.Unlock()
 	if lc.closed {
@@ -600,7 +600,7 @@ func (lc *LifecycleChannel) writeFrame(f lifecycleFrame) error {
 
 // Close stops the listener, drops the runtime connection, and fails
 // every pending request. It is safe to call more than once.
-func (lc *LifecycleChannel) Close() error {
+func (lc *RuntimeOps) Close() error {
 	lc.mu.Lock()
 	if lc.closed {
 		lc.mu.Unlock()

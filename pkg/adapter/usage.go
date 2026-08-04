@@ -217,7 +217,7 @@ func (s sessionTokenSink) AddTokens(inputTokens, outputTokens int64) {
 // NewSessionTokenSink returns the CH-RUNTIMEOPS token sink that
 // folds llm_request_completed token counts into meter under the pod's
 // current session id. cmd/lenny-adapter wires it via
-// LifecycleChannel.SetUsageSink.
+// RuntimeOps.SetUsageSink.
 func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string) tokenSink {
 	return sessionTokenSink{meter: meter, currentSession: currentSession}
 }
@@ -240,7 +240,7 @@ func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string)
 //
 // spec: §4.7 (ReportUsage, llm_request_completed token fields), §11.2
 // (direct-mode usage).
-func WireDirectModeUsage(s *Server, lc *LifecycleChannel) *SessionUsageMeter {
+func WireDirectModeUsage(s *Server, lc *RuntimeOps) *SessionUsageMeter {
 	meter := NewSessionUsageMeter(nil)
 	s.Usage = meter
 	if lc != nil {

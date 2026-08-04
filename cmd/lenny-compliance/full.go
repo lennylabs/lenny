@@ -95,8 +95,8 @@ func newFakeAdapter() (*fakeAdapter, func(), error) {
 	socketPath := filepath.Join(dir, "lifecycle.sock")
 	manifest := filepath.Join(dir, "adapter-manifest.json")
 	body, _ := json.Marshal(map[string]any{
-		"lifecycleChannel": map[string]any{"socket": socketPath},
-		"mcpNonce":         "nonce_compliance_harness",
+		"runtimeOps": map[string]any{"socket": socketPath},
+		"mcpNonce":   "nonce_compliance_harness",
 	})
 	if err := os.WriteFile(manifest, body, 0o600); err != nil {
 		os.RemoveAll(dir)

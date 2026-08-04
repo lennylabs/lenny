@@ -64,13 +64,13 @@ var (
 		Buckets: []float64{0.01, 0.1, 1, 5, 15, 30, 60},
 	}, []string{"pool", "provider"})
 	// §4.7 lines 652-662: adapter→gateway control events surfaced over the
-	// gRPC LifecycleChannel stream (RATE_LIMITED, AUTH_EXPIRED,
+	// gRPC AdapterEvents stream (RATE_LIMITED, AUTH_EXPIRED,
 	// PROVIDER_UNAVAILABLE, LEASE_REJECTED, AdapterTerminating,
 	// FINAL_USAGE_REPORT). Sent counts the events delivered onto the stream.
 	controlEventsSent = mustCounterVec(prometheus.CounterOpts{
 		Name: "lenny_adapter_control_events_total",
 		Help: "Adapter→gateway control events queued onto the §4.7 " +
-			"LifecycleChannel stream, labelled by event type.",
+			"AdapterEvents stream, labelled by event type.",
 	}, []string{"event"})
 	// controlEventsDropped counts events emitted while no gateway stream is
 	// attached or the per-stream buffer is full. A non-zero value means a
@@ -173,7 +173,7 @@ func IncSoPeercredSelftestFailed() { soPeercredSelftestFailed.WithLabelValues().
 func IncSoPeercredDisabled() { soPeercredDisabled.WithLabelValues().Inc() }
 
 // incControlEventSent records a §4.7 control event queued onto the
-// LifecycleChannel stream.
+// AdapterEvents stream.
 func incControlEventSent(event string) { controlEventsSent.WithLabelValues(event).Inc() }
 
 // incControlEventDropped records a §4.7 control event that could not be

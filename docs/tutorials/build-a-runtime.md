@@ -637,7 +637,7 @@ import (
 type AdapterManifest struct {
 	Version          int               `json:"version"`
 	PlatformMcpServer MCPServerConfig  `json:"platformMcpServer"`
-	LifecycleChannel  MCPServerConfig  `json:"lifecycleChannel"`
+	RuntimeOps  MCPServerConfig  `json:"runtimeOps"`
 	ConnectorServers  []ConnectorServer `json:"connectorServers"`
 	AdapterLocalTools []ToolDef         `json:"adapterLocalTools"`
 	SessionID        string            `json:"sessionId"`

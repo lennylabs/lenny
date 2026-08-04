@@ -33,7 +33,7 @@ func TestObservedIntegrationLevelStandard_spec_5_1(t *testing.T) {
 // observationally Full, the §5.1 "runtime source of truth", regardless of
 // the MCP signal.
 func TestObservedIntegrationLevelFull_spec_5_1(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	s := New("test")
@@ -48,7 +48,7 @@ func TestObservedIntegrationLevelFull_spec_5_1(t *testing.T) {
 // classified by its MCP signal: Standard if it reached MCP, else Basic.
 // This is the underperformance case the §5.1 admission check catches.
 func TestObservedIntegrationLevelLifecycleNotCompleted_spec_5_1(t *testing.T) {
-	lc, _ := startLifecycleChannel(t) // dialled but no handshake written
+	lc, _ := startRuntimeOps(t) // dialled but no handshake written
 	s := New("test")
 	s.Lifecycle = lc
 

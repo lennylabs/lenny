@@ -540,7 +540,7 @@ type CheckpointBarrierResult struct {
 // pod. The adapter acknowledges only after that gateway-driven stream
 // terminates; the ack echoes the gateway-minted checkpoint id. The
 // synchronous return mirrors the CheckpointBarrierAck the adapter also
-// emits on the LifecycleChannel control stream.
+// emits on the AdapterEvents control stream.
 //
 // spec: §10.1 lines 163-181.
 func (c *Client) CheckpointBarrier(ctx context.Context, sessionID string, coordinationGeneration int64, barrierID string) (CheckpointBarrierResult, error) {

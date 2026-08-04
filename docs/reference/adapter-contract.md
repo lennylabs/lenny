@@ -449,7 +449,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 {
   "version": 1,
   "platformMcpServer": { "socket": "@lenny-platform-mcp" },
-  "lifecycleChannel": { "socket": "@lenny-lifecycle" },
+  "runtimeOps": { "socket": "@lenny-runtime-ops" },
   "connectorServers": [
     { "id": "github", "socket": "@lenny-connector-github" }
   ],
@@ -482,7 +482,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 |------|-------------|
 | Basic | Not required for core operation. The four built-in tools are a fixed contract. Optionally read `adapterLocalTools` to discover custom adapter-local tools. |
 | Standard | `platformMcpServer.socket`, `connectorServers`, `mcpNonce` --- to connect to and authenticate with local MCP servers. |
-| Full | Standard fields plus `lifecycleChannel.socket`. |
+| Full | Standard fields plus `runtimeOps.socket`. |
 
 **Manifest field reference:**
 
@@ -490,7 +490,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 |-------|-------------|
 | `version` | Manifest schema version. A version increment indicates a breaking change. |
 | `platformMcpServer.socket` | Abstract Unix socket path for the platform MCP server. |
-| `lifecycleChannel.socket` | Abstract Unix socket path for the CH-RUNTIMEOPS (Full level). |
+| `runtimeOps.socket` | Abstract Unix socket path for the CH-RUNTIMEOPS (Full level). |
 | `connectorServers` | Array of connector MCP server entries with `id` and `socket`. |
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
@@ -505,7 +505,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 
 ## CH-RUNTIMEOPS (Full level only)
 
-The CH-RUNTIMEOPS is a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`.
+The CH-RUNTIMEOPS is a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-runtime-ops`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`.
 
 Opening the CH-RUNTIMEOPS is optional. Runtimes that do not open it operate in fallback-only mode (Basic or Standard level behavior).
 

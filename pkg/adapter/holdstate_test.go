@@ -56,7 +56,7 @@ func TestHoldStateEntersOnControlChannelLoss_spec_10_1(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeControlStream(ctx)
 	done := make(chan error, 1)
-	go func() { done <- s.LifecycleChannel(stream) }()
+	go func() { done <- s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 
 	cancel()
@@ -84,7 +84,7 @@ func TestHoldStateNotEnteredWhenIdle_spec_10_1(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeControlStream(ctx)
 	done := make(chan error, 1)
-	go func() { done <- s.LifecycleChannel(stream) }()
+	go func() { done <- s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 	cancel()
 	<-done
@@ -271,7 +271,7 @@ func TestHoldStateUnaryInterceptor_spec_10_1(t *testing.T) {
 }
 
 // spec: §10.1 line 49 — the stream interceptor rejects Attach while held
-// but admits the LifecycleChannel so a new coordinator can re-attach.
+// but admits the AdapterEvents so a new coordinator can re-attach.
 func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 	setCoordinatorHold(false)
 	s := New("hold-test")
@@ -289,8 +289,8 @@ func TestHoldStateStreamInterceptor_spec_10_1(t *testing.T) {
 
 	handlerCalled = false
 	if err := s.holdStateStreamInterceptor(nil, nil,
-		&grpc.StreamServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/LifecycleChannel"}, handler); err != nil || !handlerCalled {
-		t.Fatalf("LifecycleChannel must pass through hold: err=%v called=%v", err, handlerCalled)
+		&grpc.StreamServerInfo{FullMethod: "/lenny.adapter.v1.Adapter/AdapterEvents"}, handler); err != nil || !handlerCalled {
+		t.Fatalf("AdapterEvents must pass through hold: err=%v called=%v", err, handlerCalled)
 	}
 }
 

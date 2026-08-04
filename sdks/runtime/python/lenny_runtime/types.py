@@ -291,7 +291,7 @@ class AdapterManifest:
     def from_wire(cls, raw: dict[str, Any]) -> AdapterManifest:
         """Build an AdapterManifest from the §4.7 manifest file."""
         platform = raw.get("platformMcpServer")
-        lifecycle = raw.get("lifecycleChannel")
+        lifecycle = raw.get("runtimeOps")
         return cls(
             version=int(raw.get("version", 0)),
             session_id=str(raw.get("sessionId", "")),

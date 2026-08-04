@@ -237,7 +237,7 @@ type Server struct {
 	// Full-level runtime can connect for checkpoint, interrupt,
 	// credential-rotation, and deadline signals. Nil leaves the adapter
 	// Basic-level, with no CH-RUNTIMEOPS.
-	Lifecycle *LifecycleChannel
+	Lifecycle *RuntimeOps
 
 	// RuntimeName is the §5.1 runtime name stamped onto the
 	// `lenny_credential_rotation_timeout_total` metric's runtime label.
@@ -319,7 +319,7 @@ type Server struct {
 	// controlMu guards controlSink.
 	controlMu sync.Mutex
 	// controlSink is the queue feeding the active §4.7 adapter→gateway
-	// LifecycleChannel stream. Non-nil only while a gateway stream is
+	// AdapterEvents stream. Non-nil only while a gateway stream is
 	// attached; emitControlEvent drops events when it is nil.
 	controlSink chan controlEvent
 

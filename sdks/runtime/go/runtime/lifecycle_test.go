@@ -103,11 +103,11 @@ func writeFullManifest(t *testing.T, dir, lifecycleSock string) string {
 	t.Helper()
 	path := filepath.Join(dir, "adapter-manifest.json")
 	body, _ := json.Marshal(map[string]any{
-		"version":          1,
-		"sessionId":        "sess_full",
-		"taskId":           "task_full",
-		"mcpNonce":         "nonce_full",
-		"lifecycleChannel": map[string]any{"socket": lifecycleSock},
+		"version":    1,
+		"sessionId":  "sess_full",
+		"taskId":     "task_full",
+		"mcpNonce":   "nonce_full",
+		"runtimeOps": map[string]any{"socket": lifecycleSock},
 	})
 	if err := os.WriteFile(path, body, 0o600); err != nil {
 		t.Fatalf("write manifest: %v", err)

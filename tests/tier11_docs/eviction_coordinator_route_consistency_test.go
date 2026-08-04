@@ -14,7 +14,7 @@
 //
 // The clarification names two surfaces a reader must be able to trace: the
 // control-channel event (the §4.7 `AdapterTerminating` transport, which
-// pkg/adapter/controlchannel.go emits) and the checkpoint trigger (the
+// pkg/adapter/adapterevents.go emits) and the checkpoint trigger (the
 // existing `CheckpointWithTrigger` path in
 // pkg/gateway/checkpoint/checkpointer/checkpointer.go, which references
 // `checkpoint.TriggerEviction`). This test pins that the §4.6.1 sentence
@@ -49,7 +49,7 @@ import (
 //	the existing `Checkpoint` RPC with the `TriggerEviction` trigger under its
 //	held lease. A failure here means the §4.6.1 sentence drifted from those
 //	surfaces: it dropped the coordinator-direct route, named a CH-ADAPTEREVENTS
-//	event the §4.7 table and pkg/adapter/controlchannel.go do not carry, named
+//	event the §4.7 table and pkg/adapter/adapterevents.go do not carry, named
 //	a checkpoint trigger pkg/gateway/checkpoint/checkpointer does not drive, or
 //	dropped the fail-closed rule that no unfenced replica drives the
 //	checkpoint.
@@ -90,11 +90,11 @@ func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
 		"Adapter's self-initiated terminal notification",
 	})
 
-	// pkg/adapter/controlchannel.go emits that event. Both the exported
+	// pkg/adapter/adapterevents.go emits that event. Both the exported
 	// entry point and the event-type constant must be present, so the §4.6.1
 	// sentence resolves to a real code surface rather than a spec-only name.
-	controlChannel := readDocPage(t, filepath.Join(root, "pkg", "adapter", "controlchannel.go"))
-	requireAllContain(t, "pkg/adapter/controlchannel.go", controlChannel, []string{
+	controlChannel := readDocPage(t, filepath.Join(root, "pkg", "adapter", "adapterevents.go"))
+	requireAllContain(t, "pkg/adapter/adapterevents.go", controlChannel, []string{
 		"func (s *Server) EmitAdapterTerminating(",
 		`eventAdapterTerminating = "AdapterTerminating"`,
 	})

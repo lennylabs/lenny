@@ -5201,7 +5201,7 @@ func (x *CheckpointBarrierRequest) GetBarrierId() string {
 }
 
 // CheckpointBarrierResponse is the synchronous mirror of the
-// CheckpointBarrierAck event emitted on the LifecycleChannel control
+// CheckpointBarrierAck event emitted on the AdapterEvents control
 // stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
 // echoes the gateway-minted `checkpoint_id` the adapter received in the
 // CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
@@ -6328,27 +6328,27 @@ func (x *GetObservedIntegrationLevelResponse) GetObservedLevel() string {
 // spec. Kept opaque here so the proto schema does not need to evolve every
 // time a lifecycle event is added. Request and response carry the same
 // payload but are typed separately per proto-RPC convention.
-type LifecycleChannelRequest struct {
+type AdapterEventsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EnvelopeJson  []byte                 `protobuf:"bytes,1,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *LifecycleChannelRequest) Reset() {
-	*x = LifecycleChannelRequest{}
+func (x *AdapterEventsRequest) Reset() {
+	*x = AdapterEventsRequest{}
 	mi := &file_lenny_adapter_proto_msgTypes[87]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *LifecycleChannelRequest) String() string {
+func (x *AdapterEventsRequest) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*LifecycleChannelRequest) ProtoMessage() {}
+func (*AdapterEventsRequest) ProtoMessage() {}
 
-func (x *LifecycleChannelRequest) ProtoReflect() protoreflect.Message {
+func (x *AdapterEventsRequest) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[87]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6360,39 +6360,39 @@ func (x *LifecycleChannelRequest) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use LifecycleChannelRequest.ProtoReflect.Descriptor instead.
-func (*LifecycleChannelRequest) Descriptor() ([]byte, []int) {
+// Deprecated: Use AdapterEventsRequest.ProtoReflect.Descriptor instead.
+func (*AdapterEventsRequest) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{87}
 }
 
-func (x *LifecycleChannelRequest) GetEnvelopeJson() []byte {
+func (x *AdapterEventsRequest) GetEnvelopeJson() []byte {
 	if x != nil {
 		return x.EnvelopeJson
 	}
 	return nil
 }
 
-type LifecycleChannelResponse struct {
+type AdapterEventsResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EnvelopeJson  []byte                 `protobuf:"bytes,1,opt,name=envelope_json,json=envelopeJson,proto3" json:"envelope_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *LifecycleChannelResponse) Reset() {
-	*x = LifecycleChannelResponse{}
+func (x *AdapterEventsResponse) Reset() {
+	*x = AdapterEventsResponse{}
 	mi := &file_lenny_adapter_proto_msgTypes[88]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *LifecycleChannelResponse) String() string {
+func (x *AdapterEventsResponse) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*LifecycleChannelResponse) ProtoMessage() {}
+func (*AdapterEventsResponse) ProtoMessage() {}
 
-func (x *LifecycleChannelResponse) ProtoReflect() protoreflect.Message {
+func (x *AdapterEventsResponse) ProtoReflect() protoreflect.Message {
 	mi := &file_lenny_adapter_proto_msgTypes[88]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -6404,12 +6404,12 @@ func (x *LifecycleChannelResponse) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use LifecycleChannelResponse.ProtoReflect.Descriptor instead.
-func (*LifecycleChannelResponse) Descriptor() ([]byte, []int) {
+// Deprecated: Use AdapterEventsResponse.ProtoReflect.Descriptor instead.
+func (*AdapterEventsResponse) Descriptor() ([]byte, []int) {
 	return file_lenny_adapter_proto_rawDescGZIP(), []int{88}
 }
 
-func (x *LifecycleChannelResponse) GetEnvelopeJson() []byte {
+func (x *AdapterEventsResponse) GetEnvelopeJson() []byte {
 	if x != nil {
 		return x.EnvelopeJson
 	}
@@ -6889,10 +6889,10 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\"GetObservedIntegrationLevelRequest\x12\x17\n" +
 	"\await_ms\x18\x01 \x01(\x05R\x06waitMs\"L\n" +
 	"#GetObservedIntegrationLevelResponse\x12%\n" +
-	"\x0eobserved_level\x18\x01 \x01(\tR\robservedLevel\">\n" +
-	"\x17LifecycleChannelRequest\x12#\n" +
-	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"?\n" +
-	"\x18LifecycleChannelResponse\x12#\n" +
+	"\x0eobserved_level\x18\x01 \x01(\tR\robservedLevel\";\n" +
+	"\x14AdapterEventsRequest\x12#\n" +
+	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson\"<\n" +
+	"\x15AdapterEventsResponse\x12#\n" +
 	"\renvelope_json\x18\x01 \x01(\fR\fenvelopeJson*\x82\x01\n" +
 	"\x13SessionScrubOutcome\x12%\n" +
 	"!SESSION_SCRUB_OUTCOME_UNSPECIFIED\x10\x00\x12\"\n" +
@@ -6906,7 +6906,7 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\x1eCHECKPOINT_TRIGGER_UNSPECIFIED\x10\x00\x12\x1f\n" +
 	"\x1bCHECKPOINT_TRIGGER_PERIODIC\x10\x01\x12%\n" +
 	"!CHECKPOINT_TRIGGER_PRE_SCALE_DOWN\x10\x02\x12\x1f\n" +
-	"\x1bCHECKPOINT_TRIGGER_EVICTION\x10\x032\xae\x13\n" +
+	"\x1bCHECKPOINT_TRIGGER_EVICTION\x10\x032\xa5\x13\n" +
 	"\aAdapter\x12m\n" +
 	"\x10PrepareWorkspace\x12).lenny.adapter.v1.PrepareWorkspaceRequest\x1a*.lenny.adapter.v1.PrepareWorkspaceResponse\"\x00(\x01\x12n\n" +
 	"\x11FinalizeWorkspace\x12*.lenny.adapter.v1.FinalizeWorkspaceRequest\x1a+.lenny.adapter.v1.FinalizeWorkspaceResponse\"\x00\x12S\n" +
@@ -6931,8 +6931,8 @@ const file_lenny_adapter_proto_rawDesc = "" +
 	"\bShutdown\x12!.lenny.adapter.v1.ShutdownRequest\x1a\".lenny.adapter.v1.ShutdownResponse\"\x00\x12V\n" +
 	"\tDemoteSDK\x12\".lenny.adapter.v1.DemoteSDKRequest\x1a#.lenny.adapter.v1.DemoteSDKResponse\"\x00\x12k\n" +
 	"\x10NegotiateVersion\x12).lenny.adapter.v1.NegotiateVersionRequest\x1a*.lenny.adapter.v1.NegotiateVersionResponse\"\x00\x12\x8c\x01\n" +
-	"\x1bGetObservedIntegrationLevel\x124.lenny.adapter.v1.GetObservedIntegrationLevelRequest\x1a5.lenny.adapter.v1.GetObservedIntegrationLevelResponse\"\x00\x12o\n" +
-	"\x10LifecycleChannel\x12).lenny.adapter.v1.LifecycleChannelRequest\x1a*.lenny.adapter.v1.LifecycleChannelResponse\"\x00(\x010\x012\xa6\x06\n" +
+	"\x1bGetObservedIntegrationLevel\x124.lenny.adapter.v1.GetObservedIntegrationLevelRequest\x1a5.lenny.adapter.v1.GetObservedIntegrationLevelResponse\"\x00\x12f\n" +
+	"\rAdapterEvents\x12&.lenny.adapter.v1.AdapterEventsRequest\x1a'.lenny.adapter.v1.AdapterEventsResponse\"\x00(\x010\x012\xa6\x06\n" +
 	"\x0eGatewayControl\x12n\n" +
 	"\x11ListPlatformTools\x12*.lenny.adapter.v1.ListPlatformToolsRequest\x1a+.lenny.adapter.v1.ListPlatformToolsResponse\"\x00\x12k\n" +
 	"\x10CallPlatformTool\x12).lenny.adapter.v1.CallPlatformToolRequest\x1a*.lenny.adapter.v1.CallPlatformToolResponse\"\x00\x12z\n" +
@@ -7051,8 +7051,8 @@ var file_lenny_adapter_proto_goTypes = []any{
 	(*NegotiateVersionResponse)(nil),            // 91: lenny.adapter.v1.NegotiateVersionResponse
 	(*GetObservedIntegrationLevelRequest)(nil),  // 92: lenny.adapter.v1.GetObservedIntegrationLevelRequest
 	(*GetObservedIntegrationLevelResponse)(nil), // 93: lenny.adapter.v1.GetObservedIntegrationLevelResponse
-	(*LifecycleChannelRequest)(nil),             // 94: lenny.adapter.v1.LifecycleChannelRequest
-	(*LifecycleChannelResponse)(nil),            // 95: lenny.adapter.v1.LifecycleChannelResponse
+	(*AdapterEventsRequest)(nil),                // 94: lenny.adapter.v1.AdapterEventsRequest
+	(*AdapterEventsResponse)(nil),               // 95: lenny.adapter.v1.AdapterEventsResponse
 	nil,                                         // 96: lenny.adapter.v1.StartSessionRequest.LabelsEntry
 	nil,                                         // 97: lenny.adapter.v1.StartSessionRequest.TracingContextEntry
 	nil,                                         // 98: lenny.adapter.v1.AssignCredentialsRequest.LeasesEntry
@@ -7171,7 +7171,7 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	88,  // 104: lenny.adapter.v1.Adapter.DemoteSDK:input_type -> lenny.adapter.v1.DemoteSDKRequest
 	90,  // 105: lenny.adapter.v1.Adapter.NegotiateVersion:input_type -> lenny.adapter.v1.NegotiateVersionRequest
 	92,  // 106: lenny.adapter.v1.Adapter.GetObservedIntegrationLevel:input_type -> lenny.adapter.v1.GetObservedIntegrationLevelRequest
-	94,  // 107: lenny.adapter.v1.Adapter.LifecycleChannel:input_type -> lenny.adapter.v1.LifecycleChannelRequest
+	94,  // 107: lenny.adapter.v1.Adapter.AdapterEvents:input_type -> lenny.adapter.v1.AdapterEventsRequest
 	7,   // 108: lenny.adapter.v1.GatewayControl.ListPlatformTools:input_type -> lenny.adapter.v1.ListPlatformToolsRequest
 	10,  // 109: lenny.adapter.v1.GatewayControl.CallPlatformTool:input_type -> lenny.adapter.v1.CallPlatformToolRequest
 	12,  // 110: lenny.adapter.v1.GatewayControl.ListSessionConnectors:input_type -> lenny.adapter.v1.ListSessionConnectorsRequest
@@ -7202,7 +7202,7 @@ var file_lenny_adapter_proto_depIdxs = []int32{
 	89,  // 135: lenny.adapter.v1.Adapter.DemoteSDK:output_type -> lenny.adapter.v1.DemoteSDKResponse
 	91,  // 136: lenny.adapter.v1.Adapter.NegotiateVersion:output_type -> lenny.adapter.v1.NegotiateVersionResponse
 	93,  // 137: lenny.adapter.v1.Adapter.GetObservedIntegrationLevel:output_type -> lenny.adapter.v1.GetObservedIntegrationLevelResponse
-	95,  // 138: lenny.adapter.v1.Adapter.LifecycleChannel:output_type -> lenny.adapter.v1.LifecycleChannelResponse
+	95,  // 138: lenny.adapter.v1.Adapter.AdapterEvents:output_type -> lenny.adapter.v1.AdapterEventsResponse
 	9,   // 139: lenny.adapter.v1.GatewayControl.ListPlatformTools:output_type -> lenny.adapter.v1.ListPlatformToolsResponse
 	11,  // 140: lenny.adapter.v1.GatewayControl.CallPlatformTool:output_type -> lenny.adapter.v1.CallPlatformToolResponse
 	14,  // 141: lenny.adapter.v1.GatewayControl.ListSessionConnectors:output_type -> lenny.adapter.v1.ListSessionConnectorsResponse

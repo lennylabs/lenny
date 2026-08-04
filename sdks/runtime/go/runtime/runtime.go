@@ -350,8 +350,8 @@ func (s *session) manifestHasPlatformMCP() bool {
 // CH-RUNTIMEOPS socket.
 func (s *session) manifestHasLifecycle() bool {
 	return s.manifest != nil &&
-		s.manifest.LifecycleChannel != nil &&
-		s.manifest.LifecycleChannel.Socket != ""
+		s.manifest.RuntimeOps != nil &&
+		s.manifest.RuntimeOps.Socket != ""
 }
 
 // closeChannels releases the higher-level channels opened by

@@ -59,3 +59,1044 @@ entries:
   - file: spec/18_build-sequence.md
     occurrence: 1
     channel: CH-RUNTIMEOPS
+  # The file-name entries. The naming law reaches the file-name stem, so
+  # the run that rewrites the identifier inside a carrier is the run that
+  # moves the carrier whose own name carries it.
+  - file: pkg/adapter/adapterevents.go
+    path: true
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: pkg/adapter/adapterevents_test.go
+    path: true
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: pkg/adapter/runtimeops.go
+    path: true
+    channel: CH-RUNTIMEOPS
+    carrier: path
+  - file: pkg/adapter/runtimeops_test.go
+    path: true
+    channel: CH-RUNTIMEOPS
+    carrier: path
+  - file: schemas/runtime-ops-events.schema.json
+    path: true
+    channel: CH-RUNTIMEOPS
+    carrier: path
+  # The occurrences outside spec/. Two dispositions appear below. An
+  # entry naming a channel resolves which of the two channels the
+  # occurrence denotes, and, where the channel states a spelling in more
+  # than one carrier the form of the site does not select between, names
+  # the naming-table row the substitution is read from. An entry marked
+  # not-a-channel records an occurrence that is not a channel reference:
+  # every one of them stands in a test fixture that declares a retired
+  # spelling as data, either as a path inside a synthetic fixture tree
+  # the test builds or as a naming-table row the case feeds the loader,
+  # so the spelling names the fixture rather than the mechanism.
+  - file: .claude/workflows/change-proposal.js
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: TESTING.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: TESTING.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-compliance/full.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-gateway/direct_usage_quota_integration_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-gateway/direct_usage_quota_integration_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 1
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 2
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 3
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 4
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 5
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 6
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 7
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_test.go
+    occurrence: 8
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 1
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 2
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 3
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 4
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 5
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 6
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 7
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 8
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 9
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 10
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 11
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 12
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 13
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 14
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 15
+    not-a-channel: true
+  - file: cmd/lenny-test/cmd_validate_yaml_test.go
+    occurrence: 16
+    not-a-channel: true
+  - file: cmd/lenny-test/tiers.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 8
+    channel: CH-RUNTIMEOPS
+  - file: docs/api/internal.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/getting-started/architecture.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/getting-started/concepts.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/adapter-contract.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/adapter-contract.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/adapter-contract.md
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/adapter-contract.md
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: docs/reference/adapter-contract.md
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: docs/runtime-author-guide/integration-levels.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/runtime-author-guide/integration-levels.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: docs/runtime-author-guide/integration-levels.md
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: docs/runtime-author-guide/testing.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/runtime-author-guide/testing.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: docs/tutorials/build-a-runtime.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: docs/tutorials/build-a-runtime.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/checkpoint_stream_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/checkpoint_stream_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/checkpoint_stream_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 4
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 5
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 6
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents.go
+    occurrence: 7
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 4
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 5
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 6
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 7
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 8
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 9
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 10
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 11
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 12
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 13
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 14
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 15
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 16
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 17
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 18
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 19
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 20
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/adapterevents_test.go
+    occurrence: 21
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/coordination_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/coordination_test.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/credentials_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/credexpiry_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/drain_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/files_updated_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/files_updated_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/files_updated_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/files_updated_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/files_updated_test.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/holdstate.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/holdstate.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/holdstate_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/holdstate_test.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/holdstate_test.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/holdstate_test.go
+    occurrence: 4
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/holdstate_test.go
+    occurrence: 5
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/integrationlevel_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/integrationlevel_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecycle_test.go
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 8
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 9
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 10
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 11
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 12
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 13
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 14
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 15
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 16
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 17
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 18
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 19
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 20
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 21
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 22
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 23
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 24
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 25
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 26
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 27
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 28
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 29
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 30
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 31
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops.go
+    occurrence: 32
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 8
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 9
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 10
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 11
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 12
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 13
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 14
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 15
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 16
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 17
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 18
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 19
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 20
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 21
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 22
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 23
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 24
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 25
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 26
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 27
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 28
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 29
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 30
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 31
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 32
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 33
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 34
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 35
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 36
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 37
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 38
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 39
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 40
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 41
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 42
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/runtimeops_test.go
+    occurrence: 43
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 8
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest.go
+    occurrence: 9
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 8
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 9
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 10
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/manifest_test.go
+    occurrence: 11
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/metrics.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/metrics.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/metrics.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/rotationgate_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/server.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/server.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/server_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/server_test.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/server_test.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: pkg/adapter/server_test.go
+    occurrence: 4
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/server_test.go
+    occurrence: 5
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/server_test.go
+    occurrence: 6
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: pkg/adapter/usage.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/usage.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/usage_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/usage_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/gateway/runtime/adapterclient/client.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: schemas/embed.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: schemas/lenny-adapter-jsonl.schema.json
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 4
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 5
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 6
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 7
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/lenny-adapter.proto
+    occurrence: 8
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: schemas/runtime-ops-events.schema.json
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: schemas/runtime-ops-events.schema.json
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: scripts/specshift/identifier/site.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: proto-rpc
+  - file: scripts/specshift/run_test.go
+    occurrence: 1
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 2
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 3
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 4
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 5
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 6
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 7
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 8
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 9
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 10
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 11
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 12
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 13
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 14
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 15
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 16
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 17
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 18
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 19
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 20
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 21
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 22
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 23
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 24
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 25
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 26
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 27
+    not-a-channel: true
+  - file: scripts/specshift/run_test.go
+    occurrence: 28
+    not-a-channel: true
+  - file: sdks/runtime/go/runtime/lifecycle.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/lifecycle.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/lifecycle.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/lifecycle_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/typescript/src/lifecycle.ts
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/typescript/src/lifecycle.ts
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/spec-map.json
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/spec-map.json
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier0_static/schemas_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier0_static/schemas_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier0_static/schemas_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier0_static/schemas_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier10_conformance/token_service_unavailability_guard_conformance_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+    occurrence: 3
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+    occurrence: 4
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+    occurrence: 5
+    channel: CH-ADAPTEREVENTS
+    carrier: path
+  - file: tests/tier3_contract/adapter_checkpointbarrier/checkpointbarrier_wire_test.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier3_contract/lifecycle_tokens/tokens_wire_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier4_integration/credential_lifecycle_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier4_integration/credential_lifecycle_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier4_integration/credential_lifecycle_test.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier4_integration/credential_lifecycle_test.go
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier4_integration/credential_lifecycle_test.go
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier8_chaos/credential_rotation_ceiling_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier8_chaos/credential_rotation_ceiling_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier8_chaos/scaffolds_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier8_chaos/scaffolds_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: tests/tier9_security/pentest/v1-baseline-bundle.json
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

@@ -19,7 +19,7 @@ import (
 // Full-level rotation protocol.
 func rotationGateServer(t *testing.T) (*Server, *fakeRuntime) {
 	t.Helper()
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 	s := New("rotation-test")
 	s.CredentialsDir = t.TempDir()

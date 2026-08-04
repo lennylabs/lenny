@@ -82,11 +82,11 @@ export class Lifecycle {
     hooks: LifecycleHooks,
     host: LifecycleHost,
   ): Promise<Lifecycle> {
-    if (!manifest.lifecycleChannel?.socket) {
+    if (!manifest.runtimeOps?.socket) {
       throw new Error("adapter manifest has no lifecycle channel socket");
     }
     const conn = await dialUnixSocket(
-      manifest.lifecycleChannel.socket,
+      manifest.runtimeOps.socket,
       timeoutMs,
     );
     const writer = new FrameWriter(conn);

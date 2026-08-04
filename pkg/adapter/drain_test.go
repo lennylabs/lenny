@@ -14,7 +14,7 @@ import (
 // close: Shutdown sends `terminate` so the runtime coordinates a clean
 // drain, then closes the runtime process (MED-010).
 func TestShutdownDrainsViaLifecycle_spec_15_4_2(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	s := New("test")

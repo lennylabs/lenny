@@ -16,7 +16,7 @@ import "embed"
 // the source the conformance suite is schema-driven against: the JSON
 // Schemas (lenny-adapter-jsonl.schema.json — every adapter↔binary
 // stdin/stdout message; messagepart.schema.json — the MessagePart envelope;
-// lifecycle-events.schema.json — the CH-RUNTIMEOPS; workspaceplan-v1.json)
+// runtime-ops-events.schema.json — the CH-RUNTIMEOPS; workspaceplan-v1.json)
 // and lenny-adapter.proto (the adapter gRPC contract, whose Error.ErrorCode
 // enum is the closed §15.1 error-code catalog the JSONL schema leaves as an
 // open string). The on-disk artifacts remain the source of truth; this only

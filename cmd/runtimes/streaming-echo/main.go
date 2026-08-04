@@ -15,7 +15,7 @@
 // The CH-RUNTIMEOPS transport is a Unix socket whose path is taken
 // from the adapter manifest (`/run/lenny/adapter-manifest.json` by
 // default, or the path in $LENNY_ADAPTER_MANIFEST). The manifest's
-// `lifecycleChannel.socket` field carries the path. Production deploys
+// `runtimeOps.socket` field carries the path. Production deploys
 // use a Linux abstract socket (path begins with `@`); on macOS, where
 // abstract sockets are not supported (spec §15.4.3 platform note), a
 // regular file-based socket path is used so the conformance harness can
@@ -91,8 +91,8 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 	// is opened in a background goroutine so a slow connect does not block
 	// stdin processing.
 	manifest, manifestErr := loadManifest(os.Getenv("LENNY_ADAPTER_MANIFEST"))
-	if manifestErr == nil && manifest.LifecycleChannel.Socket != "" {
-		go runLifecycleChannel(ctx, manifest.LifecycleChannel.Socket, stdoutWriter, stderr, cancel)
+	if manifestErr == nil && manifest.RuntimeOps.Socket != "" {
+		go runRuntimeOps(ctx, manifest.RuntimeOps.Socket, stdoutWriter, stderr, cancel)
 	} else if manifestErr != nil {
 		fmt.Fprintf(stderr, "streaming-echo: no adapter manifest (%v); lifecycle channel disabled\n", manifestErr)
 	}
@@ -142,9 +142,9 @@ func run(stdin io.Reader, stdout io.Writer, stderr io.Writer) error {
 // adapterManifest is the subset of /run/lenny/adapter-manifest.json this
 // runtime reads. Unknown fields on the file are ignored.
 type adapterManifest struct {
-	LifecycleChannel struct {
+	RuntimeOps struct {
 		Socket string `json:"socket"`
-	} `json:"lifecycleChannel"`
+	} `json:"runtimeOps"`
 	MCPNonce string `json:"mcpNonce"`
 }
 
@@ -163,14 +163,14 @@ func loadManifest(path string) (adapterManifest, error) {
 	return m, nil
 }
 
-// runLifecycleChannel dials the lifecycle Unix socket, completes the
+// runRuntimeOps dials the lifecycle Unix socket, completes the
 // capabilities/support handshake, and processes incoming events from the
 // adapter side. Each event response is written back on the same socket.
 //
 // Connection failures are logged but not fatal — the spec permits the
 // adapter side of the channel to be temporarily unavailable. A failed
 // connect on first try gets one retry pause and then gives up.
-func runLifecycleChannel(ctx context.Context, socket string, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
+func runRuntimeOps(ctx context.Context, socket string, stdoutWriter *writer, stderr io.Writer, cancel context.CancelFunc) {
 	conn, err := dialLifecycleSocket(ctx, socket)
 	if err != nil {
 		fmt.Fprintf(stderr, "streaming-echo: lifecycle channel dial failed: %v\n", err)

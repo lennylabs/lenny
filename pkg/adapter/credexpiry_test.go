@@ -140,7 +140,7 @@ func attachControlStream(t *testing.T, s *Server) (*fakeControlStream, func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	stream := newFakeControlStream(ctx)
-	go func() { _ = s.LifecycleChannel(stream) }()
+	go func() { _ = s.AdapterEvents(stream) }()
 	awaitRegistration(t, s)
 	return stream, cancel
 }

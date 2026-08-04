@@ -164,7 +164,7 @@ service Adapter {
   // `coordination_generation` against the last fenced generation, quiesces
   // tool-call dispatch, and holds the quiesced state open while the
   // gateway drives the Checkpoint stream against the held pod. The adapter
-  // acknowledges via `CheckpointBarrierAck` on the LifecycleChannel
+  // acknowledges via `CheckpointBarrierAck` on the AdapterEvents
   // control stream (§4.7 line 660 — fields: `barrier_id`, `checkpoint_ref`)
   // only after that gateway-driven stream terminates, then releases
   // quiescence. The RPC return value mirrors the ack so a synchronous
@@ -220,11 +220,11 @@ service Adapter {
   // (RUNTIME_LEVEL_UNDERPERFORMS). See spec §5.1.
   rpc GetObservedIntegrationLevel(GetObservedIntegrationLevelRequest) returns (GetObservedIntegrationLevelResponse) {}
 
-  // LifecycleChannel is a bidirectional stream the adapter uses to surface
+  // AdapterEvents is a bidirectional stream the adapter uses to surface
   // Full-level lifecycle events (checkpoint_ready, interrupt_acknowledged,
   // credentials_acknowledged, deadline_approaching). See spec §15.4 for
   // the event taxonomy.
-  rpc LifecycleChannel(stream LifecycleChannelRequest) returns (stream LifecycleChannelResponse) {}
+  rpc AdapterEvents(stream AdapterEventsRequest) returns (stream AdapterEventsResponse) {}
 }
 
 // GatewayControl is the adapter→gateway control surface. It is the
@@ -1369,7 +1369,7 @@ message CheckpointBarrierRequest {
 }
 
 // CheckpointBarrierResponse is the synchronous mirror of the
-// CheckpointBarrierAck event emitted on the LifecycleChannel control
+// CheckpointBarrierAck event emitted on the AdapterEvents control
 // stream (§4.7 line 660). barrier_id echoes the request. checkpoint_ref
 // echoes the gateway-minted `checkpoint_id` the adapter received in the
 // CheckpointStart of the barrier-window Checkpoint stream (§10.1 line 167);
@@ -1595,10 +1595,10 @@ message GetObservedIntegrationLevelResponse {
 // spec. Kept opaque here so the proto schema does not need to evolve every
 // time a lifecycle event is added. Request and response carry the same
 // payload but are typed separately per proto-RPC convention.
-message LifecycleChannelRequest {
+message AdapterEventsRequest {
   bytes envelope_json = 1;
 }
 
-message LifecycleChannelResponse {
+message AdapterEventsResponse {
   bytes envelope_json = 1;
 }

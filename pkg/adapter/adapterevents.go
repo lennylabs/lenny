@@ -14,7 +14,7 @@ import (
 )
 
 // §4.7 lines 652-662 adapter→gateway control events. Each is surfaced as
-// a JSON envelope on the LifecycleChannel server stream; type discriminates.
+// a JSON envelope on the AdapterEvents server stream; type discriminates.
 const (
 	// eventRateLimited reports the current credential is rate-limited and
 	// the gateway should promote a fallback (§4.9 credential fallback).
@@ -51,9 +51,9 @@ const (
 const controlEventBuffer = 64
 
 // controlEvent is one §4.7 adapter→gateway control event. It is
-// JSON-encoded into the opaque LifecycleChannelResponse.envelope_json so
+// JSON-encoded into the opaque AdapterEventsResponse.envelope_json so
 // the proto schema does not grow a message per event (see the proto's
-// LifecycleChannelResponse comment). Fields absent for a given type are
+// AdapterEventsResponse comment). Fields absent for a given type are
 // omitted on the wire.
 type controlEvent struct {
 	Type      string        `json:"type"`
@@ -77,7 +77,7 @@ type controlUsage struct {
 	WallClockMs  int64 `json:"wallClockMs"`
 }
 
-// LifecycleChannel implements the §4.7 adapter→gateway control stream.
+// AdapterEvents implements the §4.7 adapter→gateway control stream.
 // The gateway opens the bidirectional stream once per pod; the adapter
 // pushes control events (RATE_LIMITED, AUTH_EXPIRED, PROVIDER_UNAVAILABLE,
 // LEASE_REJECTED, AdapterTerminating, FINAL_USAGE_REPORT) onto it as JSON
@@ -87,7 +87,7 @@ type controlUsage struct {
 // one-session-per-pod model (§6.1).
 //
 // spec: §4.7 lines 652-662.
-func (s *Server) LifecycleChannel(stream adapterv1.Adapter_LifecycleChannelServer) error {
+func (s *Server) AdapterEvents(stream adapterv1.Adapter_AdapterEventsServer) error {
 	sink := make(chan controlEvent, controlEventBuffer)
 	s.controlMu.Lock()
 	if s.controlSink != nil {
@@ -132,7 +132,7 @@ func (s *Server) LifecycleChannel(stream adapterv1.Adapter_LifecycleChannelServe
 			if err != nil {
 				return status.Errorf(codes.Internal, "encode control event: %v", err)
 			}
-			if err := stream.Send(&adapterv1.LifecycleChannelResponse{EnvelopeJson: payload}); err != nil {
+			if err := stream.Send(&adapterv1.AdapterEventsResponse{EnvelopeJson: payload}); err != nil {
 				return err
 			}
 			incControlEventSent(ev.Type)

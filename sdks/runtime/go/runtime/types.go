@@ -132,8 +132,8 @@ type AdapterManifest struct {
 	PlatformMCPServer *MCPServerRef `json:"platformMcpServer,omitempty"`
 	// ConnectorServers names the per-connector MCP server sockets.
 	ConnectorServers []ConnectorServerRef `json:"connectorServers,omitempty"`
-	// LifecycleChannel names the Full-level CH-RUNTIMEOPS socket.
-	LifecycleChannel *SocketRef `json:"lifecycleChannel,omitempty"`
+	// RuntimeOps names the Full-level CH-RUNTIMEOPS socket.
+	RuntimeOps *SocketRef `json:"runtimeOps,omitempty"`
 	// AdapterLocalTools enumerates the §15.4.1 adapter-local tools the
 	// runtime may invoke via stdout tool_call frames.
 	AdapterLocalTools []AdapterLocalTool `json:"adapterLocalTools,omitempty"`

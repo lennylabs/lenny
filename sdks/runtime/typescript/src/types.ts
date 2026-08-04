@@ -147,8 +147,8 @@ export interface AdapterManifest {
   platformMcpServer?: MCPServerRef;
   // connectorServers names the per-connector MCP server sockets.
   connectorServers?: ConnectorServerRef[];
-  // lifecycleChannel names the Full-level lifecycle channel socket.
-  lifecycleChannel?: SocketRef;
+  // runtimeOps names the Full-level lifecycle channel socket.
+  runtimeOps?: SocketRef;
   // adapterLocalTools enumerates the §15.4.1 adapter-local tools the
   // runtime may invoke via stdout tool_call frames.
   adapterLocalTools?: AdapterLocalTool[];

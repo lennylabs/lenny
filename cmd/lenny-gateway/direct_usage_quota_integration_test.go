@@ -129,9 +129,9 @@ func wiredAdapterClient(t *testing.T, sessionID string) (*adapterclient.Client, 
 	t.Helper()
 
 	sock := directUsageSocket(t)
-	lc, err := adapter.NewLifecycleChannel(sock)
+	lc, err := adapter.NewRuntimeOps(sock)
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	lcCtx, lcCancel := context.WithCancel(context.Background())
 	t.Cleanup(lcCancel)

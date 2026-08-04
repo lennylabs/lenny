@@ -165,7 +165,7 @@ func (fr *fakeLifecycleRuntime) write(f lcFrame) {
 	}
 }
 
-// wireLifecycle attaches a running LifecycleChannel to s, dials it as a fake
+// wireLifecycle attaches a running RuntimeOps to s, dials it as a fake
 // Full-level runtime, and completes the capability handshake so the adapter's
 // Checkpoint stream runs the cooperative quiesce path.
 func wireLifecycle(t *testing.T, s *adapter.Server) *fakeLifecycleRuntime {
@@ -177,9 +177,9 @@ func wireLifecycle(t *testing.T, s *adapter.Server) *fakeLifecycleRuntime {
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lc.sock")
 
-	lc, err := adapter.NewLifecycleChannel(sock)
+	lc, err := adapter.NewRuntimeOps(sock)
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	s.Lifecycle = lc
 	ctx, cancel := context.WithCancel(context.Background())

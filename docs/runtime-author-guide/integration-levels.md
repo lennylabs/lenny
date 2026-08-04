@@ -134,7 +134,7 @@ Somewhere around 150-200 lines, plus an MCP client library.
 
 ### What you add on top of Standard
 
-1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.lifecycleChannel.socket` (usually `@lenny-lifecycle`).
+1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.runtimeOps.socket` (usually `@lenny-runtime-ops`).
 2. **Do the capability handshake:** you'll receive `lifecycle_capabilities` from the sidecar; reply with `lifecycle_support` naming which of them you actually implement.
 3. **Handle lifecycle signals** in a background goroutine or thread, running alongside the main stdin loop.
 
@@ -199,7 +199,7 @@ The stdin/stdout contract doesn't change. `message` / `response` / `heartbeat` /
 
 ### From Standard to Full
 
-1. Connect to the CH-RUNTIMEOPS (`@lenny-lifecycle`) at startup.
+1. Connect to the CH-RUNTIMEOPS (`@lenny-runtime-ops`) at startup.
 2. Do the capability handshake (`lifecycle_capabilities` / `lifecycle_support`), declaring only what you implement.
 3. Read lifecycle messages in a background goroutine or thread, alongside the stdin loop.
 4. Implement the handlers you need:

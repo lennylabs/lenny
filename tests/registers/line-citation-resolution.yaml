@@ -444,12 +444,12 @@ files:
         - §15.4.1 line 1823
         - §15.4.1 line 1826
         - §15.4.1 line 1826 default
-    - path: pkg/adapter/lifecyclechannel.go
+    - path: pkg/adapter/runtimeops.go
       citations:
         - §15.5 line 2431
         - §15.5 line 2431 (item 3)
         - §7.4 line 433
-    - path: pkg/adapter/lifecyclechannel_test.go
+    - path: pkg/adapter/runtimeops_test.go
       citations:
         - §15.5 line 2431 (item 3)
     - path: pkg/adapter/mcpruntime.go

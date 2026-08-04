@@ -325,11 +325,11 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 // lifecycleRuntime is a running streaming-echo process connected to a live
 // adapter CH-RUNTIMEOPS.
 type lifecycleRuntime struct {
-	channel *adapter.LifecycleChannel
+	channel *adapter.RuntimeOps
 }
 
 // startLifecycleRuntime builds and starts cmd/runtimes/streaming-echo
-// connected to a fresh adapter LifecycleChannel over a live Unix socket,
+// connected to a fresh adapter RuntimeOps over a live Unix socket,
 // completes the §4.7 lifecycle handshake, and returns the channel. The
 // runtime process and channel are torn down on test cleanup.
 func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime {
@@ -345,9 +345,9 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 	t.Cleanup(func() { _ = os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lifecycle.sock")
 
-	channel, err := adapter.NewLifecycleChannel(sock)
+	channel, err := adapter.NewRuntimeOps(sock)
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	runErr := make(chan error, 1)
 	go func() { runErr <- channel.Run(ctx) }()
@@ -359,7 +359,7 @@ func startLifecycleRuntime(t *testing.T, ctx context.Context) *lifecycleRuntime 
 	// The adapter manifest streaming-echo reads to find the lifecycle socket.
 	manifest := filepath.Join(dir, "adapter-manifest.json")
 	manifestJSON, err := json.Marshal(map[string]any{
-		"lifecycleChannel": map[string]any{"socket": sock},
+		"runtimeOps": map[string]any{"socket": sock},
 	})
 	if err != nil {
 		t.Fatalf("marshal manifest: %v", err)

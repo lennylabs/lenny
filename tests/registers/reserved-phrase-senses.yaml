@@ -432,39 +432,39 @@ entries:
     occurrence: 4
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 1
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 2
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 3
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 4
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 5
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 6
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel.go
+  - file: pkg/adapter/runtimeops.go
     occurrence: 7
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel_test.go
+  - file: pkg/adapter/runtimeops_test.go
     occurrence: 1
     identifiers:
       - CH-RUNTIMEOPS
-  - file: pkg/adapter/lifecyclechannel_test.go
+  - file: pkg/adapter/runtimeops_test.go
     occurrence: 2
     identifiers:
       - CH-RUNTIMEOPS
@@ -632,11 +632,11 @@ entries:
     occurrence: 7
     identifiers:
       - CH-RUNTIMEOPS
-  - file: schemas/lifecycle-events.schema.json
+  - file: schemas/runtime-ops-events.schema.json
     occurrence: 1
     identifiers:
       - CH-RUNTIMEOPS
-  - file: schemas/lifecycle-events.schema.json
+  - file: schemas/runtime-ops-events.schema.json
     occurrence: 2
     identifiers:
       - CH-RUNTIMEOPS

@@ -921,9 +921,9 @@ files:
       count: 2
     - path: pkg/adapter/connectortoolprovider.go
       count: 2
-    - path: pkg/adapter/controlchannel.go
+    - path: pkg/adapter/adapterevents.go
       count: 5
-    - path: pkg/adapter/controlchannel_test.go
+    - path: pkg/adapter/adapterevents_test.go
       count: 4
     - path: pkg/adapter/coordination.go
       count: 23
@@ -995,9 +995,9 @@ files:
       count: 3
     - path: pkg/adapter/lifecycle_test.go
       count: 3
-    - path: pkg/adapter/lifecyclechannel.go
+    - path: pkg/adapter/runtimeops.go
       count: 9
-    - path: pkg/adapter/lifecyclechannel_test.go
+    - path: pkg/adapter/runtimeops_test.go
       count: 5
     - path: pkg/adapter/manifest.go
       count: 4

@@ -317,7 +317,7 @@ The gateway uses `Watch` to monitor pod health continuously and `Check` for poin
 ## CH-RUNTIMEOPS messages (Full integration level only)
 {: #lifecycle-channel-messages }
 
-Runtimes that implement the Full integration level open a **CH-RUNTIMEOPS** -- an abstract Unix socket (`@lenny-lifecycle`) -- for operational signals that require runtime cooperation. The CH-RUNTIMEOPS runs alongside the stdin/stdout binary protocol and the MCP connections.
+Runtimes that implement the Full integration level open a **CH-RUNTIMEOPS** -- an abstract Unix socket (`@lenny-runtime-ops`) -- for operational signals that require runtime cooperation. The CH-RUNTIMEOPS runs alongside the stdin/stdout binary protocol and the MCP connections.
 
 ### Channel setup
 

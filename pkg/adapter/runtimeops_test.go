@@ -77,27 +77,27 @@ func shortSocketName(t *testing.T, name string) string {
 	return filepath.Join(dir, name)
 }
 
-// startLifecycleChannel creates a LifecycleChannel on a temporary
+// startRuntimeOps creates a RuntimeOps on a temporary
 // socket, runs it, and dials it as a fake runtime. Run and the
 // connection are torn down on test cleanup.
-func startLifecycleChannel(t *testing.T) (*LifecycleChannel, *fakeRuntime) {
+func startRuntimeOps(t *testing.T) (*RuntimeOps, *fakeRuntime) {
 	t.Helper()
-	return startLifecycleChannelWithSink(t, nil)
+	return startRuntimeOpsWithSink(t, nil)
 }
 
-// startLifecycleChannelWithSink is startLifecycleChannel with the usage
+// startRuntimeOpsWithSink is startRuntimeOps with the usage
 // sink wired before Run is launched. This mirrors the production
 // ordering in cmd/lenny-adapter, where the sink is assigned to the
-// lock-free LifecycleChannel.usage field before the read-loop goroutine
+// lock-free RuntimeOps.usage field before the read-loop goroutine
 // starts (the invariant SetUsageSink documents in place of a lock). A nil
 // sink leaves token folding a no-op.
-func startLifecycleChannelWithSink(t *testing.T, sink tokenSink) (*LifecycleChannel, *fakeRuntime) {
+func startRuntimeOpsWithSink(t *testing.T, sink tokenSink) (*RuntimeOps, *fakeRuntime) {
 	t.Helper()
 	sock := shortSocketName(t, "lifecycle.sock")
 
-	lc, err := NewLifecycleChannel(sock)
+	lc, err := NewRuntimeOps(sock)
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	if sink != nil {
 		lc.SetUsageSink(sink)
@@ -119,8 +119,8 @@ func startLifecycleChannelWithSink(t *testing.T, sink tokenSink) (*LifecycleChan
 	return lc, &fakeRuntime{t: t, conn: conn, r: bufio.NewReader(conn)}
 }
 
-func TestLifecycleChannelHandshake(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsHandshake(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 
 	caps := fr.read()
 	if caps.Type != "lifecycle_capabilities" {
@@ -155,8 +155,8 @@ func TestLifecycleChannelHandshake(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelCheckpointRoundTrip(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsCheckpointRoundTrip(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	errc := make(chan error, 1)
@@ -185,8 +185,8 @@ func TestLifecycleChannelCheckpointRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelInterruptRoundTrip(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsInterruptRoundTrip(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	errc := make(chan error, 1)
@@ -207,8 +207,8 @@ func TestLifecycleChannelInterruptRoundTrip(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelCredentialRotation(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsCredentialRotation(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	errc := make(chan error, 1)
@@ -229,8 +229,8 @@ func TestLifecycleChannelCredentialRotation(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelDeadlineApproaching(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsDeadlineApproaching(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	if err := lc.SignalDeadlineApproaching(5000, "session_age"); err != nil {
@@ -242,8 +242,8 @@ func TestLifecycleChannelDeadlineApproaching(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelTerminate(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsTerminate(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	if err := lc.Terminate(2000, "session_complete"); err != nil {
@@ -255,8 +255,8 @@ func TestLifecycleChannelTerminate(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelCheckpointContextCancelled(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsCheckpointContextCancelled(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
@@ -271,11 +271,11 @@ func TestLifecycleChannelCheckpointContextCancelled(t *testing.T) {
 	}
 }
 
-// TestLifecycleChannelInflightCounter_spec_4_7 verifies llm_request_-
+// TestRuntimeOpsInflightCounter_spec_4_7 verifies llm_request_-
 // started / completed adjust the per-provider in-flight counter and that
 // it never goes below zero (spec line 820).
-func TestLifecycleChannelInflightCounter_spec_4_7(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsInflightCounter_spec_4_7(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	waitInflight := func(provider string, want int) {
@@ -330,12 +330,12 @@ func (r *recordingSink) totals() (int64, int64, int) {
 // those counts into the wired usage sink, and a frame without token fields
 // folds nothing (the runtime that cannot extract counts, a zero delta).
 // This pins the S3 fold that did not exist before this step.
-func TestLifecycleChannelFoldsCompletedTokens_spec_11_2(t *testing.T) {
+func TestRuntimeOpsFoldsCompletedTokens_spec_11_2(t *testing.T) {
 	sink := &recordingSink{}
 	// Wire the sink before Run starts, matching the production ordering
 	// (cmd/lenny-adapter): the lock-free usage field must be set before the
 	// read-loop goroutine reads it.
-	_, fr := startLifecycleChannelWithSink(t, sink)
+	_, fr := startRuntimeOpsWithSink(t, sink)
 	fr.handshake()
 
 	waitCalls := func(want int) {
@@ -379,19 +379,19 @@ func TestLifecycleChannelFoldsCompletedTokens_spec_11_2(t *testing.T) {
 
 // spec: §4.7 (llm_request_completed token fields), §11.2 (direct-mode usage)
 // The usage sink must be wired before Run starts. The lock-free
-// LifecycleChannel.usage field carries no mutex; its safety rests entirely
+// RuntimeOps.usage field carries no mutex; its safety rests entirely
 // on being assigned before the read-loop goroutine that reads it. Before
 // this step's fix, cmd/lenny-adapter wired the sink after launching the
 // Run goroutine, so a frame arriving between Run's launch and the wiring
 // call would read lc.usage with no happens-before edge to the write, a
 // data race the -race detector flags and that could drop token folding for
 // the first frames. This pins the corrected ordering: with the sink wired
-// before Run (startLifecycleChannelWithSink), a completed-LLM frame that
+// before Run (startRuntimeOpsWithSink), a completed-LLM frame that
 // arrives immediately after the handshake folds its tokens with no race.
 // Run under -race (tier 7a) it fails against the pre-fix after-Run wiring.
-func TestLifecycleChannelSinkWiredBeforeRun_spec_11_2(t *testing.T) {
+func TestRuntimeOpsSinkWiredBeforeRun_spec_11_2(t *testing.T) {
 	sink := &recordingSink{}
-	_, fr := startLifecycleChannelWithSink(t, sink)
+	_, fr := startRuntimeOpsWithSink(t, sink)
 	fr.handshake()
 
 	// The very first post-handshake frame carries tokens. With the sink
@@ -418,8 +418,8 @@ func TestLifecycleChannelSinkWiredBeforeRun_spec_11_2(t *testing.T) {
 	}
 }
 
-func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+func TestRuntimeOpsCloseFailsPendingRequest(t *testing.T) {
+	lc, fr := startRuntimeOps(t)
 	fr.handshake()
 
 	errc := make(chan error, 1)
@@ -441,7 +441,7 @@ func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {
 // the CH-RUNTIMEOPS) applies for both fresh sessions and resumes, so
 // after a runtime disconnects the channel must accept a fresh runtime's
 // connection and re-handshake. Closes F-4.7.14 / F-4.7.19.
-func TestLifecycleChannelAcceptsReconnect_spec_4_7(t *testing.T) {
+func TestRuntimeOpsAcceptsReconnect_spec_4_7(t *testing.T) {
 	dir, err := os.MkdirTemp("", "lc-reconnect-*")
 	if err != nil {
 		t.Fatal(err)
@@ -449,9 +449,9 @@ func TestLifecycleChannelAcceptsReconnect_spec_4_7(t *testing.T) {
 	t.Cleanup(func() { os.RemoveAll(dir) })
 	sock := filepath.Join(dir, "lifecycle.sock")
 
-	lc, err := NewLifecycleChannel(sock)
+	lc, err := NewRuntimeOps(sock)
 	if err != nil {
-		t.Fatalf("NewLifecycleChannel: %v", err)
+		t.Fatalf("NewRuntimeOps: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -506,7 +506,7 @@ func TestLifecycleChannelAcceptsReconnect_spec_4_7(t *testing.T) {
 // completes and the channel exposes the runtime's capability set.
 // F-15.5.9.
 func TestLifecycleVersionNegotiation_AcceptsCompatible_spec_15_5_2431(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	caps := fr.read()
 	if caps.Type != "lifecycle_capabilities" {
 		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
@@ -527,7 +527,7 @@ func TestLifecycleVersionNegotiation_AcceptsCompatible_spec_15_5_2431(t *testing
 // accepted for forward compatibility with runtimes that pre-date the
 // field. F-15.5.9.
 func TestLifecycleVersionNegotiation_AcceptsEmpty_spec_15_5_2431(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	caps := fr.read()
 	if caps.Type != "lifecycle_capabilities" {
 		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
@@ -547,7 +547,7 @@ func TestLifecycleVersionNegotiation_AcceptsEmpty_spec_15_5_2431(t *testing.T) {
 // major version is rejected; the handshake never marks the channel
 // ready. F-15.5.9.
 func TestLifecycleVersionNegotiation_RejectsIncompatibleMajor_spec_15_5_2431(t *testing.T) {
-	lc, fr := startLifecycleChannel(t)
+	lc, fr := startRuntimeOps(t)
 	caps := fr.read()
 	if caps.Type != "lifecycle_capabilities" {
 		t.Fatalf("first frame = %q, want lifecycle_capabilities", caps.Type)
