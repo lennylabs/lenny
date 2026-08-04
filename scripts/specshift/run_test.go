@@ -2192,21 +2192,20 @@ func TestTheKeyRewriteChannelSkipsBeforeItsEmptinessGuardIsAsked(t *testing.T) {
 	}
 }
 
-// TestTheKeyRewriteChannelWritesOnlyRegistersTheConfinementCovers pins
-// that a confined run never writes outside its confinement on the second
-// write channel either. The tree carries two path-keyed registers: one
-// inside the site-rewrite domain, which the key-write domain therefore
-// excludes, and one outside it, which is the whole of that domain. A
-// confinement covering the first and excluding the second makes the
-// channel run, and the run must leave the excluded register alone; the
-// register it does cover takes its key rewrite inline on the site walk,
-// so nothing goes unrekeyed. The complementary confinement covers the
-// excluded register and rekeys it.
+// TestTheKeyRewriteChannelWalksTheWholeKeyWriteDomainOnceItRuns pins
+// that the confinement's only decision on the second write channel is
+// whether the channel runs. The tree carries two path-keyed registers:
+// one inside the site-rewrite domain, which the key-write domain
+// therefore excludes, and one outside it, which is the whole of that
+// domain. A confinement covering the first and excluding the second
+// makes the channel run, and the running channel must still rekey the
+// excluded register, because the run moves the carrier those keys name.
+// A channel that filtered its domain through the confinement would move
+// the carrier, leave that key stale, and exit clean.
 //
 // spec: §28.1 (N4, the naming law: the run that moves a carrier moves
-// every key written for it, and a run writes only what it was confined
-// to)
-func TestTheKeyRewriteChannelWritesOnlyRegistersTheConfinementCovers(t *testing.T) {
+// every key written for it)
+func TestTheKeyRewriteChannelWalksTheWholeKeyWriteDomainOnceItRuns(t *testing.T) {
 	t.Parallel()
 	const keyed = "tests/registers/line-citations.yaml"
 	tree := map[string]string{
@@ -2229,10 +2228,9 @@ func TestTheKeyRewriteChannelWritesOnlyRegistersTheConfinementCovers(t *testing.
 	for _, tc := range []struct {
 		name    string
 		confine *pass.Confinement
-		want    bool
 	}{
-		{"excluding the key-write domain", pass.NewConfinement(nil, []string{keyed}), false},
-		{"covering the key-write domain", pass.NewConfinement(nil, []string{"spec/"}), true},
+		{"excluding the key-write domain", pass.NewConfinement(nil, []string{keyed})},
+		{"covering the key-write domain", pass.NewConfinement(nil, []string{"spec/"})},
 	} {
 		h := pass.NewHarnessOver(mapLister(tree), mapReader(tree), func(string, []byte) error { return nil })
 		h.Confine = tc.confine
@@ -2245,8 +2243,8 @@ func TestTheKeyRewriteChannelWritesOnlyRegistersTheConfinementCovers(t *testing.
 		if err != nil {
 			t.Fatalf("plan the run %s: %v", tc.name, err)
 		}
-		if got := membership(diff.Paths())[keyed]; got != tc.want {
-			t.Errorf("the run %s plans %s: %v, want %v", tc.name, keyed, got, tc.want)
+		if !membership(diff.Paths())[keyed] {
+			t.Errorf("the run %s leaves %s unrekeyed", tc.name, keyed)
 		}
 	}
 }

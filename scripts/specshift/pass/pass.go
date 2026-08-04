@@ -361,12 +361,6 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 // emptiness guard, which reports a tree that carries no register outside
 // the site-rewrite domain, and the guard names the confinement that made
 // the run reach it.
-//
-// The confinement then filters the domain, so this channel writes only
-// paths the confinement covers and the run narrows rather than widens.
-// A register the confinement covers and the key-write domain excludes
-// sits inside the filtered site-rewrite domain, where planInto rekeys it
-// inline, so filtering here leaves no key unmoved.
 func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) ([]*Abort, error) {
 	covers, err := h.coversKeyedRegister(ctx)
 	if err != nil {
@@ -379,8 +373,14 @@ func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) (
 	if err != nil {
 		return nil, fmt.Errorf("plan %s pass under the confinement %s: %w", r.Pass(), h.Confine, err)
 	}
-	keyed = h.Confine.Filter(keyed)
 	var aborts []*Abort
+	// The domain is walked whole rather than filtered by the
+	// confinement. The confinement's one decision on this channel is
+	// whether the channel runs, taken above. A run that moves a carrier
+	// moves every key written for it, so once the channel runs it rekeys
+	// every path-keyed register outside the site-rewrite domain; a
+	// filtered walk would move the carrier and leave an excluded
+	// register's key stale, with the run exiting clean.
 	for _, target := range keyed {
 		if err := h.planInto(ctx, diff, r, target, false); err != nil {
 			sites, ok := AllAborts(err)
