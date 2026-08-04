@@ -1094,7 +1094,7 @@ entries:
     destination: spec/28_communication-channels.md#2853-intra-pod
   - file: schemas/lenny-adapter-jsonl.schema.json
     occurrence: 1
-    destination: spec/28_communication-channels.md#2853-intra-pod
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
   - file: schemas/lenny-adapter.proto
     occurrence: 1
     destination: spec/28_communication-channels.md#2853-intra-pod
