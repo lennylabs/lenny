@@ -373,7 +373,14 @@ func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) (
 		return nil, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
 	var aborts []*Abort
-	for _, target := range h.Confine.Filter(keyed) {
+	// The domain is walked whole rather than filtered by the confinement.
+	// The confinement's one decision on this channel is whether the
+	// channel runs, taken above; filtering here would sit after the only
+	// guard that protects the channel, so a confinement covering a
+	// path-keyed register that the key-write domain excludes would clear
+	// the guard and then rekey nothing, which is the completed-rekey
+	// report over registers never opened that the guard exists to stop.
+	for _, target := range keyed {
 		if err := h.planInto(ctx, diff, r, target, false); err != nil {
 			sites, ok := AllAborts(err)
 			if !ok {
