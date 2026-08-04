@@ -8725,14 +8725,13 @@ func TestAConfinedIdentifierRunPlansNoRenameOutsideItsConfinement(t *testing.T) 
 }
 
 // TestAConfinedIdentifierRunRekeysNoRegisterForACarrierItLeavesInPlace
-// pins the rename planning's skip against the key-rewrite channel. The
-// moves are what a path-keyed register is rekeyed against, so planning
-// the move of a carrier the confinement excludes would write that
-// register's key at a path this run never creates and exit clean, with
-// the carrier standing at its retired name. Skipping the excluded
-// carrier whole leaves its exact key unmoved, and the key then stands as
-// an ordinary site of the register, which the register carries no entry
-// for and the run aborts on with nothing written.
+// pins the rename planning's confinement against the key-rewrite
+// channel. The moves are what a path-keyed register is rekeyed against,
+// so performing the move of a carrier the confinement excludes would
+// write that register's key at a path this run never creates and exit
+// clean, with the carrier standing at its retired name. The run leaves
+// both the carrier and the key that names it exactly where they stand,
+// and the complementary run moves the pair.
 //
 // spec: §28.1 (N4, the naming law: the file-name stem of a carrier is
 // the channel's identifier)
@@ -8741,20 +8740,82 @@ func TestAConfinedIdentifierRunRekeysNoRegisterForACarrierItLeavesInPlace(t *tes
 	const keyed = "tests/change-graph.json"
 	const carrier = "pkg/adapter/lifecyclechannel.go"
 	root := idTree(t, "tree")
-	before := treeSnapshot(t, root)
 	confine := pass.NewConfinement([]string{keyed}, nil)
-	_, err := applyConfinedIDPass(t, root, "tree.yaml", confine)
-	if err == nil {
-		t.Fatalf("the run confined to %s rekeyed it for a carrier it leaves in place", keyed)
+	if _, err := applyConfinedIDPass(t, root, "tree.yaml", confine); err != nil {
+		t.Fatalf("the run confined to %s failed: %v", keyed, err)
 	}
-	if _, ok := pass.AsAbort(err); !ok {
-		t.Fatalf("the failure is not a fail-closed abort: %v", err)
-	}
-	if got := treeSnapshot(t, root); !sameSnapshot(before, got) {
-		t.Error("the aborted run left the tree modified")
+	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(keyed)))
+	if !strings.Contains(after, `"`+carrier+`"`) {
+		t.Errorf("%s no longer keys %s, which the run leaves in place:\n%s", keyed, carrier, after)
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(carrier))); err != nil {
 		t.Errorf("the confined run moved a carrier outside its confinement: %v", err)
+	}
+}
+
+// TestAConfinedIdentifierRunEnumeratesACoveredRegisterTheSameWayEitherWay
+// pins the site enumeration of a file the confinement covers against the
+// rest of the confinement. The key-rewrite channel owns the spans of the
+// keys naming a carrier the migration moves, and the site rule would
+// write a carrier spelling over part of such a path. Those spans are
+// held out for every carrier of the tree, so the register carries the
+// same sites, and the run reaches the same outcome, whether the run
+// covers the carriers its keys name, leaves them to the complementary
+// run, or drives from a register that leaves one of their destinations
+// unresolved. Enumerated from the moves one run performs, the register
+// carries further sites in the last two cases, each demanding an entry
+// that would then write a channel spelling over part of a path the key
+// channel owns.
+//
+// spec: §28.1 (N4, the naming law: the canonical identifier is written
+// in every carrier of the channel it denotes)
+func TestAConfinedIdentifierRunEnumeratesACoveredRegisterTheSameWayEitherWay(t *testing.T) {
+	t.Parallel()
+	const keyed = "tests/spec-map.json"
+	const key = `"schemas/lifecycle-events.schema.json"`
+	const title = `"title": "Registers of the RuntimeOpsChannel"`
+	for _, tc := range []struct {
+		name     string
+		only     []string
+		register string
+		keyHeld  bool
+	}{
+		{
+			name:     "the carriers the keys name are covered",
+			only:     []string{keyed, "pkg/adapter", "schemas"},
+			register: "tree.yaml",
+			keyHeld:  false,
+		},
+		{
+			name:     "the carriers the keys name are outside the confinement",
+			only:     []string{keyed},
+			register: "tree.yaml",
+			keyHeld:  true,
+		},
+		{
+			name:     "the register leaves a keyed carrier unresolved",
+			only:     []string{keyed},
+			register: "unresolved-carriers.yaml",
+			keyHeld:  true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := idTree(t, "tree")
+			if _, err := applyConfinedIDPass(t, root, tc.register, pass.NewConfinement(tc.only, nil)); err != nil {
+				t.Fatalf("the run confined to %v failed: %v", tc.only, err)
+			}
+			after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(keyed)))
+			// The one site the register carries is the section title,
+			// which the register resolves as occurrence 1 under either
+			// confinement.
+			if !strings.Contains(after, title) {
+				t.Errorf("%s does not carry the canonical title after the run:\n%s", keyed, after)
+			}
+			if got := strings.Contains(after, key); got != tc.keyHeld {
+				t.Errorf("%s holds the key %s: %t, want %t", keyed, key, got, tc.keyHeld)
+			}
+		})
 	}
 }
 

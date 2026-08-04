@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: MIT
+# The senses of the fixture tree with the schema carrier's file-name
+# entry withheld, so no run this register drives resolves where that
+# carrier moves and its keys stay the key channel's all the same.
+kind: identifier-senses
+version: 1
+entries:
+  - file: pkg/adapter/lifecyclechannel.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel.go
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    path: true
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/lifecyclechannel_test.go
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 1
+    channel: CH-ADAPTEREVENTS
+  - file: pkg/adapter/holdstate.go
+    occurrence: 2
+    channel: CH-ADAPTEREVENTS
+    carrier: go-symbol
+  - file: docs/reference/channels.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: spec/17_deployment-topology.md
+    occurrence: 1
+    not-a-channel: true
+  # The two path-keyed registers inside the shared read domain take the
+  # site rewrite alongside their key rewrite. A key the move already
+  # writes is no site; a wildcard glob key and a section title are.
+  - file: tests/change-graph.json
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: tests/spec-map.json
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
