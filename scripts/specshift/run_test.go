@@ -6284,11 +6284,18 @@ func TestTheTwoPassesWithNoClaimCheckReportTheirDeferredEntries(t *testing.T) {
 		if len(diff.Files) == 0 {
 			t.Fatal("the confined line run planned no file, so the fixture does not exercise the report")
 		}
-		deferred := r.Deferred()
-		if len(deferred) == 0 {
-			t.Fatal("the confined line run defers no per-file count, so the register does not span the confinement")
+		inside, outside, outsideFiles := splitCountRegister(t, filepath.Join(fixtureLinePass, "registers", "tree.yaml"), confine)
+		if len(inside) == 0 || len(outside) == 0 {
+			t.Fatalf("the fixture register does not span the confinement: %d entr(ies) inside, %d outside", len(inside), len(outside))
 		}
-		assertDeferredReport(t, scope.Line, confine, r, diff)
+		deferred := r.Deferred()
+		if !reflect.DeepEqual(deferred, outside) {
+			t.Errorf("the confined line run defers %v, want the register's counts outside the confinement %v", deferred, outside)
+		}
+		if got := r.DeferredFiles(); !reflect.DeepEqual(got, outsideFiles) {
+			t.Errorf("the confined line run defers counts in %v, want %v", got, outsideFiles)
+		}
+		assertDeferredReport(t, scope.Line, confine, r, diff, outside, outsideFiles)
 		// The replay: the pass holds no entry to the tree, so a second
 		// run over the half it rewrote reports zero files rather than
 		// aborting on the counts it consumed.
@@ -6313,10 +6320,14 @@ func TestTheTwoPassesWithNoClaimCheckReportTheirDeferredEntries(t *testing.T) {
 		// leaves to the complementary one. A deferred list read before
 		// the walk reads a register that is still nil and is empty here.
 		want := []string{"spec/07_session-lifecycle.md occurrence 1"}
+		wantFiles := []string{"spec/07_session-lifecycle.md"}
 		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
 			t.Errorf("the confined anchor run defers %v, want %v", got, want)
 		}
-		assertDeferredReport(t, scope.Anchor, confine, r, diff)
+		if got := r.DeferredFiles(); !reflect.DeepEqual(got, wantFiles) {
+			t.Errorf("the confined anchor run defers entries in %v, want %v", got, wantFiles)
+		}
+		assertDeferredReport(t, scope.Anchor, confine, r, diff, want, wantFiles)
 		replay, replayDiff := applyConfinedAnchorPass(t, root, "tree.json", confine)
 		if len(replayDiff.Files) != 0 {
 			t.Errorf("the replayed anchor run planned %v, want an empty diff", replayDiff.Paths())
@@ -6361,10 +6372,14 @@ func applyConfinedAnchorPass(t *testing.T, root, moves string, confine *pass.Con
 // under, the number of files it planned, the file of every entry it
 // deferred, and the standing sentence naming the gates that stay red
 // until a complementary run covers them.
-func assertDeferredReport(t *testing.T, p scope.Pass, c *pass.Confinement, r pass.Rewriter, diff pass.Diff) {
+//
+// The expected entries and files are supplied by the caller, derived
+// from the fixture register the run was driven with. Reading them back
+// out of the pass would compare the report against the same accessors it
+// renders, so a pass that dropped an entry would satisfy the case.
+func assertDeferredReport(t *testing.T, p scope.Pass, c *pass.Confinement, r pass.Rewriter, diff pass.Diff, wantEntries, wantFiles []string) {
 	t.Helper()
-	confined, ok := r.(pass.Confined)
-	if !ok {
+	if _, ok := r.(pass.Confined); !ok {
 		t.Fatalf("the %s pass takes no confinement, so it reports nothing deferred", p)
 	}
 	var out bytes.Buffer
@@ -6372,10 +6387,11 @@ func assertDeferredReport(t *testing.T, p scope.Pass, c *pass.Confinement, r pas
 	want := []string{
 		c.String(),
 		fmt.Sprintf("%d file(s) planned", len(diff.Files)),
-		fmt.Sprintf("%d register entr(ies) deferred", len(confined.Deferred())),
+		fmt.Sprintf("%d register entr(ies) deferred", len(wantEntries)),
+		fmt.Sprintf("in %d file(s)", len(wantFiles)),
 		redGates,
 	}
-	want = append(want, confined.DeferredFiles()...)
+	want = append(want, wantFiles...)
 	for _, sentence := range want {
 		if !strings.Contains(out.String(), sentence) {
 			t.Errorf("the %s pass report does not name %q:\n%s", p, sentence, out.String())
@@ -6425,20 +6441,7 @@ func TestAConfinedRunReportsItsConfinementAndTheEntriesItDeferred(t *testing.T) 
 		t.Errorf("the run defers %d entr(ies) and checks %d, which do not sum to the register's %d",
 			len(deferred), checked, len(inside)+len(outside))
 	}
-	var out bytes.Buffer
-	reportRun(&out, scope.Name, "applied", specOnly, r, diff)
-	want := []string{
-		"-only spec/",
-		fmt.Sprintf("%d file(s) planned", len(diff.Files)),
-		fmt.Sprintf("%d register entr(ies) deferred", len(deferred)),
-		redGates,
-	}
-	want = append(want, outsideFiles...)
-	for _, sentence := range want {
-		if !strings.Contains(out.String(), sentence) {
-			t.Errorf("the report does not name %q:\n%s", sentence, out.String())
-		}
-	}
+	assertDeferredReport(t, scope.Name, specOnly, r, diff, outside, outsideFiles)
 }
 
 // TestAConfinedRunNamesTheDistinctFilesOfTheEntriesItDeferred pins the
@@ -6518,16 +6521,17 @@ func TestARunReportsTheDeferredEntriesOfThePassItDrove(t *testing.T) {
 	}
 }
 
-// TestARunThatDefersNothingReportsThatRatherThanTheRedGates pins the
-// other side of the report. The standing sentence names the gates that
-// stay red until a complementary run covers the deferred entries, so a
-// run whose confinement covers every entry's file states that instead:
-// the sentence would otherwise stand over a population that does not
-// exist.
+// TestARunThatDefersNothingStillCarriesTheStandingRedGateSentence pins
+// the other side of the report. The sentence is standing rather than
+// conditional: the gates it names read the whole tree, so they stay red
+// for as long as the partition is half-migrated, however few entries the
+// run in hand happened to defer. A report that suppressed the sentence
+// whenever one run's own register slice came out empty would read as a
+// finished migration to the operator of that run.
 //
 // spec: §28.1 (N3 and N4, the naming law the two confined runs apply
 // across the tree between them)
-func TestARunThatDefersNothingReportsThatRatherThanTheRedGates(t *testing.T) {
+func TestARunThatDefersNothingStillCarriesTheStandingRedGateSentence(t *testing.T) {
 	t.Parallel()
 	root := nameTree(t, "tree")
 	whole := pass.NewConfinement(nil, []string{"proposals/"})
@@ -6543,11 +6547,14 @@ func TestARunThatDefersNothingReportsThatRatherThanTheRedGates(t *testing.T) {
 	}
 	var out bytes.Buffer
 	reportRun(&out, scope.Name, "applied", whole, r, diff)
-	if !strings.Contains(out.String(), "no register entry is deferred") {
-		t.Errorf("the report does not state that nothing was deferred:\n%s", out.String())
-	}
-	if strings.Contains(out.String(), redGates) {
-		t.Errorf("the report carries the red-gate sentence with nothing deferred:\n%s", out.String())
+	for _, sentence := range []string{
+		"0 register entr(ies) deferred",
+		"in 0 file(s)",
+		redGates,
+	} {
+		if !strings.Contains(out.String(), sentence) {
+			t.Errorf("the report does not name %q:\n%s", sentence, out.String())
+		}
 	}
 }
 
@@ -6557,6 +6564,45 @@ func TestARunThatDefersNothingReportsThatRatherThanTheRedGates(t *testing.T) {
 // publishes them. A case derives the expected report from the register
 // rather than restating it, so an entry added to the fixture is covered
 // rather than silently unasserted.
+// splitCountRegister reads a per-file count register and returns its
+// entry descriptions on each side of a confinement, together with the
+// distinct files of the entries outside it, in the order the line pass
+// publishes them. One entry is keyed to one file, so the outside entries
+// and their files are the same length. A case derives the expected
+// report from the register rather than from the accessors the report
+// renders, so a pass that dropped a count fails the case.
+func splitCountRegister(t *testing.T, path string, c *pass.Confinement) (inside, outside, outsideFiles []string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the register %s: %v", path, err)
+	}
+	var doc struct {
+		Files []struct {
+			Path  string `yaml:"path"`
+			Count int    `yaml:"count"`
+		} `yaml:"files"`
+	}
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("parse the register %s: %v", path, err)
+	}
+	files := append([]struct {
+		Path  string `yaml:"path"`
+		Count int    `yaml:"count"`
+	}(nil), doc.Files...)
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	for _, entry := range files {
+		where := fmt.Sprintf("%s %d citation(s)", entry.Path, entry.Count)
+		if c.Covers(entry.Path) {
+			inside = append(inside, where)
+			continue
+		}
+		outside = append(outside, where)
+		outsideFiles = append(outsideFiles, entry.Path)
+	}
+	return inside, outside, outsideFiles
+}
+
 func splitSenseRegister(t *testing.T, path string, c *pass.Confinement) (inside, outside, outsideFiles []string) {
 	t.Helper()
 	data, err := os.ReadFile(path)

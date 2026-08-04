@@ -242,7 +242,7 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 	return nil
 }
 
-// redGates is the sentence a run carrying deferred entries closes with.
+// redGates is the sentence every confined run's report closes with.
 // The gates it names read the whole tree, so each one stays red for as
 // long as one part of the partition carries the retired population,
 // however clean the run that just finished reported itself to be.
@@ -280,19 +280,17 @@ func reportRun(out io.Writer, p scope.Pass, mode string, c *pass.Confinement, r 
 // direction. The report is the only signal in the second case, and the
 // only signal of an under-consumed register in the first.
 //
-// A run that deferred nothing says so rather than closing on the
-// standing sentence, whose subject would not exist.
+// The standing sentence closes every confined run's report, including a
+// run that deferred nothing. The gates it names read the whole tree
+// rather than one run's register slice, so they stay red for as long as
+// the partition is half-migrated whatever this run happened to defer.
 func reportDeferred(out io.Writer, c *pass.Confinement, r pass.Rewriter) {
 	confined, ok := r.(pass.Confined)
 	if !ok {
 		return
 	}
 	entries, files := confined.Deferred(), confined.DeferredFiles()
-	if len(entries) == 0 {
-		fmt.Fprintf(out, "no register entry is deferred: %s covers the file of every entry\n", c)
-		return
-	}
-	fmt.Fprintf(out, "%d register entr(ies) deferred as outside %s, in %d file(s):\n", len(entries), c, len(files))
+	fmt.Fprintf(out, "%d register entr(ies) deferred as outside %s, in %d file(s)\n", len(entries), c, len(files))
 	for _, target := range files {
 		fmt.Fprintf(out, "  %s\n", target)
 	}
