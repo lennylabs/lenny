@@ -242,8 +242,13 @@ type Confined interface {
 	// a site for it.
 	Confine(c *Confinement)
 	// Deferred names the register entries the confinement put outside
-	// the run, which the complementary run checks. A pass that takes the
-	// predicate owes the run this list, because a deferred entry is
+	// the run, which the complementary run checks, sorted by file path
+	// and, within a file, by the entry's position in that file. A
+	// register is keyed by file and position when it loads, so the
+	// order of the entries as they were written is not recoverable and
+	// the sorted order is what a consumer of this list reads. A pass
+	// that takes the predicate owes the run this list, because a
+	// deferred entry is
 	// checked by neither run until the complementary one lands and the
 	// entry would otherwise be silently unconsumed.
 	Deferred() []string

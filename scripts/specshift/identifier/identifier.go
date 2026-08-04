@@ -115,9 +115,13 @@ type Rewriter struct {
 	confine *pass.Confinement
 
 	// deferred names the register entries the confinement put outside
-	// this run, in register order. They are the complementary run's to
-	// check, and the run reports them so an entry no run covers is
-	// visible rather than silently unconsumed.
+	// this run, sorted by file path and, within a file, by entry
+	// position (the file-name entry first, then the occurrences in
+	// order). The register's own listing order is not recoverable: the
+	// loader keys the entries by file and by position, so the order the
+	// checks read them in is the sorted one they report. They are the
+	// complementary run's to check, and the run reports them so an
+	// entry no run covers is visible rather than silently unconsumed.
 	deferred []string
 
 	// prepared records that the one-per-run preparation has been
@@ -145,7 +149,8 @@ func (r *Rewriter) Pass() scope.Pass { return scope.Identifier }
 func (r *Rewriter) Confine(c *pass.Confinement) { r.confine = c }
 
 // Deferred returns the register entries this run left to the
-// complementary one, in register order.
+// complementary one, sorted by file path and, within a file, by entry
+// position.
 func (r *Rewriter) Deferred() []string {
 	return append([]string(nil), r.deferred...)
 }

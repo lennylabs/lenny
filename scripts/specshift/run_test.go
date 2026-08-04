@@ -6186,6 +6186,77 @@ func TestAConfinedRunCompletesOverTheHalfAPriorRunAlreadyRewrote(t *testing.T) {
 	})
 }
 
+// TestAConfinedRunReportsItsDeferredEntriesSortedByFileAndPosition pins
+// the order the deferred list is published in, which is the order the
+// report that consumes it renders. Both registers are keyed by file and
+// by position when they load, so the order the entries were written in
+// is discarded and the list is sorted by file path and, within a file,
+// by position. Each fixture register lists at least one entry out of
+// that order, so a list that echoed the register's own sequence would
+// differ from the one asserted here.
+//
+// spec: §28.1 (N3 and N4, the naming law the two confined runs apply
+// across the tree between them)
+func TestAConfinedRunReportsItsDeferredEntriesSortedByFileAndPosition(t *testing.T) {
+	t.Parallel()
+	t.Run("the name pass", func(t *testing.T) {
+		t.Parallel()
+		// The register enumerates docs/reference/snippets.md after the
+		// pkg/ carriers below it in path order.
+		r, err := applyConfinedNamePass(t, nameTree(t, "tree"), "tree.yaml", specOnly)
+		if err != nil {
+			t.Fatalf("the specification-confined name run failed: %v", err)
+		}
+		want := []string{
+			"docs/reference/links.md occurrence 1",
+			"docs/reference/snippets.md occurrence 1",
+			"pkg/carrier/carrier.go occurrence 1",
+			"pkg/carrier/notify.go occurrence 1",
+			"pkg/carrier/notify.go occurrence 2",
+			"pkg/catalog/catalog.go occurrence 1",
+			"schemas/lenny-adapter-defaults.yaml occurrence 1",
+			"schemas/lenny-adapter.proto occurrence 1",
+			"schemas/lenny-adapter.proto occurrence 2",
+			"schemas/lenny-adapter.schema.json occurrence 1",
+			"sdks/runtime/go/runtime/lifecycle_test.go occurrence 1",
+			"tests/tier11_docs/route_test.go occurrence 1",
+			"tests/tier11_docs/route_test.go occurrence 2",
+		}
+		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
+			t.Errorf("the specification-confined name run defers %v, want %v", got, want)
+		}
+	})
+	t.Run("the identifier pass", func(t *testing.T) {
+		t.Parallel()
+		// The register enumerates the holdstate.go entries after the
+		// lifecyclechannel.go entries that precede them in path order,
+		// and the file-name entry of a carrier sorts ahead of that
+		// carrier's occurrences.
+		r, err := applyConfinedIDPass(t, idTree(t, "tree"), "tree.yaml", specOnly)
+		if err != nil {
+			t.Fatalf("the specification-confined identifier run failed: %v", err)
+		}
+		want := []string{
+			"docs/reference/channels.md occurrence 1",
+			"pkg/adapter/holdstate.go occurrence 1",
+			"pkg/adapter/holdstate.go occurrence 2",
+			"pkg/adapter/lifecyclechannel.go file name",
+			"pkg/adapter/lifecyclechannel.go occurrence 1",
+			"pkg/adapter/lifecyclechannel.go occurrence 2",
+			"pkg/adapter/lifecyclechannel.go occurrence 3",
+			"pkg/adapter/lifecyclechannel_test.go file name",
+			"pkg/adapter/lifecyclechannel_test.go occurrence 1",
+			"pkg/adapter/lifecyclechannel_test.go occurrence 2",
+			"schemas/lifecycle-events.schema.json file name",
+			"tests/change-graph.json occurrence 1",
+			"tests/spec-map.json occurrence 1",
+		}
+		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
+			t.Errorf("the specification-confined identifier run defers %v, want %v", got, want)
+		}
+	})
+}
+
 // TestAReplayedConfinedRunAbortsOnTheEntriesItAlreadyConsumed pins the
 // other direction of the same filter, which is what keeps a repeated
 // invocation of one confinement loud. The entries of the confined half
