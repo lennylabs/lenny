@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+#
+# Identifier sense register.
+#
+# One entry per occurrence of a retired channel spelling whose sense the
+# naming table alone cannot decide, keyed by file and by the 1-based
+# position of the site among the retired-spelling sites that file carries
+# in source order. This file carries the spec/ occurrences; the
+# complementary run appends the remaining occurrences and runs the pass
+# over the rest of the tree.
+kind: identifier-senses
+version: 1
+entries:
+  - file: spec/04_system-components.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 6
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 7
+    channel: CH-RUNTIMEOPS
+  - file: spec/04_system-components.md
+    occurrence: 8
+    channel: CH-RUNTIMEOPS
+  - file: spec/15_external-api-surface.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS
+  - file: spec/15_external-api-surface.md
+    occurrence: 2
+    channel: CH-RUNTIMEOPS
+  - file: spec/15_external-api-surface.md
+    occurrence: 3
+    channel: CH-RUNTIMEOPS
+  - file: spec/15_external-api-surface.md
+    occurrence: 4
+    channel: CH-RUNTIMEOPS
+  - file: spec/15_external-api-surface.md
+    occurrence: 5
+    channel: CH-RUNTIMEOPS
+  # The occurrence stands in the file argument of an Azure storage
+  # management-policy command, which names a policy document rather than
+  # the mechanism the naming table retires the spelling for.
+  - file: spec/17_deployment-topology.md
+    occurrence: 1
+    not-a-channel: true
+  - file: spec/18_build-sequence.md
+    occurrence: 1
+    channel: CH-RUNTIMEOPS

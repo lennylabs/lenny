@@ -9070,13 +9070,15 @@ func TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain(t *testing
 }
 
 // pinnedLiteralsPath and sensePath are the two registers driving the
-// name pass, as repo-relative paths. The cases below read them out of
-// the committed tree and assert nothing about their presence: the
-// migration empties the sense register at the end of its rewrite, and a
-// case asserting either register exists would turn red at that point.
+// name pass, and identifierSensePath is the one driving the identifier
+// pass, as repo-relative paths. The cases below read them out of the
+// committed tree and assert nothing about their presence: the migration
+// empties a sense register at the end of its rewrite, and a case
+// asserting either register exists would turn red at that point.
 const (
-	pinnedLiteralsPath = "tests/registers/pinned-spec-literals.yaml"
-	sensePath          = "tests/registers/reserved-phrase-senses.yaml"
+	pinnedLiteralsPath  = "tests/registers/pinned-spec-literals.yaml"
+	sensePath           = "tests/registers/reserved-phrase-senses.yaml"
+	identifierSensePath = "tests/registers/identifier-senses.yaml"
 )
 
 // pinnedRegister mirrors the pinned-literal register's document, on the
@@ -9292,6 +9294,51 @@ func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testi
 	}
 	if err != nil {
 		t.Fatalf("the specification-confined dry run of the name pass over the seeded registers failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "dry run") {
+		t.Errorf("the run reported %q, which does not name the dry run that planned it", out.String())
+	}
+}
+
+// TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes
+// drives the identifier pass over the committed tree under the
+// confinement the specification phase of the rewrite uses, so a
+// mis-seeded occurrence number fails here rather than mid-application.
+//
+// The run plans and writes nothing. The naming table the pass resolves
+// each site against is stated by the communication-channels section of
+// the same tree, so the specification slice of the register is checkable
+// with no scratch worktree.
+//
+// The case is guarded on the same three states the name run's case is
+// guarded on and asserts none of them. It reports nothing when the tree
+// carries no such register, and nothing when the tree no longer claims
+// the register's specification-keyed entries, which is the window
+// between the specification-confined run and its complement: the run has
+// already rewritten those carriers while the register that names them is
+// appended to and emptied only afterwards, so every entry then claims an
+// occurrence above its file's site count and the claimed-entry check
+// fails the run by design.
+//
+// spec: §28.1
+func TestTheSpecificationConfinedIdentifierRunOverTheSeededRegisterCompletes(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	if !treeCarries(t, root, identifierSensePath) {
+		t.Skipf("not-yet-applicable: the tree carries no %s", identifierSensePath)
+	}
+	var out bytes.Buffer
+	err := run(context.Background(), []string{
+		"-root", root,
+		"-pass", "identifier",
+		"-register", filepath.Join(root, identifierSensePath),
+		"-only", "spec/",
+	}, &out)
+	if claimedEntryAbort(err) {
+		t.Skipf("not-yet-applicable: the tree no longer carries a site for every %s entry under spec/: %v", identifierSensePath, err)
+	}
+	if err != nil {
+		t.Fatalf("the specification-confined dry run of the identifier pass over the seeded register failed: %v", err)
 	}
 	if !strings.Contains(out.String(), "dry run") {
 		t.Errorf("the run reported %q, which does not name the dry run that planned it", out.String())
