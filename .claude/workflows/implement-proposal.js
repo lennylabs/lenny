@@ -295,14 +295,26 @@ if (plan.specEdits.length === 0) {
 
   for (const ss of substeps) {
     const ssEdits = plan.specEdits.filter((e) => e.subsection === ss);
+    // An authored edit writes one file and several can run at once. A mechanical
+    // edit is a script run whose file set is decided by its register, not by the
+    // caller, so it belongs to the SUB-STEP rather than to any one file: running
+    // it inside a per-file agent asks that agent to write files it is forbidden
+    // to touch, and runs it concurrently with the sibling agents still editing
+    // those same files, so the script would rewrite them from a mid-flight
+    // state. Authored edits therefore fan out first and settle, and the
+    // mechanical edits run afterwards, one at a time, at sub-step level.
+    const ssAuthored = ssEdits.filter((e) => e.method !== "mechanical");
+    const ssMechanical = ssEdits.filter((e) => e.method === "mechanical");
     const ssFiles = [...new Set(ssEdits.map((e) => e.targetFile))];
+    const ssAuthoredFiles = [...new Set(ssAuthored.map((e) => e.targetFile))];
     log(
-      "Sub-step " + ss + ": " + ssEdits.length + " edit(s) across " + ssFiles.length + " file(s)",
+      "Sub-step " + ss + ": " + ssAuthored.length + " authored edit(s) across " +
+        ssAuthoredFiles.length + " file(s), then " + ssMechanical.length + " mechanical",
     );
     const applyResults = (
       await parallel(
-        ssFiles.map((f) => () => {
-          const edits = ssEdits.filter((e) => e.targetFile === f);
+        ssAuthoredFiles.map((f) => () => {
+          const edits = ssAuthored.filter((e) => e.targetFile === f);
           return agent(
             "Apply staged spec edits from an approved proposal to one spec file.\n\n" +
               "HARD CONSTRAINT: the only file you may edit is " +
@@ -326,9 +338,39 @@ if (plan.specEdits.length === 0) {
       )
     ).filter(Boolean);
 
-    unappliable = applyResults.flatMap((r) => r.unappliable);
-    deviations = deviations.concat(applyResults.flatMap((r) => r.deviations));
-    for (const id of applyResults.flatMap((r) => r.applied)) appliedIds.add(id);
+    // The authored fan-out has settled. Now run this sub-step's mechanical edits
+    // sequentially, each as its own agent at sub-step level, permitted to write
+    // whatever its script's register decides rather than one named file.
+    const mechResults = [];
+    for (const me of ssMechanical) {
+      const r = await agent(
+        "Apply ONE mechanical spec edit of an approved proposal by running the script it stages.\n\n" +
+          "Work in " + repo + ". Proposal: " + proposal + ".\n" +
+          "Sub-step: " + ss + "\nEdit: " + JSON.stringify(me, null, 2) +
+          "\n\nThis edit is MECHANICAL: the proposal stages a script run over a register and " +
+          "deliberately enumerates no edit sites, so the script decides which files change. Every " +
+          "authored edit of this sub-step has already been applied and the tree has settled, so you " +
+          "are the only writer now.\n\n" +
+          "You MAY write any file the script writes; you may NOT hand-write, hand-reproduce, or " +
+          "hand-correct what it would write. The script resolves each site from its register and " +
+          "fails closed on a site the register does not carry, and a hand edit substitutes a guess " +
+          "for that guarantee.\n\n" +
+          "Procedure. Read the sub-step's Change paragraph for the command lines it states. Run the " +
+          "dry-run form first, read its file list, and confirm it is the set the proposal says this " +
+          "run writes. Then run the apply form. Then confirm the applied diff matches what the dry " +
+          "run predicted. If the script exits non-zero, if the applied diff does not match the dry " +
+          "run, or if the command is absent from the tree, record the edit as unappliable with that " +
+          "reason and STOP; never fall back to editing by hand. An empty diff where the proposal " +
+          "says the run writes files is a failure, not a pass.\n\n" + SPEC_RULES,
+        { schema: APPLY_RESULT, label: "apply:" + ss + ":mech:" + me.id, phase: "Apply spec" },
+      );
+      if (r) mechResults.push(r);
+    }
+    const allResults = applyResults.concat(mechResults);
+
+    unappliable = allResults.flatMap((r) => r.unappliable);
+    deviations = deviations.concat(allResults.flatMap((r) => r.deviations));
+    for (const id of allResults.flatMap((r) => r.applied)) appliedIds.add(id);
     if (deviations.length > 0) log(deviations.length + " rule-forced deviations recorded");
 
     // Stop on unappliable rather than verifying a partial tree. An edit that could
