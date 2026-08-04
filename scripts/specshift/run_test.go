@@ -9064,3 +9064,137 @@ func TestEveryResidualRegisterIsAnOrdinaryMemberOfTheSharedReadDomain(t *testing
 		}
 	}
 }
+
+// pinnedLiteralsPath and sensePath are the two registers driving the
+// name pass, as repo-relative paths. The case below reads them out of
+// the committed tree and asserts nothing about their presence: the
+// migration empties the sense register at the end of its rewrite, and a
+// case asserting either register exists would turn red at that point.
+const (
+	pinnedLiteralsPath = "tests/registers/pinned-spec-literals.yaml"
+	sensePath          = "tests/registers/reserved-phrase-senses.yaml"
+)
+
+// senseRegister mirrors the sense register's document, on the same terms.
+type senseRegister struct {
+	Entries []struct {
+		File       string `yaml:"file"`
+		Occurrence int    `yaml:"occurrence"`
+	} `yaml:"entries"`
+}
+
+// treeCarries reports whether the tree holds one register, which the
+// name pass reads beside the sense register. A register the tree does
+// not carry is a state the case reports nothing over rather than a
+// failure, on the same terms readRegister states.
+func treeCarries(t *testing.T, root, path string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(root, path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return true
+}
+
+// readRegister parses one committed register into doc and reports
+// whether the tree carries it. An absent register is the terminal state
+// the rewrite leaves the sense register in, so it is a skip rather than
+// a failure.
+func readRegister(t *testing.T, root, path string, doc any) bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, path))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	if err := yaml.Unmarshal(data, doc); err != nil {
+		t.Fatalf("parse %s: %v", path, err)
+	}
+	return true
+}
+
+// TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes
+// drives the name pass over the committed tree under the confinement the
+// specification phase of the rewrite uses, so a mis-seeded occurrence
+// number fails here rather than mid-application.
+//
+// The run plans and writes nothing. Both readers the pass depends on
+// resolve against the tracked tree, because the communication-channels
+// section declares the identifier space, so the specification slice of
+// the sense register is checkable with no scratch worktree.
+//
+// The case is guarded on three states and asserts none of them. It
+// reports nothing when the tree carries neither register, which is the
+// terminal state the rewrite leaves the sense register in. It also
+// reports nothing when the tree no longer claims the register's
+// specification-keyed entries, which is the window between the
+// specification-confined run and its complement: the run has already
+// rewritten those carriers while the register that names them is emptied
+// only afterwards, so every entry then claims an occurrence above its
+// file's site count and the claimed-entry check fails the run by design.
+//
+// spec: §28.1
+func TestTheSpecificationConfinedNameRunOverTheSeededRegistersCompletes(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	var senses senseRegister
+	if !readRegister(t, root, sensePath, &senses) {
+		t.Skipf("not-yet-applicable: the tree carries no %s", sensePath)
+	}
+	if !treeCarries(t, root, pinnedLiteralsPath) {
+		t.Skipf("not-yet-applicable: the tree carries no %s", pinnedLiteralsPath)
+	}
+	if !treeStillClaims(t, root, senses) {
+		t.Skipf("not-yet-applicable: the tree no longer carries a site for every %s entry under spec/", sensePath)
+	}
+	var out bytes.Buffer
+	if err := run(context.Background(), []string{
+		"-root", root,
+		"-pass", "name",
+		"-register", filepath.Join(root, sensePath),
+		"-only", "spec/",
+	}, &out); err != nil {
+		t.Fatalf("the specification-confined dry run of the name pass over the seeded registers failed: %v", err)
+	}
+	if !strings.Contains(out.String(), "dry run") {
+		t.Errorf("the run reported %q, which does not name the dry run that planned it", out.String())
+	}
+}
+
+// treeStillClaims reports whether every specification-keyed entry of the
+// sense register still has a site in the tree to resolve against.
+//
+// The count is taken with the exported phrase matcher rather than with
+// the pass's own site enumeration, which is unexported. The matcher
+// reads every position of a text, so its count is at or above the pass's
+// for the same file, and the guard is therefore conservative in the
+// direction that matters: it holds the case back only where the tree has
+// lost sites the register still claims.
+func treeStillClaims(t *testing.T, root string, senses senseRegister) bool {
+	t.Helper()
+	read := scope.DirReader(root)
+	claimed := map[string]int{}
+	for _, entry := range senses.Entries {
+		if !strings.HasPrefix(entry.File, "spec/") {
+			continue
+		}
+		if entry.Occurrence > claimed[entry.File] {
+			claimed[entry.File] = entry.Occurrence
+		}
+	}
+	for target, highest := range claimed {
+		content, err := read(target)
+		if err != nil {
+			return false
+		}
+		if len(name.FindReservedPhrases(string(content))) < highest {
+			return false
+		}
+	}
+	return true
+}

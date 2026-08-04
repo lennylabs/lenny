@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: MIT
+#
+# Pinned specification literals.
+#
+# One entry per Go string literal under tests/tier11_docs/ that pins
+# specification prose the name pass rewrites. `literal` is the 1-based
+# position of that literal among every string literal the file carries in
+# source order, counting the literals that pin nothing, so every entry is
+# re-derived when a carrier gains or loses a string literal.
+#
+# The name pass reads the register as an admission filter: a literal it
+# does not name is outside the pass, which keeps the operator-facing help
+# text and the diagnostic messages a tier-11 carrier holds out of the
+# rewrite. Nothing empties the register, and the pass requires it whenever
+# the tree carries a Go carrier under tests/tier11_docs/.
+kind: pinned-spec-literals
+version: 1
+entries:
+  - file: tests/tier11_docs/eviction_coordinator_route_consistency_test.go
+    literal: 10
