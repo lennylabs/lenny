@@ -1163,8 +1163,28 @@ wires it, per §4.4. Retracting the requirement instead would mean staging match
 line 18), which this proposal does not do. Remove the reserved bare noun phrases by script, driven by
 `tests/registers/reserved-phrase-senses.yaml`, with the pass failing a site the register does not resolve.
 
-The name pass walks the whole domain N3 states in one run rather than `spec/` and `docs/` alone, under the
-generated-file exclusion §4.6 states. Its matcher applies the comment-marker continuation join §4.6 states
+This sub-step's mechanical edit is the name pass, and its assigned `spec/` target file is
+`spec/28_communication-channels.md`, one of the `spec/` paths this sub-step's Target list already names,
+whose §28.3 naming table the pass indexes and whose presence the paragraph above obliges this sub-step to
+confirm before the pass runs. Every other `spec/` path this sub-step touches takes an edit made by hand.
+The invocations below are the last edits that file's agent applies, and the pass runs once for the
+sub-step. The command lines are the dry-run form and the apply form, in that order:
+
+```
+go run ./scripts/specshift -pass name -register tests/registers/reserved-phrase-senses.yaml -only spec/
+go run ./scripts/specshift -pass name -register tests/registers/reserved-phrase-senses.yaml -only spec/ -apply
+```
+
+with `-except spec/` in place of `-only spec/` for the complementary code-phase run. The `-only spec/` run
+rewrites every `spec/` carrier of the reserved phrase rather than the assigned file alone, so the dry run's
+file list names `spec/` files this sub-step's Target list does not, and that file list is the expected
+output rather than a run that has exceeded its scope. The mechanical diff for the assigned file is empty by
+construction, on the measurement that §28 describes the banned spellings rather than reproducing them and
+therefore carries no site of the class the pass rewrites, so the run's evidence is the dry-run report
+together with `git diff -- spec/`.
+
+The name pass walks the whole domain N3 states across the two confined runs stated above rather than
+`spec/` and `docs/` alone, under the generated-file exclusion §4.6 states. Its matcher applies the comment-marker continuation join §4.6 states
 before it applies either banned spelling, per N3, so a reserved phrase wrapped across two consecutive
 comment lines is one site the pass rewrites and one site the register resolves rather than two half-sites
 neither reads. The tree carries that wrap inside the domain N3 names, in `schemas/` at
@@ -1373,6 +1393,23 @@ ambiguous while renaming only prose produces a worse state than either alternati
 
 **Change (staged description).** Rename the two colliding channels to their canonical identifiers across
 every machine-readable surface, by script, driven by the naming table in §28.3.
+
+This sub-step's mechanical edit is the identifier pass, and its assigned `spec/` target file is
+`spec/15_external-api-surface.md`, one of the `spec/` paths this sub-step's Target list already names. The
+other `spec/` path that list carries, `spec/28_communication-channels.md`, takes the §28.3 naming-table
+rows this sub-step adds by hand. The invocations below are the last edits the assigned file's agent
+applies, and the pass runs once for the sub-step. The command lines are the dry-run form and the apply
+form, in that order:
+
+```
+go run ./scripts/specshift -pass identifier -register tests/registers/identifier-senses.yaml -only spec/
+go run ./scripts/specshift -pass identifier -register tests/registers/identifier-senses.yaml -only spec/ -apply
+```
+
+with `-except spec/` in place of `-only spec/` for the complementary code-phase run. The `-only spec/` run
+rewrites every `spec/` carrier of the retired identifier spellings rather than the assigned file alone, so
+the dry run's file list names `spec/` files this sub-step's Target list does not, and that file list is the
+expected output rather than a run that has exceeded its scope.
 
 The §28.3 table records the spelling each carrier takes, per N7. This sub-step writes the §28.3
 naming-table rows for every spelling it fixes that the table does not already carry, which are the
@@ -1819,6 +1856,45 @@ with a pointer.
 Reduce `spec/15` §15.4 to the wire-artifact pointer it already claims to be, and reduce the `spec/04` §4.7
 channel prose, in both cases leaving a successor pointer naming the identifiers that moved and the heading
 that now owns them.
+
+This sub-step's mechanical edits are the line pass and the anchor pass, and the assigned `spec/` target
+file for both is `spec/04_system-components.md`, one of the `spec/` paths this sub-step's Target list
+already names, which carries the larger citation population below the shifted ranges the line pass reads
+and the subsection headings this sub-step inserts ahead of that pass. Every other `spec/` path this
+sub-step touches takes an edit made by hand. Each pass runs once for the sub-step, and the invocations are
+the last edits that file's agent applies, in this order: the reduction runs first, the subsection headings
+are inserted over the prose that survives it, the line pass runs over the shifted tree, and the anchor pass
+runs last. The command lines for the line pass are the dry-run form and the apply form, in that order:
+
+```
+go run ./scripts/specshift -pass line -register tests/registers/line-citations.yaml -only spec/
+go run ./scripts/specshift -pass line -register tests/registers/line-citations.yaml -only spec/ -apply
+```
+
+and for the anchor pass:
+
+```
+go run ./scripts/specshift -pass anchor -register tests/spec-anchor-moves.json -only spec/
+go run ./scripts/specshift -pass anchor -register tests/spec-anchor-moves.json -only spec/ -apply
+```
+
+each with `-except spec/` in place of `-only spec/` for the complementary code-phase run. Each
+`-only spec/` run rewrites every `spec/` carrier of its pass's class rather than the assigned file alone,
+so the dry run's file list names `spec/` files this sub-step's Target list does not, and that file list is
+the expected output rather than a run that has exceeded its scope. The mechanical diff for the assigned
+file is empty by construction for both passes, so each run's evidence is its dry-run report together with
+`git diff -- spec/`. For the line pass the measurement is that `spec/04_system-components.md` holds no
+entry in `tests/registers/line-citations.yaml`, whose only `spec/` entries are
+`spec/17_deployment-topology.md` and `spec/25_agent-operability.md`, and a file the register holds no entry
+for is one the pass finds no citation in and returns unchanged. For the anchor pass the measurement is that
+no reference in that file, in any class the pass reads, names an anchor `tests/spec-anchor-moves.json`
+retires: every same-page link in the file targets a §4.x anchor the reduction keeps, including its twelve
+`](#47-runtime-adapter)` links, because §4.7 keeps its heading and its anchor and takes no
+`tests/spec-anchor-moves.json` entry; of its 225 file-qualified links the six that enter
+`spec/15_external-api-surface.md` target `#151-rest-api` at lines 194, 1100, 1102, and 1389 and
+`#1543-runtime-integration-levels` at lines 796 and 967, both of which survive, and the rest name target
+files in which this reduction retires no anchor; and the file carries no bare `§15.4` citation, so it holds
+no member of the class the anchor sense register keys.
 
 Every reduction in this sub-step is a relocation, and a relocation lands only when both of its legs land in
 the same change: the source's removal, and the destination text in `spec/28` that carries what the source
@@ -2559,8 +2635,8 @@ each citation whose target leaves its section becomes a new citation resolver fa
 baseline proposal 0065 seeds.
 `tests/spec-anchor-moves.json` cannot rescue them, because §4.8, §4.9, and §15.5 do not move and have no
 retired anchor, so the map has no entry for them. The `specshift` line pass therefore converts every
-citation into `spec/04` and `spec/15`, in every section of those two files, in every carrier, and in every
-spelling of the retired citation form §4.6 states, to anchor citations inside the same change that removes the
+citation into `spec/04` and `spec/15`, in every section of those two files, in every carrier across the two
+confined runs stated above, and in every spelling of the retired citation form §4.6 states, to anchor citations inside the same change that removes the
 content, and the exit criterion is that the resolver reports no failure the baseline does not already
 carry, together with tier 11. The criterion is stated against the baseline rather than as a green resolver
 because the resolver is red on introduction against roughly 1,500 pre-existing stale citations, per §4.6,
@@ -2584,8 +2660,8 @@ occurrences of the `§4.4 line(s) N` form and 106 of the `§4.7 line(s) N` form,
 in SPEC-4 would retire all of them onto `#44-event--checkpoint-store` and `#47-runtime-adapter`, which is
 the precision loss the insertion exists to prevent. Ordering inside this sub-step is therefore fixed: run
 the reduction, insert the headings over the prose that survives it, then run the line pass over the
-shifted tree, so the pass reads the final line numbers and converts each §4.4 and §4.7 citation to the
-subsection anchor that contains its line. The headings are inserted after the reduction rather than before
+shifted tree in the two confined runs stated above, so the pass reads the final line numbers and converts
+each §4.4 and §4.7 citation to the subsection anchor that contains its line. The headings are inserted after the reduction rather than before
 it because §4.7 loses the Part A, Part B, and message-schema-table prose at
 `spec/04_system-components.md` lines 695 through 731 to §28, so titles authored before the reduction would
 name material that leaves the section. Both orderings put the insertion ahead of the line pass, which is
@@ -2779,7 +2855,42 @@ the sub-step whose anchor pass rewrites the links into the retired `15.4.1` anch
 concentrated entirely in the tooling, which is why the tooling ships first with its own tests and a dry-run
 gate. The paragraph break is the exception and is hand-authored.
 
-**Change (staged description).** Run the anchor pass tree-wide to rewrite each remaining redirected
+**Change (staged description).** This sub-step's mechanical edits are the anchor pass and the line pass,
+and the assigned `spec/` target file for both is `spec/10_gateway-internals.md`, one of the three `spec/`
+paths this sub-step's Target list names, which carries the eight §10.1.x subsection headings this sub-step
+inserts ahead of its line pass. Every other `spec/` path this sub-step touches takes an edit made by hand.
+Each pass runs once for the sub-step, and the invocations are the last edits that file's agent applies,
+with the anchor pass running before the line pass. The command lines for the anchor pass are the dry-run
+form and the apply form, in that order:
+
+```
+go run ./scripts/specshift -pass anchor -register tests/spec-anchor-moves.json -only spec/
+go run ./scripts/specshift -pass anchor -register tests/spec-anchor-moves.json -only spec/ -apply
+```
+
+and for the line pass:
+
+```
+go run ./scripts/specshift -pass line -register tests/registers/line-citations.yaml -only spec/
+go run ./scripts/specshift -pass line -register tests/registers/line-citations.yaml -only spec/ -apply
+```
+
+each with `-except spec/` in place of `-only spec/` for the complementary code-phase run. Each
+`-only spec/` run rewrites every `spec/` carrier of its pass's class rather than the assigned file alone,
+so the dry run's file list names `spec/` files this sub-step's Target list does not, and that file list is
+the expected output rather than a run that has exceeded its scope. The mechanical diff for the assigned
+file is empty by construction for both passes, so each run's evidence is its dry-run report together with
+`git diff -- spec/`. For the line pass the measurement is that `spec/10_gateway-internals.md` holds no
+entry in `tests/registers/line-citations.yaml`, whose only `spec/` entries are
+`spec/17_deployment-topology.md` and `spec/25_agent-operability.md`, and a file the register holds no entry
+for is one the pass finds no citation in and returns unchanged. For the anchor pass the measurement is that
+the `-only spec/` run finds no link site left anywhere under `spec/`: SPEC-3's earlier `-only spec/`
+invocation of the same pass reads the same whole `tests/spec-anchor-moves.json` and rewrites every `spec/`
+markdown link whose fragment is an anchor that map retires, including the `#internal-messagepart-format`
+link at `spec/15_external-api-surface.md` line 1399 that this sub-step's pass would otherwise take, so by
+the time this invocation runs no link under `spec/` names a retired anchor.
+
+Run the anchor pass over the two confined runs stated above to rewrite each remaining redirected
 citation and each remaining markdown link into a retired anchor to its successor, then empty
 `tests/spec-anchor-moves.json` and `tests/registers/anchor-senses.yaml`. The entry criterion for emptying
 both is run completeness measured
@@ -2870,8 +2981,8 @@ section number alone. The gate's domain is a link whose target is a tracked `.md
 itself. A link written to the rendered documentation site, which is the `.html` form the `docs/` pages use
 for site-internal navigation, is resolved by the site generator rather than against a markdown heading and
 is outside the gate. Run the line pass over
-every carrier of the citation form to convert line citations to anchor citations, driving every per-file
-count in the line-citation register to zero.
+every carrier of the citation form across the two confined runs stated above, to convert line citations to
+anchor citations, driving every per-file count in the line-citation register to zero across the pair.
 
 Hand-correct the straddling range citations §4.6 enumerates before the final line-pass run, because the
 pass fails each of them rather than guessing an anchor and they would otherwise hold their files above
