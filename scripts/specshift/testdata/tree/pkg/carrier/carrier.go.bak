@@ -1,0 +1,10 @@
+// SPDX-License-Identifier: MIT
+
+// Package carrier is kept here as a saved copy beside the carrier it was
+// taken from. Its path extends that carrier's path, so a confinement
+// naming the carrier and matching by character prefix would cover this
+// file while a confinement matching a whole path or a path segment does
+// not. It carries a citation so a run that reached it would rewrite it.
+//
+// spec: §10 line 437
+package carrier
