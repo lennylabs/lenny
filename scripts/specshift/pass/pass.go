@@ -330,26 +330,13 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	}
 	// The registers outside the site-rewrite domain take the key rewrite
 	// alone, in the same diff, so a run that renames a file leaves them
-	// byte-identical apart from the moved key. The channel's own
-	// emptiness guard is asked over the whole key-write domain, and the
-	// confinement then decides whether this run covers a path-keyed
-	// register: a run that covers none skips the channel rather than
-	// failing, because a register outside the confinement is the
-	// complementary run's to rewrite.
+	// byte-identical apart from the moved key.
 	if _, ok := r.(KeyRewriter); ok {
-		keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
+		sites, err := h.planKeyRewrites(ctx, &diff, r)
 		if err != nil {
-			return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+			return Diff{}, err
 		}
-		for _, target := range h.Confine.Filter(keyed) {
-			if err := h.planInto(ctx, &diff, r, target, false); err != nil {
-				sites, ok := AllAborts(err)
-				if !ok {
-					return Diff{}, err
-				}
-				aborts = append(aborts, sites...)
-			}
-		}
+		aborts = append(aborts, sites...)
 	}
 	if err := Aborted(aborts); err != nil {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
@@ -359,6 +346,63 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
 	return diff, nil
+}
+
+// planKeyRewrites plans the key rewrite over the path-keyed registers
+// outside the pass's site-rewrite domain, and returns the fail-closed
+// sites the channel collected.
+//
+// The confinement decides whether the channel runs at all, before the
+// key-write domain is consulted. A run whose confinement covers no
+// path-keyed register has nothing to rekey, and that register is the
+// complementary run's to rewrite, so the channel is skipped rather than
+// asked to answer for a domain this run does not reach. A run whose
+// confinement does cover one takes the channel unchanged, including the
+// key-write domain's own emptiness guard, which reports a tree that
+// carries no register outside the site-rewrite domain.
+func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) ([]*Abort, error) {
+	covers, err := h.coversKeyedRegister(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+	}
+	if !covers {
+		return nil, nil
+	}
+	keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
+	if err != nil {
+		return nil, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
+	}
+	var aborts []*Abort
+	for _, target := range h.Confine.Filter(keyed) {
+		if err := h.planInto(ctx, diff, r, target, false); err != nil {
+			sites, ok := AllAborts(err)
+			if !ok {
+				return nil, err
+			}
+			aborts = append(aborts, sites...)
+		}
+	}
+	return aborts, nil
+}
+
+// coversKeyedRegister reports whether the run's confinement covers a
+// path-keyed test-infrastructure register of the tracked tree. A nil
+// confinement covers the whole tree and so answers yes without listing
+// it.
+func (h *Harness) coversKeyedRegister(ctx context.Context) (bool, error) {
+	if h.Confine == nil {
+		return true, nil
+	}
+	all, err := h.List(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list tracked tree: %w", err)
+	}
+	for _, target := range all {
+		if scope.KeyWritable(target) && h.Confine.Covers(target) {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // checkDestinations refuses a plan whose moves would overwrite a file.

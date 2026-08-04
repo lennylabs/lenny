@@ -2129,6 +2129,85 @@ func TestTheKeyRewriteChannelRunsWhereTheConfinementCoversARegister(t *testing.T
 	}
 }
 
+// TestTheKeyRewriteChannelSkipsBeforeItsEmptinessGuardIsAsked pins the
+// order of the two decisions on the second write channel. The tree it
+// runs over carries one path-keyed register, and that register sits
+// inside the site-rewrite domain, so the key-write domain is empty over
+// the whole tree and its emptiness guard fails any run that reaches it.
+// A run whose confinement covers no path-keyed register has nothing to
+// rekey and skips the channel before the domain is consulted, and the
+// complementary run, which does cover one, reaches the guard and fails
+// on it. A channel that filtered the domain instead of skipping the
+// channel would fail both runs.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it, so a run covering no carrier of those keys
+// has no key to move)
+func TestTheKeyRewriteChannelSkipsBeforeItsEmptinessGuardIsAsked(t *testing.T) {
+	t.Parallel()
+	// The register sits inside the site-rewrite domain, which is what
+	// empties the key-write domain: it is readable, it is no planning
+	// record, and it carries no generated-artifact marker.
+	tree := map[string]string{
+		"spec/28_communication-channels.md":           "# Channels\n\npkg/carrier/carrier.go\n",
+		"pkg/carrier/carrier.go":                      "package carrier\n",
+		"tests/registers/reserved-phrase-senses.yaml": "kind: reserved-phrase-senses\nentries: []\n",
+	}
+	for _, tc := range []struct {
+		name    string
+		confine *pass.Confinement
+		wantErr bool
+	}{
+		{"covering no path-keyed register", pass.NewConfinement([]string{"spec/"}, nil), false},
+		{"covering one", pass.NewConfinement(nil, []string{"spec/"}), true},
+	} {
+		h := pass.NewHarnessOver(mapLister(tree), mapReader(tree), func(string, []byte) error { return nil })
+		h.Confine = tc.confine
+		r := &renamingRewriter{
+			suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
+			from:           "pkg/carrier/carrier.go",
+			to:             "pkg/carrier/renamed.go",
+		}
+		_, err := h.Plan(context.Background(), r)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("the run %s reached no emptiness guard", tc.name)
+				continue
+			}
+			if !strings.Contains(err.Error(), "no path-keyed register") {
+				t.Errorf("the run %s failed on something other than the emptiness guard: %v", tc.name, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("the run %s did not skip the channel: %v", tc.name, err)
+		}
+	}
+}
+
+// mapLister lists the tracked paths of an in-memory tree, sorted.
+func mapLister(tree map[string]string) scope.Lister {
+	return func(context.Context) ([]string, error) {
+		paths := make([]string, 0, len(tree))
+		for p := range tree {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		return paths, nil
+	}
+}
+
+// mapReader reads the contents of an in-memory tree.
+func mapReader(tree map[string]string) scope.FileReader {
+	return func(path string) ([]byte, error) {
+		content, ok := tree[path]
+		if !ok {
+			return nil, fmt.Errorf("read %s: no such tracked path", path)
+		}
+		return []byte(content), nil
+	}
+}
+
 // TestReportAbortPassesOtherErrorsThrough pins that only a fail-closed
 // abort is reported as one.
 func TestReportAbortPassesOtherErrorsThrough(t *testing.T) {
