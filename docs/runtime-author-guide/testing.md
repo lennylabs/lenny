@@ -28,7 +28,7 @@ This page covers the conformance suite, the test categories per integration leve
 | **Shutdown behavior** | Clean exit within `deadline_ms` on `shutdown` |
 | **Schema compliance** | Every emitted frame and every `MessagePart` validates against the published JSON Schemas |
 | **MCP integration** (Standard and Full) | Platform MCP server connection, nonce authentication, tool invocation, connector reachability |
-| **Lifecycle channel** (Full) | Capability handshake, checkpoint, interrupt, credential rotation, deadline signal |
+| **CH-RUNTIMEOPS** (Full) | Capability handshake, checkpoint, interrupt, credential rotation, deadline signal |
 
 The validator also reconciles the level your runtime declares against the level it actually demonstrates. See [Declared versus observed level](#declared-versus-observed-level).
 
@@ -92,7 +92,7 @@ The validator runs a set of test categories for the declared level. Each higher 
 
 | Category | What it asserts |
 |----------|-----------------|
-| lifecycle channel opening | The runtime connects to the lifecycle channel named in the manifest (`@lenny-lifecycle`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
+| CH-RUNTIMEOPS opening | The runtime connects to the CH-RUNTIMEOPS named in the manifest (`@lenny-lifecycle`) and completes the `lifecycle_capabilities` / `lifecycle_support` exchange. |
 | checkpoint quiesce/resume | On `checkpoint_request`, the runtime quiesces output, replies with `checkpoint_ready`, waits for `checkpoint_complete`, and resumes. |
 | interrupt acknowledgement | On `interrupt_request`, the runtime reaches a safe stop point and replies with `interrupt_acknowledged` carrying the original `interruptId` within the deadline. |
 | credential rotation handling | A runtime that declares `credential_rotation` support re-reads refreshed credentials on `credentials_rotated` and services the next message without a restart. |
@@ -106,7 +106,7 @@ Each failure is classified as `schema_violation`, `timeout`, `missing_capability
 
 Alongside running the declared level's categories, the validator probes the running runtime to determine the level it actually demonstrates, then compares the two:
 
-- It starts the runtime with the full Full-level fixture set available: the lifecycle channel listening, the platform MCP server and connector fixtures reachable, and the manifest written.
+- It starts the runtime with the full Full-level fixture set available: the CH-RUNTIMEOPS listening, the platform MCP server and connector fixtures reachable, and the manifest written.
 - If the runtime completes the `lifecycle_capabilities` / `lifecycle_support` exchange on `@lenny-lifecycle` within the grace window, the observed level is at least Full.
 - Otherwise, if it connects to the platform MCP server and presents a valid `_lennyNonce` during `initialize`, the observed level is at least Standard.
 - Otherwise the observed level is Basic.
@@ -130,11 +130,11 @@ The conformance suite carries its own fixtures, so `lenny runtime validate` runs
 lenny runtime validate
 ```
 
-This needs no Docker, Kubernetes, or external infrastructure for any level. The Standard and Full categories connect to the fake MCP server and lifecycle channel the validator hosts itself.
+This needs no Docker, Kubernetes, or external infrastructure for any level. The Standard and Full categories connect to the fake MCP server and CH-RUNTIMEOPS the validator hosts itself.
 
 Use a local development mode when you want to exercise your runtime end-to-end against the platform rather than against the conformance fixtures. The recommended path is `lenny up`, which runs the whole platform from one binary and starts your runtime in a real Kubernetes pod. `make run` and `docker compose up` give tighter loops in specific cases. For the differences and when to use each, see [Local Development](local-development.md).
 
-The Standard and Full categories rely on Linux abstract Unix sockets for the platform MCP server and the lifecycle channel. When you exercise a runtime end-to-end on macOS or Windows, `make run` cannot host those sockets because it runs your runtime as a plain host process, so use `lenny up` or `docker compose up`, which provide a Linux environment.
+The Standard and Full categories rely on Linux abstract Unix sockets for the platform MCP server and the CH-RUNTIMEOPS. When you exercise a runtime end-to-end on macOS or Windows, `make run` cannot host those sockets because it runs your runtime as a plain host process, so use `lenny up` or `docker compose up`, which provide a Linux environment.
 
 ### Smoke test
 
@@ -296,6 +296,6 @@ func TestMyRuntime_RespondsToHeartbeat(t *testing.T) {
 
 ## `type: mcp` runtimes
 
-The integration levels and the agent test categories on this page apply to `type: agent` runtimes. A `type: mcp` runtime hosts an MCP server behind the platform and does not participate in the stdin/stdout protocol, the platform tool client, or the lifecycle channel, so the Basic, Standard, and Full categories do not apply to it. For how `type: mcp` runtimes differ, see [Integration Levels](integration-levels.md#type-mcp-runtimes).
+The integration levels and the agent test categories on this page apply to `type: agent` runtimes. A `type: mcp` runtime hosts an MCP server behind the platform and does not participate in the stdin/stdout protocol, the platform tool client, or the CH-RUNTIMEOPS, so the Basic, Standard, and Full categories do not apply to it. For how `type: mcp` runtimes differ, see [Integration Levels](integration-levels.md#type-mcp-runtimes).
 
 Test a `type: mcp` runtime the way you test any MCP server: exercise its `initialize`, `tools/list`, and `tools/call` handlers directly with an MCP client, and add your own functional tests for the tools it exposes.

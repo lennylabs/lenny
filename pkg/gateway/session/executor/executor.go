@@ -14,7 +14,7 @@
 //
 // Streaming and event delivery are deferred — the minimal gateway
 // returns the full response synchronously. Production replaces this
-// with the SSE relay + lifecycle channel from §4.7.
+// with the SSE relay + CH-RUNTIMEOPS from §4.7.
 package executor
 
 import (

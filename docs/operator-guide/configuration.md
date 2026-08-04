@@ -46,7 +46,7 @@ gateway:
   replicas: 2                    # Starting replica count (HPA adjusts dynamically)
   maxSessionsPerReplica: 50      # Capacity ceiling per replica (must be calibrated)
   
-  grpcPort: 50051                # Pod-to-gateway gRPC control channel
+  grpcPort: 50051                # Pod-to-gateway gRPC LNK-GWCONTROL
   llmProxyPort: 8443             # LLM proxy port (proxy-mode pools only)
   
   periodicCheckpointIntervalSeconds: 600   # Checkpoint interval (default: 10 min)

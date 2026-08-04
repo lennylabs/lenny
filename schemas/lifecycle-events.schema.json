@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://lenny.dev/schemas/lifecycle-events.json",
   "title": "Lenny runtime lifecycle events",
-  "description": "JSON envelopes exchanged on the §4.7 adapter↔runtime lifecycle channel, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/lifecyclechannel.go). See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4.",
+  "description": "JSON envelopes exchanged on the §4.7 adapter↔runtime CH-RUNTIMEOPS, a Unix socket distinct from the stdin/stdout JSONL message channel (schemas/lenny-adapter-jsonl.schema.json). Field names are camelCase to match the §4.7 message-schema table and the adapter wire (pkg/adapter/lifecyclechannel.go). See spec/04_system-components.md §4.7 and spec/15_external-api-surface.md §15.4.",
   "oneOf": [
     { "$ref": "#/$defs/lifecycle_capabilities" },
     { "$ref": "#/$defs/lifecycle_support" },
@@ -22,7 +22,7 @@
   "$defs": {
     "lifecycle_capabilities": {
       "title": "lifecycle_capabilities",
-      "description": "Adapter → runtime, first message after the lifecycle channel opens. Advertises the lifecycle capabilities the adapter supports for this session. The runtime replies with lifecycle_support.",
+      "description": "Adapter → runtime, first message after the CH-RUNTIMEOPS opens. Advertises the lifecycle capabilities the adapter supports for this session. The runtime replies with lifecycle_support.",
       "type": "object",
       "properties": {
         "type": { "const": "lifecycle_capabilities" },

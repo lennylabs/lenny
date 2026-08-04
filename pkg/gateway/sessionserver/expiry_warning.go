@@ -24,12 +24,12 @@ type expiringSoonPayload struct {
 // watchdog calls it once per session, ~5 minutes before the session's
 // effective maxSessionAge deadline. The gateway then performs both halves of
 // the §11.3 line 240 contract: it emits the `session_expiring_soon` SSE event
-// to the client and dispatches the `DEADLINE_APPROACHING` lifecycle-channel
+// to the client and dispatches the `DEADLINE_APPROACHING` CH-RUNTIMEOPS
 // signal to the running pod.
 //
 // Both halves are best-effort and independent: a session with no live SSE
 // subscriber still gets the adapter signal, and a session whose pod has no
-// lifecycle channel (Basic/Standard integration level, §15 line 2141) still
+// CH-RUNTIMEOPS (Basic/Standard integration level, §15 line 2141) still
 // gets the SSE event.
 //
 // spec: §11.3 line 240. F-11.3.5.
@@ -42,11 +42,11 @@ func (s *Server) OnSessionExpiringSoon(ctx context.Context, sess sessionstore.Se
 }
 
 // signalDeadlineApproaching dispatches the §11.3 line 240 DEADLINE_APPROACHING
-// signal to the session's running pod over the lifecycle channel, reusing the
+// signal to the session's running pod over the CH-RUNTIMEOPS, reusing the
 // per-session adapter binding the gateway already holds (the same registry the
 // interrupt path uses). A session with no live binding (no pod, or a
 // coordinator handoff that has not re-bound) is skipped; a Basic/Standard
-// runtime with no lifecycle channel returns delivered=false, which is the
+// runtime with no CH-RUNTIMEOPS returns delivered=false, which is the
 // spec's expected posture (§15 line 2141) rather than an error. The call is
 // bounded by the §4.7 interrupt deadline so a stuck runtime cannot stall the
 // background sweep. F-11.3.5.

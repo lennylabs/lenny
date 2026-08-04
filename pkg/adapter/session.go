@@ -288,8 +288,8 @@ func (s *Server) Shutdown(ctx context.Context, req *adapterv1.ShutdownRequest) (
 }
 
 // drainViaLifecycle sends the §15.4.2 DRAINING-state graceful-shutdown
-// signal on the lifecycle channel before the hard runtime close. It is a
-// no-op when the runtime has no lifecycle channel (Basic/Standard level)
+// signal on the CH-RUNTIMEOPS before the hard runtime close. It is a
+// no-op when the runtime has no CH-RUNTIMEOPS (Basic/Standard level)
 // or has not yet connected; any other send error is logged rather than
 // surfaced so a drain hiccup never blocks termination.
 func (s *Server) drainViaLifecycle(deadlineMs int32, reason string) {

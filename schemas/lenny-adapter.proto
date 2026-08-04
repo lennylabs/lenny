@@ -28,7 +28,7 @@ option go_package = "github.com/lennylabs/lenny/pkg/proto/adapter/v1;adapterv1";
 // session lifecycle, credential delivery, interrupt control, checkpoint
 // orchestration, and usage reporting. Pod → gateway traffic is initiated
 // by the gateway only; the adapter responds to RPCs and emits structured
-// events via a separate streaming RPC (the lifecycle channel).
+// events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 service Adapter {
   // PrepareWorkspace accepts streamed upload-file content into the pod's
   // staging area. It is the first RPC in the §4.7 session assignment
@@ -134,8 +134,8 @@ service Adapter {
   // approaching its §11.3 line 240 deadline so the agent can checkpoint and
   // the client can wrap up. The gateway watchdog fires it once, five minutes
   // before `maxSessionAge` expires. The adapter forwards it as a
-  // DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
-  // Basic/Standard runtime with no lifecycle channel cannot receive advance
+  // DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
+  // Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
   // notice (§15 line 2141) and the call returns delivered=false rather than
   // erroring so the watchdog's best-effort warning never fails. One-way: the
   // adapter does not block on a runtime acknowledgement.
@@ -1216,8 +1216,7 @@ message SignalDeadlineRequest {
 
 message SignalDeadlineResponse {
   // delivered is true when the warning reached the runtime over the
-  // lifecycle channel; false when the pod's runtime has no lifecycle
-  // channel (Basic/Standard integration level — §15 line 2141).
+  // CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15 line 2141).
   bool delivered = 1;
 }
 
@@ -1575,7 +1574,7 @@ message NegotiateVersionResponse {
 message GetObservedIntegrationLevelRequest {
   // wait_ms bounds how long the adapter waits for the runtime to complete
   // its first §4.7 lifecycle handshake before classifying. A Full-level
-  // runtime dials the lifecycle channel shortly after boot, so a generous
+  // runtime dials the CH-RUNTIMEOPS shortly after boot, so a generous
   // window avoids misclassifying a slow-to-connect runtime; the window is
   // only fully consumed when the runtime never opens the channel. Zero
   // classifies from the runtime's current connection state with no wait.
@@ -1586,7 +1585,7 @@ message GetObservedIntegrationLevelResponse {
   // observed_level is "basic", "standard", or "full" — the §5.1 level the
   // adapter observed the runtime actually implement. "full" when the
   // runtime completed the lifecycle handshake; "standard" when it
-  // connected to the platform MCP server but not the lifecycle channel;
+  // connected to the platform MCP server but not the CH-RUNTIMEOPS;
   // "basic" otherwise (stdin/stdout binary protocol only).
   string observed_level = 1;
 }

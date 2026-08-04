@@ -9,7 +9,7 @@
 // production gateway sink:
 //
 //   - a production-wired adapter (adapter.WireDirectModeUsage) running over
-//     a real gRPC connection and a real §4.7 lifecycle-channel Unix socket,
+//     a real gRPC connection and a real §4.7 CH-RUNTIMEOPS Unix socket,
 //     accumulating a per-session token total from the enriched
 //     llm_request_completed frame the runtime sends;
 //   - the gateway's session-scoped ReportUsage pull
@@ -120,7 +120,7 @@ type directUsageFrame struct {
 }
 
 // wiredAdapterClient stands up the adapter the way cmd/lenny-adapter does for
-// a direct-mode pod (a lifecycle channel on a real socket, the production
+// a direct-mode pod (a CH-RUNTIMEOPS on a real socket, the production
 // direct-mode usage wiring, and an in-process runtime), registers it over a
 // gRPC bufconn, claims the pod for sessionID, and returns the gateway-side
 // adapterclient.Client (the exact pull surface the directUsageLoop uses) and

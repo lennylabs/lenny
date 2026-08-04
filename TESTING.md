@@ -785,7 +785,7 @@ The reference catalog (§spec/26) defines nine production runtimes. The test inf
 
 - Extends `echo` with simulated streaming output (configurable chunk count and inter-chunk delay).
 - Implements `ReportUsage` with deterministic token counts.
-- Implements the lifecycle channel: `checkpoint_request` → `checkpoint_ready`, `interrupt_request` → `interrupt_acknowledged`, `credentials_rotated` → `credentials_acknowledged`, `deadline_approaching`.
+- Implements the CH-RUNTIMEOPS: `checkpoint_request` → `checkpoint_ready`, `interrupt_request` → `interrupt_acknowledged`, `credentials_rotated` → `credentials_acknowledged`, `deadline_approaching`.
 - Built from Phase 2.8 onward.
 - Used to validate streaming reconnect, quota enforcement, checkpoint timing, credential rotation, and interrupt flows.
 
@@ -861,7 +861,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 - Workspace plan parsing and validation. Every source type. Every mode validation. Path normalization. Last-writer-wins.
 - Setup command allowlist. Argument splitting, shell-false enforcement.
 - Adapter manifest generation. Nonce computation. Schema correctness.
-- Lifecycle channel message parsing.
+- CH-RUNTIMEOPS message parsing.
 - Output part validation. Inline-versus-ref mutual exclusion, size thresholds, MIME type checks, schema version handling.
 - MCP message framing. Protocol version negotiation.
 - OCSF translation. Lenny event → OCSF event mapping is exhaustive over the event catalog.
@@ -877,7 +877,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 **Conventions.**
 - Table-driven tests are the default. Each row carries a name, an input, and an expected output (or expected error).
 - `go test -race -count=1` is the default. Race detection is non-negotiable for any code that uses goroutines or channels.
-- Fuzz targets exist for every parser: lifecycle channel, MCP envelope, adapter manifest, output parts, workspace plan, OCSF event.
+- Fuzz targets exist for every parser: CH-RUNTIMEOPS, MCP envelope, adapter manifest, output parts, workspace plan, OCSF event.
 - Property-based tests via `pgregory.net/rapid` cover algebraic invariants: monotonicity of budget carving, idempotency of GC sweeps, stability of state-machine round-trips.
 
 **Coverage target.** 80% on new code, measured by `go-cover` and enforced by CI. The threshold is not a project-wide floor; refactoring is not penalized.
@@ -996,7 +996,7 @@ The harness drives an adapter binary over its stdin/stdout JSON Lines channel an
 - Heartbeat ack arrives within 10 seconds.
 - Shutdown completes within the declared deadline.
 - Forward compatibility: future-typed messages do not crash the adapter.
-- Lifecycle channel handshake (`lifecycle_capabilities` → `lifecycle_support`) is correct.
+- CH-RUNTIMEOPS handshake (`lifecycle_capabilities` → `lifecycle_support`) is correct.
 
 This suite runs against every test runtime and every reference runtime. A third-party runtime registers via `lenny-compliance` (see §12.10).
 
@@ -1318,7 +1318,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 - Basic: every adapter binary protocol message; stdin/stdout JSON Lines; shutdown deadline; heartbeat ack; unknown message types.
 - Standard: Basic plus MCP socket connection, nonce auth via adapter manifest, platform-tool discovery, capability inference at registration.
-- Full: Standard plus lifecycle channel handshake, checkpoint flow with timeouts, interrupt flow, credential rotation, deadline notification, task lifecycle (task mode).
+- Full: Standard plus CH-RUNTIMEOPS handshake, checkpoint flow with timeouts, interrupt flow, credential rotation, deadline notification, task lifecycle (task mode).
 
 **Built-in vs. registered runtimes.**
 - The three test runtimes (`echo`, `streaming-echo`, `delegation-echo`) run conformance on every PR.
@@ -1523,14 +1523,14 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 ### 13.5 Phase 2.8 — `streaming-echo` runtime
 
 **Test infrastructure delivered in Phase 2.8.**
-- `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a lifecycle-channel client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/lifecycle-events.schema.json` is the JSON Schema for the lifecycle-channel envelope. Example fixtures live under `schemas/examples/lifecycle.*.json` and are validated by `tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate`.
+- `cmd/runtimes/streaming-echo/` is the Full-level reference runtime. It inherits the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adds a CH-RUNTIMEOPS client over a Unix socket (abstract on Linux, file-based on macOS). The runtime handles `lifecycle_capabilities` / `lifecycle_support`, `checkpoint_request` / `checkpoint_ready`, `interrupt_request` / `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
+- `schemas/lifecycle-events.schema.json` is the JSON Schema for the CH-RUNTIMEOPS envelope. Example fixtures live under `schemas/examples/lifecycle.*.json` and are validated by `tests/tier0_static/schemas_test.go::TestLifecycleEventExamplesValidate`.
 - `cmd/lenny-compliance --level full` adds the Full-level conformance battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, credentials_rotated, deadline_signal). The harness opens a Unix-socket lifecycle server, writes a manifest pointing the runtime at it, and asserts each event round-trip.
 - `streaming-echo` passes both `lenny-compliance --level basic` (7/7) and `lenny-compliance --level full` (12/12).
 
 **Test infrastructure deferred to later phases.**
 - The integration `streaming_reconnect` suite is deferred to the phase that ships the gateway. The runtime can be checkpointed and restarted, but the reconnect flow runs through the gateway's stream proxy.
-- The Phase 2 checkpoint-duration baseline re-validation with cooperative quiescence overhead is deferred to Phase 8 (checkpoint/resume). The lifecycle channel handshake in Phase 2.8 demonstrates the quiescence protocol; the duration baseline requires the gateway's checkpoint manager.
+- The Phase 2 checkpoint-duration baseline re-validation with cooperative quiescence overhead is deferred to Phase 8 (checkpoint/resume). The CH-RUNTIMEOPS handshake in Phase 2.8 demonstrates the quiescence protocol; the duration baseline requires the gateway's checkpoint manager.
 
 ### 13.6 Phase 3 — Pool scaling, delegation policy, runtime upgrade, mTLS
 
@@ -1975,7 +1975,7 @@ Lenny publishes two SDK families across three languages (spec/15.6 and spec/15.7
 | Family | Audience | Languages | What it wraps |
 |:-------|:---------|:----------|:--------------|
 | Client SDK | External applications that talk to a Lenny gateway | Go, Python, TypeScript | REST + MCP + streaming + webhook signature verification |
-| Runtime-author SDK | Authors of agent binaries running on Lenny | Go, Python, TypeScript | Adapter binary protocol + MCP platform tools + lifecycle channel |
+| Runtime-author SDK | Authors of agent binaries running on Lenny | Go, Python, TypeScript | Adapter binary protocol + MCP platform tools + CH-RUNTIMEOPS |
 
 Both families ship under `sdks/<family>/<language>/`. The harness runs each through its language-native test runner (`go test`, `pytest`, `vitest`) and includes results in the Tier 3 contract verdict and the Tier 10 conformance verdict.
 
@@ -1999,7 +1999,7 @@ Both families ship under `sdks/<family>/<language>/`. The harness runs each thro
 
 1. Adapter binary protocol compliance. Every Basic-level message type. The SDK skeleton (the equivalent of `lenny runtime init --language <lang> --template minimal`) passes `lenny-compliance --level basic`.
 2. MCP socket integration. Standard-level: connect to `@lenny`, read `_lennyNonce` from the manifest, invoke platform tools. Compliance against `--level standard`.
-3. Lifecycle channel. Full-level: connect to `@lenny-lifecycle`, capability handshake, checkpoint flow, interrupt flow, credential rotation, deadline notification. Compliance against `--level full`.
+3. CH-RUNTIMEOPS. Full-level: connect to `@lenny-lifecycle`, capability handshake, checkpoint flow, interrupt flow, credential rotation, deadline notification. Compliance against `--level full`.
 4. Workspace helpers. `read_file`, `write_file`, `list_dir`, `delete_file` confined to `/workspace/current` and `/workspace/output`. Path traversal blocked.
 5. Delegation tools. `lenny/delegate_task` invoked through the SDK; budget metadata propagates; child results awaited and parsed.
 6. Heartbeat handling. Automatic `heartbeat_ack` within 10 seconds without runtime-author intervention.
@@ -2251,7 +2251,7 @@ Targeted properties:
 
 Go fuzz targets for every parser and every wire-format boundary:
 - Adapter JSON Lines messages.
-- Lifecycle channel messages.
+- CH-RUNTIMEOPS messages.
 - MCP envelope.
 - Adapter manifest.
 - Output parts (inline and ref, every type).

@@ -20,7 +20,7 @@
 // standard-isolation pool in this e2e overlay uses (see
 // tests/testinfra/kind/install.sh's bootstrap.pools list). A restricted
 // pod's only permitted egress is allow-pod-egress-base (the gateway
-// control channel and cluster DNS); every other destination is left to
+// LNK-GWCONTROL and cluster DNS); every other destination is left to
 // default-deny-all.
 package tier9_security_test
 
@@ -62,7 +62,7 @@ const agentEgressProbeNamespace = "lenny-agents"
 // lenny-agents can reach a destination default-deny-all and
 // allow-pod-egress-base do not admit — the lenny-agents NetworkPolicy
 // set is missing, mis-scoped, or the CNI is not enforcing egress for
-// that namespace. The positive control (the gateway control channel,
+// that namespace. The positive control (the gateway LNK-GWCONTROL,
 // the one destination allow-pod-egress-base does grant) must keep
 // working so a block on every other destination is attributable to the
 // NetworkPolicy set rather than a broken probe pod.

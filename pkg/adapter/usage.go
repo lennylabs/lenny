@@ -198,7 +198,7 @@ func (m *SessionUsageMeter) readLocked(sessionID string, cumulative bool) Usage 
 	return out
 }
 
-// sessionTokenSink bridges the lifecycle channel's session-less
+// sessionTokenSink bridges the CH-RUNTIMEOPS's session-less
 // tokenSink to a per-session SessionUsageMeter. The lifecycle frame
 // carries no session id (§6.1 one session per pod), so the sink resolves
 // the pod's current session at fold time and keys the meter by it. A
@@ -214,7 +214,7 @@ func (s sessionTokenSink) AddTokens(inputTokens, outputTokens int64) {
 	s.meter.Add(s.currentSession(), inputTokens, outputTokens)
 }
 
-// NewSessionTokenSink returns the lifecycle-channel token sink that
+// NewSessionTokenSink returns the CH-RUNTIMEOPS token sink that
 // folds llm_request_completed token counts into meter under the pod's
 // current session id. cmd/lenny-adapter wires it via
 // LifecycleChannel.SetUsageSink.
@@ -225,7 +225,7 @@ func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string)
 // WireDirectModeUsage installs the §4.7 direct-mode usage path on the
 // adapter server: it constructs the concrete SessionUsageMeter, assigns
 // it to s.Usage so ReportUsage stops returning codes.Unimplemented in
-// production (F-15.3.7), and, when a lifecycle channel is present, wires
+// production (F-15.3.7), and, when a CH-RUNTIMEOPS is present, wires
 // the token sink that folds each llm_request_completed frame's
 // direct-mode token counts (§4.7, §11.2) into the meter under the pod's
 // current session. It returns the meter so a caller that needs the
@@ -234,8 +234,7 @@ func NewSessionTokenSink(meter *SessionUsageMeter, currentSession func() string)
 //
 // cmd/lenny-adapter calls this once during server assembly. Extracting it
 // keeps the production wiring in one place and directly testable over the
-// real gRPC transport rather than re-derived in main. A nil lifecycle
-// channel leaves the meter installed with no frame source (the
+// real gRPC transport rather than re-derived in main. A nil CH-RUNTIMEOPS leaves the meter installed with no frame source (the
 // Basic/Standard path), which is a valid state: ReportUsage then reports
 // a zero delta the §11.2 anomaly detector observes.
 //

@@ -23,7 +23,7 @@ var lifecycleCapabilities = []string{
 	"deadline_signal",
 }
 
-// Lifecycle is the §15.4.3 Full-level lifecycle channel surface a
+// Lifecycle is the §15.4.3 Full-level CH-RUNTIMEOPS surface a
 // runtime observes. The SDK answers the protocol-level handshake and
 // the checkpoint, interrupt, credential-rotation, and deadline events
 // automatically; a runtime that needs to react (quiesce real output,
@@ -42,7 +42,7 @@ type Lifecycle struct {
 	hooks  lifecycleHooks
 }
 
-// LifecycleEvent is a decoded lifecycle-channel frame handed to a
+// LifecycleEvent is a decoded CH-RUNTIMEOPS frame handed to a
 // runtime callback. Raw carries the full frame for fields the typed
 // accessors do not cover.
 type LifecycleEvent struct {
@@ -59,7 +59,7 @@ type lifecycleHooks struct {
 	onDeadline   func(LifecycleEvent)
 }
 
-// LifecycleOption configures the Full-level lifecycle channel callbacks.
+// LifecycleOption configures the Full-level CH-RUNTIMEOPS callbacks.
 type LifecycleOption func(*lifecycleHooks)
 
 // OnCheckpoint registers a callback invoked on a §15.4.3
@@ -101,7 +101,7 @@ func WithLifecycleHandlers(opts ...LifecycleOption) Option {
 	}
 }
 
-// dialLifecycle opens the §15.4.3 lifecycle channel: it dials the
+// dialLifecycle opens the §15.4.3 CH-RUNTIMEOPS: it dials the
 // manifest-advertised socket, completes the lifecycle_capabilities /
 // lifecycle_support handshake, and starts the event loop. cancel stops
 // the frame loop when the adapter sends a terminate event.
@@ -147,7 +147,7 @@ func (s *session) dialLifecycle(ctx context.Context, cancel context.CancelFunc) 
 	return lc, nil
 }
 
-// loop processes inbound lifecycle-channel frames until the connection
+// loop processes inbound CH-RUNTIMEOPS frames until the connection
 // closes or the adapter sends terminate.
 func (lc *Lifecycle) loop(ctx context.Context, reader *bufio.Reader, s *session) {
 	for {
@@ -309,7 +309,7 @@ func (lc *Lifecycle) handleTerminate(ctx context.Context, line []byte, s *sessio
 	}
 }
 
-// Send writes an arbitrary frame on the lifecycle channel. It is the
+// Send writes an arbitrary frame on the CH-RUNTIMEOPS. It is the
 // escape hatch for lifecycle messages the SDK does not model.
 func (lc *Lifecycle) Send(frame any) error {
 	if lc == nil {
@@ -324,7 +324,7 @@ func (lc *Lifecycle) Send(frame any) error {
 	return lc.w.write(frame)
 }
 
-// close releases the lifecycle-channel connection.
+// close releases the CH-RUNTIMEOPS connection.
 func (lc *Lifecycle) close() {
 	if lc == nil {
 		return

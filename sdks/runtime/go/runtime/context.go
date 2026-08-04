@@ -29,7 +29,7 @@ func ToolsFrom(ctx context.Context) *Tools {
 	return t
 }
 
-// LifecycleFrom returns the §15.4.3 Full-level lifecycle channel
+// LifecycleFrom returns the §15.4.3 Full-level CH-RUNTIMEOPS
 // carried on ctx, or nil when the runtime is not Full level. Handlers
 // rarely need it directly; the SDK answers lifecycle events.
 func LifecycleFrom(ctx context.Context) *Lifecycle {
@@ -39,7 +39,7 @@ func LifecycleFrom(ctx context.Context) *Lifecycle {
 
 // CredentialsFrom returns the current §4.7 credential bundle carried on
 // ctx, or nil when the runtime's pool has no active lease. The bundle
-// reflects the most recent rotation the lifecycle channel processed.
+// reflects the most recent rotation the CH-RUNTIMEOPS processed.
 func CredentialsFrom(ctx context.Context) *CredentialBundle {
 	c, _ := ctx.Value(ctxKeyCredentials).(*CredentialBundle)
 	return c

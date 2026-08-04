@@ -6,7 +6,7 @@
 // schemas/lenny-adapter-jsonl.schema.json.
 //
 // The Basic level (spec §15.4.3) requires only the JSONL channel. No
-// adapter manifest, no MCP, no lifecycle channel. Echo serves three
+// adapter manifest, no MCP, no CH-RUNTIMEOPS. Echo serves three
 // purposes:
 //
 //   - It is the reference implementation for runtime authors writing

@@ -62,9 +62,9 @@ func (s *Server) Interrupt(ctx context.Context, req *adapterv1.InterruptRequest)
 
 // SignalDeadline forwards the §11.3 line 240 pre-expiry warning to the
 // running session's runtime as a DEADLINE_APPROACHING frame over the
-// lifecycle channel. The gateway watchdog fires it five minutes before
+// CH-RUNTIMEOPS. The gateway watchdog fires it five minutes before
 // `maxSessionAge` so the agent can checkpoint. A Basic/Standard runtime
-// has no lifecycle channel (§15 line 2141: "no lifecycle channel to
+// has no CH-RUNTIMEOPS (§15 line 2141: "no CH-RUNTIMEOPS to
 // deliver DEADLINE_APPROACHING"); the adapter reports delivered=false
 // rather than erroring so the watchdog's best-effort warning never fails.
 // The signal is one-way — unlike Interrupt it does not take the per-session
@@ -93,7 +93,7 @@ func (s *Server) SignalDeadline(_ context.Context, req *adapterv1.SignalDeadline
 }
 
 // interruptViaLifecycle delivers a §4.7 clean interrupt over the
-// lifecycle channel and waits for the runtime's acknowledgement,
+// CH-RUNTIMEOPS and waits for the runtime's acknowledgement,
 // bounded by the request's deadline. A deadline elapsing with no
 // acknowledgement is reported as INTERRUPT_TIMEOUT rather than an
 // error: §4.7 has the gateway move the session to suspended regardless.

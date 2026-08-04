@@ -211,7 +211,7 @@ func TestReportUsageWithMeterIsImplemented_spec_4_7(t *testing.T) {
 // WireDirectModeUsage is the single production wiring point
 // cmd/lenny-adapter calls during server assembly (F-15.3.7). It must
 // install the meter on the server so ReportUsage stops returning
-// Unimplemented, and, when a lifecycle channel is present, wire the token
+// Unimplemented, and, when a CH-RUNTIMEOPS is present, wire the token
 // sink onto that channel so llm_request_completed frames fold. This pins
 // both effects; a nil-channel call still installs the meter (the
 // Basic/Standard path).

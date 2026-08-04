@@ -25,7 +25,7 @@ func newLifecycleID() string {
 	return hex.EncodeToString(b[:])
 }
 
-// lifecycleProtocolVersion is the §4.7 lifecycle-channel protocol
+// lifecycleProtocolVersion is the §4.7 CH-RUNTIMEOPS protocol
 // version the adapter advertises in the lifecycle_capabilities frame.
 const lifecycleProtocolVersion = "1.0"
 
@@ -53,7 +53,7 @@ var (
 )
 
 // lifecycleFrame is one JSONL frame on the §4.7 runtime↔adapter
-// lifecycle channel. A single struct covers every frame type; fields
+// CH-RUNTIMEOPS. A single struct covers every frame type; fields
 // not set for a given type are omitted on the wire. The field names
 // match the §4.7 message-schema table (camelCase).
 type lifecycleFrame struct {
@@ -82,7 +82,7 @@ type lifecycleFrame struct {
 	OutputTokens int64 `json:"outputTokens,omitempty"`
 }
 
-// LifecycleChannel is the adapter side of the §4.7 lifecycle channel:
+// LifecycleChannel is the adapter side of the §4.7 CH-RUNTIMEOPS:
 // a Unix-socket server the Full-level agent runtime dials to receive
 // checkpoint, interrupt, credential-rotation, deadline, and terminate
 // signals and to acknowledge them. The adapter listens; the runtime
@@ -120,7 +120,7 @@ type LifecycleChannel struct {
 // counts into the session's cumulative usage total. The adapter wires it
 // to the concrete SessionUsageMeter, resolving the pod's current session
 // id; the lifecycle frame itself carries no session id (§6.1 one session
-// per pod). Defined at the consumer (the lifecycle channel) per the
+// per pod). Defined at the consumer (the CH-RUNTIMEOPS) per the
 // accept-interfaces convention.
 type tokenSink interface {
 	// AddTokens folds the counts from one completed direct-mode LLM call
@@ -159,7 +159,7 @@ func (lc *LifecycleChannel) SetUsageSink(sink tokenSink) {
 	lc.usage = sink
 }
 
-// Run serves the lifecycle channel until ctx is cancelled or the channel
+// Run serves the CH-RUNTIMEOPS until ctx is cancelled or the channel
 // is closed. It accepts one runtime connection at a time: for each, it
 // performs the lifecycle_capabilities handshake and serves frames until
 // the runtime disconnects, then resets per-connection state and accepts
@@ -170,7 +170,7 @@ func (lc *LifecycleChannel) SetUsageSink(sink tokenSink) {
 // a goroutine. The request methods block until the current connection
 // completes its handshake.
 //
-// spec: §4.7 lines 836-842 — the Full-level lifecycle channel is rebound
+// spec: §4.7 lines 836-842 — the Full-level CH-RUNTIMEOPS is rebound
 // per runtime process rather than torn down after the first disconnect.
 func (lc *LifecycleChannel) Run(ctx context.Context) error {
 	defer close(lc.done)
@@ -517,7 +517,7 @@ func (lc *LifecycleChannel) Supports(capability string) bool {
 // handshake completed. It returns immediately when the handshake is
 // already done. A non-positive wait checks the current state without
 // blocking. The §5.1 observed-integration-level probe uses it to decide
-// whether the runtime opened the lifecycle channel (Full level).
+// whether the runtime opened the CH-RUNTIMEOPS (Full level).
 func (lc *LifecycleChannel) WaitHandshake(ctx context.Context, wait time.Duration) bool {
 	ready := lc.currentReady()
 	select {

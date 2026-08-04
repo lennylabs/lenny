@@ -350,7 +350,7 @@ curl -k -X POST https://localhost:8443/v1/sessions \
   -d '{"runtime": "my-agent", "input": [{"type": "text", "inline": "hello"}]}'
 ```
 
-No rebuild of the Lenny platform is required — `lenny up` runs the released `lenny` binary, and `lenny-ctl runtime register` is the same admin API used in production clusters. Basic-level runtimes can stop here; Standard- and Full-level authors proceed to the MCP and lifecycle channel samples in [Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime).
+No rebuild of the Lenny platform is required — `lenny up` runs the released `lenny` binary, and `lenny-ctl runtime register` is the same admin API used in production clusters. Basic-level runtimes can stop here; Standard- and Full-level authors proceed to the MCP and CH-RUNTIMEOPS samples in [Section 15.4.4](15_external-api-surface.md#1544-sample-echo-runtime).
 
 **Source Mode (`make run`) — override the agent binary path (platform contributor path):**
 

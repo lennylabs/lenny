@@ -55,7 +55,7 @@ The build sequence enumerates the v1 application-code phases from Phase 0 (repos
 | Warm pod pool controller | Not started | Keeps pods pre-warmed; handles claim, release, drain. |
 | Workspace materialization | In progress | The §14 workspace plan is parsed and validated on session creation; uploaded files are stored in the blob store. Pod-side materialization is pending the pod model. |
 | Credential leasing (Basic) | In progress | The §4.9 end-user credential registry and `/v1/credentials` endpoints are served. Lease assignment on session creation is pending. |
-| Credential rotation (Full integration level) | Not started | Zero-downtime rotation over the lifecycle channel. |
+| Credential rotation (Full integration level) | Not started | Zero-downtime rotation over the CH-RUNTIMEOPS. |
 | Checkpoint / resume | Not started | Sessions survive pod failure; artifacts retrievable. |
 | Recursive delegation | In progress | The §8 delegation service enforces cycle detection, isolation monotonicity, and the depth limit. Budgets and lease extension are pending. |
 | Recursive delegation with MCP semantics | In progress | `lenny/delegate_task` and the other §8.5 platform tools are served by the MCP adapter. |

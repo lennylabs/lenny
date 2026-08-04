@@ -18,7 +18,7 @@ import (
 
 // spec: §11.3 line 240 — OnSessionExpiringSoon performs both halves: it emits
 // the session_expiring_soon SSE event to the client AND dispatches the
-// DEADLINE_APPROACHING signal to the running pod over the lifecycle channel.
+// DEADLINE_APPROACHING signal to the running pod over the CH-RUNTIMEOPS.
 // F-11.3.5.
 func TestOnSessionExpiringSoonEmitsEventAndSignalsPod_spec_11_3_240(t *testing.T) {
 	store := memstore.New()

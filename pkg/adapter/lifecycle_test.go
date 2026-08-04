@@ -120,7 +120,7 @@ func TestInterruptReportsARuntimeFailure(t *testing.T) {
 	}
 }
 
-// startLifecycle creates a lifecycle channel on a temporary socket and
+// startLifecycle creates a CH-RUNTIMEOPS on a temporary socket and
 // runs it; Run is torn down on test cleanup.
 func startLifecycle(t *testing.T) *adapter.LifecycleChannel {
 	t.Helper()
@@ -144,8 +144,7 @@ func startLifecycle(t *testing.T) *adapter.LifecycleChannel {
 	return lc
 }
 
-// lifecycleRuntime is a scripted fake runtime for the §4.7 lifecycle
-// channel, exercising the adapter's Full-level RPC paths.
+// lifecycleRuntime is a scripted fake runtime for the §4.7 CH-RUNTIMEOPS, exercising the adapter's Full-level RPC paths.
 type lifecycleRuntime struct {
 	t    *testing.T
 	conn net.Conn
@@ -238,7 +237,7 @@ func TestInterruptCleanUsesLifecycleChannel(t *testing.T) {
 }
 
 // spec: §11.3 line 240 — DEADLINE_APPROACHING is delivered over the
-// lifecycle channel. F-11.3.5.
+// CH-RUNTIMEOPS. F-11.3.5.
 func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) {
 	s, _ := startedSession(t, "sess-1")
 	lc := startLifecycle(t)
@@ -268,7 +267,7 @@ func TestSignalDeadlineDeliversOverLifecycleChannel_spec_11_3_240(t *testing.T) 
 	}
 }
 
-// spec: §15 line 2141 — a Basic/Standard runtime with no lifecycle channel
+// spec: §15 line 2141 — a Basic/Standard runtime with no CH-RUNTIMEOPS
 // receives no advance notice; the adapter reports delivered=false rather than
 // erroring. F-11.3.5.
 func TestSignalDeadlineWithoutLifecycleReturnsNotDelivered_spec_11_3_240(t *testing.T) {

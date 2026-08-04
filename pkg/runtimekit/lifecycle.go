@@ -42,7 +42,7 @@ const CheckpointTimeoutLogPrefix = "lifecycle: checkpoint_timeout"
 // non-responsive between `checkpoint_request` and `checkpoint_ready`.
 type CheckpointHandler func(ctx context.Context, deadlineMs int32) error
 
-// LifecycleClient is the runtime side of the §4.7 lifecycle channel.
+// LifecycleClient is the runtime side of the §4.7 CH-RUNTIMEOPS.
 // It writes `checkpoint_ready` after the runtime quiesces and starts a
 // 60-second autonomous-resume timer; if `checkpoint_complete` does not
 // arrive in that window the helper emits a `checkpoint_timeout`

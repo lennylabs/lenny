@@ -12,7 +12,7 @@
 // is a plain MCP server with no Lenny-specific code — a type: mcp
 // runtime is "oblivious to Lenny" (spec §5.1), so this binary speaks
 // only standard MCP and never reads an adapter manifest, presents a
-// nonce, or opens a lifecycle channel.
+// nonce, or opens a CH-RUNTIMEOPS.
 //
 // Transport: MCP over stdio. The server reads newline-delimited
 // JSON-RPC 2.0 from stdin and writes newline-delimited JSON-RPC to

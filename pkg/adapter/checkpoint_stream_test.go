@@ -140,8 +140,7 @@ type lcFrame struct {
 	Reason       string   `json:"reason,omitempty"`
 }
 
-// fakeLifecycleRuntime plays the agent-runtime end of the §4.7 lifecycle
-// channel over a raw Unix socket so the checkpoint stream tests can drive
+// fakeLifecycleRuntime plays the agent-runtime end of the §4.7 CH-RUNTIMEOPS over a raw Unix socket so the checkpoint stream tests can drive
 // the cooperative quiesce handshake and read the checkpoint_complete frame.
 type fakeLifecycleRuntime struct {
 	t    *testing.T

@@ -7,7 +7,7 @@ nav_order: 9
 
 # Adapter Contract
 
-This page is the complete reference for the protocol between the Lenny adapter sidecar and your runtime binary. It covers the sidecar architecture, the gRPC control protocol (gateway to adapter), the stdin/stdout JSON Lines protocol (adapter to your binary), and the lifecycle channel (Full level only).
+This page is the complete reference for the protocol between the Lenny adapter sidecar and your runtime binary. It covers the sidecar architecture, the gRPC control protocol (gateway to adapter), the stdin/stdout JSON Lines protocol (adapter to your binary), and the CH-RUNTIMEOPS (Full level only).
 
 ---
 
@@ -18,7 +18,7 @@ Every Lenny agent pod contains two containers:
 1. **Adapter container** (Lenny-managed) --- handles all platform communication: gRPC to the gateway, mTLS certificate management, workspace staging, credential injection, health checks, and MCP server hosting.
 2. **Agent container** (your runtime binary) --- your code. Communicates with the adapter exclusively via stdin/stdout (at every integration level) and optionally via local Unix sockets (Standard and Full levels).
 
-![Lenny pod with two containers. The adapter container runs gRPC to the gateway, MCP servers over Unix sockets, the lifecycle channel, file staging, health checks, and credential management. The agent container reads JSON from stdin, writes JSON to stdout, and optionally connects to MCP servers and the lifecycle channel via Unix sockets. The adapter connects to the Lenny gateway over gRPC with mTLS.](../assets/diagrams/lenny-pod-containers.svg)
+![Lenny pod with two containers. The adapter container runs gRPC to the gateway, MCP servers over Unix sockets, the CH-RUNTIMEOPS, file staging, health checks, and credential management. The agent container reads JSON from stdin, writes JSON to stdout, and optionally connects to MCP servers and the CH-RUNTIMEOPS via Unix sockets. The adapter connects to the Lenny gateway over gRPC with mTLS.](../assets/diagrams/lenny-pod-containers.svg)
 
 <!--
 ASCII fallback for the diagram above (lenny-pod-containers):
@@ -32,7 +32,7 @@ ASCII fallback for the diagram above (lenny-pod-containers):
   |  |                       |                                       |  |
   |  |  - gRPC to gateway    |  socket                              |  |
   |  |  - MCP servers (Unix) |  ====>   - reads JSON from stdin     |  |
-  |  |  - lifecycle channel  |          - writes JSON to stdout     |  |
+  |  |  - CH-RUNTIMEOPS  |          - writes JSON to stdout     |  |
   |  |  - file staging       |          - optionally connects to    |  |
   |  |  - health checks      |            MCP servers and lifecycle |  |
   |  |  - credential mgmt    |            channel via Unix sockets  |  |
@@ -81,11 +81,11 @@ These RPCs are between the gateway and the adapter. Your runtime binary never se
 | `ReportSessionScrub` | Report the per-slot cleanup outcome (`released` or `leaked`) at each session release on a recycling or concurrent pod. The gateway increments the pod's served-session count and feeds the leak ledger. |
 | `ReportPodScrub` | Report the binary outcome of the whole-pod scrub the adapter runs when occupancy reaches zero on a recycling pod. The gateway computes the recycle disposition from the outcome and `sessionPolicy`. |
 
-**Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no lifecycle-channel handshake between sessions. Your runtime exits at each session end as in the default mode; the adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, then reports through these RPCs.
+**Scrub responsibilities.** The per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS handshake between sessions. Your runtime exits at each session end as in the default mode; the adapter runs the credential purge, deployer `cleanupCommands`, and the scrub, then reports through these RPCs.
 
 **Checkpoint and Interrupt are mutually exclusive.** The adapter maintains a per-session operation lock. Only one of these operations may execute at a time; the other is queued until the first completes.
 
-**Adapter-to-Gateway events** (sent over the gRPC control channel):
+**Adapter-to-Gateway events** (sent over the gRPC CH-ADAPTEREVENTS):
 
 | Event | Description |
 |-------|-------------|
@@ -490,7 +490,7 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 |-------|-------------|
 | `version` | Manifest schema version. A version increment indicates a breaking change. |
 | `platformMcpServer.socket` | Abstract Unix socket path for the platform MCP server. |
-| `lifecycleChannel.socket` | Abstract Unix socket path for the lifecycle channel (Full level). |
+| `lifecycleChannel.socket` | Abstract Unix socket path for the CH-RUNTIMEOPS (Full level). |
 | `connectorServers` | Array of connector MCP server entries with `id` and `socket`. |
 | `runtimeMcpServers` | Array of runtime-provided MCP server entries. |
 | `adapterLocalTools` | Array of adapter-local tool definitions with name, description, and inputSchema. |
@@ -503,11 +503,11 @@ The adapter writes `/run/lenny/adapter-manifest.json` before spawning your binar
 
 ---
 
-## Lifecycle Channel (Full level only)
+## CH-RUNTIMEOPS (Full level only)
 
-The lifecycle channel is a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`.
+The CH-RUNTIMEOPS is a bidirectional JSON Lines stream over an abstract Unix socket (`@lenny-lifecycle`). The runtime connects as a client; the adapter listens. Each message is a single JSON object terminated by `\n`.
 
-Opening the lifecycle channel is optional. Runtimes that do not open it operate in fallback-only mode (Basic or Standard level behavior).
+Opening the CH-RUNTIMEOPS is optional. Runtimes that do not open it operate in fallback-only mode (Basic or Standard level behavior).
 
 ### Capability Negotiation
 
@@ -623,7 +623,7 @@ Then the other result arrives:
 ### Full-level checkpoint handshake
 
 ```
-Adapter sends on lifecycle channel:
+Adapter sends on CH-RUNTIMEOPS:
 {"type":"checkpoint_request","checkpointId":"chk_42","deadlineMs":60000}
 
 Runtime quiesces (flushes buffers, stops writing to workspace), then:
@@ -638,7 +638,7 @@ Runtime resumes normal operation.
 ### Full-level interrupt handshake
 
 ```
-Adapter sends on lifecycle channel:
+Adapter sends on CH-RUNTIMEOPS:
 {"type":"interrupt_request","interruptId":"int_7","deadlineMs":30000}
 
 Runtime reaches a safe stop point (e.g., finishes current LLM call), then:

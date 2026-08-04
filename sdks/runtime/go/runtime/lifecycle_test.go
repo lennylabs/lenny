@@ -14,8 +14,7 @@ import (
 	"time"
 )
 
-// fakeLifecycleAdapter is the adapter side of a §15.4.3 lifecycle
-// channel: it listens on a Unix socket, sends lifecycle_capabilities on
+// fakeLifecycleAdapter is the adapter side of a §15.4.3 CH-RUNTIMEOPS: it listens on a Unix socket, sends lifecycle_capabilities on
 // connect, and exposes send/recv for the test to drive events.
 type fakeLifecycleAdapter struct {
 	ln   net.Listener
@@ -99,8 +98,7 @@ func (fa *fakeLifecycleAdapter) recv(t *testing.T, d time.Duration) map[string]a
 	return m
 }
 
-// writeFullManifest writes a §4.7 manifest advertising a lifecycle
-// channel socket.
+// writeFullManifest writes a §4.7 manifest advertising a CH-RUNTIMEOPS socket.
 func writeFullManifest(t *testing.T, dir, lifecycleSock string) string {
 	t.Helper()
 	path := filepath.Join(dir, "adapter-manifest.json")
@@ -151,7 +149,7 @@ func (p *stdinPipe) Close() error {
 }
 
 // TestFullLevelHandshake confirms a Full-level runtime dials the
-// lifecycle channel and completes the lifecycle_support handshake.
+// CH-RUNTIMEOPS and completes the lifecycle_support handshake.
 func TestFullLevelHandshake(t *testing.T) {
 	dir := t.TempDir()
 	fa := startFakeLifecycle(t, dir)

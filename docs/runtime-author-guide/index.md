@@ -173,7 +173,7 @@ Use this level when your agent needs to call out to tools, delegate work, or tal
 
 ### Full
 
-On top of Standard, your program also opens a lifecycle channel -- a second connection that carries operational signals from the platform.
+On top of Standard, your program also opens a CH-RUNTIMEOPS -- a second connection that carries operational signals from the platform.
 
 With it, you can support:
 
@@ -210,7 +210,7 @@ Read everything above, then:
 
 ### To support checkpoints, clean interrupts, and credential rotation (Full level)
 
-Full integration is the lifecycle channel and the handlers it carries. [Pod Lifecycle](lifecycle.md) walks through each one, with the message formats inline; read its Checkpointing, Interrupt and Suspend, Credential Rotation, and Deadline Signals sections, each of which is marked Full level. Read everything above, then:
+Full integration is the CH-RUNTIMEOPS and the handlers it carries. [Pod Lifecycle](lifecycle.md) walks through each one, with the message formats inline; read its Checkpointing, Interrupt and Suspend, Credential Rotation, and Deadline Signals sections, each of which is marked Full level. Read everything above, then:
 
 10. [Pod Lifecycle](lifecycle.md) -- the checkpoint, interrupt/suspend, credential-rotation, and deadline-signal handshakes you implement at this level.
 11. [Runtime Configuration](runtime-configuration.md) -- the manifest fields and pool settings that enable these capabilities.

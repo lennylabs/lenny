@@ -9,8 +9,8 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §15.4.2 / §15.4.3 — a Full-level runtime (lifecycle channel
-// wired) drains through the lifecycle channel before the hard runtime
+// spec: §15.4.2 / §15.4.3 — a Full-level runtime (CH-RUNTIMEOPS
+// wired) drains through the CH-RUNTIMEOPS before the hard runtime
 // close: Shutdown sends `terminate` so the runtime coordinates a clean
 // drain, then closes the runtime process (MED-010).
 func TestShutdownDrainsViaLifecycle_spec_15_4_2(t *testing.T) {
@@ -42,7 +42,7 @@ func TestShutdownDrainsViaLifecycle_spec_15_4_2(t *testing.T) {
 	}
 }
 
-// spec: §15.4.3 — Basic/Standard runtimes have no lifecycle channel, so
+// spec: §15.4.3 — Basic/Standard runtimes have no CH-RUNTIMEOPS, so
 // the drain is a no-op and never blocks or fails shutdown.
 func TestDrainViaLifecycleNilIsNoOp_spec_15_4_3(t *testing.T) {
 	s := New("test")

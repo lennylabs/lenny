@@ -289,7 +289,7 @@ func ceilingTriggerLabel(trigger string) string {
 }
 
 // rotatedLease names one provider's credential lease rotated by a
-// RotateCredentials call, for the lifecycle-channel notification.
+// RotateCredentials call, for the CH-RUNTIMEOPS notification.
 type rotatedLease struct {
 	provider string
 	leaseID  string
@@ -297,7 +297,7 @@ type rotatedLease struct {
 
 // applyRotation merges the new leases into the credential file under
 // s.mu and returns the rotated providers. The lock is released before
-// the caller's lifecycle-channel round-trip so a slow runtime does not
+// the caller's CH-RUNTIMEOPS round-trip so a slow runtime does not
 // block other credential RPCs.
 func (s *Server) applyRotation(sessionID string, newLeases map[string]*adapterv1.CredentialLease) ([]rotatedLease, error) {
 	s.mu.Lock()

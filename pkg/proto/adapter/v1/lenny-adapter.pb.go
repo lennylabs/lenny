@@ -4620,8 +4620,7 @@ func (x *SignalDeadlineRequest) GetTrigger() string {
 type SignalDeadlineResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// delivered is true when the warning reached the runtime over the
-	// lifecycle channel; false when the pod's runtime has no lifecycle
-	// channel (Basic/Standard integration level — §15 line 2141).
+	// CH-RUNTIMEOPS; false when the pod's runtime has no CH-RUNTIMEOPS (Basic/Standard integration level — §15 line 2141).
 	Delivered     bool `protobuf:"varint,1,opt,name=delivered,proto3" json:"delivered,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -6229,7 +6228,7 @@ type GetObservedIntegrationLevelRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// wait_ms bounds how long the adapter waits for the runtime to complete
 	// its first §4.7 lifecycle handshake before classifying. A Full-level
-	// runtime dials the lifecycle channel shortly after boot, so a generous
+	// runtime dials the CH-RUNTIMEOPS shortly after boot, so a generous
 	// window avoids misclassifying a slow-to-connect runtime; the window is
 	// only fully consumed when the runtime never opens the channel. Zero
 	// classifies from the runtime's current connection state with no wait.
@@ -6280,7 +6279,7 @@ type GetObservedIntegrationLevelResponse struct {
 	// observed_level is "basic", "standard", or "full" — the §5.1 level the
 	// adapter observed the runtime actually implement. "full" when the
 	// runtime completed the lifecycle handshake; "standard" when it
-	// connected to the platform MCP server but not the lifecycle channel;
+	// connected to the platform MCP server but not the CH-RUNTIMEOPS;
 	// "basic" otherwise (stdin/stdout binary protocol only).
 	ObservedLevel string `protobuf:"bytes,1,opt,name=observed_level,json=observedLevel,proto3" json:"observed_level,omitempty"`
 	unknownFields protoimpl.UnknownFields

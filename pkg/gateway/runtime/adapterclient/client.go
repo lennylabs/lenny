@@ -476,11 +476,11 @@ func (c *Client) Interrupt(ctx context.Context, sessionID string, hard bool, dea
 }
 
 // SignalDeadline delivers the §11.3 line 240 pre-expiry warning to the
-// pod's runtime over the lifecycle channel. remainingMs is the wall-clock
+// pod's runtime over the CH-RUNTIMEOPS. remainingMs is the wall-clock
 // left before the session's deadline; trigger names which deadline is
 // approaching ("session_age", "budget", or "idle"). The returned bool
 // reports whether the adapter forwarded the warning (false when the
-// runtime has no lifecycle channel — Basic/Standard integration level,
+// runtime has no CH-RUNTIMEOPS — Basic/Standard integration level,
 // §15 line 2141). The call is one-way; the adapter does not wait for a
 // runtime acknowledgement.
 func (c *Client) SignalDeadline(ctx context.Context, sessionID string, remainingMs int32, trigger string) (bool, error) {

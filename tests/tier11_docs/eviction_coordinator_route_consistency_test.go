@@ -41,14 +41,14 @@ import (
 // spec: 4.6.1, 4.7, 4.4
 // diagnosis: The §4.6.1 disruption-protection clarification names a
 //
-//	control-channel event or a checkpoint trigger that the spec and code do
+//	CH-ADAPTEREVENTS event or a checkpoint trigger that the spec and code do
 //	not define, so a reader cannot trace the coordinator-direct eviction
 //	route. §4.6.1 states the agent pod's preStop signals its coordinating
-//	gateway replica over the per-pod control channel (the §4.7
+//	gateway replica over the per-pod CH-ADAPTEREVENTS (the §4.7
 //	`AdapterTerminating` transport), and the coordinating lease holder drives
 //	the existing `Checkpoint` RPC with the `TriggerEviction` trigger under its
 //	held lease. A failure here means the §4.6.1 sentence drifted from those
-//	surfaces: it dropped the coordinator-direct route, named a control-channel
+//	surfaces: it dropped the coordinator-direct route, named a CH-ADAPTEREVENTS
 //	event the §4.7 table and pkg/adapter/controlchannel.go do not carry, named
 //	a checkpoint trigger pkg/gateway/checkpoint/checkpointer does not drive, or
 //	dropped the fail-closed rule that no unfenced replica drives the
@@ -66,7 +66,7 @@ func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
 		// The coordinator-direct route: the preStop cannot open the stream and
 		// signals its coordinating replica over the control channel.
 		"cannot open the gateway-driven `Checkpoint` stream itself",
-		"signals its coordinating gateway replica over the per-pod adapter-to-gateway control channel",
+		"signals its coordinating gateway replica over the per-pod adapter-to-gateway CH-ADAPTEREVENTS",
 		// The control-channel transport it reuses is the §4.7 AdapterTerminating one.
 		"the same channel that carries `AdapterTerminating`",
 		"[§4.7](#47-runtime-adapter)",
@@ -113,7 +113,7 @@ func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
 //
 //	clarification points at a heading that no longer exists. The sentence
 //	carries a §4.7 self-link (`#47-runtime-adapter`) to the runtime-adapter
-//	section that owns the control channel, and a §10.1 cross-file link
+//	section that owns the CH-ADAPTEREVENTS, and a §10.1 cross-file link
 //	(`10_gateway-internals.md#101-horizontal-scaling`) to the coordinator-lease
 //	and TTL-handoff section. A reader following a published link that no longer
 //	resolves gets a 404 to the section anchor. Re-point the link or restore the

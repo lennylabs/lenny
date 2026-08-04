@@ -18,7 +18,7 @@
 // contracts the fix couples: the runtime→adapter llm_request_completed
 // JSONL frame (the direct-mode token source) and the gateway→adapter
 // ReportUsage gRPC pull. It stands up the production-assembled adapter
-// over a real gRPC connection and a real lifecycle-channel socket, folds
+// over a real gRPC connection and a real CH-RUNTIMEOPS socket, folds
 // a completed direct-mode LLM call's token counts through the wired sink,
 // and asserts the gateway's ReportUsage pull returns the folded delta with
 // cumulative unset and the running cumulative total with it set, rather
@@ -78,7 +78,7 @@ func shortSocket(t *testing.T, name string) string {
 }
 
 // wiredAdapter builds the adapter the way cmd/lenny-adapter does for a
-// direct-mode Full-level pod: a lifecycle channel on a real socket, the
+// direct-mode Full-level pod: a CH-RUNTIMEOPS on a real socket, the
 // production direct-mode usage wiring (WireDirectModeUsage sets the meter
 // and the token sink), and an in-process runtime so StartSession can claim
 // the pod. It registers the server over bufconn and returns the gateway

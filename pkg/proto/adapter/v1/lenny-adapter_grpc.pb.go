@@ -70,7 +70,7 @@ const (
 // session lifecycle, credential delivery, interrupt control, checkpoint
 // orchestration, and usage reporting. Pod → gateway traffic is initiated
 // by the gateway only; the adapter responds to RPCs and emits structured
-// events via a separate streaming RPC (the lifecycle channel).
+// events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 type AdapterClient interface {
 	// PrepareWorkspace accepts streamed upload-file content into the pod's
 	// staging area. It is the first RPC in the §4.7 session assignment
@@ -163,8 +163,8 @@ type AdapterClient interface {
 	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
 	// before `maxSessionAge` expires. The adapter forwards it as a
-	// DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
-	// Basic/Standard runtime with no lifecycle channel cannot receive advance
+	// DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
+	// Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
 	// notice (§15 line 2141) and the call returns delivered=false rather than
 	// erroring so the watchdog's best-effort warning never fails. One-way: the
 	// adapter does not block on a runtime acknowledgement.
@@ -515,7 +515,7 @@ type Adapter_LifecycleChannelClient = grpc.BidiStreamingClient[LifecycleChannelR
 // session lifecycle, credential delivery, interrupt control, checkpoint
 // orchestration, and usage reporting. Pod → gateway traffic is initiated
 // by the gateway only; the adapter responds to RPCs and emits structured
-// events via a separate streaming RPC (the lifecycle channel).
+// events via a separate streaming RPC (the CH-ADAPTEREVENTS).
 type AdapterServer interface {
 	// PrepareWorkspace accepts streamed upload-file content into the pod's
 	// staging area. It is the first RPC in the §4.7 session assignment
@@ -608,8 +608,8 @@ type AdapterServer interface {
 	// approaching its §11.3 line 240 deadline so the agent can checkpoint and
 	// the client can wrap up. The gateway watchdog fires it once, five minutes
 	// before `maxSessionAge` expires. The adapter forwards it as a
-	// DEADLINE_APPROACHING frame over the §15.4.6 lifecycle channel; a
-	// Basic/Standard runtime with no lifecycle channel cannot receive advance
+	// DEADLINE_APPROACHING frame over the §15.4.6 CH-RUNTIMEOPS; a
+	// Basic/Standard runtime with no CH-RUNTIMEOPS cannot receive advance
 	// notice (§15 line 2141) and the call returns delivered=false rather than
 	// erroring so the watchdog's best-effort warning never fails. One-way: the
 	// adapter does not block on a runtime acknowledgement.

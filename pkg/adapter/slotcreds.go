@@ -55,7 +55,7 @@ func (s *Server) assignCredentialsSlot(sessionID, slotID string, reqLeases map[s
 // slot's per-slot file. Per §6.1 the rotation is independent: a sibling
 // slot's file and in-flight requests are unaffected. The §4.7 Full-level
 // in-flight gate / ceiling / ack protocol is the runtime's concern over
-// its lifecycle channel; the concurrent slot's runtime owns its own
+// its CH-RUNTIMEOPS; the concurrent slot's runtime owns its own
 // channel, so this path performs the file rewrite and lets the slot's
 // runtime rebind. spec: §6.1 line 28; §4.7 lines 816-829.
 func (s *Server) rotateCredentialsSlot(sessionID, slotID string, reqLeases map[string]*adapterv1.CredentialLease) (*adapterv1.RotateCredentialsResponse, error) {

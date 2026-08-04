@@ -71,7 +71,7 @@ capabilities:
 integrationLevel: full
 ```
 
-All four coding-agent runtimes declare `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), matching their `Level: Full` row in the §26.1 catalog table. Full level is required because these runtimes rely on the lifecycle channel for clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions.
+All four coding-agent runtimes declare `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)), matching their `Level: Full` row in the §26.1 catalog table. Full level is required because these runtimes rely on the CH-RUNTIMEOPS for clean interrupt, checkpoint/restore, and in-place credential rotation during long coding sessions.
 
 **Common `limits`.**
 

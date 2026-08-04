@@ -10,8 +10,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// spec: §5.1 / §15.4.3 — a runtime that opened neither the lifecycle
-// channel nor the platform MCP server is observationally Basic (stdin/
+// spec: §5.1 / §15.4.3 — a runtime that opened neither the CH-RUNTIMEOPS nor the platform MCP server is observationally Basic (stdin/
 // stdout binary protocol only).
 func TestObservedIntegrationLevelBasic_spec_5_1(t *testing.T) {
 	s := New("test")
@@ -21,7 +20,7 @@ func TestObservedIntegrationLevelBasic_spec_5_1(t *testing.T) {
 }
 
 // spec: §5.1 — a runtime that connected to the platform MCP server but not
-// the lifecycle channel is observationally Standard.
+// the CH-RUNTIMEOPS is observationally Standard.
 func TestObservedIntegrationLevelStandard_spec_5_1(t *testing.T) {
 	s := New("test")
 	s.markMCPHandshakeSeen()
@@ -44,7 +43,7 @@ func TestObservedIntegrationLevelFull_spec_5_1(t *testing.T) {
 	}
 }
 
-// spec: §5.1 — when the adapter offers a lifecycle channel but the runtime
+// spec: §5.1 — when the adapter offers a CH-RUNTIMEOPS but the runtime
 // never completes the handshake within the wait window, the runtime is
 // classified by its MCP signal: Standard if it reached MCP, else Basic.
 // This is the underperformance case the §5.1 admission check catches.

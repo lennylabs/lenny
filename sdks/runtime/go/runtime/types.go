@@ -132,7 +132,7 @@ type AdapterManifest struct {
 	PlatformMCPServer *MCPServerRef `json:"platformMcpServer,omitempty"`
 	// ConnectorServers names the per-connector MCP server sockets.
 	ConnectorServers []ConnectorServerRef `json:"connectorServers,omitempty"`
-	// LifecycleChannel names the Full-level lifecycle channel socket.
+	// LifecycleChannel names the Full-level CH-RUNTIMEOPS socket.
 	LifecycleChannel *SocketRef `json:"lifecycleChannel,omitempty"`
 	// AdapterLocalTools enumerates the §15.4.1 adapter-local tools the
 	// runtime may invoke via stdout tool_call frames.
@@ -178,7 +178,7 @@ type WorkspacePlan struct {
 }
 
 // TerminationReason is the reason passed to Handler.OnTerminate. The SDK
-// populates it from the §15.4.1 shutdown frame or the lifecycle-channel
+// populates it from the §15.4.1 shutdown frame or the CH-RUNTIMEOPS
 // terminate event.
 type TerminationReason struct {
 	// Reason is the adapter-supplied reason string (drain, deadline,

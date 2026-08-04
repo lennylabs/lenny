@@ -213,7 +213,7 @@ Provides session recovery and observability capabilities, backed by **MinIO** (S
 
 | Runtime level | Checkpoint method | Consistency |
 |-------------|------------------|-------------|
-| Full | Cooperative quiescence via lifecycle channel (`checkpoint_request` / `checkpoint_ready` handshake) | Consistent |
+| Full | Cooperative quiescence via CH-RUNTIMEOPS (`checkpoint_request` / `checkpoint_ready` handshake) | Consistent |
 | Standard / Basic | Best-effort snapshot without pausing the runtime | Best-effort |
 
 ---
@@ -269,11 +269,11 @@ Each agent pod contains two processes:
 - Exposes the gRPC/HTTP+mTLS interface that the gateway uses for lifecycle control.
 - Writes the adapter manifest (`/run/lenny/adapter-manifest.json`) with MCP server addresses, credential file paths, and configuration.
 - Hosts the intra-pod MCP servers (platform tools, per-connector tools) as abstract Unix socket listeners.
-- Manages the lifecycle channel (`@lenny-lifecycle`) for runtimes that implement the Full integration level.
+- Manages the CH-RUNTIMEOPS (`@lenny-lifecycle`) for runtimes that implement the Full integration level.
 - Handles workspace staging, setup command execution, and checkpoint orchestration.
 
 **Agent binary (main container).** The actual agent runtime -- Claude Code, a LangGraph agent, a custom Python script, or any binary that implements the adapter protocol. The agent binary:
-- Reads messages from stdin (Basic integration level) or connects to MCP servers and the lifecycle channel (Standard or Full integration level).
+- Reads messages from stdin (Basic integration level) or connects to MCP servers and the CH-RUNTIMEOPS (Standard or Full integration level).
 - Reads the adapter manifest to discover available tools and credentials.
 - Operates on files in `/workspace/current`.
 - Writes responses to stdout.
@@ -424,7 +424,7 @@ graph TB
     subgraph "Intra-pod"
         IP6["stdin/stdout JSON Lines<br/>Adapter ↔ Runtime (Basic level)"]
         IP7["MCP over Unix socket<br/>Adapter ↔ Runtime (Standard / Full level)"]
-        IP8["JSON Lines over Unix socket<br/>Lifecycle channel (Full level)"]
+        IP8["JSON Lines over Unix socket<br/>CH-RUNTIMEOPS (Full level)"]
     end
 
     C[Client] --> EP1 & EP2 & EP3
@@ -503,7 +503,7 @@ graph TB
 
 - **Default-deny all:** No ingress or egress by default.
 - **Allow gateway ingress:** Only the gateway (identified by namespace + pod label selector) can connect to pods, on the adapter's gRPC port only.
-- **Allow pod-to-gateway egress:** Pods can reach the gateway for the gRPC control channel and (if configured) the LLM Proxy.
+- **Allow pod-to-gateway egress:** Pods can reach the gateway for the gRPC LNK-GWCONTROL and (if configured) the LLM Proxy.
 - **Allow DNS:** Pods can resolve DNS via the cluster DNS service.
 - **No pod-to-pod communication:** Pods cannot communicate with each other. All inter-agent communication goes through the gateway's MCP Fabric via delegation.
 

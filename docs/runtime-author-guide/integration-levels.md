@@ -23,12 +23,12 @@ Lenny gives `type: agent` runtimes three levels of integration. Each level adds 
 | **Minimal message fields** (only `type`, `id`, `input` needed) | Yes | Yes | Yes |
 | **Platform tool server** (delegation, discovery, user input, streaming output, memory, messaging, tracing-context propagation) | -- | Yes | Yes |
 | **Connector tool servers** (GitHub, Jira, Slack, etc.) | -- | Yes | Yes |
-| **Lifecycle channel** | -- | -- | Yes |
+| **CH-RUNTIMEOPS** | -- | -- | Yes |
 | **Checkpoint and restore** | None -- pod failure loses context | Best-effort -- minor inconsistencies possible | Cooperative handshake -- consistent snapshots |
 | **Interrupt** | SIGTERM only, no safe stop point | SIGTERM only | Clean `interrupt_request` / `interrupt_acknowledged` |
 | **Credential rotation** | Pod restart, in-flight context lost (no checkpoint) | Pod restart, brief pause (best-effort checkpoint) | Rotated in place, no interruption |
 | **Advance deadline warning** | `shutdown` only, no advance notice | `shutdown` only | `deadline_approaching` signal before expiry |
-| **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | Coordinated via the lifecycle channel |
+| **Graceful drain** | `shutdown` + SIGTERM | `shutdown` + SIGTERM | Coordinated via the CH-RUNTIMEOPS |
 | **Pod recycling (`recycle.enabled`)** | Yes -- adapter-executed, no runtime cooperation | Yes | Yes |
 
 ---
@@ -134,7 +134,7 @@ Somewhere around 150-200 lines, plus an MCP client library.
 
 ### What you add on top of Standard
 
-1. **Open the lifecycle channel** by connecting to the socket named in `manifest.lifecycleChannel.socket` (usually `@lenny-lifecycle`).
+1. **Open the CH-RUNTIMEOPS** by connecting to the socket named in `manifest.lifecycleChannel.socket` (usually `@lenny-lifecycle`).
 2. **Do the capability handshake:** you'll receive `lifecycle_capabilities` from the sidecar; reply with `lifecycle_support` naming which of them you actually implement.
 3. **Handle lifecycle signals** in a background goroutine or thread, running alongside the main stdin loop.
 
@@ -199,7 +199,7 @@ The stdin/stdout contract doesn't change. `message` / `response` / `heartbeat` /
 
 ### From Standard to Full
 
-1. Connect to the lifecycle channel (`@lenny-lifecycle`) at startup.
+1. Connect to the CH-RUNTIMEOPS (`@lenny-lifecycle`) at startup.
 2. Do the capability handshake (`lifecycle_capabilities` / `lifecycle_support`), declaring only what you implement.
 3. Read lifecycle messages in a background goroutine or thread, alongside the stdin loop.
 4. Implement the handlers you need:
@@ -218,11 +218,11 @@ When an LLM provider rate-limits or revokes a credential, Lenny rotates it. What
 
 | Level | How rotation happens | What the session sees |
 |-------|---------------------|----------------------|
-| Full | The platform sends `credentials_rotated` on the lifecycle channel; your runtime rebinds in place. | Nothing -- the session keeps running. |
+| Full | The platform sends `credentials_rotated` on the CH-RUNTIMEOPS; your runtime rebinds in place. | Nothing -- the session keeps running. |
 | Standard | The platform checkpoints, terminates the pod, allocates a new one, assigns new credentials, and resumes. This is a force restart; context is preserved by the best-effort checkpoint. | A brief pause; the client sees a reconnect. |
 | Basic | The platform terminates the pod, allocates a new one, assigns new credentials, and restarts the session. This is a force restart; there is no checkpoint at this level, so any in-flight context is lost. | A pause, and the loss of in-flight context. |
 
-So at Full level your runtime is never force-restarted for a credential change, while at Standard and Basic a credential change always restarts the pod. The platform picks the strategy automatically, based on the capabilities you declared in `lifecycle_support` or the absence of a lifecycle channel. The [Credential Rotation section of Pod Lifecycle](lifecycle.md#credential-rotation) covers the same behavior in the context of the pod state machine.
+So at Full level your runtime is never force-restarted for a credential change, while at Standard and Basic a credential change always restarts the pod. The platform picks the strategy automatically, based on the capabilities you declared in `lifecycle_support` or the absence of a CH-RUNTIMEOPS. The [Credential Rotation section of Pod Lifecycle](lifecycle.md#credential-rotation) covers the same behavior in the context of the pod state machine.
 
 ---
 

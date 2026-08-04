@@ -335,10 +335,10 @@ func TestRuntimeSDKMCPSocketStandardLevelTypeScript(t *testing.T) {
 // spec: 15.4.3, 15.7 (Go runtime SDK, Full level)
 // diagnosis: the SDK-based lifecycle runtime
 // (sdks/runtime/go/example/lifecycle) is started with WithFullLevel. It
-// must open the lifecycle channel, complete the lifecycle_capabilities
+// must open the CH-RUNTIMEOPS, complete the lifecycle_capabilities
 // / lifecycle_support handshake, and answer the checkpoint, interrupt,
 // credential-rotation, and deadline events. A failed Full-level check
-// means the SDK lifecycle channel does not honor the contract.
+// means the SDK CH-RUNTIMEOPS does not honor the contract.
 func TestRuntimeSDKLifecycleFullLevel(t *testing.T) {
 	compliance := buildRuntimeBinary(t, "./cmd/lenny-compliance")
 	runtimeBin := buildRuntimeBinary(t, "./sdks/runtime/go/example/lifecycle")
@@ -349,7 +349,7 @@ func TestRuntimeSDKLifecycleFullLevel(t *testing.T) {
 // spec: 15.4.3, 15.7 (Python and TypeScript runtime SDK, Full level)
 // diagnosis: the Python (lenny_runtime.examples.lifecycle) and
 // TypeScript (examples/lifecycle) SDK lifecycle runtimes are started at
-// the Full level. Each must open the lifecycle channel, complete the
+// the Full level. Each must open the CH-RUNTIMEOPS, complete the
 // handshake, and answer the checkpoint, interrupt, credential-rotation,
 // and deadline events. A subtest skips when its toolchain is absent.
 func TestRuntimeSDKLifecycleFullLevelInterpreted(t *testing.T) {

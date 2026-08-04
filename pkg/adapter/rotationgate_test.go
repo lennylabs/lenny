@@ -15,8 +15,7 @@ import (
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
-// rotationGateServer wires a Server to a freshly handshaken lifecycle
-// channel with one assigned credential, ready to exercise the §4.7
+// rotationGateServer wires a Server to a freshly handshaken CH-RUNTIMEOPS with one assigned credential, ready to exercise the §4.7
 // Full-level rotation protocol.
 func rotationGateServer(t *testing.T) (*Server, *fakeRuntime) {
 	t.Helper()

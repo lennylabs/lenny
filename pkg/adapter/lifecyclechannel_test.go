@@ -24,8 +24,7 @@ import (
 // timing out when 28+ packages contend for cores. spec: §4.7.
 const fakeRuntimeReadDeadline = 30 * time.Second
 
-// fakeRuntime plays the agent-runtime end of the §4.7 lifecycle
-// channel: it dials the adapter's Unix socket and exchanges JSONL
+// fakeRuntime plays the agent-runtime end of the §4.7 CH-RUNTIMEOPS: it dials the adapter's Unix socket and exchanges JSONL
 // frames.
 type fakeRuntime struct {
 	t    *testing.T
@@ -439,7 +438,7 @@ func TestLifecycleChannelCloseFailsPendingRequest(t *testing.T) {
 }
 
 // spec: §4.7 lines 836-842 — the startup sequence (runtime connects to
-// the lifecycle channel) applies for both fresh sessions and resumes, so
+// the CH-RUNTIMEOPS) applies for both fresh sessions and resumes, so
 // after a runtime disconnects the channel must accept a fresh runtime's
 // connection and re-handshake. Closes F-4.7.14 / F-4.7.19.
 func TestLifecycleChannelAcceptsReconnect_spec_4_7(t *testing.T) {

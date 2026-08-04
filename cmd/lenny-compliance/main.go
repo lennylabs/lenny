@@ -14,7 +14,7 @@
 // The Basic-level battery exercises the stdin/stdout binary protocol.
 // The Standard-level battery adds the §15.4.3 intra-pod MCP integration
 // and the §8.5 delegation tool surface; the Full-level battery adds the
-// lifecycle channel.
+// CH-RUNTIMEOPS.
 //
 // The harness exits 0 when every check passed and non-zero (one per
 // failed check) otherwise. The JSON form produces a single document

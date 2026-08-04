@@ -66,7 +66,7 @@ In SDK-warm mode, the agent process starts during the warm phase (before any ses
 
 In the default `sessionPolicy` (`maxConcurrentSessions: 1`, `recycle.enabled: false`), a pod is bound to exactly one session for its entire lifetime. After the session completes or fails, the pod is terminated and replaced --- never reused for a different session. This prevents cross-session data leakage through residual files, cached DNS, or runtime memory.
 
-**Recycling** relaxes this constraint: with `recycle.enabled: true` the pod is reused across sequential sessions, and with `maxConcurrentSessions > 1` it serves multiple simultaneous sessions. Recycling requires no runtime cooperation: the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no lifecycle-channel exchange between sessions. See the recycle lifecycle below.
+**Recycling** relaxes this constraint: with `recycle.enabled: true` the pod is reused across sequential sessions, and with `maxConcurrentSessions > 1` it serves multiple simultaneous sessions. Recycling requires no runtime cooperation: the per-slot cleanup and the whole-pod scrub are adapter-executed and gateway-coordinated, with no CH-RUNTIMEOPS exchange between sessions. See the recycle lifecycle below.
 
 ---
 
@@ -180,7 +180,7 @@ For most workloads this is sufficient.
 Full-level runtimes participate in a handshake that guarantees **consistent snapshots**:
 
 ```
-1. Adapter sends checkpoint_request on the lifecycle channel:
+1. Adapter sends checkpoint_request on the CH-RUNTIMEOPS:
    {"type":"checkpoint_request","checkpointId":"chk_42","deadlineMs":60000}
 
 2. Your runtime:
@@ -241,7 +241,7 @@ The client receives this event. Your runtime does not emit or handle it; from th
 
 ## Interrupt and Suspend (Full level)
 
-Full-level runtimes can handle clean interrupts via the lifecycle channel:
+Full-level runtimes can handle clean interrupts via the CH-RUNTIMEOPS:
 
 ```
 1. Adapter sends interrupt_request:
@@ -271,14 +271,14 @@ When a provider credential is rate-limited, expires, or is revoked, the platform
 
 | Level | Method | Session Impact |
 |------|--------|----------------|
-| **Full** | `credentials_rotated` on lifecycle channel; runtime rebinds in-place | No session interruption |
+| **Full** | `credentials_rotated` on CH-RUNTIMEOPS; runtime rebinds in-place | No session interruption |
 | **Standard** | Gateway triggers a best-effort checkpoint, terminates the pod, and resumes on a new pod with the new credential | Brief pause; client sees a reconnect |
 | **Basic** | Pod restart with the new credential. Basic has no checkpoint, so in-flight context is lost and the session restarts from the last gateway-persisted state | Pause and loss of in-flight context |
 
 ### Full-level credential rotation
 
 ```
-1. Adapter sends on lifecycle channel:
+1. Adapter sends on CH-RUNTIMEOPS:
    {"type":"credentials_rotated","provider":"anthropic","credentialsPath":"/run/lenny/credentials.json","leaseId":"lease_xyz"}
 
 2. Your runtime re-reads the credentials file and rebinds the provider client to the new credential.
@@ -305,7 +305,7 @@ At the Basic and Standard levels, you receive only a `shutdown` message when the
 
 ## Terminate Signal (Full level)
 
-Full-level runtimes receive a `terminate` message on the lifecycle channel as the primary graceful shutdown path. It arrives on the lifecycle channel rather than as the stdin `shutdown` message that Basic and Standard runtimes receive.
+Full-level runtimes receive a `terminate` message on the CH-RUNTIMEOPS as the primary graceful shutdown path. It arrives on the CH-RUNTIMEOPS rather than as the stdin `shutdown` message that Basic and Standard runtimes receive.
 
 ```json
 {"type":"terminate","deadlineMs":10000,"reason":"session_complete"}
@@ -316,13 +316,13 @@ Full-level runtimes receive a `terminate` message on the lifecycle channel as th
 | `deadlineMs` | integer | Time in milliseconds before the adapter sends SIGTERM. |
 | `reason` | string | One of `"session_complete"`, `"budget_exhausted"`, `"eviction"`, or `"operator"`. |
 
-Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod the runtime exits at each session end; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no lifecycle-channel handshake.
+Your runtime must exit within `deadlineMs`. If the process does not exit by the deadline, the adapter sends SIGTERM, then SIGKILL after 10 seconds. `terminate` always means process exit. On a recycling pod the runtime exits at each session end; the whole-pod scrub and the next session's manifest regeneration are adapter-executed and require no CH-RUNTIMEOPS handshake.
 
 ---
 
 ## LLM Request Tracking (Full level, Direct Mode)
 
-Runtimes that call LLM provider APIs directly (not through the adapter proxy) should emit `llm_request_started` and `llm_request_completed` messages on the lifecycle channel. These signals allow the adapter to track in-flight LLM requests for credential rotation coordination --- the adapter will not send `credentials_rotated` while LLM requests are in flight.
+Runtimes that call LLM provider APIs directly (not through the adapter proxy) should emit `llm_request_started` and `llm_request_completed` messages on the CH-RUNTIMEOPS. These signals allow the adapter to track in-flight LLM requests for credential rotation coordination --- the adapter will not send `credentials_rotated` while LLM requests are in flight.
 
 ### `llm_request_started` (runtime to adapter)
 

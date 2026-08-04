@@ -111,7 +111,7 @@ A **runtime** defines a type of agent that can run on Lenny. It specifies the co
 Lenny is runtime-agnostic. Every agent meets the same contract, a documented interface that a binary in any language can implement. The contract has two sides:
 
 - **The platform talks to the pod** over a private, authenticated internal protocol. This handles infrastructure plumbing: preparing the workspace, starting the session, taking checkpoints, delivering credentials, tearing down. The sidecar in each pod handles this side; your code never touches it.
-- **The pod talks to your agent** through a stdin/stdout contract (one JSON object per line). At higher integration levels, it also opens a local tool server and a lifecycle channel, both of which are opt-in.
+- **The pod talks to your agent** through a stdin/stdout contract (one JSON object per line). At higher integration levels, it also opens a local tool server and a CH-RUNTIMEOPS, both of which are opt-in.
 
 ### Runtime types
 
@@ -149,7 +149,7 @@ Everything in Basic, plus a local connection to a tool server that the platform 
 
 #### Full
 
-Everything in Standard, plus a lifecycle channel: a second local connection that carries operational signals:
+Everything in Standard, plus a CH-RUNTIMEOPS: a second local connection that carries operational signals:
 
 - Opens a bidirectional JSON-lines stream over an abstract Unix socket (`@lenny-lifecycle`).
 - Supports cooperative checkpoints: the platform asks the runtime to quiesce, the runtime replies when it's at a safe point, the snapshot is captured, and the platform signals completion.
@@ -545,7 +545,7 @@ A credential can change during a session for two distinct reasons; Lenny handles
 
 Both kinds of rotation deliver the new lease via the `RotateCredentials` RPC. What the runtime does with it depends on its [integration level](#integration-levels):
 
-- **Full:** the adapter waits for any in-flight LLM request to drain (complete or error out), then sends a `credentials_rotated` message on the lifecycle channel. The runtime rebinds its provider in place, replies `credentials_acknowledged`, and the session continues without interruption. Subsequent LLM requests use the new credential.
+- **Full:** the adapter waits for any in-flight LLM request to drain (complete or error out), then sends a `credentials_rotated` message on the CH-RUNTIMEOPS. The runtime rebinds its provider in place, replies `credentials_acknowledged`, and the session continues without interruption. Subsequent LLM requests use the new credential.
 - **Basic / Standard:** the session is checkpointed and restarted on a new pod. Basic runtimes that do not participate in checkpointing lose their in-flight context.
 
 ### Pool exhaustion

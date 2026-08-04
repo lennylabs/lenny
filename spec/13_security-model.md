@@ -76,7 +76,7 @@ spec:
 
 **Allow pod-to-gateway and DNS — base policy (applied to all agent pods in every agent namespace):**
 
-This base policy allows only the gRPC control channel (port 50051) and DNS. Port 8443 (LLM proxy) is **not** included here — it is conditionally added by the supplemental `allow-pod-egress-llm-proxy` policy and applies only to pods in pools with `deliveryMode: proxy`. The OTLP collector port is conditionally added by `allow-pod-egress-otlp` (rendered only when `observability.otlpEndpoint` is set), and object-store egress for checkpoint chunk transfer is conditionally added by `allow-pod-egress-objectstore` (see below). An agent pod reaches no egress port beyond those named by this base policy and whichever supplemental policies its pool selects.
+This base policy allows only the gRPC LNK-GWCONTROL (port 50051) and DNS. Port 8443 (LLM proxy) is **not** included here — it is conditionally added by the supplemental `allow-pod-egress-llm-proxy` policy and applies only to pods in pools with `deliveryMode: proxy`. The OTLP collector port is conditionally added by `allow-pod-egress-otlp` (rendered only when `observability.otlpEndpoint` is set), and object-store egress for checkpoint chunk transfer is conditionally added by `allow-pod-egress-objectstore` (see below). An agent pod reaches no egress port beyond those named by this base policy and whichever supplemental policies its pool selects.
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -89,7 +89,7 @@ spec:
     matchLabels:
       lenny.dev/managed: "true"
   egress:
-    - to: # Gateway — gRPC control channel only
+    - to: # Gateway — gRPC LNK-GWCONTROL only
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: lenny-system
@@ -97,7 +97,7 @@ spec:
             matchLabels:
               lenny.dev/component: gateway
       ports:
-        - port: 50051 # {{ .Values.gateway.grpcPort }} — pod-to-gateway gRPC control channel
+        - port: 50051 # {{ .Values.gateway.grpcPort }} — pod-to-gateway gRPC LNK-GWCONTROL
           protocol: TCP
     - to: # DNS (lenny-system CoreDNS)
         - namespaceSelector:

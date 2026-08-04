@@ -634,7 +634,7 @@ func TestSignalDeadlineForwardsAndReportsDelivery_spec_11_3_240(t *testing.T) {
 	}
 }
 
-// A runtime without a lifecycle channel returns delivered=false; the wrapper
+// A runtime without a CH-RUNTIMEOPS returns delivered=false; the wrapper
 // surfaces that without error so the watchdog's best-effort warning continues.
 func TestSignalDeadlineReportsNotDelivered_spec_11_3_240(t *testing.T) {
 	rec := &recordingAdapter{signalDelivered: false}

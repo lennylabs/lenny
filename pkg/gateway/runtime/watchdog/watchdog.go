@@ -388,8 +388,7 @@ type SessionExpiryNotifier interface {
 // The watchdog invokes it once per session, when the session's effective
 // maxSessionAge deadline first falls within the ExpiryWarningSeconds window
 // (default 300s), so the gateway emits the §11.3 line 240 session_expiring_soon
-// SSE event to the client and dispatches the DEADLINE_APPROACHING lifecycle-
-// channel signal to the running pod. maxSessionAgeSeconds is the session's
+// SSE event to the client and dispatches the DEADLINE_APPROACHING CH-RUNTIMEOPS signal to the running pod. maxSessionAgeSeconds is the session's
 // resolved deadline (for the SSE payload) and remainingSeconds is the
 // wall-clock left before it.
 //
@@ -1129,7 +1128,7 @@ func (w *Watchdog) sweepMaxAge(ctx context.Context, tenant string, now time.Time
 
 // sweepExpiryWarning implements the §11.3 line 240 session-expiry warning:
 // the gateway sends a `session_expiring_soon` event to the client and a
-// `DEADLINE_APPROACHING` lifecycle-channel signal to the pod five minutes
+// `DEADLINE_APPROACHING` CH-RUNTIMEOPS signal to the pod five minutes
 // (ExpiryWarningSeconds) before a session's effective maxSessionAge deadline
 // so the agent can checkpoint and the client can extend or wrap up.
 //

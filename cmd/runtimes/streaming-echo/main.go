@@ -3,7 +3,7 @@
 // Command streaming-echo is the Full-level reference adapter binary. It
 // inherits the Basic-level stdin/stdout protocol from cmd/runtimes/echo
 // (message → response, heartbeat → heartbeat_ack, shutdown → clean exit)
-// and adds the lifecycle channel from spec §15.4.3 Full level:
+// and adds the CH-RUNTIMEOPS from spec §15.4.3 Full level:
 //
 //   - lifecycle_capabilities / lifecycle_support  — handshake on connect
 //   - checkpoint_request / checkpoint_ready / checkpoint_complete
@@ -12,7 +12,7 @@
 //   - deadline_approaching — advance warning, logged (no exit)
 //   - terminate            — emit a final response and exit
 //
-// The lifecycle channel transport is a Unix socket whose path is taken
+// The CH-RUNTIMEOPS transport is a Unix socket whose path is taken
 // from the adapter manifest (`/run/lenny/adapter-manifest.json` by
 // default, or the path in $LENNY_ADAPTER_MANIFEST). The manifest's
 // `lifecycleChannel.socket` field carries the path. Production deploys

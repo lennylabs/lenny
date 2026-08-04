@@ -78,7 +78,7 @@ func WithStandardLevel() Option {
 }
 
 // WithFullLevel runs the SDK at the §15.4.3 Full level. It implies
-// Standard level and additionally opens the lifecycle channel,
+// Standard level and additionally opens the CH-RUNTIMEOPS,
 // completing the lifecycle_capabilities / lifecycle_support handshake
 // and surfacing checkpoint, interrupt, credential rotation, and deadline
 // events.

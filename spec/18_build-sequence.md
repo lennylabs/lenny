@@ -161,8 +161,8 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 
 **Deliverables.**
 
-- `cmd/runtimes/streaming-echo` Full-level reference runtime, inheriting the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adding a lifecycle-channel client over a Unix socket. The runtime handles `lifecycle_capabilities`, `lifecycle_support`, `checkpoint_request`, `checkpoint_ready`, `interrupt_request`, `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
-- `schemas/lifecycle-events.schema.json` (lifecycle-channel envelope) with example fixtures under `schemas/examples/lifecycle.*.json`.
+- `cmd/runtimes/streaming-echo` Full-level reference runtime, inheriting the Basic stdin/stdout protocol from `cmd/runtimes/echo` and adding a CH-RUNTIMEOPS client over a Unix socket. The runtime handles `lifecycle_capabilities`, `lifecycle_support`, `checkpoint_request`, `checkpoint_ready`, `interrupt_request`, `interrupt_acknowledged`, `credentials_rotated`, `deadline_signal`, and `draining`.
+- `schemas/lifecycle-events.schema.json` (CH-RUNTIMEOPS envelope) with example fixtures under `schemas/examples/lifecycle.*.json`.
 - `cmd/lenny-compliance --level full` battery (lifecycle handshake, checkpoint quiesce/resume, interrupt acknowledgement, `credentials_rotated`, and `deadline_signal`).
 
 **Prerequisites.** Phase 2.5 exit gate.
@@ -405,7 +405,7 @@ Hard prerequisites are summarized in [§18.40](#1840-hard-prerequisite-chain).
 - Gateway-side wire-in of the Phase 3 adapter `DemoteSDK` and `ConfigureWorkspace` RPCs for the SDK-warm transition path.
 - SIGSTOP/SIGCONT embedded-adapter path per [§4.4](04_system-components.md#44-event--checkpoint-store).
 - Eviction-fallback Postgres minimal-state record per [§4.4](04_system-components.md#44-event--checkpoint-store).
-- Gateway-side session-deadline emitter per [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation): the 5-minute pre-expiry timer that fires before `maxSessionAge`, the `session_expiring_soon` event sent to the client, and the `DEADLINE_APPROACHING` lifecycle-channel signal dispatched to the runtime (`streaming-echo` handled the runtime side in Phase 2.8; the gateway emitter lands here).
+- Gateway-side session-deadline emitter per [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation): the 5-minute pre-expiry timer that fires before `maxSessionAge`, the `session_expiring_soon` event sent to the client, and the `DEADLINE_APPROACHING` CH-RUNTIMEOPS signal dispatched to the runtime (`streaming-echo` handled the runtime side in Phase 2.8; the gateway emitter lands here).
 - `lenny-drain-readiness` admission webhook (pre-drain MinIO health check per [§12.5](12_storage-architecture.md#125-artifact-store) and [§13.2](13_security-model.md#132-network-isolation) NET-037).
 - Helm feature flag `features.drainReadiness` enabled and the corresponding phase-stamp entry.
 - Checkpoint-duration baseline re-captured with cooperative quiescence overhead.

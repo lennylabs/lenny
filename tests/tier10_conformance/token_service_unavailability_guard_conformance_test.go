@@ -13,7 +13,7 @@
 //
 // This case drives the exported adapter.Server directly (the recycle-scrub and
 // concurrent-slot conformance cases establish the pattern) with a real
-// lifecycle channel and an external runtime peer that speaks the §4.7 JSONL
+// CH-RUNTIMEOPS and an external runtime peer that speaks the §4.7 JSONL
 // lifecycle protocol and advertises credential_rotation, so a non-conforming
 // adapter that mishandled the extension as a rotation would send
 // credentials_rotated over the wire the peer observes.
@@ -99,7 +99,7 @@ func (p *guardRuntimePeer) read() guardLifecycleFrame {
 }
 
 // expectNoRotation asserts the adapter sends no frame within d. A conforming
-// ExtendCredentialLease sends nothing on the lifecycle channel; an adapter that
+// ExtendCredentialLease sends nothing on the CH-RUNTIMEOPS; an adapter that
 // mishandled it as a rotation would send credentials_rotated.
 func (p *guardRuntimePeer) expectNoRotation(d time.Duration) {
 	p.t.Helper()

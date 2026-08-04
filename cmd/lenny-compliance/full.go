@@ -19,7 +19,7 @@ import (
 
 // runFullBattery executes the Basic checks plus the §15.4.6 Full-level
 // test categories. Each Full-level check spawns the runtime with a fake
-// lifecycle-channel server attached and asserts the matching event-pair
+// CH-RUNTIMEOPS server attached and asserts the matching event-pair
 // behaviour. The fake lifecycle server uses a file-based Unix socket so
 // the harness runs cross-platform; the spec permits both file-based and
 // abstract socket addresses (§15.4.3 platform note).
@@ -75,7 +75,7 @@ func (r *Report) recordCheck(name, spec string, detail string, err error) {
 }
 
 // fakeAdapter spins up a Unix-socket listener that plays the adapter
-// side of the lifecycle channel and writes a manifest pointing the
+// side of the CH-RUNTIMEOPS and writes a manifest pointing the
 // runtime at it. The returned cleanup MUST be called.
 type fakeAdapter struct {
 	dir        string

@@ -60,7 +60,7 @@ type ManifestConnector struct {
 
 // ManifestLifecycleChannel is the §15.4.6 lifecycleChannel manifest
 // object: the Unix socket a Full-level runtime dials to reach the
-// lifecycle channel.
+// CH-RUNTIMEOPS.
 type ManifestLifecycleChannel struct {
 	Socket string `json:"socket"`
 }
@@ -152,8 +152,8 @@ type Manifest struct {
 	// Empty in v1; never absent.
 	RuntimeMcpServers []ManifestConnector `json:"runtimeMcpServers"`
 	// LifecycleChannel points a Full-level runtime at the §15.4.6
-	// lifecycle channel's Unix socket. Omitted when the adapter runs no
-	// lifecycle channel (a Basic-level deployment).
+	// CH-RUNTIMEOPS's Unix socket. Omitted when the adapter runs no
+	// CH-RUNTIMEOPS (a Basic-level deployment).
 	LifecycleChannel *ManifestLifecycleChannel `json:"lifecycleChannel,omitempty"`
 }
 

@@ -110,7 +110,7 @@ func TestFinalizeWorkspaceMidSessionOverlaysAndSignals_spec_7_4_433(t *testing.T
 
 // TestFinalizeWorkspacePreStartDoesNotSignal asserts the default (pre-start)
 // path neither overlays nor emits files_updated: it replaces the whole tree
-// and stays silent on the lifecycle channel. F-7.4.6.
+// and stays silent on the CH-RUNTIMEOPS. F-7.4.6.
 func TestFinalizeWorkspacePreStartDoesNotSignal_spec_7_4_433(t *testing.T) {
 	root := t.TempDir()
 	// A leftover file the whole-tree promotion is expected to discard.

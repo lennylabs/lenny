@@ -6,7 +6,7 @@
 // cmd/runtimes/streaming-echo.
 //
 // The runtime is started with WithFullLevel, so the SDK opens the
-// §15.4.3 lifecycle channel and completes the lifecycle_capabilities /
+// §15.4.3 CH-RUNTIMEOPS and completes the lifecycle_capabilities /
 // lifecycle_support handshake in addition to the Standard-level MCP
 // setup. The SDK answers the checkpoint, interrupt, credential-rotation,
 // and deadline events automatically; the lifecycle callbacks below show
@@ -14,7 +14,7 @@
 // interrupt point, and rebinds rotated credentials.
 //
 // The message handler is a plain echo — the Full-level value is in the
-// lifecycle channel, not the per-turn behavior.
+// CH-RUNTIMEOPS, not the per-turn behavior.
 //
 // Exit codes (spec §15.4): 0 success, 1 runtime error, 2 protocol
 // error.

@@ -170,7 +170,7 @@ func TestDirectLeaseArmsExpiryTimerAtExpiresAt_spec_4_9(t *testing.T) {
 
 // spec: §4.9 line 1149 — when the timer fires without a replacement, the
 // adapter deletes the provider's credential-file entry and reports
-// AUTH_EXPIRED on the control channel.
+// AUTH_EXPIRED on the CH-ADAPTEREVENTS.
 func TestExpiryFireDeletesEntryAndReportsAuthExpired_spec_4_9(t *testing.T) {
 	clk := &fakeExpiryClock{cur: time.Unix(1_700_000_000, 0).UTC()}
 	s := expiryServer(t, clk)

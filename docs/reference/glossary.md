@@ -203,7 +203,7 @@ A container runtime that uses lightweight virtual machines for strong isolation.
 
 See [Credential Lease](#credential-lease).
 
-### Lifecycle Channel
+### CH-RUNTIMEOPS
 {: #lifecycle-channel }
 
 The gRPC bidirectional stream between the gateway and a pod's runtime adapter. Used for control-plane signals: session start/stop, interrupt, checkpoint requests, credential rotation, and workspace notifications. Distinct from the data-plane stdin/stdout pipe.

@@ -193,7 +193,7 @@ input_required → failed    (BUDGET_KEYS_EXPIRED detected while awaiting input 
 
 While in `input_required`, the `maxSessionAge` timer continues running (the session is logically active). This aligns with the canonical task state machine ([Section 8.8](08_recursive-delegation.md#88-taskrecord-and-taskresult-schema)) and the interactive session model ([Section 7.2](07_session-lifecycle.md#72-interactive-session-model)).
 
-**`suspended` state:** `interrupt_request` on the lifecycle channel produces a distinct `suspended` session state:
+**`suspended` state:** `interrupt_request` on the CH-RUNTIMEOPS produces a distinct `suspended` session state:
 
 ```
 running → suspended   (interrupt_request + interrupt_acknowledged)

@@ -31,8 +31,7 @@ import (
 // serialised; different sessions run independent processes.
 //
 // This is NOT the production pod-backed executor — there is no
-// Kubernetes, no warm pool, no adapter manifest, no lifecycle
-// channel. It is the `make run` developer-loop executor and the
+// Kubernetes, no warm pool, no adapter manifest, no CH-RUNTIMEOPS. It is the `make run` developer-loop executor and the
 // substrate the conformance harness exercises.
 type SubprocessExecutor struct {
 	binPath string

@@ -4,7 +4,7 @@
 // developer write a Lenny agent runtime in Go by implementing the
 // Handler interface and calling Run; the SDK drives the §15.4.1 adapter
 // binary protocol, the §15.4.2 RPC lifecycle state machine, the §8.5
-// platform MCP tool helpers, and the Full-level lifecycle channel.
+// platform MCP tool helpers, and the Full-level CH-RUNTIMEOPS.
 //
 // This SDK is the runtime-author counterpart of the client SDK at
 // sdks/client/go/lenny. The client SDK wraps the gateway REST API for
@@ -24,10 +24,10 @@
 //     platform MCP server and connector MCP servers with the §15.4.3
 //     manifest-nonce handshake, and exposes typed §8.5 platform tool
 //     helpers through the Tools value passed to handlers.
-//   - Full: the SDK additionally opens the §15.4.3 lifecycle channel,
+//   - Full: the SDK additionally opens the §15.4.3 CH-RUNTIMEOPS,
 //     completes the lifecycle_capabilities / lifecycle_support
 //     handshake, and surfaces checkpoint, interrupt, credential
-//     rotation, and deadline events on the Lifecycle channel.
+//     rotation, and deadline events on the CH-RUNTIMEOPS.
 //
 // # Minimal runtime
 //
@@ -130,7 +130,7 @@ const defaultCredentialsPath = "/run/lenny/credentials.json"
 
 // Run wires up the §15.4.1 stdin/stdout framing, optionally dials the
 // manifest-advertised abstract Unix sockets (platform MCP server,
-// connector MCP servers, lifecycle channel) with the §15.4.3
+// connector MCP servers, CH-RUNTIMEOPS) with the §15.4.3
 // manifest-nonce handshake, parses the §4.7 credential file, and drives
 // the §15.4.2 dispatch loop. It blocks until the adapter closes the
 // inbound stream or sends a shutdown frame and returns nil on a clean
@@ -299,8 +299,8 @@ func (s *session) run(ctx context.Context) error {
 }
 
 // startChannels dials the §15.4.3 platform MCP server, connector MCP
-// servers, and lifecycle channel for the configured integration level.
-// cancel lets a lifecycle-channel terminate event stop the frame loop.
+// servers, and CH-RUNTIMEOPS for the configured integration level.
+// cancel lets a CH-RUNTIMEOPS terminate event stop the frame loop.
 //
 // When a higher-level channel is configured but the adapter manifest
 // does not advertise it (no manifest, or a manifest without the socket
@@ -347,7 +347,7 @@ func (s *session) manifestHasPlatformMCP() bool {
 }
 
 // manifestHasLifecycle reports whether the manifest advertises a
-// lifecycle channel socket.
+// CH-RUNTIMEOPS socket.
 func (s *session) manifestHasLifecycle() bool {
 	return s.manifest != nil &&
 		s.manifest.LifecycleChannel != nil &&
@@ -535,7 +535,7 @@ func (s *session) invokeCreate(ctx context.Context) error {
 }
 
 // invokeTerminate calls Handler.OnTerminate at most once. The terminated
-// guard makes a lifecycle-channel terminate and the stdin shutdown path
+// guard makes a CH-RUNTIMEOPS terminate and the stdin shutdown path
 // idempotent.
 func (s *session) invokeTerminate(ctx context.Context, reason TerminationReason) {
 	if !s.terminated.CompareAndSwap(false, true) {
@@ -589,7 +589,7 @@ func (s *session) loadCredentials() {
 }
 
 // reloadCredentials re-reads the §4.7 credential file in place. The
-// lifecycle channel calls it on a credentials_rotated event so a
+// CH-RUNTIMEOPS calls it on a credentials_rotated event so a
 // Full-level runtime continues without restart.
 func (s *session) reloadCredentials() *CredentialBundle {
 	s.loadCredentials()
@@ -599,7 +599,7 @@ func (s *session) reloadCredentials() *CredentialBundle {
 }
 
 // Credentials returns the current §4.7 credential bundle, refreshed in
-// place by the lifecycle channel on rotation. It is safe to call from
+// place by the CH-RUNTIMEOPS on rotation. It is safe to call from
 // any goroutine.
 func (s *session) Credentials() *CredentialBundle {
 	s.credMu.RLock()

@@ -214,7 +214,7 @@ func TestEmergencyRevocationDuringActiveSession(t *testing.T) {
 // §12.8 rotation failure — covered structurally by:
 //   - pkg/adapter/credentials.go (credentials_rotated /
 //     credentials_acknowledged handshake; unit tests).
-//   - pkg/adapter/lifecyclechannel.go (lifecycle channel).
+//   - pkg/adapter/lifecyclechannel.go (CH-RUNTIMEOPS).
 //   - sdks/runtime/go/runtime/lifecycle.go.
 //
 // Live rotation-failure exercise needs the fault-injection knob on

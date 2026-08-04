@@ -152,7 +152,7 @@ Lenny is not tied to any specific agent runtime. It defines a leveled adapter co
 | ------------ | -------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | **Basic**    | stdin/stdout JSON Lines          | ~50 lines of code, no SDK | Basic session lifecycle, text I/O                                                                                                    |
 | **Standard** | stdin/stdout + MCP (Unix socket) | Moderate                  | Basic + platform MCP tools (delegation, discovery, elicitation, output), connector tool access                                       |
-| **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + lifecycle channel (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
+| **Full**     | stdin/stdout + MCP (Unix socket) | Significant               | Standard + CH-RUNTIMEOPS (cooperative checkpointing, clean interrupts, credential rotation, graceful drain, task-mode pod reuse) |
 
 You can run Claude Code agents, LangChain agents, CrewAI agents, code review bots, research agents, or any long-lived process. Multiple runtime types can be registered and run simultaneously, each with their own pools and configuration.
 

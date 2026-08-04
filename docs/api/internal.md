@@ -10,7 +10,7 @@ nav_order: 6
 {: .warning }
 > **Audience: Runtime adapter authors only.** These are internal APIs for gateway-to-pod communication. They are not for external clients. Unlike the stable external APIs, internal APIs may change between versions.
 
-The gateway communicates with agent pods over **gRPC + mTLS**. This page documents the protobuf service definitions, lifecycle channel messages, connection semantics, and error handling that runtime adapter authors need to implement.
+The gateway communicates with agent pods over **gRPC + mTLS**. This page documents the protobuf service definitions, CH-RUNTIMEOPS messages, connection semantics, and error handling that runtime adapter authors need to implement.
 
 ---
 
@@ -226,7 +226,7 @@ message CheckpointResponse {
 }
 ```
 
-For `consistency: "consistent"` (Full integration level), the adapter first sends a `checkpoint_request` on the lifecycle channel, waits for `checkpoint_ready` from the runtime, performs the snapshot, then sends `checkpoint_complete`. See [Lifecycle channel messages](#lifecycle-channel-messages) below.
+For `consistency: "consistent"` (Full integration level), the adapter first sends a `checkpoint_request` on the CH-RUNTIMEOPS, waits for `checkpoint_ready` from the runtime, performs the snapshot, then sends `checkpoint_complete`. See [CH-RUNTIMEOPS messages](#lifecycle-channel-messages) below.
 
 For `consistency: "best-effort"` (Standard integration level), the adapter takes the snapshot immediately without pausing the runtime. Minor workspace inconsistencies are possible.
 
@@ -314,14 +314,14 @@ The gateway uses `Watch` to monitor pod health continuously and `Check` for poin
 
 ---
 
-## Lifecycle channel messages (Full integration level only)
+## CH-RUNTIMEOPS messages (Full integration level only)
 {: #lifecycle-channel-messages }
 
-Runtimes that implement the Full integration level open a **lifecycle channel** -- an abstract Unix socket (`@lenny-lifecycle`) -- for operational signals that require runtime cooperation. The lifecycle channel runs alongside the stdin/stdout binary protocol and the MCP connections.
+Runtimes that implement the Full integration level open a **CH-RUNTIMEOPS** -- an abstract Unix socket (`@lenny-lifecycle`) -- for operational signals that require runtime cooperation. The CH-RUNTIMEOPS runs alongside the stdin/stdout binary protocol and the MCP connections.
 
 ### Channel setup
 
-1. The adapter opens the lifecycle channel socket.
+1. The adapter opens the CH-RUNTIMEOPS socket.
 2. The adapter sends `lifecycle_capabilities` listing available signals.
 3. The runtime responds with `lifecycle_support` listing capabilities it supports.
 4. The channel remains open for the session duration.
@@ -475,7 +475,7 @@ ASCII fallback for the diagram above (rpc-lifecycle):
 |:------|:------------|
 | `INIT` | Adapter starts, opens gRPC connection, sends `AdapterInit` with protocol version |
 | `READY` | Adapter signals readiness. Pod enters warm pool. Gateway may assign sessions. |
-| `ACTIVE` | Session in progress. Adapter manages MCP servers, lifecycle channel, stdin/stdout. |
+| `ACTIVE` | Session in progress. Adapter manages MCP servers, CH-RUNTIMEOPS, stdin/stdout. |
 | `DRAINING` | Graceful shutdown requested. Finishes current exchange, signals agent to stop. |
 | `TERMINATED` | Adapter has exited. Gateway marks pod as unavailable. |
 

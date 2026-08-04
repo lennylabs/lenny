@@ -744,7 +744,7 @@ In this tutorial you:
 |------|--------------------|--------------|
 | **Basic** | stdin/stdout JSON Lines | Message/response, adapter-local tools (read_file, write_file, etc.) |
 | **Standard** | + MCP client connection to adapter's local servers | Platform tools (delegation, discovery, elicitation), connector access |
-| **Full** | + Lifecycle channel | Clean interrupts, checkpoint/restore, in-place credential rotation |
+| **Full** | + CH-RUNTIMEOPS | Clean interrupts, checkpoint/restore, in-place credential rotation |
 
 ---
 

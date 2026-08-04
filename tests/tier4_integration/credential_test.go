@@ -149,7 +149,7 @@ func TestCredentialLifecycle(t *testing.T) {
 //	cmd/lenny-gateway binary. PUT /v1/credentials/{ref} did not
 //	install the new secret, return the credential to active, or
 //	stamp rotatedAt as §15.1 specifies. The fault-driven
-//	rotation pipeline and the lifecycle-channel credentials_
+//	rotation pipeline and the CH-RUNTIMEOPS credentials_
 //	rotated emission run against a pod the integration harness
 //	does not provide; this exercises the user-facing rotation
 //	endpoint that triggers them.

@@ -37,7 +37,7 @@ import (
 //     as a §15.4.1 `response` frame on the Output channel.
 //   - Interrupt: close the MCP connection and signal the process
 //     (SIGTERM for a clean interrupt, SIGKILL for a hard one). A type:
-//     mcp runtime has no §15.4.3 lifecycle channel, so there is no
+//     mcp runtime has no §15.4.3 CH-RUNTIMEOPS, so there is no
 //     in-band interrupt.
 //   - Close: close the MCP connection and terminate the process.
 //
@@ -233,10 +233,9 @@ func (r *MCPRuntime) Output(_ context.Context, _ string) (<-chan []byte, error) 
 }
 
 // Interrupt signals the agent's MCP-server process. A type: mcp runtime
-// has no §15.4.3 lifecycle channel, so a clean interrupt is a SIGTERM
+// has no §15.4.3 CH-RUNTIMEOPS, so a clean interrupt is a SIGTERM
 // and a hard interrupt is a SIGKILL — the same signal path the §4.7
-// Interrupt RPC falls back to for any runtime without a lifecycle
-// channel.
+// Interrupt RPC falls back to for any runtime without a CH-RUNTIMEOPS.
 func (r *MCPRuntime) Interrupt(_ context.Context, _ string, hard bool) error {
 	r.mu.Lock()
 	cmd := r.cmd

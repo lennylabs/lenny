@@ -61,7 +61,7 @@ type rotationFrame struct {
 	Status          string   `json:"status,omitempty"`
 }
 
-// runtimePeer is the external §4.7 lifecycle-channel runtime, dialing the
+// runtimePeer is the external §4.7 CH-RUNTIMEOPS runtime, dialing the
 // adapter's Unix socket and driving frames over the wire. It models a
 // direct-mode Full-level runtime that can start an LLM request and then
 // withhold the completion frame to hold the in-flight gate open.
@@ -133,8 +133,7 @@ func (p *runtimePeer) expectSilence(d time.Duration) {
 	}
 }
 
-// startAdapter brings up a real adapter.Server bound to a real lifecycle
-// channel on a Unix socket, with credentials assigned for one direct-mode
+// startAdapter brings up a real adapter.Server bound to a real CH-RUNTIMEOPS on a Unix socket, with credentials assigned for one direct-mode
 // provider. It returns the server, the socket path, and the recording audit
 // emitter wired to the §4.9.2 EventStore hook.
 func startAdapter(t *testing.T, pool string) (*adapter.Server, string, *recordingCeilingAudit) {

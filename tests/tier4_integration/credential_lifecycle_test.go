@@ -114,10 +114,10 @@ func (r *lifecycleRevoker) RevokePoolCredentials(_ context.Context, poolID strin
 //	rebind and reply with credentials_acknowledged"; line 728
 //	"credentials_acknowledged ... Runtime has rebound to the new credential";
 //	line 831 "Full | Gateway calls RotateCredentials RPC; adapter sends
-//	credentials_rotated on lifecycle channel; runtime rebinds provider
+//	credentials_rotated on CH-RUNTIMEOPS; runtime rebinds provider
 //	in-place"; line 960 "The file is rewritten by the adapter on credential
 //	rotation; after rewrite, the adapter sends credentials_rotated on the
-//	lifecycle channel and awaits credentials_acknowledged from the runtime
+//	CH-RUNTIMEOPS and awaits credentials_acknowledged from the runtime
 //	before resuming operation"),
 //
 // 4.9 (Emergency Credential Revocation, spec/04_system-components.md lines
@@ -323,7 +323,7 @@ func TestCredentialLifecycleAssignRotateRebindRevokeTerminate(t *testing.T) {
 }
 
 // lifecycleRuntime is a running streaming-echo process connected to a live
-// adapter lifecycle channel.
+// adapter CH-RUNTIMEOPS.
 type lifecycleRuntime struct {
 	channel *adapter.LifecycleChannel
 }

@@ -365,7 +365,7 @@ func TestBindClaimsAndStartsTheSession(t *testing.T) {
 }
 
 // spec: §5.1 line 42 — a runtime declaring integrationLevel `full` whose
-// adapter handshake is observed at Basic (no lifecycle channel, no MCP)
+// adapter handshake is observed at Basic (no CH-RUNTIMEOPS, no MCP)
 // has its first session assignment rejected with
 // RUNTIME_LEVEL_UNDERPERFORMS, and the pod is reclaimed by draining it
 // (the pre-attached failure is a terminal claim disposition, §6.2)
