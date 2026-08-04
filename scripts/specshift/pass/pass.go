@@ -271,6 +271,11 @@ type Confined interface {
 // in the same run. The harness plans and applies both channels together,
 // so the dry-run diff still equals the applied change and an abort
 // anywhere leaves the tree byte-identical.
+//
+// The run's confinement bounds this channel as it bounds the site walk: a
+// register the confinement excludes belongs to the complementary run, and
+// a move that would strand such a register's key fails the run rather
+// than reaching outside the confinement to repair it.
 type KeyRewriter interface {
 	// RewriteKeys returns the register's new contents with the keys of
 	// every file the run renames moved to their new paths. It carries the
@@ -378,13 +383,11 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	// The registers outside the site-rewrite domain take the key rewrite
 	// alone, in the same diff, so a run that renames a file leaves them
 	// byte-identical apart from the moved key.
-	if _, ok := r.(KeyRewriter); ok {
-		sites, err := h.planKeyRewrites(ctx, &diff, r)
-		if err != nil {
-			return Diff{}, err
-		}
-		aborts = append(aborts, sites...)
+	sites, err := h.planKeyRewrites(ctx, &diff, r)
+	if err != nil {
+		return Diff{}, err
 	}
+	aborts = append(aborts, sites...)
 	if err := Aborted(aborts); err != nil {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
@@ -392,43 +395,27 @@ func (h *Harness) Plan(ctx context.Context, r Rewriter) (Diff, error) {
 	if err := checkDestinations(ctx, h.List, diff); err != nil {
 		return Diff{}, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
 	}
+	// The confinement bounds both write channels, so a key this run may
+	// not move is a key no run of this partition moves unless the
+	// complementary one does. The check is the loud failure that replaces
+	// the write outside the confinement a filtered walk would otherwise
+	// have to make.
+	if err := h.checkExcludedKeys(ctx, diff); err != nil {
+		return Diff{}, fmt.Errorf("plan %s pass under the confinement %s: %w", r.Pass(), h.Confine, err)
+	}
 	return diff, nil
 }
 
 // planKeyRewrites plans the key rewrite over the path-keyed registers
-// outside the pass's site-rewrite domain, and returns the fail-closed
-// sites the channel collected.
-//
-// The confinement decides whether the channel runs at all, before the
-// key-write domain is consulted. A run whose confinement covers no
-// path-keyed register has nothing to rekey, and that register is the
-// complementary run's to rewrite, so the channel is skipped rather than
-// asked to answer for a domain this run does not reach. A run whose
-// confinement does cover one reaches the key-write domain's own
-// emptiness guard, which reports a tree that carries no register outside
-// the site-rewrite domain, and the guard names the confinement that made
-// the run reach it.
+// outside the pass's site-rewrite domain that the run's confinement
+// covers, and returns the fail-closed sites the channel collected.
 func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) ([]*Abort, error) {
-	covers, err := h.coversKeyedRegister(ctx)
+	targets, err := h.KeyWriteTargets(ctx, r)
 	if err != nil {
-		return nil, fmt.Errorf("plan %s pass: %w", r.Pass(), err)
-	}
-	if !covers {
-		return nil, nil
-	}
-	keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
-	if err != nil {
-		return nil, fmt.Errorf("plan %s pass under the confinement %s: %w", r.Pass(), h.Confine, err)
+		return nil, err
 	}
 	var aborts []*Abort
-	// The domain is walked whole rather than filtered by the
-	// confinement. The confinement's one decision on this channel is
-	// whether the channel runs, taken above. A run that moves a carrier
-	// moves every key written for it, so once the channel runs it rekeys
-	// every path-keyed register outside the site-rewrite domain; a
-	// filtered walk would move the carrier and leave an excluded
-	// register's key stale, with the run exiting clean.
-	for _, target := range keyed {
+	for _, target := range targets {
 		if err := h.planInto(ctx, diff, r, target, false); err != nil {
 			sites, ok := AllAborts(err)
 			if !ok {
@@ -438,6 +425,48 @@ func (h *Harness) planKeyRewrites(ctx context.Context, diff *Diff, r Rewriter) (
 		}
 	}
 	return aborts, nil
+}
+
+// KeyWriteTargets returns the path-keyed registers the run rewrites
+// through the key channel: the members of the pass's key-write domain the
+// confinement covers. A pass that renames no file rewrites no key and has
+// none.
+//
+// The confinement bounds this channel as it bounds the site walk. The
+// gate that decides whether the channel runs and the set the channel
+// writes are one set, so a run writes no path its confinement excludes.
+// The stale key an excluded register is left holding is reported by the
+// harness's own check rather than repaired by a write outside the
+// confinement.
+//
+// The channel is skipped before the key-write domain is consulted when
+// the confinement covers no path-keyed register at all. That run has
+// nothing to rekey, and a tree carrying no register outside the
+// site-rewrite domain is the complementary run's emptiness guard to
+// reach; the guard names the confinement that made the run reach it.
+//
+// It is exported because the write-domain measurement states every path a
+// run under the same confinement writes, which is the site domain
+// together with these registers.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func (h *Harness) KeyWriteTargets(ctx context.Context, r Rewriter) ([]string, error) {
+	if _, ok := r.(KeyRewriter); !ok {
+		return nil, nil
+	}
+	covers, err := h.coversKeyedRegister(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("the %s pass key-write targets: %w", r.Pass(), err)
+	}
+	if !covers {
+		return nil, nil
+	}
+	keyed, err := scope.KeyWriteDomain(ctx, h.List, r.Pass(), h.Read)
+	if err != nil {
+		return nil, fmt.Errorf("the %s pass key-write targets under the confinement %s: %w", r.Pass(), h.Confine, err)
+	}
+	return h.Confine.Filter(keyed), nil
 }
 
 // coversKeyedRegister reports whether the run's confinement covers a
@@ -458,6 +487,73 @@ func (h *Harness) coversKeyedRegister(ctx context.Context) (bool, error) {
 		}
 	}
 	return false, nil
+}
+
+// checkExcludedKeys refuses a plan that moves a file a path-keyed
+// register outside the run's confinement names.
+//
+// The run may not write that register, and the complementary run does not
+// perform the move, so the key would survive under a path the tree no
+// longer carries with both runs exiting clean: the line-citation ratchet
+// then fires on the new path as a file it has no count for, and every
+// baselined non-resolving citation under the old path reappears as a
+// resolver failure. The run stops with the tree unchanged, naming the
+// register and the confinement, so the move is issued by a run that
+// covers the keys it invalidates.
+//
+// The check reads every path-keyed register the confinement excludes,
+// whether or not the pass site-rewrites it, because a register the
+// confinement excludes takes neither channel of this run.
+//
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func (h *Harness) checkExcludedKeys(ctx context.Context, diff Diff) error {
+	moved := diff.movedPaths()
+	if len(moved) == 0 || h.Confine == nil {
+		return nil
+	}
+	all, err := h.List(ctx)
+	if err != nil {
+		return fmt.Errorf("list tracked tree: %w", err)
+	}
+	for _, target := range all {
+		if !scope.KeyWritable(target) || h.Confine.Covers(target) {
+			continue
+		}
+		content, err := h.Read(target)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", target, err)
+		}
+		for _, from := range moved {
+			if bytes.Contains(content, []byte(from)) {
+				return fmt.Errorf("%s names %s, which this run moves to %s, and the confinement excludes that register from the key rewrite: the run that covers the register owns the move",
+					target, from, diff.destinationOf(from))
+			}
+		}
+	}
+	return nil
+}
+
+// movedPaths returns the paths the diff moves, in diff order.
+func (d Diff) movedPaths() []string {
+	var moved []string
+	for _, f := range d.Files {
+		if f.To != "" {
+			moved = append(moved, f.Path)
+		}
+	}
+	return moved
+}
+
+// destinationOf returns the path the diff moves one file to, so a message
+// names both ends of the move.
+func (d Diff) destinationOf(path string) string {
+	for _, f := range d.Files {
+		if f.Path == path {
+			return f.Destination()
+		}
+	}
+	return path
 }
 
 // checkDestinations refuses a plan whose moves would overwrite a file.

@@ -199,7 +199,14 @@ func runWith(ctx context.Context, passesFor func(root string) map[scope.Pass]pas
 	harness := pass.NewHarness(opts.root)
 	harness.Confine = pass.NewConfinement(opts.only, opts.except)
 	if opts.domain {
-		return printWriteDomain(ctx, harness, opts.pass, out)
+		// The measurement reads the pass as well as its name, because the
+		// registers a renaming pass rekeys are part of what a run under the
+		// same confinement writes.
+		rewriter, err := rewriterFor(passes, opts.pass)
+		if err != nil {
+			return err
+		}
+		return printWriteDomain(ctx, harness, rewriter, out)
 	}
 	// A run of a pass states the part of the write domain it covers. An
 	// unconfined run writes every file of that domain, which is wider
@@ -319,22 +326,34 @@ func reportAbort(err error) error {
 	return fmt.Errorf("aborted with the tree unchanged at %s", strings.Join(lines, "; "))
 }
 
-// printWriteDomain prints the tracked paths the pass may write under the
+// printWriteDomain prints the tracked paths the pass writes under the
 // harness's confinement, and names that confinement in the count line.
 // The measurement is the one surface that admits an unconfined run, so it
 // is where an operator compares a confinement against the whole domain
 // before applying it, and where a pair of confinements is checked to
-// partition the domain.
-func printWriteDomain(ctx context.Context, h *pass.Harness, p scope.Pass, out io.Writer) error {
-	domain, err := scope.WriteDomain(ctx, h.List, p, h.Read)
+// partition what the passes write.
+//
+// The paths are the site-rewrite domain together with the path-keyed
+// registers the pass rekeys through its key channel, both under the same
+// confinement, so the measurement accounts for every file a run under
+// that confinement writes. A measurement over the site domain alone would
+// name none of the registers a renaming run rewrites, and a partition
+// checked against it would leave them unaccounted for.
+func printWriteDomain(ctx context.Context, h *pass.Harness, r pass.Rewriter, out io.Writer) error {
+	domain, err := scope.WriteDomain(ctx, h.List, r.Pass(), h.Read)
 	if err != nil {
 		return err
 	}
 	domain = h.Confine.Filter(domain)
+	keyed, err := h.KeyWriteTargets(ctx, r)
+	if err != nil {
+		return err
+	}
+	domain = append(domain, keyed...)
 	sort.Strings(domain)
 	for _, target := range domain {
 		fmt.Fprintln(out, target)
 	}
-	fmt.Fprintf(out, "# %d file(s) in the %s pass write domain (%s)\n", len(domain), p, h.Confine)
+	fmt.Fprintf(out, "# %d file(s) in the %s pass write domain (%s)\n", len(domain), r.Pass(), h.Confine)
 	return nil
 }
