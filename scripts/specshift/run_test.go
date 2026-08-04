@@ -997,6 +997,9 @@ func underDir(target, dir string) bool {
 // fixture that discriminates on its entries' paths therefore pins nothing:
 // it can neither make the channel run nor make it skip, and a confinement
 // case wired to it would record a rule the tool does not implement.
+//
+// spec: §28.1 (the key-write channel's membership axis: a register joins
+// the key-write domain by its own tracked path)
 func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 	t.Parallel()
 	// Membership is the register's own path against the rule.
@@ -1054,6 +1057,9 @@ func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 // of any walked tree, so a fixture placed here can never enter a file
 // domain. A fixture meant to exercise the key-rewrite channel belongs in
 // a walked tree at a path the path-keyed register rule matches.
+//
+// spec: §28.1 (the register-fixture placement rule: a standalone register
+// fixture is loader input and never enters a walked file domain)
 func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
 	t.Parallel()
 	named := map[string]bool{
