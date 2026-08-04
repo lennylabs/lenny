@@ -1096,27 +1096,87 @@ func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
 			t.Errorf("KeyWritable(%q) = true, want false: a fixture path is outside the key-write channel", target)
 		}
 	}
-	named := map[string]bool{
-		"malformed.yaml":           true,
-		"no-entries-block.yaml":    true,
-		"pass-line-citations.yaml": true,
-		"pass-malformed.yaml":      true,
-		"valid.yaml":               true,
-		"wrong-kind.yaml":          true,
+	assertFixtureDirHolds(t, fixtureRegisters, "no loader case names and which no tree walk lists", []string{
+		"malformed.yaml",
+		"no-entries-block.yaml",
+		"pass-line-citations.yaml",
+		"pass-malformed.yaml",
+		"valid.yaml",
+		"wrong-kind.yaml",
+	})
+}
+
+// assertFixtureDirHolds pins the exact entries a fixture directory
+// holds against the set of entries a case reaches by name. A fixture
+// directory sits outside every read and write domain, so an entry no
+// case names is reached by nothing and is dead weight the tier-0 run
+// reports here rather than leaving in the tree. unreached completes the
+// sentence "dir holds entry, which ...".
+func assertFixtureDirHolds(t *testing.T, dir, unreached string, named []string) {
+	t.Helper()
+	want := map[string]bool{}
+	for _, name := range named {
+		want[name] = true
 	}
-	entries, err := os.ReadDir(fixtureRegisters)
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		t.Fatalf("read %s: %v", fixtureRegisters, err)
+		t.Fatalf("read %s: %v", dir, err)
 	}
 	for _, e := range entries {
-		if !named[e.Name()] {
-			t.Errorf("%s holds %s, which no loader case names and which no tree walk lists", fixtureRegisters, e.Name())
+		if !want[e.Name()] {
+			t.Errorf("%s holds %s, which %s", dir, e.Name(), unreached)
 		}
-		delete(named, e.Name())
+		delete(want, e.Name())
 	}
-	for missing := range named {
-		t.Errorf("%s no longer holds %s, which a loader case names", fixtureRegisters, missing)
+	for missing := range want {
+		t.Errorf("%s no longer holds %s, which a case names", dir, missing)
 	}
+}
+
+// TestTheLinePassFixturesAreTheOnesACaseNames pins what the line pass
+// fixture directory holds. Every carrier tree under it is assembled by
+// name through lineTree and every register under it is loaded by name
+// through lineRewriter, and the fixture directory is outside every read
+// and write domain, so a tree or a register no case names is reached by
+// nothing. The flat-register case above polices testdata/registers
+// alone, which leaves the line pass fixtures unguarded on their own.
+//
+// spec: §28.1 (N3, the naming law: every testdata/ directory is outside
+// the prohibition's domain)
+func TestTheLinePassFixturesAreTheOnesACaseNames(t *testing.T) {
+	t.Parallel()
+	const unnamedTree = "no line pass case assembles"
+	assertFixtureDirHolds(t, fixtureLinePass, unnamedTree, []string{
+		"fail",
+		"registers",
+		"spec",
+		"tree",
+		"want",
+	})
+	assertFixtureDirHolds(t, filepath.Join(fixtureLinePass, "fail"), unnamedTree, []string{
+		"many-sites",
+		"reformed-colon",
+		"reformed-join",
+		"served-json-no-tie",
+		"served-no-tie",
+		"straddling-range",
+		"unbalanced",
+		"unknown-file",
+	})
+	assertFixtureDirHolds(t, filepath.Join(fixtureLinePass, "registers"), "no line pass case loads", []string{
+		"fail-many-sites.yaml",
+		"fail-reformed-colon.yaml",
+		"fail-reformed-join.yaml",
+		"fail-served-json-no-tie.yaml",
+		"fail-served-no-tie.yaml",
+		"fail-straddling-range.yaml",
+		"fail-unbalanced.yaml",
+		"fail-unknown-file.yaml",
+		"tree-count-fallen.yaml",
+		"tree-count-risen.yaml",
+		"tree-no-count.yaml",
+		"tree.yaml",
+	})
 }
 
 // TestProducerOutputSetsAreHeldAsData pins that the third disjunct is
