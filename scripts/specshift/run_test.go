@@ -38,7 +38,18 @@ import (
 // dry run whose diff matches the apply.
 
 // fixtureTree is the tracked-tree fixture the domain cases run against.
-// It holds one ordinary carrier plus one member of every excluded group.
+// It holds ordinary carriers plus one member of every excluded group.
+//
+// The ordinary carriers span the specification directory and the code
+// tree, so a run confined to either one partitions the write domain into
+// a non-empty selected half and a non-empty excluded half. The tree also
+// carries a sibling directory beside the specification directory
+// (spec-notes/) and a suffixed file beside a named carrier
+// (pkg/carrier/carrier.go.bak), both of which the write domain admits, so
+// a confinement matched by substring rather than by path segment selects
+// one of them and the confinement cases detect it. Pruning or renaming
+// any of these four carriers removes the property the confinement cases
+// stand on.
 const fixtureTree = "testdata/tree"
 
 // fixtureRegisters holds the residual-register fixtures.
@@ -996,10 +1007,9 @@ func underDir(target, dir string) bool {
 // sits, and the paths its entries are keyed by are never consulted. A
 // fixture that discriminates on its entries' paths therefore pins nothing:
 // it can neither make the channel run nor make it skip, and a confinement
-// case wired to it would record a rule the tool does not implement.
-//
-// spec: §28.1 (the key-write channel's membership axis: a register joins
-// the key-write domain by its own tracked path)
+// case wired to it would record a rule the tool does not implement. The
+// membership axis is a migration-tooling convention owned by the scope
+// package, so this case carries no spec-section annotation.
 func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 	t.Parallel()
 	// Membership is the register's own path against the rule.
@@ -1056,10 +1066,9 @@ func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 // straight to a loader as the -register argument, and none of it is part
 // of any walked tree, so a fixture placed here can never enter a file
 // domain. A fixture meant to exercise the key-rewrite channel belongs in
-// a walked tree at a path the path-keyed register rule matches.
-//
-// spec: §28.1 (the register-fixture placement rule: a standalone register
-// fixture is loader input and never enters a walked file domain)
+// a walked tree at a path the path-keyed register rule matches. The rule
+// is this test package's own fixture layout, so this case carries no
+// spec-section annotation.
 func TestTheStandaloneRegisterFixturesAreTheOnesALoaderCaseNames(t *testing.T) {
 	t.Parallel()
 	named := map[string]bool{
