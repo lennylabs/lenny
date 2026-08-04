@@ -1,7 +1,13 @@
 # Proposal: Supply the migration passes' driving registers and give specshift a write-confinement option so proposal 0064 can be applied
 
-- **Status:** Verified (2026-08-03). Converged after 10 adversarial review rounds (25 findings fixed);
-  awaiting sign-off.
+- **Status:** **Approved (2026-08-04) by jaf sign-off.** Verified (2026-08-03), converged after 10
+  adversarial review rounds (25 findings fixed) across three full-pool sweeps, the certifying sweep running
+  every lens complete with zero confirmed findings. This is the second convergence: the first predated the
+  landing of `spec/28`, and the re-run corrected the premises that landing made stale. The sign-off covers
+  the write confinement the tooling sub-step adds, which an earlier design review had recommended dropping
+  in favour of running each pass once over the whole tree. That recommendation is not taken: the
+  whole-tree alternative is neither built nor proposed, so dropping the confinement would leave no
+  mechanism for running a pass at all, and the sub-step has since been reviewed across two convergences.
 - **Lands after:** `proposals/0065_new_build-the-specification-migration-tooling-and-its-gates.md`, which is
   implemented. **Lands before:**
   `proposals/0064_fix_name-the-communication-channels-and-move-them-into-the-spec.md`, which cannot be
