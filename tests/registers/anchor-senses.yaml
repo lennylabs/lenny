@@ -1691,7 +1691,7 @@ entries:
     destination: spec/28_communication-channels.md#2853-intra-pod
   - file: tests/spec-map.json
     occurrence: 1
-    destination: spec/28_communication-channels.md#2853-intra-pod
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
   - file: tests/testinfra/embedded/embedded.go
     occurrence: 1
     destination: spec/28_communication-channels.md#2853-intra-pod
