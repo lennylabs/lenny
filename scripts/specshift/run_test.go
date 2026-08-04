@@ -2021,32 +2021,13 @@ func TestTheConfinedDomainsOfAPartitionReconstructTheWriteDomain(t *testing.T) {
 	inSpec, specCount := domainRun(t, "-only", "spec/")
 	outsideSpec, _ := domainRun(t, "-except", "spec/")
 	partitionCovers(t, whole, inSpec, outsideSpec)
-	// The identifier pass writes the path-keyed registers it rekeys as
-	// well as the files it site-rewrites, and the measurement accounts for
-	// both, so the partition is checked over everything a run under either
-	// half writes. Measured over the site domain alone, a register the two
-	// runs leave to each other would be unaccounted for in both.
+	// The identifier pass is measured as well, because it is the pass
+	// carrying a second write channel, and the partition of its printed
+	// domain has to hold in the same two terms.
 	idWhole, _ := domainRunFor(t, "identifier")
 	idInSpec, _ := domainRunFor(t, "identifier", "-only", "spec/")
 	idOutsideSpec, _ := domainRunFor(t, "identifier", "-except", "spec/")
 	partitionCovers(t, idWhole, idInSpec, idOutsideSpec)
-	root := fixtureTreeRoot(t)
-	keyed, err := scope.KeyWriteDomain(context.Background(), scope.DirLister(root), scope.Identifier, scope.DirReader(root))
-	if err != nil {
-		t.Fatalf("KeyWriteDomain(identifier) over the fixture tree: %v", err)
-	}
-	if len(keyed) == 0 {
-		t.Fatal("the fixture tree carries no key-write domain, so the case pins nothing")
-	}
-	measured, remainder := membership(idWhole), membership(idOutsideSpec)
-	for _, register := range keyed {
-		if !measured[register] {
-			t.Errorf("the measurement omits %s, which the identifier pass rekeys", register)
-		}
-		if !remainder[register] {
-			t.Errorf("neither half of the partition accounts for the rekey of %s", register)
-		}
-	}
 	// The count line names the confinement the measurement ran under, so
 	// the two halves are told apart in an operator's output.
 	if !strings.Contains(specCount, "-only spec/") {
@@ -2054,6 +2035,44 @@ func TestTheConfinedDomainsOfAPartitionReconstructTheWriteDomain(t *testing.T) {
 	}
 	if !strings.Contains(wholeCount, "the whole write domain") {
 		t.Errorf("the unconfined count line does not name the whole domain: %q", wholeCount)
+	}
+}
+
+// TestTheMeasuredWriteDomainIsThePassWriteDomainAndNothingElse pins what
+// the measurement counts. The line the measurement closes with calls the
+// figure the pass's write domain, so the paths above it are that domain
+// and no other: an unconfined measurement of a pass that carries a second
+// write channel equals scope.WriteDomain for that pass exactly. A
+// measurement that folded the key-rewrite targets in under the same label
+// would report a count for one domain over the members of two, and the
+// partition the two-run protocol rests on would no longer be a partition
+// of the domain it names.
+//
+// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
+// the tree)
+func TestTheMeasuredWriteDomainIsThePassWriteDomainAndNothingElse(t *testing.T) {
+	t.Parallel()
+	root := fixtureTreeRoot(t)
+	ctx := context.Background()
+	// The identifier pass is the one that rekeys, so it is the pass whose
+	// measurement a widening would change.
+	want, err := scope.WriteDomain(ctx, scope.DirLister(root), scope.Identifier, scope.DirReader(root))
+	if err != nil {
+		t.Fatalf("WriteDomain(identifier) over the fixture tree: %v", err)
+	}
+	keyed, err := scope.KeyWriteDomain(ctx, scope.DirLister(root), scope.Identifier, scope.DirReader(root))
+	if err != nil {
+		t.Fatalf("KeyWriteDomain(identifier) over the fixture tree: %v", err)
+	}
+	if len(keyed) == 0 {
+		t.Fatal("the fixture tree carries no key-write domain, so the case pins nothing")
+	}
+	got, count := domainRunFor(t, "identifier")
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("the measurement printed %v, want the write domain %v", got, want)
+	}
+	if !strings.Contains(count, fmt.Sprintf("# %d file(s)", len(want))) {
+		t.Errorf("the count line %q does not report the %d file(s) of the write domain", count, len(want))
 	}
 }
 
@@ -2214,6 +2233,14 @@ func TestAConfinementMatchingNoFileFailsWithTheZeroFileGuard(t *testing.T) {
 // skips the channel rather than failing its emptiness guard, and the
 // complementary run retains the whole channel with that guard intact.
 //
+// The third case is the one that separates the two-valued gate from a
+// filter: a confinement covering one path-keyed register and excluding
+// another makes the channel run, and the running channel rekeys both,
+// because the run moves the carrier every one of those keys names. A
+// channel narrowed by the confinement would rekey the covered register
+// alone and leave the excluded one holding a path the tree no longer
+// carries.
+//
 // spec: §28.1 (N4, the naming law: the run that moves a carrier moves
 // every key written for it)
 func TestTheKeyRewriteChannelRunsWhereTheConfinementCoversARegister(t *testing.T) {
@@ -2229,6 +2256,7 @@ func TestTheKeyRewriteChannelRunsWhereTheConfinementCoversARegister(t *testing.T
 	}{
 		{"confined to the specification directory", pass.NewConfinement([]string{"spec/"}, nil), false},
 		{"confined away from it", pass.NewConfinement(nil, []string{"spec/"}), true},
+		{"covering one path-keyed register and excluding another", pass.NewConfinement(nil, []string{"spec/", registers[0]}), true},
 	} {
 		root := copyFixtureTree(t)
 		h := pass.NewHarnessOver(scope.DirLister(root), scope.DirReader(root), dirWriterFor(root))
@@ -2314,26 +2342,27 @@ func TestTheKeyRewriteChannelSkipsBeforeItsEmptinessGuardIsAsked(t *testing.T) {
 	}
 }
 
-// TestTheKeyRewriteChannelWritesOnlyTheRegistersTheConfinementCovers
-// pins the second write channel to the same bound as the site walk. The
-// tree carries two path-keyed registers: one inside the site-rewrite
-// domain, which the key-write domain therefore excludes, and one outside
-// it, which is the whole of that domain. A confinement that covers the
-// first and excludes the second opens the channel and must still leave
-// the excluded register byte-identical, because a run writes no path its
-// own exclusion names. A channel gated on one set and walking another
-// rewrites a register the run was confined out of.
+// TestTheKeyRewriteChannelWalksTheWholeKeyWriteDomainOnceItRuns pins
+// that the confinement's only decision on the second write channel is
+// whether the channel runs. The tree carries two path-keyed registers:
+// one inside the site-rewrite domain, which the key-write domain
+// therefore excludes, and one outside it, which is the whole of that
+// domain. A confinement covering the first and excluding the second
+// makes the channel run, and the running channel must still rekey the
+// excluded register, because the run moves the carrier those keys name.
+// A channel that filtered its domain through the confinement would move
+// the carrier, leave that key stale, and exit clean.
 //
-// spec: §28.1 (N3 and N4, the naming law the confined runs apply across
-// the tree)
-func TestTheKeyRewriteChannelWritesOnlyTheRegistersTheConfinementCovers(t *testing.T) {
+// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
+// every key written for it)
+func TestTheKeyRewriteChannelWalksTheWholeKeyWriteDomainOnceItRuns(t *testing.T) {
 	t.Parallel()
 	const keyed = "tests/registers/line-citations.yaml"
 	tree := map[string]string{
 		"spec/28_communication-channels.md": "# Channels\n\npkg/carrier/carrier.go\n",
 		"pkg/carrier/carrier.go":            "package carrier\n",
 		// Inside the site-rewrite domain, so the key-write domain
-		// excludes it and covering it is what opens the channel.
+		// excludes it and covering it is what makes the channel run.
 		"tests/registers/reserved-phrase-senses.yaml": "kind: reserved-phrase-senses\nentries: []\n",
 		// Outside the site-rewrite domain, so it is the whole key-write
 		// domain.
@@ -2349,10 +2378,9 @@ func TestTheKeyRewriteChannelWritesOnlyTheRegistersTheConfinementCovers(t *testi
 	for _, tc := range []struct {
 		name    string
 		confine *pass.Confinement
-		want    bool
 	}{
-		{"excluding the key-write domain", pass.NewConfinement(nil, []string{keyed}), false},
-		{"covering the key-write domain", pass.NewConfinement(nil, []string{"spec/"}), true},
+		{"excluding the key-write domain", pass.NewConfinement(nil, []string{keyed})},
+		{"covering the key-write domain", pass.NewConfinement(nil, []string{"spec/"})},
 	} {
 		written := map[string][]byte{}
 		h := pass.NewHarnessOver(mapLister(tree), mapReader(tree), func(path string, content []byte) error {
@@ -2369,64 +2397,14 @@ func TestTheKeyRewriteChannelWritesOnlyTheRegistersTheConfinementCovers(t *testi
 		if err != nil {
 			t.Fatalf("apply the run %s: %v", tc.name, err)
 		}
-		if got := membership(diff.Paths())[keyed]; got != tc.want {
-			t.Errorf("the run %s plans %s: %t, want %t", tc.name, keyed, got, tc.want)
+		if !membership(diff.Paths())[keyed] {
+			t.Errorf("the run %s leaves %s unrekeyed", tc.name, keyed)
 		}
-		// The applied tree is what the confinement bounds, so the
-		// excluded register is not written at all rather than written
-		// back unchanged.
-		if _, got := written[keyed]; got != tc.want {
-			t.Errorf("the run %s writes %s: %t, want %t", tc.name, keyed, got, tc.want)
+		// The rekey travels to the tree rather than to the diff alone, so
+		// a run that planned the register and wrote nothing fails here.
+		if _, ok := written[keyed]; !ok {
+			t.Errorf("the run %s wrote no rekeyed %s", tc.name, keyed)
 		}
-	}
-}
-
-// TestARunRefusesToMoveACarrierAnExcludedRegisterKeys pins the
-// fail-closed replacement for the write outside the confinement. The run
-// covers the carrier it moves and excludes the path-keyed register that
-// names it, so neither this run nor the complementary one, which does
-// not perform the move, can move that key. The run stops with the tree
-// unchanged and names both the register and the confinement, rather than
-// exiting clean over a register keyed by a path the tree no longer
-// carries.
-//
-// spec: §28.1 (N4, the naming law: the run that moves a carrier moves
-// every key written for it)
-func TestARunRefusesToMoveACarrierAnExcludedRegisterKeys(t *testing.T) {
-	t.Parallel()
-	const keyed = "tests/registers/line-citations.yaml"
-	const carrier = "pkg/carrier/carrier.go"
-	tree := map[string]string{
-		"spec/28_communication-channels.md": "# Channels\n\n" + carrier + "\n",
-		carrier:                             "package carrier\n",
-		"tests/registers/reserved-phrase-senses.yaml": "kind: reserved-phrase-senses\nentries: []\n",
-		keyed: "kind: line-citations\nfiles:\n  " + carrier + ": 1\n",
-	}
-	written := map[string][]byte{}
-	h := pass.NewHarnessOver(mapLister(tree), mapReader(tree), func(path string, content []byte) error {
-		written[path] = content
-		return nil
-	})
-	h.Remove = func(string) error { return nil }
-	h.Confine = pass.NewConfinement(nil, []string{keyed})
-	r := &renamingRewriter{
-		suffixRewriter: suffixRewriter{p: scope.Identifier, suffix: "// rewritten\n"},
-		from:           carrier,
-		to:             "pkg/carrier/renamed.go",
-		move:           true,
-	}
-	_, err := h.Apply(context.Background(), r)
-	if err == nil {
-		t.Fatal("the run moved a carrier an excluded register keys and reported no error")
-	}
-	if !strings.Contains(err.Error(), keyed) || !strings.Contains(err.Error(), carrier) {
-		t.Errorf("the failure names neither the excluded register nor the carrier: %v", err)
-	}
-	if !strings.Contains(err.Error(), h.Confine.String()) {
-		t.Errorf("the failure does not name the confinement %s: %v", h.Confine, err)
-	}
-	if len(written) != 0 {
-		t.Errorf("the refused run wrote %v", written)
 	}
 }
 
@@ -8883,12 +8861,8 @@ func TestAConfinedIdentifierRunEnumeratesACoveredRegisterTheSameWayEitherWay(t *
 		keyHeld  bool
 	}{
 		{
-			name: "the carriers the keys name are covered",
-			// The confinement covers every path-keyed register of the
-			// tree as well as the carriers, because a run that moves a
-			// carrier a register it may not write names is refused
-			// rather than left to strand that key.
-			only:     []string{"tests", "pkg/adapter", "schemas"},
+			name:     "the carriers the keys name are covered",
+			only:     []string{keyed, "pkg/adapter", "schemas"},
 			register: "tree.yaml",
 			keyHeld:  false,
 		},
