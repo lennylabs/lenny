@@ -6255,33 +6255,34 @@ func TestAConfinedRunAbortsAtAnUnregisteredSiteInsideItAndNotOutsideIt(t *testin
 	t.Parallel()
 	for _, tc := range []struct {
 		class string
-		run   func(t *testing.T, confine *pass.Confinement) (string, error)
+		tree  func(t *testing.T) string
+		run   func(t *testing.T, root string, confine *pass.Confinement) error
 		names string
 	}{
 		{
 			"an occurrence of a reserved phrase",
-			func(t *testing.T, confine *pass.Confinement) (string, error) {
-				root := nameTree(t, "fail/unregistered")
+			func(t *testing.T) string { return nameTree(t, "fail/unregistered") },
+			func(t *testing.T, root string, confine *pass.Confinement) error {
 				_, err := applyConfinedNamePass(t, root, "fail-unregistered.yaml", confine)
-				return root, err
+				return err
 			},
 			"pkg/carrier/unregistered.go",
 		},
 		{
 			"an occurrence of a retired spelling",
-			func(t *testing.T, confine *pass.Confinement) (string, error) {
-				root := idTree(t, "fail/unregistered")
+			func(t *testing.T) string { return idTree(t, "fail/unregistered") },
+			func(t *testing.T, root string, confine *pass.Confinement) error {
 				_, err := applyConfinedIDPass(t, root, "fail-unregistered.yaml", confine)
-				return root, err
+				return err
 			},
 			"pkg/adapter/unregistered.go",
 		},
 		{
 			"a file name carrying a retired spelling",
-			func(t *testing.T, confine *pass.Confinement) (string, error) {
-				root := idTree(t, "fail/unregisteredpath")
+			func(t *testing.T) string { return idTree(t, "fail/unregisteredpath") },
+			func(t *testing.T, root string, confine *pass.Confinement) error {
 				_, err := applyConfinedIDPass(t, root, "fail-unregisteredpath.yaml", confine)
-				return root, err
+				return err
 			},
 			"pkg/adapter/lifecyclechannel.go",
 		},
@@ -6290,7 +6291,9 @@ func TestAConfinedRunAbortsAtAnUnregisteredSiteInsideItAndNotOutsideIt(t *testin
 			t.Parallel()
 			t.Run("inside the confinement", func(t *testing.T) {
 				t.Parallel()
-				root, err := tc.run(t, specExcept)
+				root := tc.tree(t)
+				before := treeSnapshot(t, root)
+				err := tc.run(t, root, specExcept)
 				if err == nil {
 					t.Fatal("the run reached the unregistered site and reported a clean pass")
 				}
@@ -6301,13 +6304,17 @@ func TestAConfinedRunAbortsAtAnUnregisteredSiteInsideItAndNotOutsideIt(t *testin
 				if abort.Path != tc.names {
 					t.Errorf("the abort names %s, want %s", abort.Path, tc.names)
 				}
-				if got := treeSnapshot(t, root); got[filepath.FromSlash(tc.names)] == "" {
+				got := treeSnapshot(t, root)
+				if got[filepath.FromSlash(tc.names)] == "" {
 					t.Errorf("the aborted run removed %s from the tree", tc.names)
+				}
+				if !sameSnapshot(before, got) {
+					t.Error("the aborted run wrote to the tree")
 				}
 			})
 			t.Run("outside the confinement", func(t *testing.T) {
 				t.Parallel()
-				if _, err := tc.run(t, specOnly); err != nil {
+				if err := tc.run(t, tc.tree(t), specOnly); err != nil {
 					t.Errorf("the complementary run aborted at a site outside its confinement: %v", err)
 				}
 			})
@@ -6418,7 +6425,9 @@ func TestTheConfinementFiltersThePinnedLiteralClaimCheck(t *testing.T) {
 }
 
 // TestTheDeclaredIdentifierCheckReadsTheWholeRegister pins the one
-// check §4.1 leaves unfiltered. An entry naming an identifier the
+// check the confinement does not filter: the declared-identifier
+// per-entry loop reads the whole register whatever the run's
+// confinement covers. An entry naming an identifier the
 // specification declares nowhere fails the run whichever half of the
 // partition its carrier sits in, so a misspelled code-side entry is
 // reported by the specification-phase run rather than surfacing a phase
