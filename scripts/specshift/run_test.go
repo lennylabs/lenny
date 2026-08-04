@@ -8077,6 +8077,37 @@ func TestAConfinedIdentifierRunPlansNoRenameOutsideItsConfinement(t *testing.T) 
 	})
 }
 
+// TestAConfinedIdentifierRunEnumeratesAPathKeyedRegisterAsAnUnconfinedRunDoes
+// pins the site enumeration of a path-keyed register against the
+// confinement. The enumeration holds out the spans the key rewrite owns,
+// which are the whole-scalar occurrences of the paths the run moves, so
+// a rename plan filtered by the confinement would count the retired
+// spelling standing in such a key as an ordinary site. The register's
+// occurrence numbers are keyed against one enumeration, so a run
+// confined to a register whose keys name a carrier outside the
+// confinement resolves the same sites as an unconfined run: it rewrites
+// the glob key through its entry, moves the exact key through the key
+// channel, and enumerates no third site to abort on.
+//
+// spec: §28.1 (N4, the naming law: every entry resolves a site of the
+// tree to a spelling the table states)
+func TestAConfinedIdentifierRunEnumeratesAPathKeyedRegisterAsAnUnconfinedRunDoes(t *testing.T) {
+	t.Parallel()
+	const keyed = "tests/change-graph.json"
+	root := idTree(t, "tree")
+	confine := pass.NewConfinement([]string{keyed}, nil)
+	if _, err := applyConfinedIDPass(t, root, "tree.yaml", confine); err != nil {
+		t.Fatalf("the run confined to %s failed: %v", keyed, err)
+	}
+	assertRewritten(t, root, keyed)
+	// The carriers the confinement excludes are the complementary run's
+	// to move, so this run planned their moves without writing them.
+	carrier := filepath.FromSlash("pkg/adapter/lifecyclechannel.go")
+	if _, err := os.Stat(filepath.Join(root, carrier)); err != nil {
+		t.Errorf("the confined run moved a carrier outside its confinement: %v", err)
+	}
+}
+
 // TestIdentifierPassFailsWhenTheTreeCarriesNoNamingTable pins that the
 // pass reads its spellings out of the specification rather than from a
 // list of its own. A tree with no naming table resolves no site, so a
