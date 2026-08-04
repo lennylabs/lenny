@@ -140,11 +140,15 @@ the shared entry schema does not fit them. A sense map records which
 identifier a pass writes at a given file and occurrence, which is a
 decision rather than an exemption.
 
-The registers driving the `specshift` name and identifier passes are
-held here.
+The registers driving the `specshift` name, identifier, and anchor
+passes are held here, except for the anchor-move map, which the anchor
+pass takes on the command line and which sits at
+`tests/spec-anchor-moves.json`.
 
 | File | Pass that reads it | Schema | What empties it |
 |:--|:--|:--|:--|
 | `reserved-phrase-senses.yaml` | The `specshift` name pass. | `kind: reserved-phrase-senses`, `version: 1`, and an `entries` list keyed by `file` and 1-based `occurrence`, each naming the canonical identifiers the site denotes and, where it names more than one, the `replacement` text they sit in. | The change that runs the pass over the whole write domain, which leaves no site for an entry to resolve. |
 | `pinned-spec-literals.yaml` | The `specshift` name pass. | `kind: pinned-spec-literals`, `version: 1`, and an `entries` list keyed by `file` and by the 1-based `literal` position among every string literal that file carries in source order. | Nothing. The pass requires the register whenever the tree carries a Go carrier under `tests/tier11_docs/`, and reads it as the filter admitting the literals that pin specification prose. |
 | `identifier-senses.yaml` | The `specshift` identifier pass. | `kind: identifier-senses`, `version: 1`, and an `entries` list keyed by `file` and 1-based `occurrence`, each carrying either the `channel` the occurrence denotes or `not-a-channel: true`. An entry keyed by `path: true` instead resolves the retired spelling in the carrier's own file name. | It carries the occurrences under `spec/` alone, and the occurrences over the rest of the write domain, the file-name carriers included, are outstanding. The change that appends them and runs the pass over the remainder of the tree empties it. |
+| `anchor-senses.yaml` | The `specshift` anchor pass. | `kind: anchor-senses`, `version: 1`, and an `entries` list keyed by `file` and by the 1-based `occurrence` among the retired-section citations that file carries in source order, each naming the `destination` heading in the `<path>#<anchor>` spelling. | The change that runs the pass over the whole write domain, which leaves no retired-section citation for an entry to resolve. |
+| `../spec-anchor-moves.json` | The `specshift` anchor pass, which takes it as `-register`. | `kind: spec-anchor-moves`, `version: 1`, and a `moves` list of `{anchor, successor: {file, anchor}}`, keyed by the retired anchor a markdown fragment link names. | The same change, which leaves no link into a retired anchor. |

@@ -1,0 +1,1811 @@
+# SPDX-License-Identifier: MIT
+#
+# Anchor sense register.
+#
+# One entry per bare section citation of a retired anchor whose material
+# the reduction carves out, so the anchor-move map's single successor
+# would send it to the wrong heading. Keyed by file and by the 1-based
+# position of the citation among the retired-section citations that file
+# carries in source order, counting the prose and comment citations
+# alone. The change that runs the anchor pass over the whole write
+# domain empties it.
+kind: anchor-senses
+version: 1
+entries:
+  - file: BUILD-PROGRESS.md
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: Makefile
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-adapter/main.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-compliance/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-compliance/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-compliance/schemaassert.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-compliance/schemavalidate.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-compliance/schemavalidate_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-compliance/standard.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-gateway/direct_usage_quota_integration_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-gateway/flags.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-gateway/runtime_select.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-gateway/runtime_select_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/lenny-gateway/stores.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/delegation-echo/main.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/dispatch.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/dispatch.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/dispatch.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/main_test.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/slot.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/slot.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/slot.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/slot.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/slot.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-concurrent/slot.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-embedded/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-embedded/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-embedded/main.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-embedded/main.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo-embedded/main.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/echo/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/elicitation-echo/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/elicitation-echo/main_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/elicitation-echo/main_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/mcp-reference/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/mcp-reference/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/preconnect-echo/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/preconnect-echo/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/streaming-echo/main.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: cmd/runtimes/streaming-echo/schemaversion_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: migrations/0131_0132_schema_version_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: migrations/0131_session_messages_schema_version.up.sql
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/adapter/attach.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/attach.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded_sdkwarm.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded_sdkwarm_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/embedded_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat.go
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_external_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_external_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_external_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_internal_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_internal_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_internal_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/heartbeat_internal_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/localtools/localtools.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/localtools/localtools.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_schemaversion_internal_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_schemaversion_internal_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_schemaversion_internal_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/mcpruntime_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/server.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/server.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/server.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/server.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/server.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/session.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/session.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/session_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/slotframe_test.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime.go
+    occurrence: 17
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime_e2e_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime_e2e_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime_e2e_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/socketruntime_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/toolcall.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/toolcall.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/tracingcontext.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/tracingcontext.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/adapter/tracingcontext.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/controller/sandbox/podspec/podspec.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/degradation/annotations_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/ARCHITECTURE.md
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/environment/transcriptstore/pgstore/pgstore.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore.go
+    occurrence: 7
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/environment/transcriptstore/transcriptstore_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/externalapi/openapi/openapi.json
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/externalapi/openapi/openapi.json
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/externalapi/openapi/openapi.json
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/externalapi/outputpartfidelity/datauri.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/fidelity_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/externalapi/outputpartfidelity/matrix.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/matrix.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/matrix.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/matrix.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/matrix.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/open_responses.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/open_responses.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/openai_completions.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/externalapi/outputpartfidelity/openai_completions.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: pkg/gateway/mcpfabric/mcptools/delegate_contract_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/delegate_target.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/mcptools_register.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/messagepart_internal_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/messagepart_internal_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/mcpfabric/mcptools/messaging_from_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/mcpfabric/mcptools/messaging_from_test.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/runtime/adapterclient/client.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/runtime/adapterclient/client.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/runtime/adapterclient/client.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/runtime/adapterclient/client.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/runtime/adapterclient/client.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/executor.go
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/from_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/from_test.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/from_test.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/ingest.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/ingest_test.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/pod.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/pod.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/pod.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/pod.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/pod_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 11
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 12
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/subprocess.go
+    occurrence: 13
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/executor/subprocess_crash_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/executor/subprocess_crash_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/session/sessioninbox/coordinator.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/coordinator.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/coordinator_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/dlq.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 7
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events.go
+    occurrence: 8
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/events_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/sessioninbox.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/sessioninbox.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/session/sessioninbox/sessioninbox.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/sessionserver/messages.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/sessionserver/messages.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/sessionserver/messages.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 7
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 8
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 9
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 10
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 11
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list.go
+    occurrence: 12
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list_test.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list_test.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list_test.go
+    occurrence: 4
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list_test.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messages_list_test.go
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messaging.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messaging.go
+    occurrence: 2
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messaging.go
+    occurrence: 3
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/messaging_internal_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/sessionserver.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: pkg/gateway/sessionserver/usage.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/gateway/sessionserver/usage.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/outputtype/outputtype_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/echocore/echocore_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/transport.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/transport.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/runtimekit/transport.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record.go
+    occurrence: 17
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: pkg/sessionrecord/record_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: schemas/embed.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: schemas/lenny-adapter-jsonl.schema.json
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: schemas/lenny-adapter.proto
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: scripts/specshift/run_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: scripts/specshift/run_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/example/delegate/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/example/delegate/main.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/example/echo/main.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/messagepart/messagepart.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/messagepart/messagepart.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/messagepart/messagepart.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/messagepart/messagepart.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/messagepart/messagepart.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/messagepart/messagepart.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/lifecycle.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/mcp.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/options.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 7
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 17
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 18
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 19
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 20
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 21
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 22
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 23
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 24
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime.go
+    occurrence: 25
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/runtime_test.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/tool.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 12
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 17
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 18
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 19
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 20
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 21
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 22
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/go/runtime/types.go
+    occurrence: 23
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/__init__.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/examples/delegate.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/examples/delegate.py
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/examples/echo.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/lifecycle.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/mcp.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/mcp.py
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 8
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 17
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/runtime.py
+    occurrence: 18
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/tool.py
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/transport.py
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 7
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 8
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 15
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/python/lenny_runtime/types.py
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/python/pyproject.toml
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/examples/delegate/main.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/examples/delegate/main.ts
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/examples/echo/main.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/index.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/lifecycle.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/mcp.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/mcp.ts
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/runtime.ts
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/tool.ts
+    occurrence: 12
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/transport.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/transport.ts
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/transport.ts
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/transport.ts
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/transport.ts
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 5
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 6
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 11
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 12
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 13
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 14
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 15
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 16
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: sdks/runtime/typescript/src/types.ts
+    occurrence: 17
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: spec/15_external-api-surface.md
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/spec-map.json
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/testinfra/embedded/embedded.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/testinfra/embedded/embedded.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/testinfra/kind/agent-workload.yaml
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/testinfra/kind/agent-workload.yaml
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier10_conformance/concurrent_slot_conformance_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier10_conformance/concurrent_slot_conformance_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier10_conformance/concurrent_slot_conformance_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier10_conformance/concurrent_slot_conformance_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier10_conformance/scaffolds_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier2_component/migrations/prod_columns_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: tests/tier2_component/stores/transcriptstore_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#messageenvelope--unified-message-format
+  - file: tests/tier2_component/translators/openai_responses_translator_test.go
+    occurrence: 1
+    destination: spec/15_external-api-surface.md#translation-fidelity-matrix
+  - file: tests/tier2_component/translators/openai_singleshot_lifecycle_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/adapter_usage_wired/wired_reportusage_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier3_contract/sdks/runtime_sdk_test.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/concurrent_delegation_proxy_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/concurrent_workspace_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/concurrent_workspace_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/concurrent_workspace_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/delegation_child_materialization_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 4
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 5
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 6
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 7
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 8
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 9
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/embedded_mode_smoke_test.go
+    occurrence: 10
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/mcp_runtime_lifecycle_test.go
+    occurrence: 1
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/mcp_runtime_lifecycle_test.go
+    occurrence: 2
+    destination: spec/28_communication-channels.md#2853-intra-pod
+  - file: tests/tier4_integration/mcp_runtime_lifecycle_test.go
+    occurrence: 3
+    destination: spec/28_communication-channels.md#2853-intra-pod

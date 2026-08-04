@@ -1,0 +1,17 @@
+{
+  "kind": "spec-anchor-moves",
+  "version": 1,
+  "moves": [
+    {"anchor": "1541-adapterbinary-protocol", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "internal-messagepart-format", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "protocol-reference--message-schemas", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "inbound-message", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "inbound-heartbeat", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "inbound-shutdown", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "inbound-tool_result", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "outbound-response", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "outbound-tool_call", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "outbound-heartbeat_ack", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}},
+    {"anchor": "outbound-status-optional", "successor": {"file": "spec/28_communication-channels.md", "anchor": "2853-intra-pod"}}
+  ]
+}
