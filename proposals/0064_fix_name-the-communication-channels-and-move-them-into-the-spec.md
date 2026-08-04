@@ -1165,8 +1165,9 @@ line 18), which this proposal does not do. Remove the reserved bare noun phrases
 
 This sub-step's mechanical edit is the name pass, and its assigned `spec/` target file is
 `spec/28_communication-channels.md`, one of the `spec/` paths this sub-step's Target list already names,
-whose §28.3 naming table the pass indexes and whose presence the paragraph above obliges this sub-step to
-confirm before the pass runs. Every other `spec/` path this sub-step touches takes an edit made by hand.
+whose committed §28.3 register tables the name pass indexes and whose §28.1 through §28.4 subsections the
+paragraph above obliges this sub-step to confirm are present before the pass runs. Every other `spec/` path
+this sub-step stages an edit in takes an authored edit.
 The invocations below are the last edits that file's agent applies, and the pass runs once for the
 sub-step. The command lines are the dry-run form and the apply form, in that order:
 
@@ -1861,8 +1862,9 @@ This sub-step's mechanical edits are the line pass and the anchor pass, and the 
 file for both is `spec/04_system-components.md`, one of the `spec/` paths this sub-step's Target list
 already names, which carries the larger citation population below the shifted ranges the line pass reads
 and the subsection headings this sub-step inserts ahead of that pass. Every other `spec/` path this
-sub-step touches takes an edit made by hand. Each pass runs once for the sub-step, and the invocations are
-the last edits that file's agent applies, in this order: the reduction runs first, the subsection headings
+sub-step stages an edit in takes an authored edit. Each pass runs once for the sub-step, and the
+invocations are the last edits that file's agent applies, in this order: the reduction runs first, the
+subsection headings
 are inserted over the prose that survives it, the line pass runs over the shifted tree, and the anchor pass
 runs last. The command lines for the line pass are the dry-run form and the apply form, in that order:
 
@@ -2858,7 +2860,8 @@ gate. The paragraph break is the exception and is hand-authored.
 **Change (staged description).** This sub-step's mechanical edits are the anchor pass and the line pass,
 and the assigned `spec/` target file for both is `spec/10_gateway-internals.md`, one of the three `spec/`
 paths this sub-step's Target list names, which carries the eight §10.1.x subsection headings this sub-step
-inserts ahead of its line pass. Every other `spec/` path this sub-step touches takes an edit made by hand.
+inserts ahead of its line pass. Every other `spec/` path this sub-step stages an edit in takes an authored
+edit.
 Each pass runs once for the sub-step, and the invocations are the last edits that file's agent applies,
 with the anchor pass running before the line pass. The command lines for the anchor pass are the dry-run
 form and the apply form, in that order:
