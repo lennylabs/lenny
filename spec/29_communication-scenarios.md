@@ -1139,3 +1139,103 @@ leave a 30-second margin, with the per-tier value fixed in §17.8
     receives SIGKILL and the remaining clients must reconnect. Together with the one-pod-at-a-time
     scale-down policy, this bounds the fleet to at most one replica draining at any moment
     ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+### 29.8 Coordinator handoff and crash takeover
+
+This trace follows one session's coordination moving from the replica that held it to a peer replica after
+that holder crashes or is partitioned away, from that holder's crash or partition to the point at which the
+acquiring replica may send operational RPCs to the pod. It traces the crash-takeover entry point. The
+orderly entry point, on which a peer replica acquires the sessions of a replica that has completed its
+graceful drain through the same lease acquisition, reaches the same handoff protocol and is named rather
+than traced here ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §29.7). Two further branches are named and not
+traced: coordination rights acquired through the Postgres fallback
+`SELECT ... FOR UPDATE SKIP LOCKED` on the session row when Redis is unavailable, and the path on which no
+replica fences within `coordinatorHoldTimeoutSeconds`, default 120s, on which the adapter begins graceful
+session termination with reason `coordinator_lost` and sends `AdapterTerminating` to the gateway
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.2 `CH-ADAPTEREVENTS`). The steps are
+numbered and written in the form §29.1 fixes.
+
+**Preconditions.** `replica A` coordinates the session, holding the session's coordination lease
+`REG-COORDLEASE`, which admits one holder per tenant and session on a compare-and-set with a 60-second
+expiry, and the session's `coordination_generation` is the generation the pod last fenced
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). `replica B` is a peer replica that holds
+no binding for the session. Every gateway-to-pod RPC carries the coordinator's generation stamp, and the
+pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+1. `replica A`, `internal`. The replica crashes or becomes network-partitioned and stops extending the
+   session's coordination lease ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+2. `adapter`, `internal`. The pod's gRPC transport detects the broken gateway-to-pod connection within 15
+   seconds, one keepalive interval of 10 seconds plus one keepalive timeout of 5 seconds. With no active
+   coordinator the adapter enters hold state: it pauses runtime activity, leaves the runtime process
+   running with no new instructions, rejects every inbound RPC other than `CoordinatorFence` with
+   `UNAVAILABLE` and a `coordinator_hold` error detail, emits the `lenny_adapter_coordinator_hold` gauge at
+   1, and logs a `coordinator_connection_lost` event carrying the last known generation
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§16.1](16_observability.md#161-metrics)).
+
+3. `replica B` → `redis`, `REG-COORDLEASE`, Redis. Once the prior holder's 60-second expiry lapses, the
+   replica acquires the session's coordination lease on the compare-and-set that admits one holder per
+   tenant and session ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
+
+4. `replica B` → `postgres`, no register entry, the Postgres `SessionStore` role
+   ([§12.2](12_storage-architecture.md#122-storage-roles)). The replica reads `tenant_id`,
+   `coordination_generation`, and `last_checkpoint_workspace_bytes` from the session row under row-level
+   security, on the shard the routing prefix embedded in the session id names, and primes its in-replica
+   `last_checkpoint_workspace_bytes` cache with a non-null value. When the read returns no row the replica
+   relinquishes the lease and emits a `session_not_found_on_handoff` structured event, which is a
+   non-retryable failure. A failure of the cache priming write alone does not abort the acquisition
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§12.6](12_storage-architecture.md#126-interface-design)).
+
+5. `replica B` → `postgres`, no register entry, the Postgres `SessionStore` role
+   ([§12.2](12_storage-architecture.md#122-storage-roles)). The replica increments
+   `coordination_generation` on the session row with a compare-and-swap predicated on the session id, the
+   tenant id, and the expected generation read from that row, and the returned value becomes its local
+   generation stamp. When the update matches no row the replica re-reads `coordination_generation`,
+   discards its lease claim, and restarts from lease acquisition; when the re-read returns a `tenant_id`
+   differing from the value used in the failed compare-and-swap the replica logs a
+   `coordinator_handoff_tenant_mismatch` critical structured event, aborts without retry, and relinquishes
+   the lease ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+6. `replica B` → `adapter`, `CH-FENCE`, `gateway-to-pod`. The replica sends
+   `CoordinatorFence(session_id, new_generation)` carrying its local generation stamp, under a 5-second
+   deadline (§28.5.1 `CH-FENCE`, [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+
+7. `adapter`, `internal`. The adapter records the announced generation, from that point rejects any RPC
+   carrying an older one, and acknowledges the fence, which is the only exit from hold state. When the
+   announced generation exceeds `last_fenced_generation` by more than one, the adapter first cancels and
+   discards every in-flight RPC received after `last_fenced_generation`, resets the transient tool-call and
+   lifecycle state accumulated since that generation, and logs a `coordinator_generation_gap` event
+   recording both generations, then acknowledges normally (§28.5.1 `CH-FENCE`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+8. When the fence fails or its deadline expires: `replica B` → `adapter`, `CH-FENCE`, `gateway-to-pod`. The
+   replica retries the fence with the same generation value, up to 3 attempts with 1-second backoff. On
+   exhaustion it relinquishes the lease, stopping its extension of the Redis expiry, and backs off with a
+   jittered delay from an initial 2 seconds to a 16-second maximum before reconsidering coordination. The generation increment stays in Postgres and the next replica to
+   acquire the lease increments it again to a value that supersedes both (§28.5.1 `CH-FENCE`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+9. When the fence has returned a successful acknowledgement: `replica B`, `internal`. The replica begins
+   coordinating the session and stamps its local generation on every gateway-to-pod RPC it sends for the
+   session. The acknowledgement is the hard precondition for this step, so no operational RPC reaches the
+   pod before the fence closes the window in which the prior coordinator's RPCs are still accepted
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1 `CH-FENCE`, §28.6).
+
+10. When the prior coordinator resumes and receives a generation-stale rejection for the session, from the
+    pod or from a failed compare-and-swap on the session row: `replica A`, `internal`. It cancels every
+    in-flight RPC for the session without retrying, discards its cached in-memory streams, pending tool calls, and
+    buffered events for the session, and, while it still holds an unexpired lease it believes entitles it
+    to re-acquire coordination, backs off with a jittered exponential delay from an initial 500 milliseconds
+    to an 8-second maximum before re-checking the generation in Postgres, releasing the lease and ceasing to
+    contend once it observes a generation above its own
+    ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.6).
+
+11. `unstated`. The specification does not state at what point of a takeover the `REG-COORDMIRROR` row is
+    updated to name the acquiring replica as the session's `coordinator_replica`. The register names the
+    gateway sweeper as that row's writer set and the row as a projection rather than an exclusion primitive
+    (§28.3), and a draining replica reads the row as its barrier-target set (§29.7), so a reader cannot
+    determine from the specification whether a barrier fan-out concurrent with this takeover observes the
+    prior holder or the acquiring one.
