@@ -208,4 +208,5 @@
   - [29.1 Participants and trace notation](29_communication-scenarios.md#291-participants-and-trace-notation)
   - [29.2 Session start](29_communication-scenarios.md#292-session-start)
   - [29.3 Interactive message send](29_communication-scenarios.md#293-interactive-message-send)
+  - [29.4 Interrupt, terminate, and delete](29_communication-scenarios.md#294-interrupt-terminate-and-delete)
 

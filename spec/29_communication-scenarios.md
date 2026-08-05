@@ -477,3 +477,191 @@ reading from it ([§7.1](07_session-lifecycle.md#71-normal-flow),
     paths that produce each of them, are stated in §7.2 and in §15.4
     ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
     [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+
+### 29.4 Interrupt, terminate, and delete
+
+This trace follows the three verbs that stop agent work: the interrupt signal that pauses a running
+session, and the terminate and delete calls that end one. The interrupt path suspends the session and
+leaves the pod held, so steps 1 through 9 end with the session in `suspended`. The session-end path is
+the same funnel for `POST /v1/sessions/{id}/terminate`, for `DELETE /v1/sessions/{id}`, and for the
+platform timers that expire a session, which differ in the terminal state they write and in whether a
+client is waiting on a response; steps 10 through 18 trace it. The two paths are alternatives rather
+than a sequence, so every step opens with the verb under which it holds. The steps are numbered and
+written in the form §29.1 fixes.
+
+**Preconditions.** The session is attached to a claimed pod and the startup sequence §29.2 traces has
+completed, so the runtime is running and the gateway replica coordinating the session holds the session's
+coordination lease `REG-COORDLEASE` ([§7.1](07_session-lifecycle.md#71-normal-flow),
+[§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). The interrupt path additionally requires
+the session to be `running`, which is the only state the interrupt endpoint's precondition table admits
+([§15.1](15_external-api-surface.md#151-rest-api)).
+
+1. On `POST /v1/sessions/{id}/interrupt`: `client` → `gateway`, no register entry, the
+   client-to-gateway session REST surface. The client interrupts the agent's current work, which is a
+   lifecycle signal rather than content delivery
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)). The §28.3 registers carry no entry for this surface,
+   so the step names the surface in place of a channel identifier and a boundary value, per §29.1. The
+   same verb is reachable on the MCP API as the `interrupt_session` tool
+   ([§15.2](15_external-api-surface.md#152-mcp-api)).
+
+2. On `POST /v1/sessions/{id}/interrupt`: `gateway`, `internal`. The gateway authenticates the caller and
+   authorizes the operation against the RBAC permission matrix
+   ([§10.2](10_gateway-internals.md#102-authentication)), then applies the endpoint's precondition table,
+   which admits `running` and produces `suspended`. The call is not valid in `suspended`, `starting`,
+   `finalizing`, or any terminal state, and is rejected with `409 INVALID_STATE_TRANSITION` against a
+   terminal row ([§15.1](15_external-api-surface.md#151-rest-api)).
+
+3. On `POST /v1/sessions/{id}/interrupt`: `gateway`, `internal`. The gateway resolves the pod the session
+   is bound to from the session row's `pod_assignment` column, which records the session-to-pod binding
+   ([§4.2](04_system-components.md#42-session-manager),
+   [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+
+4. On `POST /v1/sessions/{id}/interrupt`: `gateway` → `adapter`, no register entry, the internal control
+   API ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
+   the `Interrupt` RPC, which interrupts the agent's current work
+   ([§4.7](04_system-components.md#47-runtime-adapter),
+   [§7.2](07_session-lifecycle.md#72-interactive-session-model)). The §28.3 channel register places the
+   channels `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, and `CH-PODHEALTH` on the
+   gateway-to-pod boundary (§28.5.1) and carries no entry for this RPC, so the step names the internal
+   control API in place of a channel identifier and a boundary value, per §29.1. The pod validates the
+   `coordination_generation` stamp on every gateway-to-pod RPC and rejects a stale one, and a replica that
+   has just acquired coordination must receive a successful `CoordinatorFence` acknowledgement before it
+   sends any operational RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1).
+
+5. On `POST /v1/sessions/{id}/interrupt`: `agent pod`, `internal`. The adapter takes its pod-level
+   operation lock, which serializes `Checkpoint` and `Interrupt` across the pod's slots. An interrupt that
+   arrives during a checkpoint is queued until the checkpoint completes or times out; an interrupt that
+   arrives while another interrupt is already queued is dropped with a `BUSY` status and the gateway
+   retries it with backoff. While an interrupt is pending on a concurrent-session pod it holds the
+   whole-pod queue, so any further checkpoint or interrupt is dropped with a `BUSY` status
+   ([§4.7](04_system-components.md#47-runtime-adapter), §28.6).
+
+6. On `POST /v1/sessions/{id}/interrupt` against a Full-level runtime: `adapter` → `runtime`,
+   `CH-RUNTIMEOPS`, `intra-pod`. The adapter writes `interrupt_request`, carrying `interruptId` and
+   `deadlineMs`, which asks the runtime to reach a safe stop point within `deadlineMs`, and the runtime
+   replies with `interrupt_acknowledged` carrying the same `interruptId` on the same channel (§28.5.3
+   `CH-RUNTIMEOPS`, [§4.7](04_system-components.md#47-runtime-adapter),
+   [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). When
+   `interrupt_acknowledged` does not arrive within `deadlineMs`, the adapter transitions the session to
+   `suspended` anyway and reports an `INTERRUPT_TIMEOUT` status
+   ([§4.7](04_system-components.md#47-runtime-adapter), §28.5.3). A Basic-level or Standard-level runtime
+   opens no `CH-RUNTIMEOPS` channel, so this step does not occur and the interrupt degrades to
+   SIGTERM-based termination with no opportunity for the runtime to reach a safe stop point
+   ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3).
+
+7. On `POST /v1/sessions/{id}/interrupt`: `adapter` → `gateway`, no register entry, the internal control
+   API ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The adapter returns
+   the `Interrupt` RPC response, which carries an `INTERRUPT_TIMEOUT` status when the runtime did not
+   acknowledge within the frame's `deadlineMs`. The gateway logs the timeout and proceeds with the
+   `suspended` state normally ([§4.7](04_system-components.md#47-runtime-adapter), §28.5.3).
+
+8. On `POST /v1/sessions/{id}/interrupt`: `gateway` → `postgres`, no register entry, the Postgres
+   `SessionStore` role ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway writes the
+   `running → suspended` transition on the session row, which is where the session lifecycle state lives
+   and from which the session API reads it
+   ([§7.1](07_session-lifecycle.md#71-normal-flow),
+   [§7.2](07_session-lifecycle.md#72-interactive-session-model)). Entering `suspended` pauses the
+   `maxSessionAge` timer and the idle clock, and the gateway persists the accumulated age on the
+   transition ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
+
+9. On `POST /v1/sessions/{id}/interrupt`: `gateway` → `client`, no register entry, the client-to-gateway
+   session REST surface. The gateway returns the session in `suspended`
+   ([§15.1](15_external-api-surface.md#151-rest-api)). The pod is held and the workspace is preserved
+   while the session is suspended; the pod is released when `maxSuspendedPodHoldSeconds` fires, after
+   which the session stays `suspended` without a pod until the client acts
+   ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
+
+10. On `POST /v1/sessions/{id}/terminate` or `DELETE /v1/sessions/{id}`: `client` → `gateway`, no register
+    entry, the client-to-gateway session REST surface. `POST /v1/sessions/{id}/terminate` is the graceful
+    end and is valid in any non-terminal state, and it records `completed`; `DELETE /v1/sessions/{id}`
+    force-cancels the session from any non-terminal state and records `cancelled` for audit and billing
+    ([§15.1](15_external-api-surface.md#151-rest-api),
+    [§7.2](07_session-lifecycle.md#72-interactive-session-model)). The same two verbs are reachable on the
+    MCP API as the `terminate_session` and `cancel_session` tools
+    ([§15.2](15_external-api-surface.md#152-mcp-api)). On an expiry there is no client call: the gateway's
+    own evaluation of `maxSessionAge` or of the client idle clock fires the transition to `expired`, and
+    the session end proceeds from step 11 with that terminal state in place of `completed` or `cancelled`
+    ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
+
+11. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
+    ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway seals the
+    workspace, exporting the final workspace snapshot to the Artifact Store before the pod is released
+    ([§7.1](07_session-lifecycle.md#71-normal-flow),
+    [§4.5](04_system-components.md#45-artifact-store)). When the export fails the pod is held in
+    `draining` and the export is retried with exponential backoff within
+    `maxWorkspaceSealDurationSeconds`, after which the session goes to `failed` with reason
+    `workspace_seal_timeout`, the pod is terminated anyway, and the `WorkspaceSealStuck` alert fires
+    ([§7.1](07_session-lifecycle.md#71-normal-flow)). The specification states the seal as a
+    gateway-to-pod step of the normal flow and does not state which RPC or channel carries it.
+
+12. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway` → `adapter`, no register entry, the internal control API
+    ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls
+    `Terminate`, the graceful end-of-session shutdown of the pod's runtime. On the default disposition the
+    adapter closes the session runtime and the pod is replaced. On the recycle disposition, which applies
+    when occupancy reaches zero on a recycling pod, the request also carries the pod identity and the
+    whole-pod scrub parameters, and the adapter keeps the pod process alive across the recycle boundary
+    and runs the scrub asynchronously ([§7.1](07_session-lifecycle.md#71-normal-flow),
+    [§4.7](04_system-components.md#47-runtime-adapter),
+    [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+
+13. On a session end against a Full-level runtime, triggered by `POST /v1/sessions/{id}/terminate`, by
+    `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `runtime`, `CH-RUNTIMEOPS`,
+    `intra-pod`. The adapter writes the `terminate` frame, carrying `deadlineMs` and a `reason` drawn from
+    `session_complete`, `budget_exhausted`, `eviction`, and `operator`. The runtime must exit within
+    `deadlineMs`, and the adapter sends SIGTERM on timeout (§28.5.3 `CH-RUNTIMEOPS`,
+    [§4.7](04_system-components.md#47-runtime-adapter)). A Basic-level or Standard-level runtime opens no
+    `CH-RUNTIMEOPS` channel, so this step does not occur and shutdown is SIGTERM-based
+    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3).
+
+14. On a session end of a delegation child session, triggered by `POST /v1/sessions/{id}/terminate`, by
+    `DELETE /v1/sessions/{id}`, or by an expiry timer: `adapter` → `gateway`, `CH-ADAPTEREVENTS`,
+    `pod-to-gateway`. The child's adapter pushes `FINAL_USAGE_REPORT` once every in-flight `ReportUsage`
+    pull has settled, as the final message before the stream closes, and the gateway waits for it or for
+    the stream close, whichever comes first, before it returns the child's delegation budget (§28.5.2
+    `CH-ADAPTEREVENTS`, [§4.7](04_system-components.md#47-runtime-adapter),
+    [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
+
+15. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+    ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway marks the session terminal,
+    persists the final state, and records the artifact references
+    ([§7.1](07_session-lifecycle.md#71-normal-flow)). The terminal state is `completed` for the terminate
+    verb, `cancelled` for the delete verb, and `expired` for an expiry timer
+    ([§15.1](15_external-api-surface.md#151-rest-api),
+    [§7.2](07_session-lifecycle.md#72-interactive-session-model)). On the terminal transition the gateway
+    drains the session's inbox and its dead-letter queue, emitting a `message_expired` event with
+    `reason: "target_terminated"` on each sender's event stream, evaluates `cascadeOnFailure` for the
+    session's children, and emits the session's terminal event
+    ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+    [§7.3](07_session-lifecycle.md#73-retry-and-resume)).
+
+16. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway`, `internal`. The gateway releases the session's credential lease back to
+    the pool ([§7.1](07_session-lifecycle.md#71-normal-flow),
+    [§4.9](04_system-components.md#49-credential-leasing-service)). Credentials are leased per session
+    rather than per pod, so a recycling pod releases its lease before the next session begins
+    ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).
+
+17. On a session end triggered by `POST /v1/sessions/{id}/terminate`, by `DELETE /v1/sessions/{id}`, or by
+    an expiry timer: `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway releases the
+    pod. On the default disposition the claim is deleted and the pod projects `draining` and then
+    `terminated` ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
+    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3). On the recycle
+    disposition the gateway patches the claim's binding state from `bound` to `recycling`, the whole-pod
+    scrub runs while the pod projects `claimed`, the adapter reports its outcome with `ReportPodScrub`,
+    and the gateway then patches the claim to `reserved`, coordinates the SDK re-warm on a preConnect
+    pool, or retires the pod when the recycle limits or the host-node schedulability check say so
+    ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
+    [§4.7](04_system-components.md#47-runtime-adapter),
+    [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+
+18. On a session end triggered by `POST /v1/sessions/{id}/terminate` or by `DELETE /v1/sessions/{id}`:
+    `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway
+    returns the terminal session row ([§15.1](15_external-api-surface.md#151-rest-api)). On an expiry
+    timer no client call is outstanding, so this step does not occur and the terminal state reaches the
+    client through the session API and the session's terminal event instead
+    ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
+    [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
