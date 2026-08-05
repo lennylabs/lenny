@@ -343,3 +343,137 @@ state that the READY signal is one of them.
     connected and the gateway has pointed it at the finalized `cwd` (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+
+### 29.3 Interactive message send
+
+This trace follows one client message from the `POST /v1/sessions/{id}/messages` call that carries it to
+the delivery receipt the gateway returns for it. It covers the direct-delivery path, which
+[§7.2](07_session-lifecycle.md#72-interactive-session-model) states as path 2: the message carries no
+`inReplyTo` that matches an outstanding request, and the target runtime is available because its adapter
+reports `ready_for_input`. §7.2 owns the delivery precedence chain and states every other path, together
+with the deployment, pool, and session-state conditions under which each one is selected. This trace cites
+§7.2 for that branching rather than reproducing it, and names the alternative in one sentence at each step
+whose behaviour differs under another path. The steps are numbered and written in the form §29.1 fixes.
+
+**Preconditions.** The session is `running`, its pod is claimed and bound, and the startup sequence §29.2
+traces has completed, so the adapter has delivered a first `message` on `CH-MSGSOCK` and the runtime is
+reading from it ([§7.1](07_session-lifecycle.md#71-normal-flow),
+[§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+
+1. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
+   `POST /v1/sessions/{id}/messages`, which is the unified endpoint for all content delivery
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)). The §28.3 registers carry no entry for this surface,
+   so the step names the surface in place of a channel identifier and a boundary value, per §29.1. The
+   replica the call lands on is selected by the load balancer, and sticky routing is an optimization
+   rather than a guarantee: a client can reach any replica
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). When the replica serving the call is not the
+   session's coordinating replica and the message carries `delivery: "immediate"` against a `suspended`
+   session, §7.2 requires the serving replica to forward the message to the coordinator and states the
+   inbox-buffering fallback when the coordinator is unreachable
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+
+2. `gateway`, `internal`. The gateway authenticates the caller and authorizes the operation against the
+   RBAC permission matrix, under which a caller holding the `user` role reaches only their own sessions
+   unless a tenant-admin has granted otherwise
+   ([§10.2](10_gateway-internals.md#102-authentication)).
+
+3. `gateway`, `internal`. The gateway loads the target session and applies the state and runtime
+   preconditions the endpoint states. The endpoint accepts any non-terminal state, and delivery semantics
+   vary by state ([§15.1](15_external-api-surface.md#151-rest-api)). An external client message against a
+   pre-running session (`created`, `ready`, `starting`, or `finalizing`) is rejected with
+   `TARGET_NOT_READY`, HTTP 409, because such a session has no inbox; an inter-session message against the
+   same session is instead buffered in the target's dead-letter queue
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)). A message against a session whose runtime declares
+   `injection.supported: false` is rejected with `INJECTION_REJECTED`, HTTP 403
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)).
+
+4. `gateway`, `internal`. The gateway validates the message envelope, which is a `MessageEnvelope`
+   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The `delivery` field is a
+   closed enum whose defined values are `immediate` and `queued`, an absent value is the same as `queued`,
+   and an unrecognized value is rejected with HTTP 400 `INVALID_DELIVERY_VALUE`
+   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification),
+   [§15.1](15_external-api-surface.md#151-rest-api)).
+
+5. `gateway`, `internal`. The gateway evaluates the delivery paths in the order §7.2 lists them, and the
+   first matching path wins ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). This trace
+   follows path 2, under which no pending request matches and the runtime is available because its adapter
+   reports `ready_for_input`. On a message whose `inReplyTo` matches an outstanding `lenny/request_input`
+   call on the target session, path 1 is selected instead, and the gateway resolves the blocked tool call
+   directly, with no delivery to the pod and no interrupt, a receipt status of `delivered`, and none of
+   steps 6 through 11 below ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). Every other path is stated
+   in §7.2, which names the conditions that select it, the interrupt or buffering behaviour it carries, and
+   the receipt status it produces ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). On a pod
+   whose pool sets `sessionPolicy.maxConcurrentSessions > 1`, path evaluation is performed per slot rather
+   than per pod, the target slot is resolved from the addressed session before routing proceeds, and a
+   message that does not resolve to an active slot fails closed internally and is never routed
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+
+6. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The gateway sends the message envelope to the pod
+   on the attach stream, whose §28.3 register row carries message delivery and agent output as its message
+   vocabulary and whose messages are bidirectional (§28.5.1 `CH-ATTACH`, §28.3). The envelope carries the
+   gateway-injected `schemaVersion`, and it carries `slotId` only on a pod whose pool sets
+   `sessionPolicy.maxConcurrentSessions > 1`
+   ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification),
+   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)). On an
+   inter-session message carried by `lenny/send_message` rather than by the client REST surface, the
+   `PreMessageDelivery` interceptor phase fires before this delivery, with the serialized message body as
+   its content, and the target session's effective `contentPolicy.maxInputSize` limit is enforced at the
+   same point ([§4.8](04_system-components.md#48-gateway-policy-engine)). The channel is
+   restricted to the session's coordinating replica by the coordination lease `REG-COORDLEASE` and the
+   `coordination_generation` stamp the pod validates on every gateway-to-pod RPC (§28.5.1 `CH-ATTACH`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+7. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter writes the `message` as a single JSON
+   object terminated by a newline and flushes it before the runtime blocks on its next read, populating
+   `from.kind` and `from.id` from execution context and overwriting any runtime-supplied `from` (§28.5.3
+   `CH-MSGSOCK`, [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+
+8. `unstated`. The specification does not state which channel and which message carry the adapter's report
+   that the runtime is `ready_for_input` and its acknowledgement that the runtime consumed the written
+   message, which are the two signals path 2 turns on and against which the delivery timeout of step 13 is
+   measured. §7.2 requires the adapter to emit `ready_for_input` only once every dispatched tool call has
+   settled and the runtime is reading from its input
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model)), while the §28.5.3 `CH-MSGSOCK` card and
+   the §28.5.2 `CH-ADAPTEREVENTS` card state the messages those channels carry and neither states a
+   message carrying either signal (§28.5.2, §28.5.3).
+
+9. `runtime` → `adapter`, `CH-MSGSOCK`, `intra-pod`. The runtime emits a `response` carrying its parts in
+   an `output` array. A `response` may be preceded by one or more `tool_call` messages, each of which the
+   adapter answers with a `tool_result` whose `id` matches the emitted `tool_call`; results may arrive in
+   any order, and a `tool_result` whose `id` is unknown is dropped and logged as a protocol error
+   (§28.5.3 `CH-MSGSOCK`, [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+
+10. `adapter` → `gateway`, `CH-ATTACH`, `gateway-to-pod`. The adapter returns the agent output to the
+    gateway on the same attach stream, whose §28.3 row records message authority on both sides and which
+    the gateway proxies between the client and the pod (§28.5.1 `CH-ATTACH`, §28.3,
+    [§7.1](07_session-lifecycle.md#71-normal-flow)). The step names the boundary value the §28.3 register
+    carries for the channel, which is `gateway-to-pod` and records the boundary the channel sits on rather
+    than the direction of this step, per §29.1.
+
+11. `gateway`, `internal`. The `PostAgentOutput` interceptor phase fires on the agent's output before the
+    gateway delivers it to the client or to the parent session in a delegation. An interceptor at that
+    phase may modify, redact, or truncate the output, may remove or replace individual `MessagePart`
+    entries, and may not suppress delivery entirely; suppression is expressed as a rejection
+    ([§4.8](04_system-components.md#48-gateway-policy-engine)).
+
+12. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+    ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway records the delivered message in
+    the session's message DAG store, the `session_messages` table, which clients read through
+    `GET /v1/sessions/{id}/messages`
+    ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification),
+    [§15.1](15_external-api-surface.md#151-rest-api)).
+
+13. `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway
+    returns the delivery receipt, which carries the message identifier, the status, and the fields the
+    status selects ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). On this path
+    the status is `delivered` only after the runtime's consumption is confirmed within the delivery
+    timeout, default 30 seconds; when it is not confirmed within that timeout the message falls through to
+    inbox buffering and the status is `queued` instead
+    ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). The remaining status values, and the
+    paths that produce each of them, are stated in §7.2 and in §15.4
+    ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+    [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
