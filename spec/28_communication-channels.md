@@ -1164,3 +1164,93 @@ reaches neither Postgres nor Redis ([§13.2](13_security-model.md#132-network-is
   the `DualStoreUnavailable` alert fires
   ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes),
   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+### 28.6 Exclusivity and concurrency model
+
+Each contract card in §28.5 states its channel's exclusivity constraint and the guard that enforces it, or
+records that the specification states neither. This subsection states the pattern those fields form across
+the channel set: which channels admit one holder at a time, what the unit of the constraint is on each such
+channel, and what the specification states happens to a second opener. It states no constraint the cards do
+not carry, and where a card records that the specification names no exclusivity guard for a channel, that is
+the position here as well.
+
+**One holder per session.** The gateway-to-pod channels `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, and
+`CH-BARRIER` admit one holder at a time, and the unit is the session (§28.5.1). The guard is the
+session-coordination lease `REG-COORDLEASE`, which admits one holder per tenant and session (§28.3),
+together with the `coordination_generation` stamp the pod validates on every gateway-to-pod RPC
+([§10.1](10_gateway-internals.md#101-horizontal-scaling)). `CH-FENCE` establishes the constraint: a replica
+that has just acquired coordination must receive a successful fence acknowledgement before it sends any
+operational RPC, and from the fence onward the pod rejects every RPC carrying an older generation
+([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+[§4.7](04_system-components.md#47-runtime-adapter)).
+
+**The second opener on those channels.** A replica that opens one of those four channels without holding the
+current generation is rejected on the generation stamp, and it cancels every in-flight RPC for the session
+without retrying and discards its cached in-memory streams. While the adapter is in hold state, every
+inbound RPC other than `CoordinatorFence` is rejected with `UNAVAILABLE` and a `coordinator_hold` error
+detail, so `CH-FENCE` is the one channel a second opener can use. A replica becomes the holder by acquiring
+`REG-COORDLEASE` and winning the generation compare-and-swap, and the fence acknowledgement closes the
+window in which the prior coordinator's RPCs are still accepted (§28.5.1,
+[§10.1](10_gateway-internals.md#101-horizontal-scaling)). The constraint excludes a second replica. The
+specification states no limit on how many `CH-ATTACH` streams one holding replica opens at the same time;
+the `Checkpoint` operation `CH-CHECKPOINT` carries is serialized against the `Interrupt` operation the
+specification states outside the channel register by the adapter's pod-level operation lock stated below
+([§4.7](04_system-components.md#47-runtime-adapter)).
+
+**One operation per pod.** Below the per-session constraint sits one per-pod constraint. The adapter's
+operation lock serializes `Checkpoint` and `Interrupt` across the pod's slots, admits one pending checkpoint
+per distinct `slotId`, coalesces a checkpoint whose `slotId` is already pending, and on a single-session pod
+holds at most one queued operation ([§4.7](04_system-components.md#47-runtime-adapter)). Its unit is the
+pod, and admission to its queue is counted per slot. It is the one guard that spans boundaries: it bounds
+`CH-CHECKPOINT` on the gateway-to-pod boundary (§28.5.1), the `checkpoint_request` and `interrupt_request`
+frames of `CH-RUNTIMEOPS` on the intra-pod boundary (§28.5.3), and the transfer `CH-OBJSTORE` carries on the
+pod-egress boundary (§28.5.5). A checkpoint whose `slotId` is already pending coalesces, while an interrupt
+arriving while another interrupt is already queued, and any checkpoint or interrupt arriving while an
+interrupt is pending on a concurrent-session pod, is dropped with a `BUSY` status
+([§4.7](04_system-components.md#47-runtime-adapter)). The gateway retries a dropped interrupt with backoff
+([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no retry rule for a
+checkpoint dropped with `BUSY` on a concurrent-session pod. The specification states no pod-level barrier lock
+beyond this operation lock (§28.5.1).
+
+**Channels the specification states no constraint on.** For `CH-PODHEALTH` (§28.5.1), `CH-ADAPTEREVENTS`
+(§28.5.2), `CH-MSGSOCK`, `CH-RUNTIMEOPS`, `CH-MCP-PLATFORM`, and `CH-MCP-CONNECTOR` (§28.5.3),
+`CH-LLMPROXY` and the connection `CH-OBJSTORE` runs on (§28.5.5), `CH-ADMISSION` (§28.5.6), and
+`CH-EVENTRELAY` (§28.5.7), the specification states no exclusivity constraint on the channel and names no
+guard that enforces one. It therefore states no rejection or precedence rule for an additional holder on any
+of them, and this subsection supplies none.
+
+Two of those cards record a constraint that runs the other way, so more than one holder is possible.
+`CH-EVENTRELAY` admits every gateway replica serving an attached client for the session as a concurrent
+reader, which is the reconnection case the stream exists for (§28.5.7,
+[§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). `CH-ADMISSION` is served by a webhook
+Deployment carrying the uniform admission-plane high-availability contract of two replicas with a pod
+disruption budget of one available pod, so more than one webhook pod may hold the channel at the same time
+(§28.5.6, [§17.2](17_deployment-topology.md#172-namespace-layout)).
+
+Others in that set carry a scoping constraint that is not exclusivity. On a pod whose pool sets
+`maxConcurrentSessions` above 1, `CH-MSGSOCK` multiplexes every slot's stream over the one channel, keyed by
+`slotId`, and on a single-session pod no message carries `slotId`
+([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). `CH-MCP-PLATFORM` and
+`CH-MCP-CONNECTOR` are scoped per session by the `mcpNonce` the adapter regenerates for each session and
+rewrites into the manifest before each session's runtime start
+([§4.7](04_system-components.md#47-runtime-adapter)). `CH-LLMPROXY` binds its lease token to the issuing
+pod's SPIFFE identity and rejects a request whose peer SPIFFE URI does not match the lease record with
+`LEASE_SPIFFE_MISMATCH`, which is a cross-pod replay control
+([§4.9](04_system-components.md#49-credential-leasing-service)). `CH-OBJSTORE` is constrained per
+capability, where a capability names one method and one key, an upload capability additionally names one
+exact `Content-Length`, and at most `checkpointGrantWindow` capabilities are outstanding for an attempt at a
+time (§28.5.5). Scoping by session, slot, pod, or capability restricts what a connection may carry rather
+than how many holders it admits.
+
+`CH-ADAPTEREVENTS` addresses its events to the session's coordinating replica, which is the holder of
+`REG-COORDLEASE`, while the `LNK-POD-GRPC` register row states one connection per gateway replica per pod,
+so the specification does not state which replica's connection carries an event when more than one replica
+holds a connection to the pod (§28.5.2, §28.3).
+
+**Units carried outside the channel register.** The exclusion primitives themselves are register entries and
+link lifetimes rather than channels. `REG-COORDLEASE` admits one holder per tenant and session,
+`REG-SLOTCOUNT` is an atomic per-pod counter that ceilings concurrent slots, and `REG-CLAIM` is a
+cluster-wide per-pod acquisition on first claim, while `REG-COORDMIRROR` is a projection rather than an
+exclusion primitive (§28.3). At the link level, `LNK-POD-GRPC` carries one connection per gateway replica
+per pod and `LNK-GWCONTROL` one connection per pod process to one replica, so the per-replica unit is a
+property of the connection rather than of a channel carried on it (§28.3).

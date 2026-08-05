@@ -201,4 +201,5 @@
     - [28.5.5 Pod-egress](28_communication-channels.md#2855-pod-egress)
     - [28.5.6 Control-plane](28_communication-channels.md#2856-control-plane)
     - [28.5.7 Gateway-to-store](28_communication-channels.md#2857-gateway-to-store)
+  - [28.6 Exclusivity and concurrency model](28_communication-channels.md#286-exclusivity-and-concurrency-model)
 
