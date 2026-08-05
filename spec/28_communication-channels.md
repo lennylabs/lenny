@@ -1068,3 +1068,99 @@ here.
   ([§16.5](16_observability.md#165-alerting-rules-and-slos),
   [§17.2](17_deployment-topology.md#172-namespace-layout)). The specification does not state a retry,
   buffering, or resumption policy for a callback whose transport fails mid-response.
+
+#### 28.5.7 Gateway-to-store
+
+This boundary carries the channels a gateway replica opens to a datastore that mediates state between
+gateway replicas. The §28.3 channel register places one channel on this boundary, `CH-EVENTRELAY`, and it
+carries `None` in its Link column, so its own register row together with the endpoint stated in its card
+describes the connection. The stores on this boundary divide by role: Postgres carries the authoritative
+session and event state through the `SessionStore` and `EventStore` roles, while Redis data is treated as
+ephemeral, is not a system of record, and carries a durable fallback or reconstruction path for every role
+placed on it, so a total loss of Redis data is recoverable
+([§12.2](12_storage-architecture.md#122-storage-roles),
+[§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The entries of the §28.3
+register-entry register, which are `REG-COORDLEASE`, `REG-COORDMIRROR`, `REG-SLOTCOUNT`, `REG-PODSTATE`,
+and `REG-CLAIM`, are shared state mediating two participants with no live connection rather than channels
+per §28.2, so they carry no card here. No agent pod participates on this boundary: the base egress policy
+`allow-pod-egress-base` is an allowlist carrying the gateway gRPC port and DNS alone, so an agent pod
+reaches neither Postgres nor Redis ([§13.2](13_security-model.md#132-network-isolation)).
+
+```
+  gateway replica                              gateway replica
+  +----------------------+                     +----------------------+
+  |  in-memory           |                     |  replica serving a   |
+  |  session-event bus   |                     |  reconnected client  |
+  +----------------------+                     +----------------------+
+             |                                            ^
+             |  CH-EVENTRELAY, XADD                       |  XRANGE, XREAD BLOCK
+             v                                            |
+  +-----------------------------------------------------------------------+
+  |          Redis stream lenny:events:{session_id}                       |
+  +-----------------------------------------------------------------------+
+
+  CH-EVENTRELAY: Redis, dialled by the gateway, on a stream per session, wired
+  only when Redis is present.
+```
+
+**`CH-EVENTRELAY`**
+
+- **Link.** `None` (§28.3).
+- **Endpoint.** The Redis Streams key `lenny:events:{session_id}`, one stream per session
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The key is session-scoped and
+  carries no tenant prefix; the `lenny:` prefix scopes the stream to the gateway namespace, and the Redis
+  wrapper layer passes the key through unvalidated because it leads with no prefix the wrapper recognizes,
+  so its isolation rests on the session-scoped stream key rather than on the leading-prefix rule
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The gateway reaches Redis on the
+  TLS listener port `redis.tlsPort`, default 6380, which the gateway egress rule permits
+  ([§13.2](13_security-model.md#132-network-isolation)); Redis must run with `tls-port` set to that
+  listener port and the plaintext `port` set to 0
+  ([§10.3](10_gateway-internals.md#103-mtls-pki)). Redis AUTH through ACLs and TLS
+  are required on the connection ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)), and
+  Redis must be configured with `tls-auth-clients yes`, so the connection carries a client certificate
+  ([§10.3](10_gateway-internals.md#103-mtls-pki)). The specification does not state a fixed hostname for
+  the Redis service; it is the configured Redis endpoint of the deployment.
+- **Axes.** State plane, dialled by the gateway, message authority with the gateway, Redis transport
+  (§28.3).
+- **Messages.** The session events a gateway replica's in-memory session-event bus fans out, appended with
+  `XADD`. A reader consumes the stream with `XRANGE` for history and `XREAD BLOCK` for live delivery
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The events carried are the
+  `SessionEvent` frames the gateway dispatches on a session's event stream, each carrying the monotonic
+  `SeqNum` the gateway assigns at dispatch time
+  ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+  [§15.2](15_external-api-surface.md#152-mcp-api)). The specification does not state the field layout of a
+  stream entry, and it states no trim, `MAXLEN`, or retention bound for the stream.
+- **Preconditions.** The channel is wired only when Redis is present in the deployment. Single-replica dev
+  mode keeps the session-event bus in memory and writes no stream
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). A reader opens the stream when a
+  client reconnects with `Last-Event-ID`, which the SSE transport carries as the implicit equivalent of
+  `resumeFromSeq`, to a replica other than the one that produced the earlier events, per the §15.2
+  event-stream resume contract ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes),
+  [§15.2](15_external-api-surface.md#152-mcp-api)).
+- **Timing.** The live read is a blocking `XREAD BLOCK`
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The specification states no block
+  timeout, request deadline, retry count, or publication interval for the channel.
+- **Exclusivity.** The specification states no exclusivity constraint on the channel and names no guard
+  that enforces one. Every gateway replica serving an attached client for the session may read the stream
+  at the same time, which is the reconnection case the stream exists for
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). The session-coordination lease
+  `REG-COORDLEASE`, which admits one holder per tenant and session, is a register entry governing session
+  coordination rather than a guard on this channel (§28.3).
+- **Degradation.** The failure-behavior table of
+  [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes) carries no row for this stream, so the
+  specification states no per-use-case fallback for it; the general Redis posture that section states
+  applies, under which Redis is not a system of record and the authoritative record of session events is
+  the Postgres `EventStore` ([§12.2](12_storage-architecture.md#122-storage-roles),
+  [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). A resume request is served from the
+  per-session event replay buffer the coordinating replica holds in process, sized by
+  `gateway.sessionEventReplayBufferDepth`, and a request for a sequence that buffer has evicted yields a
+  single protocol-level `gap_detected` frame carrying `{"lastSeenSeq": N, "nextSeq": M}` before live
+  delivery resumes ([§10.4](10_gateway-internals.md#104-gateway-reliability),
+  [§15.2](15_external-api-surface.md#152-mcp-api)). The specification does not state what a reader does
+  when an entry it requests is absent from this stream, and it states no buffering or resumption policy for
+  an `XADD` or a blocking read whose transport fails mid-stream. When both Postgres and Redis are
+  unavailable the platform enters dual-store degraded mode: new sessions are rejected with `503`, in-flight
+  sessions continue on cached coordination state, a `PLATFORM_DEGRADED` event is emitted to clients, and
+  the `DualStoreUnavailable` alert fires
+  ([§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling)).

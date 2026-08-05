@@ -200,4 +200,5 @@
     - [28.5.4 Inter-replica](28_communication-channels.md#2854-inter-replica)
     - [28.5.5 Pod-egress](28_communication-channels.md#2855-pod-egress)
     - [28.5.6 Control-plane](28_communication-channels.md#2856-control-plane)
+    - [28.5.7 Gateway-to-store](28_communication-channels.md#2857-gateway-to-store)
 
