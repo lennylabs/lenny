@@ -794,3 +794,179 @@ rather than dropping the message ([§7.2](07_session-lifecycle.md#72-interactive
 [§10.1](10_gateway-internals.md#101-horizontal-scaling)). §28.3 records that this cross-replica message
 routing is not implemented and that the status is carried as an `ABSENT` claim-register row per §28.4.
 This subsection gains a card at the point the §28.3 channel register places a channel on this boundary.
+
+#### 28.5.5 Pod-egress
+
+This boundary carries the channels an agent pod originates to a destination outside the pod. The §28.3
+channel register places two channels on this boundary, `CH-LLMPROXY` and `CH-OBJSTORE`, and each carries
+`None` in its Link column, so each channel's own register row together with the endpoint stated in its
+card describes the connection. Both are governed by the default-deny egress posture of
+[§13.2](13_security-model.md#132-network-isolation): an agent pod reaches no egress port beyond those
+named by the base policy `allow-pod-egress-base` and whichever supplemental policies its pool selects, and
+each of these two channels is permitted by a supplemental policy rather than by the base policy.
+
+```
+  agent pod                                              egress destinations
+  +--------------------+                            +----------------------+
+  |                    |   CH-LLMPROXY    =====>    |  gateway LLM proxy   |
+  |   agent pod        |                            +----------------------+
+  |                    |                            +----------------------+
+  |                    |   CH-OBJSTORE    =====>    |  object storage      |
+  +--------------------+                            +----------------------+
+
+  CH-LLMPROXY: gateway, TCP 8443, HTTPS, permitted by allow-pod-egress-llm-proxy
+  CH-OBJSTORE: object store, TLS, permitted by allow-pod-egress-objectstore
+```
+
+**`CH-LLMPROXY`**
+
+- **Link.** `None` (§28.3).
+- **Endpoint.** The gateway's LLM proxy port, TCP 8443, reached at the `proxyUrl` the pod receives in its
+  `CredentialLease`; a pool declares the address as its `proxyEndpoint`
+  ([§4.9](04_system-components.md#49-credential-leasing-service),
+  [§13.2](13_security-model.md#132-network-isolation)). The endpoint must use TLS: a pool registration
+  whose `proxyEndpoint` uses an `http://` scheme is rejected with the validation error
+  `InvalidProxyEndpointScheme`, and the endpoint shares the mTLS certificate infrastructure of the internal
+  gRPC control plane ([§4.9](04_system-components.md#49-credential-leasing-service)), whose certificate
+  issuance is stated in [§10.3](10_gateway-internals.md#103-mtls-pki).
+- **Axes.** Content plane, dialled by the runtime, message authority with the runtime, HTTP transport
+  (§28.3).
+- **Messages.** The requests of the pool's declared `proxyDialect`. The `openai` dialect exposes
+  `POST {proxyUrl}/v1/chat/completions`, `POST {proxyUrl}/v1/embeddings`, and the streaming SSE variant,
+  and accepts the OpenAI request body with a `model` field the gateway's translator maps to the upstream
+  provider's model ID. The `anthropic` dialect exposes `POST {proxyUrl}/v1/messages` and its streaming
+  variant, and accepts the Anthropic Messages API request body; the proxy accepts the `anthropic-version`
+  header from the runtime and injects the configured default when the header is absent, advertising that
+  default to runtimes through the adapter manifest's `llm.headers` field
+  ([§4.9](04_system-components.md#49-credential-leasing-service)). Responses are the upstream provider's
+  responses translated back into the dialect the pod speaks, streamed to the pod
+  ([§4.9](04_system-components.md#49-credential-leasing-service)).
+- **Preconditions.** The pod's pool runs `deliveryMode: proxy`, so the pod receives a lease token, a
+  `proxyUrl`, and a `proxyDialect` in its `CredentialLease` rather than a materialized upstream API key
+  ([§4.9](04_system-components.md#49-credential-leasing-service)). The pool's `proxyDialect` must match a
+  dialect the Runtime declares in `credentialCapabilities.proxyDialect`, which admission control enforces
+  by rejecting a mismatched pool registration or update with `422 INVALID_POOL_PROXY_DIALECT`
+  ([§4.9](04_system-components.md#49-credential-leasing-service),
+  [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). The pod must carry the
+  `lenny.dev/delivery-mode: proxy` label the WarmPoolController sets on pods of proxy-mode pools, because
+  port 8443 is excluded from the base egress policy and is permitted only by the supplemental
+  `allow-pod-egress-llm-proxy` policy that selects on that label; a direct-mode pod carries no such label
+  and cannot reach the port ([§13.2](13_security-model.md#132-network-isolation)). Per request, the
+  gateway validates the lease token against `TokenStore`, verifies the peer SPIFFE URI from the
+  authenticated mTLS connection against the SPIFFE URI recorded in the lease record for multi-tenant
+  deployments, and runs the `PreLLMRequest` interceptor chain before any upstream call
+  ([§4.9](04_system-components.md#49-credential-leasing-service),
+  [§4.8](04_system-components.md#48-gateway-policy-engine)).
+- **Timing.** The specification states no request deadline, retry count, or interval for the channel
+  itself. Two gateway-side bounds sit on the hop: the `PreLLMRequest` and `PostLLMResponse` interceptor
+  phases default to a 100ms timeout, overridable through the `timeout` field on the interceptor
+  registration ([§4.8](04_system-components.md#48-gateway-policy-engine)), and the LLM Proxy circuit
+  breaker's half-open cooldown defaults to 30s, configurable through
+  `llmProxy.circuitBreaker.halfOpenInterval`
+  ([§4.9](04_system-components.md#49-credential-leasing-service)).
+- **Exclusivity.** The specification states no exclusivity constraint on the channel and names no guard
+  that enforces one. The nearest constraint is per-pod rather than exclusive: the lease token is bound to
+  the issuing pod's SPIFFE identity, and a request whose peer SPIFFE URI does not match the lease record is
+  rejected with `LEASE_SPIFFE_MISMATCH` and emits the audit event `credential.lease_spiffe_mismatch`, which
+  is a cross-pod replay control ([§4.9](04_system-components.md#49-credential-leasing-service)).
+- **Degradation.** When the LLM Proxy circuit breaker is open, every new request is rejected immediately
+  with `PROVIDER_UNAVAILABLE` rather than hanging, the adapter receives a `PROVIDER_UNAVAILABLE` event and
+  relays it to the runtime as a tool-result error of the same code, streams established before the circuit
+  opened continue to completion or upstream failure, and a single probe request is allowed at each
+  half-open transition ([§4.9](04_system-components.md#49-credential-leasing-service)). When the lease
+  expires or is revoked the proxy rejects requests before any upstream call, returning `CREDENTIAL_REVOKED`
+  on a deny-list hit ([§4.9](04_system-components.md#49-credential-leasing-service)). A `PreLLMRequest`
+  interceptor returning `REJECT` yields `LLM_REQUEST_REJECTED` to the pod and a `PostLLMResponse` rejection
+  yields `LLM_RESPONSE_REJECTED` ([§4.8](04_system-components.md#48-gateway-policy-engine)). When the peer
+  is absent because the pod's pool is not a proxy-mode pool, the supplemental egress policy does not select
+  the pod and the default-deny policy drops the connection
+  ([§13.2](13_security-model.md#132-network-isolation)). The specification does not state a retry,
+  resumption, or buffering policy for a proxy response stream that fails mid-stream.
+
+**`CH-OBJSTORE`**
+
+- **Link.** `None` (§28.3).
+- **Endpoint.** The configured object store. The supplemental `allow-pod-egress-objectstore` policy renders
+  an in-cluster arm reaching the self-managed MinIO in the release namespace on `minio.tlsPort`, default
+  9443, and a cloud-managed arm reaching an operator-enumerated CIDR list on TCP 443
+  ([§13.2](13_security-model.md#132-network-isolation)). Object-store TLS is required: the object store's
+  server certificate must be signed by a CA the agent pods trust, either the deployer's cluster-wide trust
+  bundle or a deployer-supplied CA bundle projected into agent pods when `objectStorage.caBundle` is set,
+  and the certificate's SAN must cover the configured object-store endpoint hostname
+  ([§13.2](13_security-model.md#132-network-isolation)). The specification does not state a fixed hostname
+  for the endpoint; it is the configured object-store endpoint of the deployment.
+- **Axes.** State plane, dialled by the pod adapter, message authority with the pod adapter, HTTP transport
+  (§28.3).
+- **Messages.** On the capture path, one single-part `PUT` per chunk against a gateway-minted presigned
+  capability that names one HTTP method, one object key under
+  `/{tenant_id}/checkpoints/{session_id}/{checkpoint_id}/`, and one exact `Content-Length`; the object key
+  is `chunk_object_key_prefix/chunk-{n}.{chunk_encoding}`
+  ([§13.2](13_security-model.md#132-network-isolation),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling)). On the SigV4 backends the adapter replays the
+  signed header values the gateway returns in `Grant.headers` verbatim, because the signed set names the
+  headers rather than their values ([§13.2](13_security-model.md#132-network-isolation)). On the restore
+  path, one single-key `GET` per chunk index in the contiguous prefix `[0, chunk_count)`, against
+  capabilities the gateway mints and passes on the unary `Resume` call
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The pod holds no `LIST`, `DELETE`, or
+  multipart capability, so it enumerates no key it was not handed, deletes nothing, and opens no multipart
+  upload ([§13.2](13_security-model.md#132-network-isolation),
+  [§4.4](04_system-components.md#44-event--checkpoint-store)).
+- **Preconditions.** Every request is made against a capability the gateway has already minted:
+  capture-path capabilities are minted on `CH-CHECKPOINT`, and restore-path capabilities are minted by the
+  gateway and passed on the unary `Resume` call
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). On neither path does the pod hold an
+  object-store credential ([§13.2](13_security-model.md#132-network-isolation)). On the capture path the gateway mints chunk-upload
+  capabilities only after the intent-row INSERT commits; the adapter declares each chunk by index and exact
+  byte length, and the gateway rejects a declared length outside `(0, chunk_size_bytes]` and aborts the
+  attempt with `manifest_reason = 'stream_truncated'` before it signs anything. The gateway keeps at most
+  `checkpointGrantWindow` grants outstanding, default 4, and refuses to sign a capability whose
+  `Content-Length` would carry the attempt past its reservation plus remaining tenant headroom, aborting
+  with `STORAGE_QUOTA_EXCEEDED` before signing
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). The `ArtifactStore` validates the
+  `tenant_id` prefix of every key it is asked to sign and mints no capability for a key outside the
+  caller's authenticated tenant prefix ([§12.5](12_storage-architecture.md#125-artifact-store)). On the
+  restore path the gateway lists the objects under the prefix and verifies contiguity of `[0, chunk_count)`
+  before it mints a single `GET` capability per index
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The egress itself is permitted only for pools
+  that write checkpoints, for which the supplemental `allow-pod-egress-objectstore` policy is rendered
+  ([§13.2](13_security-model.md#132-network-isolation)).
+- **Timing.** Every capability expires after `checkpointCapabilityTTLSeconds`, default 30
+  ([§13.2](13_security-model.md#132-network-isolation),
+  [§17.8.1](17_deployment-topology.md#1781-operational-defaults--quick-reference)). Non-eviction uploads
+  are retried with exponential backoff from 200ms at factor 2 for up to about 5 seconds in total, and a
+  retry that outlives its grant's expiry requests a fresh grant for the same chunk index on the open
+  `Checkpoint` stream, which the gateway re-signs at the same key and length
+  ([§4.4](04_system-components.md#44-event--checkpoint-store)). The whole checkpoint the transfer serves is
+  bounded by the 60-second timeout every checkpoint path enforces from the initial quiescence request to
+  completion ([§4.4](04_system-components.md#44-event--checkpoint-store)). The specification states no
+  per-request deadline for an individual `PUT` or `GET`.
+- **Exclusivity.** Per capability rather than per connection. An upload capability names one method, one
+  key, and one exact `Content-Length`; a restore capability names one method and one key. The tenant
+  prefix, the method, and the key are bound into the
+  signature on every backend, so a request that alters any of them is rejected by the object store before a
+  byte is written or read ([§13.2](13_security-model.md#132-network-isolation)). At most
+  `checkpointGrantWindow` capabilities are outstanding for an attempt at a time
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Above the transfer, the adapter's pod-level
+  operation lock serializes `Checkpoint` across the pod's slots
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The specification states no exclusivity constraint
+  on the connection itself and names no guard that enforces one.
+- **Degradation.** When upload retries are exhausted on a non-eviction checkpoint, the adapter resumes the
+  agent immediately, reports the retry-exhausted failure on the `Checkpoint` stream, and the gateway
+  increments `lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}`; the failed checkpoint is
+  discarded and the next scheduled checkpoint retries normally
+  ([§4.4](04_system-components.md#44-event--checkpoint-store)). An attempt that ends before every declared
+  byte is confirmed leaves a manifest row flagged `partial = true`, which is not a valid checkpoint; a
+  deadline fire retains its chunks as a recovery aid the resume path reassembles, while a stream
+  truncation, an adapter crash, a supersession, or a quota refusal leaves no resume candidate and the
+  gateway sweeps the prefix by listing it, which also reclaims a chunk written by a grant still outstanding
+  when the abort was observed ([§4.4](04_system-components.md#44-event--checkpoint-store)). When the object
+  store is unreachable on the eviction path and its retries are exhausted, the gateway falls back to
+  writing a minimal session-state record to Postgres and the `CheckpointStorageUnavailable` critical alert
+  fires; when the Postgres write is also exhausted the gateway logs the committed object keys, the chunk
+  encoding, and the error summary at `WARN`, so an operator can reconstruct the workspace by hand, before
+  entering the total-loss path ([§4.4](04_system-components.md#44-event--checkpoint-store)). On the restore path, a contiguity failure,
+  a fetch error on a non-final chunk, or a decode error away from the end of the stream aborts reassembly,
+  discards the staging directory, and falls back to the last successful full checkpoint
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry
+  policy for a restore `GET` that fails mid-stream.
