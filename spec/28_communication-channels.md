@@ -760,3 +760,37 @@ the connection it runs on. The runtime is the dialling participant on every chan
   does not state what the adapter does when one connector server fails to bind its socket while the
   others bind, and it does not state what happens to the channel when a connector's authorization is
   revoked mid-session.
+
+#### 28.5.4 Inter-replica
+
+This boundary carries the channels between two gateway replicas. The §28.3 channel register places no
+channel on this boundary, so this subsection carries no card. The §28.3 link register declares the
+connection such a channel would be carried on, `LNK-INTERREPLICA`, between a forwarding gateway replica
+and a session's coordinating gateway replica, dialled by the forwarding replica over gRPC, with one
+connection per forwarding replica to a session's coordinating replica. The specification does not state
+the address that connection is reached at (§28.3).
+
+```
+  forwarding replica                                 coordinating replica
+  +----------------------+                    +----------------------+
+  |                      |                    |                      |
+  |   gateway replica    |  LNK-INTERREPLICA  |   gateway replica    |
+  |                      |        =====>      |                      |
+  +----------------------+                    +----------------------+
+
+  LNK-INTERREPLICA: gRPC, dialled by the forwarding replica, at an address the
+  specification does not state. The §28.3 channel register places no channel on
+  this boundary, so this subsection carries no card.
+```
+
+The conversation the connection carries is the internal gRPC `ForwardMessage` RPC used for cross-replica
+message routing. A message carrying `delivery: immediate` that lands on a replica that is not the
+session's coordinator is forwarded to that session's coordinator, which is identified through the
+coordination lease. The coordinator executes the atomic resume-and-deliver sequence when the session
+still holds its pod, and the `suspended` to `resume_pending` transition with the message held in the
+session inbox when the pod has been released. When the coordinator is
+unreachable the forwarding replica falls back to inbox buffering with a `queued` delivery receipt status
+rather than dropping the message ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+[§10.1](10_gateway-internals.md#101-horizontal-scaling)). §28.3 records that this cross-replica message
+routing is not implemented and that the status is carried as an `ABSENT` claim-register row per §28.4.
+This subsection gains a card at the point the §28.3 channel register places a channel on this boundary.
