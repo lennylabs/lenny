@@ -199,4 +199,5 @@
     - [28.5.3 Intra-pod](28_communication-channels.md#2853-intra-pod)
     - [28.5.4 Inter-replica](28_communication-channels.md#2854-inter-replica)
     - [28.5.5 Pod-egress](28_communication-channels.md#2855-pod-egress)
+    - [28.5.6 Control-plane](28_communication-channels.md#2856-control-plane)
 

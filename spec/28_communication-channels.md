@@ -970,3 +970,101 @@ each of these two channels is permitted by a supplemental policy rather than by 
   discards the staging directory, and falls back to the last successful full checkpoint
   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry
   policy for a restore `GET` that fails mid-stream.
+
+#### 28.5.6 Control-plane
+
+This boundary carries the channels between a Lenny control-plane component and another control-plane
+surface, where the conversation is about the cluster's own admission and lifecycle decisions rather than
+about a session. The §28.3 channel register places one channel on this boundary, `CH-ADMISSION`, and it
+carries `None` in its Link column, so its own register row together with the endpoint stated in its card
+describes the connection. No agent pod participates on this boundary: the base egress policy
+`allow-pod-egress-base` permits an agent pod the gateway gRPC port and DNS alone, so an agent pod reaches
+neither the kube-apiserver nor the gateway's internal HTTP port
+([§13.2](13_security-model.md#132-network-isolation)). The Kubernetes API entries of the §28.3
+register-entry register, such as `REG-CLAIM`, are shared state rather than channels per §28.2, and their
+writer sets are the gateway replicas and the WarmPoolController leader
+([§4.6.3](04_system-components.md#463-crd-field-ownership-and-write-boundaries)), so they carry no card
+here.
+
+```
+  kube-apiserver                admission webhook                 gateway replica
+  +------------------+        +--------------------+        +--------------------+
+  |                  |        |                    |        |                    |
+  |  kube-apiserver  | =====> | lenny-drain-       | =====> |  gateway internal  |
+  |                  |        | readiness          |        |  HTTP port         |
+  +------------------+        +--------------------+        +--------------------+
+        admission callback,        CH-ADMISSION, gateway internalPort, default TCP 8080,
+        TCP 443                    GET /internal/drain-readiness
+
+  CH-ADMISSION: dialled by the admission webhook, permitted by the drain-readiness
+  sub-rule of the lenny-system admission-webhook egress policy.
+```
+
+**`CH-ADMISSION`**
+
+- **Link.** `None` (§28.3).
+- **Endpoint.** The gateway's internal HTTP port, `gateway.internalPort`, default TCP 8080, reached at the
+  drain readiness endpoint `GET /internal/drain-readiness`
+  ([§12.5](12_storage-architecture.md#125-artifact-store),
+  [§13.2](13_security-model.md#132-network-isolation)). The specification names this hop as the gateway's
+  internal HTTP port and states no transport protection for it; the TLS variant of the gateway's internal
+  admin surface, `gateway.internalTLSPort`, is stated for the `lenny-ops` flows rather than for this
+  callback ([§13.2](13_security-model.md#132-network-isolation)). The hop is permitted by a dedicated
+  egress sub-rule of the `lenny-system` admission-webhook NetworkPolicy that selects on the canonical
+  `lenny.dev/component: admission-webhook` label together with the additive
+  `lenny.dev/webhook-name: drain-readiness` label, which the `lenny-drain-readiness` Deployment alone
+  carries, so the sub-rule confines this reachability to that Deployment and no in-process validator
+  inherits it
+  ([§13.2](13_security-model.md#132-network-isolation),
+  [§17.2](17_deployment-topology.md#172-namespace-layout)).
+- **Axes.** Control plane, dialled by the admission webhook, message authority with the admission webhook,
+  HTTP transport (§28.3).
+- **Messages.** One `GET /internal/drain-readiness` request per webhook invocation, answered by
+  `HTTP 200 {"status": "ready", "minio": "healthy"}` when the drain may proceed and by
+  `HTTP 503 {"status": "not_ready", "minio": "unhealthy", "reason": "<error>"}` when it must be deferred
+  ([§12.5](12_storage-architecture.md#125-artifact-store)). The webhook's admission verdict is not carried
+  on this channel: the rejection travels back to the kube-apiserver on the admission callback that invoked
+  the webhook, with the message `"Node drain blocked: MinIO health check failed — defer drain until MinIO
+  is healthy (STR-006)"` ([§12.5](12_storage-architecture.md#125-artifact-store)).
+- **Preconditions.** The `lenny-drain-readiness` `ValidatingAdmissionWebhook` is rendered only when the
+  chart's `features.drainReadiness` flag is `true`, which defaults to `false`, and the feature is first
+  deployed in the checkpoint and resume phase of the build sequence
+  ([§17.2](17_deployment-topology.md#172-namespace-layout),
+  [§18.22](18_build-sequence.md#1822-phase-8--checkpointresume-drain-readiness-webhook)). The channel opens when the webhook fires,
+  which is on a `CREATE` operation against the `pods/eviction` resource in the agent namespaces, reaching
+  the webhook pods from the kube-apiserver on TCP 443 within `webhookIngressCIDR`
+  ([§12.5](12_storage-architecture.md#125-artifact-store),
+  [§13.2](13_security-model.md#132-network-isolation)). The check covers evictions that pass through the
+  Kubernetes eviction API, including operator-initiated drains and cluster-autoscaler scale-downs; a
+  spontaneous node failure, an OOM kill, or a preemption bypasses the eviction API and opens no channel
+  ([§12.5](12_storage-architecture.md#125-artifact-store)). An operator can bypass the check for an
+  emergency drain by annotating the node with `lenny.dev/drain-force: "true"` and providing justification,
+  in which case the webhook permits the drain and emits the `node.drain.forced` critical audit event
+  ([§12.5](12_storage-architecture.md#125-artifact-store)).
+- **Timing.** The MinIO liveness probe the endpoint performs, an S3 `HeadBucket` against the checkpoints
+  bucket, carries a 2 second timeout ([§12.5](12_storage-architecture.md#125-artifact-store)). The
+  specification states no request deadline, retry count, or interval for the callback itself. The webhook
+  invocation that triggers it is bounded by the admission webhook timeout, default 5 seconds and tunable
+  via `admissionWebhook.timeoutSeconds`
+  ([§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+- **Exclusivity.** The specification states no exclusivity constraint on the channel and names no guard
+  that enforces one. The nearest constraint runs the other way: the webhook Deployment carries the uniform
+  admission-plane high-availability contract of two replicas with a pod disruption budget of one available
+  pod, so more than one webhook pod may hold the channel at the same time
+  ([§17.2](17_deployment-topology.md#172-namespace-layout)).
+- **Degradation.** The webhook rejects the eviction when the endpoint answers `503` and when the endpoint
+  is unreachable, so both outcomes block the drain. Separately, the webhook is deployed with
+  `failurePolicy: Fail`, so webhook unavailability blocks the drain as well, which is stated as the
+  deliberate posture against silent data loss
+  ([§12.5](12_storage-architecture.md#125-artifact-store)). Outcomes are counted by
+  `lenny_drain_readiness_checks_total`, labeled by `outcome` with the values `allowed`, `blocked`, and
+  `forced` ([§12.5](12_storage-architecture.md#125-artifact-store)). A webhook unreachable for more than
+  five minutes raises the `DrainReadinessWebhookUnavailable` warning alert, whose stated consequence is
+  that node drains and rolling updates may stall
+  ([§16.5](16_observability.md#165-alerting-rules-and-slos)). When the feature flag is turned off after the
+  webhook has been deployed, the channel disappears together with the webhook and its per-webhook alert;
+  that drift is the case the `AdmissionPlaneFeatureFlagDowngrade` warning alert covers, and the flag
+  downgrade is prohibited and enforced at the chart, preflight, and runtime layers
+  ([§16.5](16_observability.md#165-alerting-rules-and-slos),
+  [§17.2](17_deployment-topology.md#172-namespace-layout)). The specification does not state a retry,
+  buffering, or resumption policy for a callback whose transport fails mid-response.
