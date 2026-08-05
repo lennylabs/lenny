@@ -196,4 +196,5 @@
   - [28.5 Contract cards](28_communication-channels.md#285-contract-cards)
     - [28.5.1 Gateway-to-pod](28_communication-channels.md#2851-gateway-to-pod)
     - [28.5.2 Pod-to-gateway](28_communication-channels.md#2852-pod-to-gateway)
+    - [28.5.3 Intra-pod](28_communication-channels.md#2853-intra-pod)
 

@@ -492,3 +492,271 @@ gateway replica consumes. The §28.3 channel register places one channel on this
   detected by the pod's gRPC transport within 15 seconds and puts the adapter into hold state
   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry or
   buffering policy for an event other than `AdapterTerminating` whose delivery fails.
+
+#### 28.5.3 Intra-pod
+
+This boundary carries the channels between the runtime adapter and the runtime binary inside one agent
+pod. The §28.3 channel register places these channels on this boundary, and each carries `None` in its
+Link column, so each channel's own register row together with the endpoint stated in its card describes
+the connection it runs on. The runtime is the dialling participant on every channel here.
+
+```
+  agent pod
+  +----------------------------------------------------------------------+
+  |                                                                      |
+  |  +------------------+                          +------------------+  |
+  |  |                  |   CH-MSGSOCK             |                  |  |
+  |  |                  |   CH-RUNTIMEOPS          |                  |  |
+  |  | runtime adapter  |                  <=====  |  runtime binary  |  |
+  |  |                  |   CH-MCP-PLATFORM        |                  |  |
+  |  |                  |   CH-MCP-CONNECTOR       |                  |  |
+  |  +------------------+                          +------------------+  |
+  |                                                                      |
+  +----------------------------------------------------------------------+
+
+  The runtime-ops and MCP channels run on abstract Unix sockets in the Linux
+  abstract namespace. The runtime dials every channel drawn above.
+```
+
+**`CH-MSGSOCK`**
+
+- **Link.** `None` (§28.3). The channel's own register row and the endpoint below describe the
+  connection.
+- **Endpoint.** §28.3 records the transport as Unix socket JSON Lines.
+  [§15.4](15_external-api-surface.md#154-runtime-adapter-specification) states that the adapter
+  communicates with the agent binary over stdin and stdout using newline-delimited JSON, and
+  [§4.7](04_system-components.md#47-runtime-adapter) states that the default sidecar deployment
+  communicates with the agent binary over abstract Unix sockets in the Linux abstract namespace, which
+  carry no filesystem path. The specification states no socket name for this channel. The transport
+  protections it states for the adapter-agent boundary are the `SO_PEERCRED` peer-UID check against the
+  expected agent UID and the manifest-nonce handshake presented as the first message on the socket. When
+  `Runtime.spec.requireSoPeercred` is `false` the peer check is unavailable and the adapter supplements
+  the static nonce with a per-connection 128-bit challenge whose `HMAC-SHA256` response it validates
+  ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
+- **Axes.** Content plane, dialled by the runtime, message authority on both sides, Unix socket JSON
+  Lines transport (§28.3).
+- **Messages.** Adapter to runtime: `message`, `tool_result`, `heartbeat`, and `shutdown`. Runtime to
+  adapter: `response`, `tool_call`, `heartbeat_ack`, `status`, and `set_tracing_context`
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). Each message is a single JSON
+  object terminated by `\n`. A `message` carries an `input` field holding a `MessagePart` array, and a
+  `response` carries its parts in an `output` array; `heartbeat` and `shutdown` use their own minimal
+  schemas and are not `MessageEnvelope` instances
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). Every `tool_result.id` matches
+  the `id` of a previously emitted `tool_call`, results may arrive in any order, and a `tool_result`
+  whose `id` is unknown is dropped and logged as a protocol error
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). On a pod whose pool sets
+  `sessionPolicy.maxConcurrentSessions > 1`, `message`, `tool_result`, `response`, and `tool_call` carry
+  a `slotId` assigned by the adapter, and on a pod that sets it to 1 no message carries `slotId`
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification),
+  [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+- **Preconditions.** The adapter writes the final adapter manifest and spawns the runtime binary before
+  it delivers the first `message`, with the runtime's connection to the MCP servers and the
+  `CH-RUNTIMEOPS` capability handshake in between
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The adapter is the protocol initiator: it sends
+  messages and tool-call instructions and receives responses, and the agent cannot initiate an arbitrary
+  request to the adapter ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Timing.** The adapter sends a periodic `heartbeat`, and a runtime that does not answer with
+  `heartbeat_ack` within 10 seconds is treated as hung and is sent SIGTERM
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not
+  state the heartbeat interval. A `shutdown` carries a `deadline_ms` by which the runtime must finish its
+  current work and exit, with no acknowledgement required; a runtime that has not exited by the deadline
+  is sent SIGTERM and then SIGKILL 10 seconds later
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). In nonce-only mode the
+  challenge response is due within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Exclusivity.** The specification states no exclusivity constraint on this channel and names no
+  enforcing guard. A pod serving more than one concurrent session multiplexes every slot's stream over
+  the one channel, keyed by `slotId`
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+- **Degradation.** Every outbound message is flushed before the runtime blocks on its next read; a
+  runtime that leaves the message in a buffer never reaches the adapter and the session hangs silently
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). When the agent process
+  crashes, the adapter detects the socket EOF, reports the failure to the gateway, and does not restart
+  the agent; retry is handled by the gateway at the session level
+  ([§4.7](04_system-components.md#47-runtime-adapter)). When the process exits non-zero without emitting
+  a `response`, the adapter synthesizes a `RUNTIME_CRASH` error from the exit code and stderr, and when a
+  `response` carries an `error` field the adapter maps the task to `failed` and populates
+  `TaskResult.error` from it ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The
+  specification does not state a buffering or replay policy for a message the adapter holds while the
+  runtime is absent.
+
+**`CH-RUNTIMEOPS`**
+
+- **Link.** `None` (§28.3). The channel's own register row and the endpoint below describe the
+  connection.
+- **Endpoint.** The abstract Unix socket `@lenny-runtime-ops`, advertised in the adapter manifest as
+  `runtimeOps.socket`. The runtime connects as a client and the adapter listens
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The protections stated for the socket are the
+  `SO_PEERCRED` peer-UID check against the expected agent UID and the manifest-nonce handshake, which the
+  runtime presents as the first message on the socket. When `Runtime.spec.requireSoPeercred` is `false`
+  the peer check is unavailable and the adapter supplements the static nonce with a per-connection
+  128-bit challenge whose `HMAC-SHA256` response it validates
+  ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
+- **Axes.** Control plane, dialled by the runtime, message authority on both sides, Unix socket JSON
+  Lines transport (§28.3).
+- **Messages.** Adapter to runtime: `lifecycle_capabilities`, `checkpoint_request`,
+  `checkpoint_complete`, `interrupt_request`, `credentials_rotated`, `terminate`, and
+  `deadline_approaching`. Runtime to adapter: `lifecycle_support`, `checkpoint_ready`,
+  `interrupt_acknowledged`, `credentials_acknowledged`, `llm_request_started`, and
+  `llm_request_completed`. Each message is a single JSON object terminated by `\n` with `type` as its
+  discriminator, and the field set of each is stated with the message-schema table in
+  [§4.7](04_system-components.md#47-runtime-adapter). An unknown message is silently ignored on both
+  sides ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Preconditions.** The channel is optional and is opened by Full-level runtimes; a runtime that does
+  not open it operates in fallback-only mode ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The runtime reads
+  `runtimeOps.socket` from the manifest the adapter writes before it spawns the runtime binary
+  ([§4.7](04_system-components.md#47-runtime-adapter)). `lifecycle_capabilities` is the first message
+  sent on channel open and the runtime replies with `lifecycle_support`, which is the handshake the
+  gateway reads to select the credential-rotation strategy for the session
+  ([§4.7](04_system-components.md#47-runtime-adapter)). Before it sends `credentials_rotated` the adapter
+  rewrites `/run/lenny/credentials.json` and waits for the in-flight LLM request gate to clear
+  ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Timing.** `checkpoint_request`, `interrupt_request`, `terminate`, and `deadline_approaching` each
+  carry a millisecond field that bounds the runtime's reply, its exit, or the remaining session time
+  ([§4.7](04_system-components.md#47-runtime-adapter)). Every checkpoint path is bounded by a 60-second
+  timeout measured from the initial quiescence request to completion
+  ([§4.4](04_system-components.md#44-event--checkpoint-store)). The adapter enforces a 60-second timeout
+  on `credentials_acknowledged`, starting when `credentials_rotated` is sent, and the old credential is
+  not returned to the pool until that reply arrives or the timeout elapses
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The in-flight gate before
+  `credentials_rotated` is unbounded for `rotationTrigger: proactive_renewal` and capped at 300 seconds
+  for every other trigger, and a wait beyond 60 seconds emits a
+  `credential_rotation_inflight_wait_long` warning event
+  ([§4.7](04_system-components.md#47-runtime-adapter)). In nonce-only mode the challenge response is due
+  within 500 ms ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Exclusivity.** The specification states no exclusivity constraint on this channel and names no
+  enforcing guard. It bounds the operations the frames carry rather than the channel: the adapter's
+  pod-level operation lock serializes `Checkpoint` and `Interrupt` across the pod's slots, so a
+  `checkpoint_request` and an `interrupt_request` are not outstanding at the same time
+  ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Degradation.** When `interrupt_acknowledged` does not arrive within the frame's `deadlineMs`, the
+  adapter transitions the session to `suspended` anyway and returns an `INTERRUPT_TIMEOUT` status in the
+  `Interrupt` RPC response; the session is not left in `running`
+  ([§4.7](04_system-components.md#47-runtime-adapter)). When `credentials_acknowledged` does not arrive
+  within 60 seconds, the adapter emits a `credential_rotation_timeout` warning event, increments
+  `lenny_credential_rotation_timeout_total`, and falls back to the Standard-level rotation path of
+  checkpoint, pod termination, replacement pod, `AssignCredentials`, and `Resume`
+  ([§4.7](04_system-components.md#47-runtime-adapter)). When the runtime has not exited by the
+  `terminate` frame's `deadlineMs` the adapter sends SIGTERM
+  ([§4.7](04_system-components.md#47-runtime-adapter)). When the peer is absent, because the runtime
+  never opened the channel, interrupt degrades to SIGTERM-based termination and the deadline warning and
+  the drain coordination signal are not delivered, at both Basic level and Standard level. At Standard
+  level a checkpoint degrades to a best-effort snapshot without a runtime pause and credential rotation
+  degrades to the checkpoint and restart path. At Basic level there is no checkpoint support: pod failure
+  loses the in-flight context, the gateway restarts the session from its last gateway-persisted state,
+  and credential rotation over the same restart path loses the in-flight context
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). When the runtime has sent
+  `checkpoint_ready` and no `checkpoint_complete` arrives within 60 seconds, the runtime autonomously
+  resumes normal operation and logs a `checkpoint_timeout` warning, which is the stated protection
+  against an adapter crash or a partition during the snapshot phase
+  ([§4.4](04_system-components.md#44-event--checkpoint-store)). The specification does not
+  state what the adapter does when the socket fails mid-session while the runtime process is still
+  running.
+
+**`CH-MCP-PLATFORM`**
+
+- **Link.** `None` (§28.3). §28.3 records the tool calls this channel carries as forwarded over
+  `LNK-GWCONTROL`.
+- **Endpoint.** An abstract Unix socket whose name the adapter manifest advertises under
+  `platformMcpServer.socket`, for example `@lenny-platform-mcp`
+  ([§4.7](04_system-components.md#47-runtime-adapter)). Intra-pod MCP servers use abstract Unix sockets
+  exclusively, and there is no stdio transport for intra-pod MCP
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The protection stated for the
+  connection is the manifest-nonce handshake: the runtime presents the manifest's `mcpNonce` as the
+  top-level `_lennyNonce` field of the MCP `initialize` request's `params` object, the adapter validates
+  it before any tool dispatch and strips it before the request reaches its MCP server implementation, and
+  a connection that does not present a valid nonce is closed immediately
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),
+  [§4.7](04_system-components.md#47-runtime-adapter)).
+- **Axes.** Content plane, dialled by the runtime, message authority with the runtime, JSON-RPC transport
+  (§28.3).
+- **Messages.** MCP. The runtime calls `tools/list` to discover the server's tools and `tools/call` to
+  invoke one ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The platform tool
+  set is `lenny/delegate_task`, `lenny/await_children`, `lenny/cancel_child`, `lenny/discover_agents`,
+  `lenny/output`, `lenny/request_elicitation`, `lenny/memory_write`, `lenny/memory_query`,
+  `lenny/request_input`, `lenny/send_message`, `lenny/get_task_tree`, and `lenny/set_tracing_context`
+  ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§9.1](09_mcp-integration.md#91-where-mcp-is-used)). Lease extension is an internal gateway operation
+  and is not exposed as a tool on this channel
+  ([§4.7](04_system-components.md#47-runtime-adapter), [§8.6](08_recursive-delegation.md#86-lease-extension)).
+  The servers speak MCP 2025-03-26 and also accept MCP 2024-11-05, and the adapter never advertises the
+  `sampling` MCP capability to the local server
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),
+  [§4.7](04_system-components.md#47-runtime-adapter)).
+- **Preconditions.** The adapter writes the manifest carrying `platformMcpServer.socket` and `mcpNonce`
+  before it spawns the runtime binary, and a Standard-level or Full-level runtime reads both from it
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The nonce is validated before any tool is
+  dispatched ([§4.7](04_system-components.md#47-runtime-adapter)). A Basic-level runtime has no platform
+  MCP server and reaches none of these tools
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
+- **Timing.** The specification states no deadline, retry count, or interval for the channel itself. It
+  states gateway-side bounds on individual tools this channel carries. `lenny/request_input` blocks until
+  an answer arrives and is bounded by `maxRequestInputWaitSeconds`, after which the gateway delivers a
+  `REQUEST_INPUT_TIMEOUT` tool-call error ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)). `lenny/request_elicitation` is
+  bounded by `maxElicitationWaitSeconds`, and each hop that forwards an elicitation is bounded by a
+  30-second forwarding timeout ([§9.2](09_mcp-integration.md#92-elicitation-chain),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+- **Exclusivity.** The specification states no exclusivity constraint on this channel and names no
+  enforcing guard. It scopes the connection per session through the `mcpNonce` the adapter regenerates
+  for each session and rewrites into the manifest before each session's runtime start
+  ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Degradation.** A connection that does not present a valid nonce is rejected before any tool is
+  dispatched, which is what prevents a pod-local process without manifest access from calling a
+  privileged platform tool ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). When the peer is absent,
+  because the runtime is Basic-level and connects to no MCP server, delegation, discovery, elicitation,
+  inter-session messaging, and blocking input requests are unavailable with no fallback, and the runtime
+  produces all of its output on `CH-MSGSOCK`
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The specification does not
+  state what the adapter does when the server fails to bind its socket or when the connection drops
+  mid-session.
+
+**`CH-MCP-CONNECTOR`**
+
+- **Link.** `None` (§28.3). §28.3 records the tool calls this channel carries as forwarded over
+  `LNK-GWCONTROL`.
+- **Endpoint.** One abstract Unix socket per authorized connector, whose name the adapter manifest
+  advertises in the `connectorServers` array alongside the connector's `id`, for example
+  `@lenny-connector-github` ([§4.7](04_system-components.md#47-runtime-adapter)). The transport rule and
+  the manifest-nonce handshake are the ones stated for every intra-pod MCP connection, and the adapter
+  requires the nonce on each connector server's connection separately
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels),
+  [§4.7](04_system-components.md#47-runtime-adapter)).
+- **Axes.** Content plane, dialled by the runtime, message authority with the runtime, JSON-RPC transport
+  (§28.3).
+- **Messages.** MCP. The runtime calls `tools/list` on each connector server to discover that connector's
+  tools and `tools/call` to invoke one
+  ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). Each authorized connector in
+  the session's delegation policy gets its own independent server, and no aggregated connector proxy
+  exists, because aggregation is not lossless under the MCP specification
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The call is served by the gateway acting as the
+  MCP client to the external tool, so the tokens the external tool requires never enter the pod
+  ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)).
+- **Preconditions.** The manifest carries a `connectorServers` array, which is empty when no connector is
+  authorized and is never absent, and the adapter writes it before it spawns the runtime binary
+  ([§4.7](04_system-components.md#47-runtime-adapter)). The set of authorized connectors is fixed by the
+  session's `DelegationPolicy`, and the gateway validates the `connector_id` of every external tool call
+  against the calling pod's effective policy before proxying it
+  ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc),
+  [§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)). The nonce is validated before any
+  tool is dispatched ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Timing.** The specification states no deadline, retry count, or interval for this channel.
+- **Exclusivity.** The specification states no exclusivity constraint on this channel and names no
+  enforcing guard. It scopes the connection per session through the same per-session `mcpNonce` that
+  scopes `CH-MCP-PLATFORM` ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Degradation.** A connection that does not present a valid nonce is rejected before any tool is
+  dispatched ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). A tool call that requires user
+  authorization is answered by an auth challenge the gateway turns into a URL-mode elicitation carried
+  hop by hop up to the client, after which the gateway stores the resulting tokens and later calls from
+  pods authorized for that connector use the gateway-held connector state
+  ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)). The specification does not state
+  what happens to the call that raised the challenge. When the peer is absent, because
+  the runtime is Basic-level and connects to no MCP server, no connector tool is reachable and there is
+  no fallback ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The specification
+  does not state what the adapter does when one connector server fails to bind its socket while the
+  others bind, and it does not state what happens to the channel when a connector's authorization is
+  revoked mid-session.
