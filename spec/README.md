@@ -204,4 +204,6 @@
   - [28.6 Exclusivity and concurrency model](28_communication-channels.md#286-exclusivity-and-concurrency-model)
   - [28.7 Wire-contract artifact register](28_communication-channels.md#287-wire-contract-artifact-register)
   - [28.8 Failure and degradation matrix](28_communication-channels.md#288-failure-and-degradation-matrix)
+- [29. Communication Scenarios](29_communication-scenarios.md)
+  - [29.1 Participants and trace notation](29_communication-scenarios.md#291-participants-and-trace-notation)
 
