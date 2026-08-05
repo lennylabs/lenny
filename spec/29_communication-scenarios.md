@@ -8,9 +8,9 @@ participants without reassembling it from the cards. §29.1 states the participa
 fixes the notation every trace uses. The scenario traces follow in the subsections below it.
 
 This section also carries the off-holder matrix, keyed by session-scoped client route, stating what happens
-when the replica serving that route is not the replica holding the session's pod control stream. The
-client-to-gateway session REST surface is not a channel in the §28 register, so no §28 card owns it, and
-the matrix is the normative statement of off-holder behaviour for that surface. Its `delivery: immediate`
+when the replica serving that route is not the replica holding the session's pod control stream
+`CH-ATTACH`. The client-to-gateway session REST surface is not a channel in the §28 register, so no §28
+card owns it, and the matrix is the normative statement of off-holder behaviour for that surface. Its `delivery: immediate`
 resume rows are the exception: they restate the forwarding and inbox-buffering requirement §7.2 states and
 cite §7.2 as the section that owns it.
 
@@ -113,7 +113,14 @@ This trace follows one session from the client request that creates it to the po
 running inside its pod and able to receive a message. It covers a session-mode pool
 ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)); service mode
 creates no claim, materializes no workspace, and is outside this trace. The steps are numbered and written
-in the form §29.1 fixes.
+in the form §29.1 fixes. The trace follows the route that creates the session with `POST /v1/sessions` and
+then calls finalize and start separately. Two other entry points reach the same pod-facing sequence and are
+outside this trace: the one-call convenience route `POST /v1/sessions/start`
+([§15.1](15_external-api-surface.md#151-rest-api)), and the delegated-child materialization of
+[§8.2](08_recursive-delegation.md#82-delegation-mechanism). A delegated child is committed to `created`
+before its warm pod is claimed and claims its pod during the §8.2 materialization step
+([§15.1](15_external-api-surface.md#151-rest-api)), so the order in which steps 6 through 9 claim the pod
+and then persist the session row is the top-level order alone.
 
 **Preconditions.** The pod the session is dispatched onto is already in the warm pool. Kubernetes created
 it, its adapter opened the `LNK-GWCONTROL` connection to a gateway replica, wrote a placeholder manifest,
@@ -223,7 +230,7 @@ state that the READY signal is one of them.
     [§4.7](04_system-components.md#47-runtime-adapter)). The §28.3 channel register places the channels
     `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, and `CH-PODHEALTH` on the gateway-to-pod
     boundary (§28.5.1) and carries no entry for the workspace and session-start RPCs of steps 15, 16, 17,
-    19, and 21, so each of those steps names the internal control API in place of a channel identifier and
+    19, 22, and 23, so each of those steps names the internal control API in place of a channel identifier and
     a boundary value, per §29.1.
 
 16. `gateway` → `adapter`, no register entry, the internal control API
@@ -254,24 +261,29 @@ state that the READY signal is one of them.
     ([§4.7](04_system-components.md#47-runtime-adapter),
     [§4.9](04_system-components.md#49-credential-leasing-service)).
 
-21. On a pod-warm pod: `gateway` → `adapter`, no register entry, the internal control API
+21. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
+    `POST /v1/sessions/{id}/start`, which the endpoint's precondition table admits in `ready` and which
+    moves the session through `starting` to `running`
+    ([§7.1](07_session-lifecycle.md#71-normal-flow), [§15.1](15_external-api-surface.md#151-rest-api)).
+
+22. On a pod-warm pod: `gateway` → `adapter`, no register entry, the internal control API
     ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The
     `StartSession` RPC starts the agent runtime with the final `cwd`
     ([§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-22. On an SDK-warm pod: `gateway` → `adapter`, no register entry, the internal control API
-    ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). Step 21 does not occur,
+23. On an SDK-warm pod: `gateway` → `adapter`, no register entry, the internal control API
+    ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). Step 22 does not occur,
     because the session is already connected; the gateway sends the `ConfigureWorkspace` RPC to point the
     pre-connected session at the finalized `cwd`, with a 10s timeout and idempotent semantics for the same
     path. On failure the gateway calls `DemoteSDK` with a 5s timeout and falls back to pod-warm
     materialization, and when `DemoteSDK` also fails the pod transitions to `failed` and a replacement is
     claimed ([§7.1](07_session-lifecycle.md#71-normal-flow),
-    [§4.7](04_system-components.md#47-runtime-adapter)). Steps 23 through 28 are the pod-warm startup
+    [§4.7](04_system-components.md#47-runtime-adapter)). Steps 24 through 29 are the pod-warm startup
     sequence for `type: agent` runtimes and are stated for that path
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-23. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter writes the final
+24. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter writes the final
     manifest, whose connector server entries are now known from the assigned leases
     ([§4.7](04_system-components.md#47-runtime-adapter)). The manifest
     advertises `runtimeOps.socket` for `CH-RUNTIMEOPS`, `platformMcpServer.socket` and `mcpNonce` for
@@ -279,10 +291,10 @@ state that the READY signal is one of them.
     connector is authorized and is never absent (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-24. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter spawns the runtime
+25. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter spawns the runtime
     binary ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-25a. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime: `runtime` → `adapter`,
+26a. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime: `runtime` → `adapter`,
     `CH-MCP-PLATFORM`, `intra-pod`. The runtime reads the manifest and connects to the platform MCP
     server, presenting the manifest's
     `mcpNonce` as the top-level `_lennyNonce` field of the `initialize` request's `params` object; the
@@ -292,13 +304,13 @@ state that the READY signal is one of them.
     to no MCP server and this step does not occur
     ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-25b. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime and at least one
+26b. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime and at least one
     authorized connector: `runtime` → `adapter`, `CH-MCP-CONNECTOR`, `intra-pod`. The runtime connects to
     each authorized connector's own MCP server, presenting the nonce on each connection separately
     (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-25c. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
+26c. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
     `intra-pod`. The runtime opens the channel on the abstract Unix socket `@lenny-runtime-ops` the
     manifest advertises, presenting the
     manifest nonce as the first message on the socket; the adapter checks the peer UID with `SO_PEERCRED`
@@ -306,38 +318,38 @@ state that the READY signal is one of them.
     not open the channel operates in fallback-only mode (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)). The specification states steps
-    25a, 25b, and 25c as one startup step and does not fix their relative order
+    26a, 26b, and 26c as one startup step and does not fix their relative order
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-26. On a pod-warm pod with a Full-level `type: agent` runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`,
+27. On a pod-warm pod with a Full-level `type: agent` runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`,
     `intra-pod`. The adapter sends `lifecycle_capabilities` as the first message on channel open
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-27. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
+28. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
     `intra-pod`. The runtime replies with `lifecycle_support`, which is the handshake the gateway reads
     to select the credential-rotation
     strategy for the session ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-28. On a pod-warm pod with a `type: agent` runtime: `unstated`. The specification does not state when the
+29. On a pod-warm pod with a `type: agent` runtime: `unstated`. The specification does not state when the
     runtime opens `CH-MSGSOCK`. §28.3 records the
     runtime as the dialling participant on that channel and §28.5.3 states the transport protections for
     the adapter-agent boundary, while the startup sequence names the manifest read, the MCP connections,
     and the `CH-RUNTIMEOPS` open without naming this channel's open
     ([§4.7](04_system-components.md#47-runtime-adapter), §28.3).
 
-29. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
+30. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
     `AttachSession` with the session identifier
     ([§7.1](07_session-lifecycle.md#71-normal-flow), [§15.1](15_external-api-surface.md#151-rest-api)).
     §7.1 places this call after session start and states no ordering between it and the adapter's own
-    startup sequence of steps 23 through 28.
+    startup sequence of steps 24 through 29.
 
-30. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The `Attach` RPC connects the client stream to
+31. `gateway` → `adapter`, `CH-ATTACH`, `gateway-to-pod`. The `Attach` RPC connects the client stream to
     the running session over the `LNK-POD-GRPC` connection, and the gateway proxies the bidirectional
     stream between the client and the pod (§28.5.1 `CH-ATTACH`,
     [§7.1](07_session-lifecycle.md#71-normal-flow),
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-31. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
+32. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
     the last step of the startup sequence and the point at which the agent is running and able to receive
     a message. The preconditions the §28.5.3 `CH-MSGSOCK` card states for that delivery are met at this
     point on a pod-warm pod with a `type: agent` runtime: the adapter has written the final manifest and
@@ -490,8 +502,7 @@ holding the coordination lease `REG-COORDLEASE` (§28.3,
 [§10.1](10_gateway-internals.md#101-horizontal-scaling)). The matrix below states the required behaviour of
 the serving replica in that case for the session-scoped client routes its rows name, and it carries one row
 per route and session state where a route has more than one off-holder outcome. A session-scoped route that
-no row names and that the store-only row does not cover, because it touches the pod control stream or the
-session inbox, is a condition this matrix does not state. The client-to-gateway session
+no row names and that the store-only row does not cover is a condition this matrix does not state. The client-to-gateway session
 REST surface is not a channel in the §28 register, so no §28 card owns it and this matrix is the normative
 statement of its off-holder behaviour. The matrix applies to the message-send trace above and to every
 other trace in this section that begins on that surface.
@@ -507,13 +518,15 @@ coordinator-performed effect without naming a carrier for them. A serving replic
 did not reach the pod, and never writes a session state transition that depends on an effect at the pod it
 did not perform. When the coordinator is unreachable on one of those rows, a message send falls back to
 inbox buffering with a `queued` delivery receipt so the message is not dropped, and every other forwarding
-row fails closed with `TARGET_NOT_READY`, HTTP 409. This section states that code for the condition of an
+row fails closed with `TARGET_NOT_READY`, HTTP 409, and the typed refusal carries the identity of the
+session's coordinating replica. This section states that code for the condition of an
 unreachable coordinator; the pre-running condition §15.1 states for the same code is a separate condition.
 The rows whose outcome is not a forward are stated by the rows themselves: the
 `POST /v1/sessions/{id}/start` row addresses a state for which the specification establishes no holder, so
-the serving replica performs the start itself, the events streaming row is served
-from the shared session-event relay, the events JSON row records that the specification does not state the
-off-holder outcome for that form, the logs streaming row is served from the Postgres `EventStore`, the
+the serving replica performs the start itself, the `POST /v1/sessions/{id}/finalize` row addresses
+`created` for the same reason, the events streaming row is served
+from the shared session-event relay, the events JSON row and the interaction-resolution row record that the specification does not state the
+off-holder outcome for those routes, the logs streaming row is served from the Postgres `EventStore`, the
 built-in adapter row addresses no pre-existing session and so has no holder to forward to, and the
 store-only row requires no forwarding at all.
 
@@ -526,7 +539,9 @@ store-only row requires no forwarding at all.
 | `POST /v1/sessions/{id}/terminate` | `starting`, `running`, `suspended`, `resume_pending`, and `awaiting_client_action`, the non-terminal states for which the specification establishes a coordinating replica holding `REG-COORDLEASE` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), §28.3) | Forward to the coordinator, which performs the termination sequence [§15.1](15_external-api-surface.md#151-rest-api) states for the session's current state and writes `completed`. The serving replica does not write the terminal state itself and does not report a termination outcome for a sequence it did not perform. On an unreachable coordinator it fails closed. In the remaining non-terminal states the route accepts, which are `created`, `finalizing`, and `ready`, the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the specification establishes no coordinating replica for those states and no off-holder condition arises there | §29 |
 | `DELETE /v1/sessions/{id}` | The same states as `POST /v1/sessions/{id}/terminate` | The same requirement as `POST /v1/sessions/{id}/terminate`, with the terminal state `cancelled` | §29 |
 | `POST /v1/sessions/{id}/resume` | `awaiting_client_action` | Forward to the coordinator, which performs the restore and the delegation-tree recovery traversal. The serving replica does not run the traversal, because its view of a descendant held by another replica is not evidence that the descendant is orphaned. On an unreachable coordinator it fails closed | §29 |
-| `POST /v1/sessions/{id}/start` | `ready` | No forwarding is required. In `ready` the specification establishes no holder, because the session's pod control stream `CH-ATTACH` is not open and the coordination lease `REG-COORDLEASE` has not been acquired (§28.3, §28.5.1), so the serving replica performs the start and becomes the session's coordinating replica | §29 |
+| `POST /v1/sessions/{id}/start` | `ready` | No forwarding is required. In `ready` the specification establishes no holder, because the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the serving replica performs the start | §29 |
+| `POST /v1/sessions/{id}/finalize` | `created`, the only state the endpoint's precondition table admits ([§15.1](15_external-api-surface.md#151-rest-api)) | No forwarding is required. In `created` the specification establishes no holder, because the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the serving replica resolves the pod the session is bound to from the session row's `pod_assignment` column ([§4.2](04_system-components.md#42-session-manager), [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)) and performs the workspace, setup, and credential-assignment sequence of §29.2 steps 15 through 20 against that pod itself | §29 |
+| `POST /v1/sessions/{id}/tool-use/{toolCallId}/approve`, `POST /v1/sessions/{id}/tool-use/{toolCallId}/deny`, `POST /v1/sessions/{id}/elicitations/{elicitationId}/respond`, and `POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss` | Any non-terminal state | A client reattaching after a coordinator handoff receives pending elicitation state re-synthesized from durable Postgres state ([§15.2.1](15_external-api-surface.md#1521-restmcp-consistency-contract), [§10.4](10_gateway-internals.md#104-gateway-reliability)). What an off-holder replica does with these four routes, whether it must forward the resolution to the coordinator for the call the pod is blocked on to be resolved, and what it answers when the coordinator is unreachable, is a condition the specification does not state | §29 |
 | `POST /v1/sessions/{id}/upload` | `running` | Forward to the coordinator, which performs the mid-session upload against the pod ([§7.4](07_session-lifecycle.md#74-upload-safety)). On an unreachable coordinator it fails closed with `TARGET_NOT_READY`, HTTP 409, whose code and status [§15.1](15_external-api-surface.md#151-rest-api) states and whose replica condition §29 states | §29 |
 | `GET /v1/sessions/{id}/events`, streaming form | Any non-terminal state | Serve both the backlog and the live tail from the shared session-event relay `CH-EVENTRELAY`, which the serving replica reads directly, so no forwarding to the coordinator is required (§28.5.7, [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). What a reader receives when the relay is absent, or when the requested entry is absent from the relay stream, is a condition the specification does not state (§28.5.7, §28.8) | §29 |
 | `GET /v1/sessions/{id}/events`, `Accept: application/json` form | Any non-terminal state | This form returns the paginated list envelope `{items, cursor, hasMore}` over the retained event replay buffer ([§15.1](15_external-api-surface.md#151-rest-api)), and that buffer is per-session and held in process by the session's coordinating replica ([§10.4](10_gateway-internals.md#104-gateway-reliability)), so a serving replica that is not the holder retains no entries for the session. What an off-holder replica returns for this form, and whether it forwards the request to the coordinator, is a condition the specification does not state | §29 |
@@ -534,7 +549,18 @@ store-only row requires no forwarding at all.
 | `POST /v1/chat/completions` and `POST /v1/responses` | No pre-existing session is addressed | No forwarding is required. Each call runs an implicit single-shot session that the serving replica creates, claims a warm pod for, dispatches, and releases within the call ([§15](15_external-api-surface.md#15-external-api-surface)), so the serving replica is the coordinating replica by construction and no off-holder condition arises. A creation or claim failure fails closed as `SESSION_CREATION_FAILED` or `CREDENTIAL_POOL_EXHAUSTED`, HTTP 503 ([§15.1](15_external-api-surface.md#151-rest-api)), rendered into the adapter's native error envelope (§15); no inbox buffering and no `queued` receipt applies | §29 |
 | The MCP tool surface, `lenny/send_message` carrying `delivery: immediate` | `suspended` | The same requirement as the `suspended` message-send row, which §7.2 states for both of its message sources | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
 | The MCP tool surface, every other session-addressed tool call | Any non-terminal state | The requirement stated for the REST route the tool maps onto ([§15.2](15_external-api-surface.md#152-mcp-api)) | §29 |
-| Every session-scoped route that reads or writes the `SessionStore` session row, the `ArtifactStore`, or the `EventStore` alone ([§12.2](12_storage-architecture.md#122-storage-roles)) | Any state | No forwarding is required, because the route touches neither the pod control stream nor the session inbox and every replica reads the same stores | §29 |
+| Every session-scoped route that reads or writes the `SessionStore`, the `ArtifactStore`, or the `EventStore` alone ([§12.2](12_storage-architecture.md#122-storage-roles)) | Any state | No forwarding is required, because the route touches neither the pod control stream `CH-ATTACH` nor the session inbox and every replica reads the same stores | §29 |
+
+Two requirements govern the paths that write a session terminal without a client route. The orphan session
+reconciler runs on a single replica under the leader election its reconcile loop is gated by, so two
+replicas do not both force a session terminal for the same terminated pod
+([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The session-terminal callback the gateway
+invokes when a session reaches a terminal state (the `callbackUrl` webhook the gateway POSTs on that
+transition, [§14](14_workspace-plan-schema.md)) is invoked once per terminal transition: a second terminal
+write for a session already in that terminal state produces no second callback invocation and no further
+effect. How a single invocation is retried, and what happens when its retry attempts are exhausted, is a
+separate mechanism, which
+[§14](14_workspace-plan-schema.md) states.
 
 A per-RPC statement of what an off-holder replica does with a gateway-to-pod operational request is card
 content under §28.5.1 rather than a key of this matrix, because keying the matrix by RPC leaves no row for
@@ -735,9 +761,10 @@ point at which the session row records it. Every trigger converges on the one ga
 `CH-CHECKPOINT` stream: the periodic schedule that enforces the checkpoint freshness requirement, the
 eviction path a terminating agent pod raises, the drain path a `CH-BARRIER` message opens, and the
 pre-scale-down path ([§4.4](04_system-components.md#44-event--checkpoint-store),
-[§10.1](10_gateway-internals.md#101-horizontal-scaling)). The trigger selects the retry budget, the
-abort disposition, and whether the agent is resumed afterwards; every step below holds for all of them
-unless it names a trigger. The steps are numbered and written in the form §29.1 fixes.
+[§10.1](10_gateway-internals.md#101-horizontal-scaling)). The trigger selects the abort disposition, while
+the upload-retry budget and whether the agent is resumed afterwards turn on whether the pod is terminating
+on the preStop eviction path of §29.9; every step below holds for all of them unless it names a trigger or
+that path. The steps are numbered and written in the form §29.1 fixes.
 
 The two stores this trace writes carry different roles. The chunk bytes are written to the object store,
 which is where the `ArtifactStore` role places checkpoints and workspace snapshots
@@ -883,8 +910,11 @@ and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT
     chunk against the capability, replaying the signed header values verbatim on the SigV4 backends. The
     pod holds no object-store credential and no `LIST`, `DELETE`, or multipart capability. On the
     non-eviction triggers a failed upload is retried with exponential backoff from 200ms at factor 2 for
-    up to about 5 seconds in total; on the eviction trigger the budget is 500ms at factor 2, capped at 5s
-    per attempt, for up to 30 seconds in total. A retry that outlives its grant's expiry requests a fresh
+    up to about 5 seconds in total; on the preStop eviction path of §29.9 the budget is 500ms at factor 2,
+    capped at 5s per attempt, for up to 30 seconds in total
+    ([§4.4](04_system-components.md#44-event--checkpoint-store)). The barrier-driven drain checkpoint of
+    §29.7 carries the eviction trigger on a pod that is not terminating, so it falls under neither of those
+    two budgets, and the specification does not state an upload-retry budget for it. A retry that outlives its grant's expiry requests a fresh
     grant for the same chunk index on the open stream, which the gateway re-signs at the same key and
     length (§28.5.5 `CH-OBJSTORE`, [§4.4](04_system-components.md#44-event--checkpoint-store),
     [§13.2](13_security-model.md#132-network-isolation)).
@@ -943,13 +973,13 @@ and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT
     [§4.4](04_system-components.md#44-event--checkpoint-store)). A Basic-level or Standard-level runtime
     opens no `CH-RUNTIMEOPS` channel, so this step does not occur and there is no runtime to resume,
     because step 8 did not pause it
-    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3). On the eviction
-    trigger the pod is terminating and there is no agent to resume
+    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3). On the preStop
+    eviction path of §29.9 the pod is terminating and there is no agent to resume
     ([§4.4](04_system-components.md#44-event--checkpoint-store)).
 
-19. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
-    ([§12.2](12_storage-architecture.md#122-storage-roles)). On a checkpoint that finalised
-    `partial = false`, the gateway updates `last_successful_checkpoint_at` on the session record, which it
+19. On a checkpoint that finalised `partial = false`: `gateway` → `postgres`, no register entry, the
+    Postgres `SessionStore` role ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway
+    updates `last_successful_checkpoint_at` on the session record, which it
     tracks for every successful checkpoint regardless of trigger and against which the freshness
     requirement of step 1 is evaluated ([§4.4](04_system-components.md#44-event--checkpoint-store)).
 
@@ -1162,7 +1192,9 @@ leave a 30-second margin, with the per-tier value fixed in §17.8
    `Checkpoint` stream for each quiesced session concurrently with the in-flight `CheckpointBarrier` RPC
    to that session, drives the upload against the quiesced pod inside the
    `checkpointBarrierAckTimeoutSeconds` deadline, and finalises the manifest row. The capture the stream
-   carries is traced in §29.5, and the drain driver stamps the eviction trigger on the finalisation
+   carries is traced in §29.5, and the drain driver stamps the eviction trigger on the finalisation's
+   trigger label. The pod is not terminating on this path, so the trigger-conditioned statements §29.5
+   makes about a terminating pod do not hold here and the adapter releases quiescence per step 7
    (§28.5.1 `CH-CHECKPOINT`, [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
 
 7. `adapter` → `gateway`, `CH-ADAPTEREVENTS`, `pod-to-gateway`. The adapter sends
@@ -1375,7 +1407,7 @@ and be persisted to object storage
 5. `agent pod`, `internal`. The pod terminates
    ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
 
-6. `gateway`, `internal`. For a session whose pod was checkpointed, the session retry mechanism transitions
+6. On a session whose pod was checkpointed: `gateway`, `internal`. The session retry mechanism transitions
    the session to `resume_pending` and rebuilds it onto a replacement pod under the session's retry policy,
    which §29.6 names as an entry point it does not trace, reaching the same restore §29.6 traces from the
    client-driven `POST /v1/sessions/{id}/resume` call
