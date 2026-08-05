@@ -56,6 +56,11 @@ suffix, as `4a` and `4b`, and the step text states that their order is unfixed. 
 under a condition is numbered in sequence and opens with the condition. Numbering restarts at 1 in each
 scenario, so a step is cited as the scenario's subsection number together with its step number.
 
+**Conditional steps.** A step that holds only under a condition states that condition in full in its own
+text. No step inherits a condition from another step: a step that would otherwise stand under a condition
+an earlier step introduced restates that condition rather than relying on its position in the sequence. A
+reader of one step alone can therefore tell every condition under which that step holds.
+
 **Step form.** A step that carries a message between two participants is written as the originating
 participant, the receiving participant, the identifier of the channel the message is carried on, and the
 boundary value that channel carries in the §28.3 channel register, followed by a sentence stating what the
@@ -138,14 +143,16 @@ state that the READY signal is one of them.
    ([§7.1](07_session-lifecycle.md#71-normal-flow),
    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
 
-6. `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway acquires the pod by creating a
+6. On a pod not held for the same tenant under a `reserved` claim within its hold window: `gateway` →
+   `control plane`, `REG-CLAIM`, Kubernetes API. The gateway acquires the pod by creating a
    `SandboxClaim` with the deterministic name `claim-<podName>`, carrying `sandboxRef` and `tenantId` in
    its spec. Exactly one replica's `CREATE` succeeds; another receives an `AlreadyExists` conflict or an
    admission rejection from the `lenny-sandboxclaim-guard` webhook, re-reads the idle inventory, and
    retries with a different pod ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
    §28.3).
 
-7. `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway writes the first binding state,
+7. `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. On a pod not held for the same tenant under a
+   `reserved` claim within its hold window, the gateway writes the first binding state,
    `bound`, as a status patch, because the status subresource is not writable by the create call
    ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). When the pod is instead
    held for the same tenant under a `reserved` claim within its hold window, this step is a
@@ -259,18 +266,20 @@ state that the READY signal is one of them.
     sequence for `type: agent` runtimes and are stated for that path
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-23. `adapter`, `internal`. The adapter writes the final manifest, whose connector server entries are now
-    known from the assigned leases ([§4.7](04_system-components.md#47-runtime-adapter)). The manifest
+23. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter writes the final
+    manifest, whose connector server entries are now known from the assigned leases
+    ([§4.7](04_system-components.md#47-runtime-adapter)). The manifest
     advertises `runtimeOps.socket` for `CH-RUNTIMEOPS`, `platformMcpServer.socket` and `mcpNonce` for
     `CH-MCP-PLATFORM`, and the `connectorServers` array for `CH-MCP-CONNECTOR`, which is empty when no
     connector is authorized and is never absent (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter)).
 
-24. `adapter`, `internal`. The adapter spawns the runtime binary
-    ([§4.7](04_system-components.md#47-runtime-adapter)).
+24. On a pod-warm pod with a `type: agent` runtime: `adapter`, `internal`. The adapter spawns the runtime
+    binary ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-25a. On a Standard-level or Full-level runtime: `runtime` → `adapter`, `CH-MCP-PLATFORM`, `intra-pod`. The
-    runtime reads the manifest and connects to the platform MCP server, presenting the manifest's
+25a. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime: `runtime` → `adapter`,
+    `CH-MCP-PLATFORM`, `intra-pod`. The runtime reads the manifest and connects to the platform MCP
+    server, presenting the manifest's
     `mcpNonce` as the top-level `_lennyNonce` field of the `initialize` request's `params` object; the
     adapter validates it before any tool dispatch and closes a connection that does not present a valid
     nonce (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
@@ -278,14 +287,15 @@ state that the READY signal is one of them.
     to no MCP server and this step does not occur
     ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-25b. On a Standard-level or Full-level runtime with at least one authorized connector: `runtime` →
-    `adapter`, `CH-MCP-CONNECTOR`, `intra-pod`. The runtime connects to each authorized connector's own
-    MCP server, presenting the nonce on each connection separately (§28.5.3,
-    [§4.7](04_system-components.md#47-runtime-adapter),
+25b. On a pod-warm pod with a Standard-level or Full-level `type: agent` runtime and at least one
+    authorized connector: `runtime` → `adapter`, `CH-MCP-CONNECTOR`, `intra-pod`. The runtime connects to
+    each authorized connector's own MCP server, presenting the nonce on each connection separately
+    (§28.5.3, [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels)).
 
-25c. On a Full-level runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`, `intra-pod`. The runtime opens the
-    channel on the abstract Unix socket `@lenny-runtime-ops` the manifest advertises, presenting the
+25c. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
+    `intra-pod`. The runtime opens the channel on the abstract Unix socket `@lenny-runtime-ops` the
+    manifest advertises, presenting the
     manifest nonce as the first message on the socket; the adapter checks the peer UID with `SO_PEERCRED`
     against the expected agent UID and validates the nonce. A runtime that does
     not open the channel operates in fallback-only mode (§28.5.3,
@@ -294,15 +304,17 @@ state that the READY signal is one of them.
     25a, 25b, and 25c as one startup step and does not fix their relative order
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-26. On a Full-level runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`, `intra-pod`. The adapter sends
-    `lifecycle_capabilities` as the first message on channel open
+26. On a pod-warm pod with a Full-level `type: agent` runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`,
+    `intra-pod`. The adapter sends `lifecycle_capabilities` as the first message on channel open
     ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-27. On a Full-level runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`, `intra-pod`. The runtime replies with
-    `lifecycle_support`, which is the handshake the gateway reads to select the credential-rotation
+27. On a pod-warm pod with a Full-level `type: agent` runtime: `runtime` → `adapter`, `CH-RUNTIMEOPS`,
+    `intra-pod`. The runtime replies with `lifecycle_support`, which is the handshake the gateway reads
+    to select the credential-rotation
     strategy for the session ([§4.7](04_system-components.md#47-runtime-adapter)).
 
-28. `unstated`. The specification does not state when the runtime opens `CH-MSGSOCK`. §28.3 records the
+28. On a pod-warm pod with a `type: agent` runtime: `unstated`. The specification does not state when the
+    runtime opens `CH-MSGSOCK`. §28.3 records the
     runtime as the dialling participant on that channel and §28.5.3 states the transport protections for
     the adapter-agent boundary, while the startup sequence names the manifest read, the MCP connections,
     and the `CH-RUNTIMEOPS` open without naming this channel's open
@@ -323,7 +335,11 @@ state that the READY signal is one of them.
 31. `adapter` → `runtime`, `CH-MSGSOCK`, `intra-pod`. The adapter delivers the first `message`, which is
     the last step of the startup sequence and the point at which the agent is running and able to receive
     a message. The preconditions the §28.5.3 `CH-MSGSOCK` card states for that delivery are met at this
-    point: the adapter has written the final manifest and spawned the runtime binary, with the runtime's
-    connection to the MCP servers and the `CH-RUNTIMEOPS` capability handshake in between (§28.5.3,
+    point on a pod-warm pod with a `type: agent` runtime: the adapter has written the final manifest and
+    spawned the runtime binary, with the runtime's connection to the MCP servers and the
+    `CH-RUNTIMEOPS` capability handshake in between. A Basic-level runtime connects to no MCP server and
+    a runtime below Full level opens no `CH-RUNTIMEOPS` channel. On an SDK-warm pod that startup
+    sequence does not occur, because the session is already
+    connected and the gateway has pointed it at the finalized `cwd` (§28.5.3,
     [§4.7](04_system-components.md#47-runtime-adapter),
     [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
