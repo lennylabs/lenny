@@ -211,4 +211,5 @@
   - [29.4 Interrupt, terminate, and delete](29_communication-scenarios.md#294-interrupt-terminate-and-delete)
   - [29.5 Checkpoint capture](29_communication-scenarios.md#295-checkpoint-capture)
   - [29.6 Restore and resume](29_communication-scenarios.md#296-restore-and-resume)
+  - [29.7 Gateway drain](29_communication-scenarios.md#297-gateway-drain)
 

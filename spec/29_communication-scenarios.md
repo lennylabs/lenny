@@ -1039,3 +1039,103 @@ stamp on every gateway-to-pod RPC and rejects a stale one
     immediately after `session.resumed`, once per parent resume
     ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
     [§8.10](08_recursive-delegation.md#810-delegation-tree-recovery)).
+
+### 29.7 Gateway drain
+
+This trace follows one gateway replica's graceful drain, from the preStop hook that starts the staged
+drain sequence to the SIGKILL deadline that ends it. It traces the path on which every pod the replica
+coordinates acknowledges its barrier within the deadline. A pod that does not acknowledge within
+`checkpointBarrierAckTimeoutSeconds` is carried by the BarrierAck-timeout partial-capture path, which
+finalises the session's active partial-manifest intent row as `manifest_reason = "timeout"` when that row
+carries committed chunks and otherwise falls back to the session's last successful periodic checkpoint
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.1 `CH-BARRIER`). A barrier addressed to a
+session this replica no longer coordinates is rejected by the pod as a generation-stale RPC under the
+fencing rules ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Those outcomes are named here and
+are not traced, and the acquisition of the drained replica's sessions by a peer replica is the coordinator
+handoff protocol ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) rather than part of this trace.
+The agent pod's own termination is a separate path, on which the pod signals its coordinating replica and
+that replica drives the eviction checkpoint
+([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.5.2 `CH-ADAPTEREVENTS`). The
+steps are numbered and written in the form §29.1 fixes.
+
+**Preconditions.** The replica coordinates one or more sessions, holding each session's coordination lease
+`REG-COORDLEASE` and appearing as the `coordinator_replica` of that session's `REG-COORDMIRROR` row
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). The gateway pod's
+`terminationGracePeriodSeconds` satisfies
+`max_tiered_checkpoint_cap + checkpointBarrierAckTimeoutSeconds + 30`, which with the defaults is 210
+seconds, and the Helm chart sets the gateway pod's `terminationGracePeriodSeconds` to 240 by default to
+leave a 30-second margin, with the per-tier value fixed in §17.8
+([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+[§17.8](17_deployment-topology.md#178-capacity-planning-and-defaults)).
+
+1. `gateway`, `internal`. The replica's preStop hook runs the staged graceful drain sequence within
+   `terminationGracePeriodSeconds` ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+2. `gateway`, `internal`. The hook sets the pod's readiness probe to `false` before any drain logic
+   begins, which removes the pod from the Service's endpoints list and stops the load balancer routing new
+   requests to it. No new sessions or streams are accepted after this point
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+3. `gateway` → `postgres`, `REG-COORDMIRROR`, Postgres. The replica reads its barrier-target set as the
+   `coordination_lease` rows whose `coordinator_replica` is this replica under `released_at IS NULL`,
+   bounded by a 2-second deadline. On a failed read or on deadline expiry the replica falls back to its
+   in-memory lease cache so the barrier still fires, and emits
+   `lenny_prestop_barrier_target_source_total` with `source="cache_fallback"` in place of the healthy
+   path's `source="postgres"` ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
+
+4. `gateway` → `adapter`, `CH-BARRIER`, `gateway-to-pod`. At the readiness flip the replica sends
+   `CheckpointBarrier`, carrying the session's current `coordination_generation` and a `barrier_id` that
+   is monotonically increasing per session, to every pod in the barrier-target set simultaneously, and
+   waits for the acknowledgements of all of them under a single wall-clock deadline of
+   `checkpointBarrierAckTimeoutSeconds`, default 90s, rather than per pod (§28.5.1 `CH-BARRIER`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+
+5. `agent pod`, `internal`. The adapter finishes the tool call it is executing, stops accepting new
+   tool-call dispatches, records the `barrier_id` in the session's checkpoint metadata, and holds the
+   quiesced state open rather than driving its own checkpoint (§28.5.1 `CH-BARRIER`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+6. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The replica's barrier dispatcher opens the
+   `Checkpoint` stream for each quiesced session concurrently with the in-flight `CheckpointBarrier` RPC
+   to that session, drives the upload against the quiesced pod inside the
+   `checkpointBarrierAckTimeoutSeconds` deadline, and finalises the manifest row. The capture the stream
+   carries is traced in §29.5, and the drain driver stamps the eviction trigger on the finalisation
+   (§28.5.1 `CH-CHECKPOINT`, [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+7. `adapter` → `gateway`, `CH-ADAPTEREVENTS`, `pod-to-gateway`. The adapter sends
+   `CheckpointBarrierAck`, carrying the `barrier_id`, the `checkpoint_ref` echoing the gateway-minted
+   `checkpoint_id` it received in the stream's `Start` message, and `quiesced_ms` as the
+   time-to-quiescence measured inside the ack window, only after the gateway-driven stream has terminated,
+   and then releases quiescence (§28.5.2 `CH-ADAPTEREVENTS`,
+   [§4.7](04_system-components.md#47-runtime-adapter),
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+8. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+   ([§12.2](12_storage-architecture.md#122-storage-roles)). For each session that still has a checkpoint
+   in progress, the hook reads `last_checkpoint_workspace_bytes` from the session record to select the
+   cap tier the wait of step 9 runs under, which is 30s at or below 100 MB, 60s from 101 MB to 300 MB, and
+   90s from 301 MB to the 512 MB hard limit. A `NULL` value selects the 90s maximum tier. A failed read
+   falls back to the in-replica cache that mirrors the field for the sessions this replica coordinates
+   without blocking on Postgres, and a cache miss selects the 90s maximum tier. The selection emits
+   `lenny_prestop_cap_selection_total` once, labelled `source` with the value that names how it was
+   obtained, which is `postgres`, `postgres_null`, `cache_hit`, or `cache_miss_max_tier`
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§16.1](16_observability.md#161-metrics)).
+
+9. `gateway`, `internal`. The hook waits for the checkpoints in progress for the sessions this replica
+   coordinates to complete before proceeding, so that SIGKILL does not interrupt a checkpoint upload and
+   leave checkpoint state inconsistent. The wait runs under the tier selected in step 8, clamped to
+   `terminationGracePeriodSeconds` minus 30 seconds so that at least 30 seconds remains for the stream
+   drain ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+10. `gateway`, `internal`. The hook polls `active_streams > 0` at 1-second intervals for the remainder of
+    `terminationGracePeriodSeconds`, which gives in-flight streams time to complete naturally and gives
+    clients time to detect the closing connection, through a gRPC `GOAWAY` or an SSE stream close, and
+    reconnect to another replica through the load balancer
+    ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+11. `gateway`, `internal`. When active streams have not drained by the grace-period deadline the process
+    receives SIGKILL and the remaining clients must reconnect. Together with the one-pod-at-a-time
+    scale-down policy, this bounds the fleet to at most one replica draining at any moment
+    ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
