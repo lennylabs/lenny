@@ -172,3 +172,234 @@ The claim register carries its own schema rather than the entry schema the migra
 because a `WIRED` row is a permanent statement about the tree and carries no expiry, while a migration
 register's entry expires. The register file, its seed rows, and the validator that reads it land with the
 contract cards.
+
+### 28.5 Contract cards
+
+A contract card states the contract of one channel in the §28.3 channel register. The cards are grouped by
+the channel's boundary value, one subsection per value of the closed boundary set §28.2 states, so the
+subsection heading and the register's boundary column carry the same string. A card's citable handle is its
+subsection number together with the channel identifier, which stays stable when a card is added above it.
+
+Every card states the same fields in the same order, so two cards are comparable field by field. The
+template sets no length: a channel whose contract is long is stated in full rather than shortened to match
+its neighbours.
+
+| Field | What it states |
+|:--|:--|
+| Link | The §28.3 link register entry carrying the channel, or `None` when the channel's own register row describes the connection |
+| Endpoint | The address the channel is reached at, and the transport protection stated for it |
+| Axes | Plane, dial direction, authority direction, and transport, restated from the channel's §28.3 register row |
+| Messages | The messages the channel carries, in the spelling the specification gives them |
+| Preconditions | What has to hold before a participant opens the channel or sends on it |
+| Timing | The deadlines, timeouts, retry counts, and intervals that bound the channel |
+| Exclusivity | The granularity of the exclusivity constraint and the guard that enforces it, or the guard named as missing, per §28.2 |
+| Degradation | What the channel does when its peer is absent and when its transport fails mid-stream |
+
+Every field names the section that states its content. Where the specification states no value for a field
+of a channel, the card records that the specification does not state it. A card never supplies a plausible
+value for a field no section states, because a reader cannot afterwards distinguish a value the
+specification fixes from one the card invented. A mechanism a card states that is specified and not
+implemented carries its status in the §28.4 claim register, so the card states the contract and the
+register states how far the tree has reached it.
+
+#### 28.5.1 Gateway-to-pod
+
+This boundary carries the channels a gateway replica opens to the runtime adapter inside an agent pod. The
+§28.3 channel register places these channels on this boundary, and each is carried on the `LNK-POD-GRPC`
+connection.
+
+```
+  gateway replica                                            agent pod
+  +------------------+                                +--------------------+
+  |                  |   CH-ATTACH                    |                    |
+  |                  |   CH-CHECKPOINT                |                    |
+  |  gateway replica |   CH-FENCE           =====>    |   runtime adapter  |
+  |                  |   CH-BARRIER                   |                    |
+  |                  |   CH-PODHEALTH                 |                    |
+  +------------------+                                +--------------------+
+
+  LNK-POD-GRPC: pod IP, TCP 50051, gRPC over mTLS
+```
+
+**`CH-ATTACH`**
+
+- **Link.** `LNK-POD-GRPC` (§28.3).
+- **Endpoint.** The pod IP on TCP 50051 (§28.3 link register). Gateway-to-pod communication runs over gRPC
+  with mTLS ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)), whose
+  certificate issuance is stated in [§10.3](10_gateway-internals.md#103-mtls-pki).
+- **Axes.** Content plane, dialled by the gateway, message authority on both sides, gRPC transport
+  (§28.3).
+- **Messages.** The `Attach` RPC connects a client stream to a running session
+  ([§4.7](04_system-components.md#47-runtime-adapter)). Its streaming messages are bidirectional and are
+  declared in the published protobuf service definition
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The specification does not state
+  the individual message names of the stream in prose.
+- **Preconditions.** The pod validates the `coordination_generation` stamp on every gateway-to-pod RPC and
+  rejects a stale one, and a replica that has just acquired coordination must receive a successful
+  `CoordinatorFence` acknowledgement before it sends any operational RPC
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+- **Timing.** The specification states no deadline for `Attach`. The connection carrying it uses gRPC
+  keepalive probes at a 10s interval with a 5s timeout
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+- **Exclusivity.** One coordinating replica per session. The guard is the session-coordination lease
+  `REG-COORDLEASE`, held in Redis on a compare-and-set with a TTL and falling back to a Postgres
+  `SELECT ... FOR UPDATE SKIP LOCKED` on the session row, together with the `coordination_generation`
+  stamp the pod validates ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
+- **Degradation.** When the coordinating replica is lost, the pod's gRPC transport detects the broken
+  connection within 15 seconds and the adapter enters hold state, in which every inbound RPC other than
+  `CoordinatorFence` is rejected with `UNAVAILABLE` and a `coordinator_hold` error detail. A replica that
+  receives a generation-stale rejection cancels all in-flight RPCs for the session without retrying and
+  discards its cached in-memory streams ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). A gRPC
+  error on the stream while the coordinator is unchanged and the session is `running` transitions the
+  session to `resume_pending` while retries remain, and the session is re-attached on a replacement pod
+  from its last checkpoint when a pod is allocated within `maxResumeWindowSeconds`, or reaches
+  `awaiting_client_action` when that window elapses or the retries are exhausted
+  ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+  [§7.3](07_session-lifecycle.md#73-retry-and-resume)). The specification does not state whether the
+  gateway redials `Attach` against the same pod before treating the pod as lost.
+
+**`CH-CHECKPOINT`**
+
+- **Link.** `LNK-POD-GRPC` (§28.3).
+- **Endpoint.** The pod IP on TCP 50051 (§28.3 link register), over gRPC with mTLS
+  ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)).
+- **Axes.** State plane, dialled by the gateway, message authority on both sides, gRPC transport (§28.3).
+- **Messages.** The `Checkpoint` RPC is a gateway-driven bidirectional grant and confirm stream: the
+  gateway mints a per-chunk upload capability and confirms each uploaded chunk, and the adapter streams the
+  workspace archive as chunks directly to object storage
+  ([§4.7](04_system-components.md#47-runtime-adapter)). An upload retry that outlives its grant's expiry
+  requests a fresh grant for the same chunk index on the open stream, and the adapter reports a
+  retry-exhausted failure on the stream ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+- **Preconditions.** The generation stamp and the fence acknowledgement that govern every gateway-to-pod
+  RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The adapter's pod-level operation lock
+  must be free or must promote this checkpoint from its queue
+  ([§4.7](04_system-components.md#47-runtime-adapter)). On the eviction path the agent pod cannot open the
+  stream itself: it signals its coordinating replica on `CH-ADAPTEREVENTS`, and that replica drives the
+  stream under its held lease
+  ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+- **Timing.** Every checkpoint path enforces a 60-second timeout measured from the initial quiescence
+  request to completion ([§4.4](04_system-components.md#44-event--checkpoint-store)). A checkpoint the
+  gateway drives against a barrier-held pod is additionally bounded by
+  `checkpointBarrierAckTimeoutSeconds`, default 90s ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)). Non-eviction upload retries use
+  exponential backoff from 200ms at factor 2 for up to about 5 seconds in total
+  ([§4.4](04_system-components.md#44-event--checkpoint-store)). Scheduling is bounded by the freshness
+  requirement that every active session have a successful checkpoint within
+  `periodicCheckpointIntervalSeconds`, default 600s
+  ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+- **Exclusivity.** Pod-level. The adapter maintains an operation lock that serializes `Checkpoint` and
+  `Interrupt` across the pod's slots, admitting one pending checkpoint per distinct `slotId` and coalescing
+  a checkpoint whose `slotId` is already pending; on a single-session pod at most one operation may be
+  queued ([§4.7](04_system-components.md#47-runtime-adapter)). Above that lock, the session-coordination
+  lease `REG-COORDLEASE` and the generation stamp restrict the channel to the coordinating replica
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
+- **Degradation.** An attempt that ends before every declared byte is confirmed leaves a manifest row
+  flagged `partial = true`, which is not a valid checkpoint. A deadline fire on a drain, preStop, or
+  barrier path retains its chunks as a recovery aid the resume path reassembles, while a stream truncation,
+  an adapter crash, a supersession, or a quota refusal leaves no resume candidate and the gateway sweeps
+  the chunk prefix. When all upload retries fail on a non-eviction checkpoint the adapter resumes the agent
+  immediately, the attempt is discarded, and the gateway increments
+  `lenny_checkpoint_storage_failure_total` ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+  While the adapter is in hold state the RPC is rejected with `UNAVAILABLE` and a `coordinator_hold` error
+  detail ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+**`CH-FENCE`**
+
+- **Link.** `LNK-POD-GRPC` (§28.3).
+- **Endpoint.** The pod IP on TCP 50051 (§28.3 link register), over gRPC with mTLS
+  ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)).
+- **Axes.** Control plane, dialled by the gateway, message authority with the gateway, gRPC transport
+  (§28.3).
+- **Messages.** `CoordinatorFence(session_id, new_generation)` announces the new `coordination_generation`
+  to the pod on coordinator handoff. The pod records the generation and from that point rejects any RPC
+  carrying an older one ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+- **Preconditions.** The acquiring replica reads the session row, then increments
+  `coordination_generation` with a compare-and-swap that returns the replica's local generation stamp,
+  before it sends the fence. The fence is itself the hard precondition for every other operational RPC to
+  the pod ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§4.7](04_system-components.md#47-runtime-adapter)).
+- **Timing.** A 5-second deadline, hard-coded and not configurable
+  ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)). On failure or timeout the new
+  coordinator retries the same generation value up to 3 attempts with 1-second backoff; when the retries
+  are exhausted it relinquishes the lease and backs off with jittered delay from 2s to a 16s maximum before
+  reconsidering coordination ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+- **Exclusivity.** One coordinating replica per session, established by this channel. The guard is the
+  session-coordination lease `REG-COORDLEASE` with its Postgres fallback, and the acknowledgement of this
+  fence is what closes the window in which the prior coordinator's RPCs are still accepted
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
+- **Degradation.** When the announced generation exceeds the last fenced generation by more than one, the
+  adapter cancels and discards every in-flight RPC received after the last fenced generation, resets the
+  transient state accumulated since it, logs a `coordinator_generation_gap` event, and acknowledges the
+  fence normally. This is the one channel the adapter still accepts in hold state, and it is the only exit
+  from it. When no successful fence arrives within `coordinatorHoldTimeoutSeconds`, default 120s, the
+  adapter begins graceful session termination with reason `coordinator_lost`
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+
+**`CH-BARRIER`**
+
+- **Link.** `LNK-POD-GRPC` (§28.3).
+- **Endpoint.** The pod IP on TCP 50051 (§28.3 link register), over gRPC with mTLS
+  ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)).
+- **Axes.** Control plane, dialled by the gateway, message authority with the gateway, gRPC transport
+  (§28.3).
+- **Messages.** `CheckpointBarrier` carries `coordination_generation` and `barrier_id`. The adapter
+  quiesces tool-call dispatch and holds quiescence while the gateway drives the `Checkpoint` stream against
+  the held pod. The acknowledgement is not carried on this channel: the adapter replies with
+  `CheckpointBarrierAck`, carrying `barrier_id` and the gateway-minted `checkpoint_ref`, on
+  `CH-ADAPTEREVENTS`, whose card is in §28.5.2 ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Preconditions.** The generation stamp and the fence acknowledgement that govern every gateway-to-pod
+  RPC ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The barrier is dispatched during the
+  gateway replica's graceful drain ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+- **Timing.** A single wall-clock deadline across all the pods a draining replica coordinates,
+  `checkpointBarrierAckTimeoutSeconds`, default 90s ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+- **Exclusivity.** One coordinating replica per session, on the same `REG-COORDLEASE` lease and
+  `coordination_generation` stamp as the other gateway-to-pod channels; the barrier carries that generation
+  in its own message ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). The specification does not state a
+  separate pod-level barrier lock beyond the operation lock `CH-CHECKPOINT` states.
+- **Degradation.** When the deadline fires before every declared byte of the barrier-driven checkpoint is
+  confirmed and chunks were already committed for the session, the gateway finalises the partial
+  checkpoint manifest with `manifest_reason = "timeout"`, and that row and its chunks are retained as the
+  recovery aid the resume path reassembles ([§4.4](04_system-components.md#44-event--checkpoint-store),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling)). When no chunks were committed, no intent row
+  exists, or the read of that row fails, the gateway soft-deletes any such row and falls back to the
+  session's last successful periodic checkpoint
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). While the adapter is in hold state the RPC
+  is rejected with `UNAVAILABLE` and a `coordinator_hold` error detail
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state what the
+  adapter does with a held quiescence whose barrier is never followed by a `Checkpoint` stream.
+
+**`CH-PODHEALTH`**
+
+- **Link.** `LNK-POD-GRPC` (§28.3).
+- **Endpoint.** The pod IP on TCP 50051 (§28.3 link register), over gRPC with mTLS
+  ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)).
+- **Axes.** Control plane, dialled by the gateway, message authority with the gateway, gRPC transport
+  (§28.3).
+- **Messages.** The gRPC Health Checking Protocol
+  ([§4.7](04_system-components.md#47-runtime-adapter)), whose binding is declared in the published protobuf
+  service definition ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)). The
+  specification does not state which service names are probed.
+- **Preconditions.** The specification states no precondition for the probe itself. It states that pods
+  validate the `coordination_generation` on every gateway-to-pod RPC
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)) and does not state how that rule applies to a
+  probe against a pod that is not yet serving a coordinated session.
+- **Timing.** The specification does not state a probe interval, a probe deadline, or a failure threshold
+  for this channel. The connection carrying it uses gRPC keepalive probes at a 10s interval with a 5s
+  timeout ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+- **Exclusivity.** The specification states no exclusivity constraint and names no enforcing guard for this
+  channel. §28.3 records the gateway as the dialling participant, while the consumer of the result is the
+  warm pool controller, which marks a pod `idle` only once the health check passes
+  ([§4.7](04_system-components.md#47-runtime-adapter)).
+- **Degradation.** A pod whose health check has not passed is not marked `idle` and so is not offered to a
+  session ([§4.7](04_system-components.md#47-runtime-adapter)). Loss of the underlying connection is
+  detected by the gRPC transport within 15 seconds and puts the adapter into hold state
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state what the
+  gateway does with a pod whose health check fails after the pod has been marked `idle`.
