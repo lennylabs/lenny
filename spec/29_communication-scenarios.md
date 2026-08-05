@@ -890,3 +890,152 @@ and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT
     `partial = false`, the gateway updates `last_successful_checkpoint_at` on the session record, which it
     tracks for every successful checkpoint regardless of trigger and against which the freshness
     requirement of step 1 is evaluated ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+
+### 29.6 Restore and resume
+
+This trace follows one client-driven resume, from the `POST /v1/sessions/{id}/resume` call that requests
+it to the point at which the session is `running` again on a replacement pod with its workspace restored
+from a checkpoint. It traces that entry point alone. A session also reaches the same restore without a
+client call: the gateway's own recovery after a retryable pod failure, of which an eviction is the case
+that carries its own teardown checkpoint, transitions the session to `resume_pending` and rebuilds it onto
+a replacement pod under the session's retry policy
+([§7.3](07_session-lifecycle.md#73-retry-and-resume),
+[§7.2](07_session-lifecycle.md#72-interactive-session-model),
+[§4.4](04_system-components.md#44-event--checkpoint-store)), and a `delivery: "immediate"` message
+addressed to a `suspended` session whose pod was already released drives the same transition
+([§7.2](07_session-lifecycle.md#72-interactive-session-model)). Those entry points are named here and are
+not traced. The steps are numbered and written in the form §29.1 fixes.
+
+**Preconditions.** The session is in `awaiting_client_action`, the only state
+`POST /v1/sessions/{id}/resume` admits, which a session reaches through auto-retry exhaustion or through
+`maxResumeWindowSeconds` elapsing in `resume_pending` while no pod was available
+([§15.1](15_external-api-surface.md#151-rest-api),
+[§7.3](07_session-lifecycle.md#73-retry-and-resume)). The gateway replica that drives the restore holds
+the session's coordination lease `REG-COORDLEASE`, and the pod validates the `coordination_generation`
+stamp on every gateway-to-pod RPC and rejects a stale one
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3).
+
+1. `client` → `gateway`, no register entry, the client-to-gateway session REST surface. The client calls
+   `POST /v1/sessions/{id}/resume`, which is the explicit resume available once automatic retries are
+   exhausted ([§15.1](15_external-api-surface.md#151-rest-api),
+   [§7.3](07_session-lifecycle.md#73-retry-and-resume)). The §28.3 registers carry no entry for this
+   surface, so the step names the surface in place of a channel identifier and a boundary value, per
+   §29.1.
+
+2. `gateway`, `internal`. The gateway authenticates the caller and authorizes the operation against the
+   RBAC permission matrix ([§10.2](10_gateway-internals.md#102-authentication)), then applies the
+   endpoint's precondition table, which admits `awaiting_client_action` alone. The call is not valid in
+   `suspended`, for which message delivery or `resume_session` is the path, and a call against a terminal
+   row is rejected with `409 INVALID_STATE_TRANSITION`
+   ([§15.1](15_external-api-surface.md#151-rest-api)).
+
+3. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+   ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway writes the
+   `awaiting_client_action → resume_pending` transition on the session row
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)). A session in `resume_pending` moves on to the
+   internal `resuming` state when a pod is allocated within `maxResumeWindowSeconds`, and returns to
+   `awaiting_client_action` when that window elapses with no pod available; the API reports the whole
+   sequence as `resume_pending → running`
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)).
+
+4. `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway allocates a replacement warm pod,
+   which it acquires by creating a `SandboxClaim` with the deterministic name `claim-<podName>` carrying
+   `sandboxRef` and `tenantId` in its spec, and may wait when the pool is temporarily exhausted
+   ([§7.3](07_session-lifecycle.md#73-retry-and-resume),
+   [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3). A pool or credential
+   exhaustion, a Token Service outage, or a transient setup-time transport failure on this path is
+   returned to the caller as `RESUME_FAILED` with `Retry-After` set, and the session row returns to
+   `awaiting_client_action` so an explicit retry of the same call succeeds once the condition clears
+   ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+   [§15.1](15_external-api-surface.md#151-rest-api)).
+
+5. `gateway` → `postgres`, no register entry, the Event / Checkpoint Store
+   ([§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§12.2](12_storage-architecture.md#122-storage-roles)). The gateway selects the checkpoint to restore:
+   the active manifest row for the session and slot under `deleted_at IS NULL` at the highest
+   `coordination_generation`, and among the rows at that generation the most recently created one, with
+   the session's `WorkspaceSnapshot.Ref` as a validation input rather than the key of the selection. A row
+   that is `partial = false` is restored whole. For a row that is `partial = true` the threshold is
+   `baseline_full_checkpoint_bytes` multiplied by `gateway.partialRecoveryThresholdFraction`, default 0.5,
+   when that baseline is not null and zero when it is null, and the row is restored only when
+   `workspace_bytes_uploaded` is at least that threshold and `workspace_bytes_uploaded` and
+   `chunk_count` are both greater than zero; below that threshold the session falls back to the last
+   successful full checkpoint ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§17.8.1](17_deployment-topology.md#1781-operational-defaults--quick-reference)).
+
+6. `gateway` → `object store`, no register entry, the Artifact Store
+   ([§4.5](04_system-components.md#45-artifact-store),
+   [§12.2](12_storage-architecture.md#122-storage-roles)). The gateway lists the objects under the
+   manifest's `chunk_object_key_prefix` and verifies that every index in the contiguous prefix
+   `[0, chunk_count)` is present. An index at or beyond `chunk_count` is expected residue and is ignored,
+   while a missing intermediate index or an out-of-order index below `chunk_count` fails reassembly before
+   any chunk body is fetched and the session falls back to the last successful full checkpoint
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The §28.3 channel register places
+   `CH-OBJSTORE` on the pod-egress boundary with the pod adapter as its dialling participant, so no
+   register entry covers this gateway-originated request and the step names the store instead, per §29.1.
+
+7. `gateway`, `internal`. The gateway mints one presigned single-key `GET` capability per index in
+   `[0, chunk_count)`, each naming one method and one object key, at
+   `chunk_object_key_prefix/chunk-{n}.{chunk_encoding}` with `{n}` the zero-padded five-digit index. Each
+   capability expires after `checkpointCapabilityTTLSeconds`, default 30, and the `ArtifactStore` mints no
+   capability for a key outside the caller's authenticated tenant prefix
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§12.5](12_storage-architecture.md#125-artifact-store),
+   [§13.2](13_security-model.md#132-network-isolation),
+   [§17.8.1](17_deployment-topology.md#1781-operational-defaults--quick-reference)).
+
+8. `gateway` → `adapter`, no register entry, the internal control API
+   ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)). The gateway calls the
+   unary `Resume` RPC, which restores the session from its checkpoint on the replacement pod, and passes
+   the restore capabilities on that call ([§4.7](04_system-components.md#47-runtime-adapter),
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.5 `CH-OBJSTORE`). The §28.3 channel
+   register places the channels `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, and `CH-PODHEALTH`
+   on the gateway-to-pod boundary (§28.5.1) and carries no entry for this RPC, so the step names the
+   internal control API in place of a channel identifier and a boundary value, per §29.1.
+
+9. `adapter` → `object store`, `CH-OBJSTORE`, `pod-egress`. The adapter fetches one chunk per index in
+   ascending order against the capabilities the `Resume` call carried, holding no object-store credential
+   and no `LIST`, `DELETE`, or multipart capability, and concatenates the bodies into a single byte stream
+   fed end to end into one decompress-and-untar pipeline whose decoder is selected from the manifest's
+   `chunk_encoding` column. The pipeline writes into the staging directory `/workspace/current.partial`,
+   which is renamed onto `/workspace/current` only once end truncation is the sole observed error; a fetch
+   error on a non-final chunk, a decode error away from the end of the stream, or a mid-stream tar header
+   parse error aborts reassembly, deletes the staging directory whole, and falls back to the last
+   successful full checkpoint (§28.5.5 `CH-OBJSTORE`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§13.2](13_security-model.md#132-network-isolation)).
+
+10. `agent pod`, `internal`. The restored runtime resumes its conversation as of the checkpoint, which
+    bundles the native-SDK session file, so the replay window spans from that checkpoint to the moment of
+    the failure that ended the previous pod. The platform guarantees at-least-once semantics for external
+    side effects across the restore: an effect performed within the replay window may be issued again, the
+    platform provides no automatic deduplication on this path, and the §11.5 idempotency mechanism does
+    not close it ([§7.3](07_session-lifecycle.md#73-retry-and-resume),
+    [§4.4](04_system-components.md#44-event--checkpoint-store),
+    [§11.5](11_policy-and-controls.md#115-idempotency)). Under
+    `messaging.durableInbox: true` the checkpoint state carries the adapter's `delivered_message_ids` set,
+    bounded to the last 1000 message identifiers, which the adapter checks on a re-delivery and against
+    which it suppresses a duplicate, incrementing `lenny_inbox_duplicate_suppressed_total`
+    ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+
+11. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+    ([§12.2](12_storage-architecture.md#122-storage-roles)). The gateway writes the session to `running`.
+    The recovery mints a new `recovery_generation` of the same logical session and the client continues to
+    see one session identifier, and the row's `last_seq` counter advances without rewinds or duplicates
+    across the recovery ([§7.3](07_session-lifecycle.md#73-retry-and-resume),
+    [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+
+12. `gateway` → `client`, no register entry, the client-to-gateway session REST surface. The gateway emits
+    `session.resumed` on the session's event stream, carrying `resumeMode` and `workspaceLost`. The mode is
+    `full` when the workspace was restored whole from the checkpoint, and `partial_workspace` when it was
+    reconstructed from a partial manifest, in which case the event also carries
+    `workspaceRecoveryFraction`, computed as the post-extraction on-disk total over the manifest's
+    `baseline_full_checkpoint_bytes` and omitted when that baseline is null
+    ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+    [§10.1](10_gateway-internals.md#101-horizontal-scaling)). When the resuming session has one or more
+    active children in the delegation tree, the gateway emits `children_reattached` as a single event
+    immediately after `session.resumed`, once per parent resume
+    ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
+    [§8.10](08_recursive-delegation.md#810-delegation-tree-recovery)).
