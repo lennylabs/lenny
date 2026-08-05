@@ -14,6 +14,11 @@ the matrix is the normative statement of off-holder behaviour for that surface. 
 resume rows are the exception: they restate the forwarding and inbox-buffering requirement §7.2 states and
 cite §7.2 as the section that owns it.
 
+This section also carries §29.10, the structural analysis of the concurrent-session pod, which states which
+part of a pod serving more than one session is partitioned per slot and which part is shared by the whole
+pod. It is stated outside the traced form and carries no numbered steps, because a pod serving several
+sessions is a condition under which the traces run rather than an operation carried from end to end.
+
 A trace restates behaviour the specification states elsewhere and cites the section that states it. Where
 a trace and a cited section disagree, the cited section is the normative statement and the trace is the
 defect.
@@ -477,6 +482,63 @@ reading from it ([§7.1](07_session-lifecycle.md#71-normal-flow),
     paths that produce each of them, are stated in §7.2 and in §15.4
     ([§7.2](07_session-lifecycle.md#72-interactive-session-model),
     [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+
+**Off-holder matrix.** Step 1 states that the replica a client call lands on is selected by the load
+balancer, so any session-scoped route can be served by a replica other than the one holding that session's
+pod control stream `CH-ATTACH`. The holder is the session's coordinating replica, which is the replica
+holding the coordination lease `REG-COORDLEASE` (§28.3,
+[§10.1](10_gateway-internals.md#101-horizontal-scaling)). The matrix below states the required behaviour of
+the serving replica in that case for the session-scoped client routes its rows name, and it carries one row
+per route and session state where a route has more than one off-holder outcome. A session-scoped route that
+no row names and that the store-only row does not cover, because it touches the pod control stream or the
+session inbox, is a condition this matrix does not state. The client-to-gateway session
+REST surface is not a channel in the §28 register, so no §28 card owns it and this matrix is the normative
+statement of its off-holder behaviour. The matrix applies to the message-send trace above and to every
+other trace in this section that begins on that surface.
+
+Two requirements govern the rows whose required outcome is a forward to the coordinator. The serving
+replica forwards the request to the session's coordinating replica and the coordinator performs the
+effect. On the message-send rows that forward is carried over `LNK-INTERREPLICA`, which is the
+inter-replica link the §28.3 link register carries and whose conversation §28.5.4 states as the
+cross-replica message routing RPC. On the rows whose forwarded request is not a message send, which are
+the interrupt, terminate, delete, resume, and upload rows below, the specification states no inter-replica
+conversation that carries the request (§28.3, §28.5.4), so those rows require the forward and the
+coordinator-performed effect without naming a carrier for them. A serving replica never reports a successful outcome for an effect that
+did not reach the pod, and never writes a session state transition that depends on an effect at the pod it
+did not perform. When the coordinator is unreachable on one of those rows, a message send falls back to
+inbox buffering with a `queued` delivery receipt so the message is not dropped, and every other forwarding
+row fails closed with `TARGET_NOT_READY`, HTTP 409. This section states that code for the condition of an
+unreachable coordinator; the pre-running condition §15.1 states for the same code is a separate condition.
+The rows whose outcome is not a forward are stated by the rows themselves: the
+`POST /v1/sessions/{id}/start` row addresses a state for which the specification establishes no holder, so
+the serving replica performs the start itself, the events streaming row is served
+from the shared session-event relay, the events JSON row records that the specification does not state the
+off-holder outcome for that form, the logs streaming row is served from the Postgres `EventStore`, the
+built-in adapter row addresses no pre-existing session and so has no holder to forward to, and the
+store-only row requires no forwarding at all.
+
+| Route | Session state | Required off-holder outcome | Owning section |
+|:--|:--|:--|:--|
+| `POST /v1/sessions/{id}/messages`, no matching `inReplyTo` | `running` | Forward to the coordinator, which evaluates the §7.2 delivery paths and produces the receipt. On an unreachable coordinator the serving replica buffers the message in the session inbox and answers `queued` | §29 |
+| `POST /v1/sessions/{id}/messages` carrying `inReplyTo` | `input_required` | Forward to the coordinator, which resolves the outstanding `lenny/request_input` call. The serving replica does not resolve the call against its own pending-request state and does not answer `delivered`. On an unreachable coordinator it buffers the message and answers `queued` | §29 |
+| `POST /v1/sessions/{id}/messages` carrying `delivery: immediate` | `suspended` | Forward to the coordinator, which performs the atomic resume-and-deliver when the pod is still held and the `suspended` to `resume_pending` transition when the pod has been released. On an unreachable coordinator the serving replica falls back to inbox buffering with a `queued` receipt. The serving replica writes no state transition of its own | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| `POST /v1/sessions/{id}/interrupt` | `running` | Forward to the coordinator, which issues the interrupt to the adapter. The serving replica does not write `suspended` and does not report an interrupt acknowledgement. On an unreachable coordinator it fails closed | §29 |
+| `POST /v1/sessions/{id}/terminate` | `starting`, `running`, `suspended`, `resume_pending`, and `awaiting_client_action`, the non-terminal states for which the specification establishes a coordinating replica holding `REG-COORDLEASE` ([§7.2](07_session-lifecycle.md#72-interactive-session-model), §28.3) | Forward to the coordinator, which performs the termination sequence [§15.1](15_external-api-surface.md#151-rest-api) states for the session's current state and writes `completed`. The serving replica does not write the terminal state itself and does not report a termination outcome for a sequence it did not perform. On an unreachable coordinator it fails closed. In the remaining non-terminal states the route accepts, which are `created`, `finalizing`, and `ready`, the session's pod control stream `CH-ATTACH` is not open and the specification states no point at which the coordination lease `REG-COORDLEASE` is acquired for the session (§28.3, §28.5.1), so the specification establishes no coordinating replica for those states and no off-holder condition arises there | §29 |
+| `DELETE /v1/sessions/{id}` | The same states as `POST /v1/sessions/{id}/terminate` | The same requirement as `POST /v1/sessions/{id}/terminate`, with the terminal state `cancelled` | §29 |
+| `POST /v1/sessions/{id}/resume` | `awaiting_client_action` | Forward to the coordinator, which performs the restore and the delegation-tree recovery traversal. The serving replica does not run the traversal, because its view of a descendant held by another replica is not evidence that the descendant is orphaned. On an unreachable coordinator it fails closed | §29 |
+| `POST /v1/sessions/{id}/start` | `ready` | No forwarding is required. In `ready` the specification establishes no holder, because the session's pod control stream `CH-ATTACH` is not open and the coordination lease `REG-COORDLEASE` has not been acquired (§28.3, §28.5.1), so the serving replica performs the start and becomes the session's coordinating replica | §29 |
+| `POST /v1/sessions/{id}/upload` | `running` | Forward to the coordinator, which performs the mid-session upload against the pod ([§7.4](07_session-lifecycle.md#74-upload-safety)). On an unreachable coordinator it fails closed with `TARGET_NOT_READY`, HTTP 409, whose code and status [§15.1](15_external-api-surface.md#151-rest-api) states and whose replica condition §29 states | §29 |
+| `GET /v1/sessions/{id}/events`, streaming form | Any non-terminal state | Serve both the backlog and the live tail from the shared session-event relay `CH-EVENTRELAY`, which the serving replica reads directly, so no forwarding to the coordinator is required (§28.5.7, [§12.4](12_storage-architecture.md#124-redis-ha-and-failure-modes)). What a reader receives when the relay is absent, or when the requested entry is absent from the relay stream, is a condition the specification does not state (§28.5.7, §28.8) | §29 |
+| `GET /v1/sessions/{id}/events`, `Accept: application/json` form | Any non-terminal state | This form returns the paginated list envelope `{items, cursor, hasMore}` over the retained event replay buffer ([§15.1](15_external-api-surface.md#151-rest-api)), and that buffer is per-session and held in process by the session's coordinating replica ([§10.4](10_gateway-internals.md#104-gateway-reliability)), so a serving replica that is not the holder retains no entries for the session. What an off-holder replica returns for this form, and whether it forwards the request to the coordinator, is a condition the specification does not state | §29 |
+| `GET /v1/sessions/{id}/logs`, streaming form | Any non-terminal state | Serve from the Postgres `EventStore` ([§12.2](12_storage-architecture.md#122-storage-roles)), which every replica reads, so no forwarding to the coordinator is required | §29 |
+| `POST /v1/chat/completions` and `POST /v1/responses` | No pre-existing session is addressed | No forwarding is required. Each call runs an implicit single-shot session that the serving replica creates, claims a warm pod for, dispatches, and releases within the call ([§15](15_external-api-surface.md#15-external-api-surface)), so the serving replica is the coordinating replica by construction and no off-holder condition arises. A creation or claim failure fails closed as `SESSION_CREATION_FAILED` or `CREDENTIAL_POOL_EXHAUSTED`, HTTP 503 ([§15.1](15_external-api-surface.md#151-rest-api)), rendered into the adapter's native error envelope (§15); no inbox buffering and no `queued` receipt applies | §29 |
+| The MCP tool surface, `lenny/send_message` carrying `delivery: immediate` | `suspended` | The same requirement as the `suspended` message-send row, which §7.2 states for both of its message sources | [§7.2](07_session-lifecycle.md#72-interactive-session-model) |
+| The MCP tool surface, every other session-addressed tool call | Any non-terminal state | The requirement stated for the REST route the tool maps onto ([§15.2](15_external-api-surface.md#152-mcp-api)) | §29 |
+| Every session-scoped route that reads or writes the `SessionStore` session row, the `ArtifactStore`, or the `EventStore` alone ([§12.2](12_storage-architecture.md#122-storage-roles)) | Any state | No forwarding is required, because the route touches neither the pod control stream nor the session inbox and every replica reads the same stores | §29 |
+
+A per-RPC statement of what an off-holder replica does with a gateway-to-pod operational request is card
+content under §28.5.1 rather than a key of this matrix, because keying the matrix by RPC leaves no row for
+the outcomes that lose a message or corrupt durable state without reaching a pod at all.
 
 ### 29.4 Interrupt, terminate, and delete
 
@@ -1319,3 +1381,154 @@ and be persisted to object storage
    client-driven `POST /v1/sessions/{id}/resume` call
    ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
    [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+
+### 29.10 The concurrent-session pod
+
+This subsection departs from the traced form the rest of §29 carries, and states no numbered steps. A pod
+serving more than one concurrent session is a condition under which the traces above run rather than an
+operation carried from end to end: each of §29.2 through §29.9 holds on such a pod, with part of the
+pod's state, part of its channels, and part of its resources partitioned per slot and the rest shared by
+the whole pod. What a reader of those traces needs is which part is which, so this subsection states the
+partition and what follows from each half. The step notation §29.1 fixes governs traces and does not
+apply here; each statement below cites the section that states it. Where the specification does not state
+whether something is partitioned per slot, this subsection says so rather than inferring it from the
+things around it that are partitioned.
+
+**The condition.** The pod's pool sets `sessionPolicy.maxConcurrentSessions` above 1, which allows
+multiple simultaneous sessions of the same tenant on one pod and requires the deployer to set
+`sessionPolicy.acknowledgeProcessLevelIsolation: true`. The pool controller rejects a pool definition
+that sets the first without the second
+([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+[§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)). Each simultaneous session occupies one
+slot, identified by a `slotId` the adapter assigns, and every mechanism below is keyed by that identifier
+or is not. On a pod whose pool sets `maxConcurrentSessions` to 1 no message carries
+`slotId`, so nothing in this subsection applies to it
+([§15.4](15_external-api-surface.md#154-runtime-adapter-specification), §28.6). SDK-warm mode is not
+available under this condition: a pool that combines `capabilities.preConnect: true` with
+`maxConcurrentSessions` above 1 is rejected at validation time, because each slot requires independent
+workspace materialization and independent agent initialization
+([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like)).
+
+**Partitioned per slot.** The following are stated per slot, and a reader may treat two slots on one pod
+as independent in each of them.
+
+- The workspace subtree. The adapter creates and removes a per-slot directory tree at
+  `/workspace/slots/{slotId}/`, `/sessions/{slotId}/`, and `/artifacts/{slotId}/`, the runtime derives
+  each slot's `cwd` from its `slotId` and may not assume the single-slot `/workspace/current` layout, and
+  the gateway addresses workspace finalization and checkpoint export by the slot-qualified path
+  ([§6.4](06_warm-pod-model.md#64-pod-filesystem-layout)). The plan behind those trees is not
+  partitioned: the `WorkspacePlan` serves as a shared template whose sources, setup commands, and options
+  are materialized independently for every slot, and per-slot workspace differentiation is out of scope,
+  so all slots on one pod are assigned sessions that share one plan
+  ([§14](14_workspace-plan-schema.md)).
+- The credential lease. Each active slot holds an independent lease obtained by its own
+  `AssignCredentials` call at slot assignment, written to a per-slot credential file at
+  `/run/lenny/slots/{slotId}/credentials.json`, revoked independently when the slot completes or fails,
+  and rotated independently, so the in-flight gate and the `credentials_rotated` acknowledgement apply to
+  the slot being rotated and a sibling slot's model calls are unaffected. Each lease counts separately
+  against the credential pool's concurrency limit
+  ([§6.1](06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like),
+  [§4.9](04_system-components.md#49-credential-leasing-service)). What a slot may read is not partitioned
+  with it, which the shared list below states.
+- The slot's lifecycle state. Beneath the pod-level coarse phase, per-slot sub-states track each slot
+  through workspace materialization, execution, and cleanup, and the gateway applies the per-slot retry
+  policy independently for each failed slot ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
+- The session inbox and the delivery-path evaluation. Each active slot maintains its own independent inbox
+  on the coordinating gateway replica, the `slotId` on the `MessageEnvelope` selects which slot's inbox
+  receives a message, and the §7.2 delivery paths are evaluated per slot, with `ready_for_input`,
+  `input_required`, and `await_children` tracked for each slot rather than for the pod. A message that does
+  not resolve to an active slot fails closed internally and is never routed, and the `delivery: immediate`
+  interrupt targets the specific slot's tool-call context rather than the whole pod
+  ([§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+- The addressing key on the agent message plane. Every `message`, `tool_result`, `response`, and
+  `tool_call` on `CH-MSGSOCK` carries the slot's `slotId`, and a runtime serving such a pool implements a
+  dispatch loop keyed on it (§28.5.3, [§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+  The key is per slot and the channel it rides is not.
+- Admission of a checkpoint to the adapter's operation lock. The lock admits one pending checkpoint per
+  distinct `slotId`, coalesces a checkpoint whose `slotId` is already pending, and promotes the pending
+  checkpoints in slot-ID order ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). The lock
+  itself is not partitioned, which the shared list below states.
+- The coordination lease and the fence that guards it. `REG-COORDLEASE` admits one holder per tenant and
+  session (§28.3), and the exclusivity constraint on `CH-CHECKPOINT`, `CH-ATTACH`, `CH-FENCE`, and
+  `CH-BARRIER` is one coordinating replica per session, guarded by that lease together with the
+  generation stamp (§28.5.1, §28.6). Both units are the session, so each slot's session carries its own
+  lease and its own generation. Whether the sessions occupying two slots on one pod may be coordinated by
+  two different replicas is not stated, which the list of what the specification does not state records
+  below.
+
+**Shared by the whole pod.** The following carry the pod as their unit, so two slots on one pod are not
+independent in them.
+
+- The transport to the gateway. `LNK-POD-GRPC` carries one connection per gateway replica per pod and
+  `LNK-GWCONTROL` one connection per pod process to one replica (§28.3), so the connections beneath
+  `CH-ATTACH`, `CH-CHECKPOINT`, `CH-FENCE`, `CH-BARRIER`, `CH-PODHEALTH`, and `CH-ADAPTEREVENTS` are
+  established per replica and pod, with no per-slot connection stated.
+- The agent message plane itself. `CH-MSGSOCK` is one channel over which a pod serving more than one
+  concurrent session multiplexes every slot's stream, keyed by `slotId` (§28.5.3, §28.6), which
+  [§15.4](15_external-api-surface.md#154-runtime-adapter-specification) states as multiple independent
+  concurrent session streams through a single stdin channel. It is a scoping constraint rather than an
+  exclusivity constraint, and the specification states no exclusivity constraint on this channel and
+  names no guard that enforces one (§28.6).
+- The adapter's operation lock. It is pod-level and serializes `Checkpoint` and `Interrupt` across the
+  pod's slots, and while an interrupt is pending it holds the whole-pod queue, so any further checkpoint
+  or interrupt is dropped with a `BUSY` status ([§4.7](04_system-components.md#47-runtime-adapter),
+  §28.6). One slot's operation therefore delays or refuses another slot's. It is also the one guard that
+  spans boundaries, bounding `CH-CHECKPOINT` on the gateway-to-pod boundary, the `checkpoint_request` and
+  `interrupt_request` frames of `CH-RUNTIMEOPS` on the intra-pod boundary, and the transfer `CH-OBJSTORE`
+  carries on the pod-egress boundary (§28.6). The specification states no pod-level barrier lock beyond
+  it, and no retry rule for a checkpoint dropped with `BUSY` on a concurrent-session pod (§28.6).
+- The process-level co-tenancy the deployer acknowledged. Concurrent slots share the pod's process
+  namespace, `/tmp`, cgroup memory, and network stack, and each slot's credential file is group-readable
+  by every slot's agent process through the shared `lenny-cred-readers` supplementary group, which is not
+  mitigated at the pod level. The shared network namespace carries cross-slot traffic observation, port
+  binding conflicts, DNS resolver cache effects, and observable timing patterns, and the agent
+  container's `securityContext` must drop `CAP_NET_RAW`
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  [§13.1](13_security-model.md#131-pod-security)). A client sees the condition as
+  `sessionIsolationLevel.residualStateWarning` on the session creation response
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes),
+  [§7.1](07_session-lifecycle.md#71-normal-flow)).
+- The occupancy and claim primitives. `REG-SLOTCOUNT` is an atomic per-pod counter that ceilings
+  concurrent slots and is the occupancy authority, and `REG-CLAIM` is a cluster-wide per-pod acquisition
+  on first claim (§28.3, [§6.2](06_warm-pod-model.md#62-pod-state-machine)). The specification states no
+  per-slot claim object.
+- The shared asset tree. `/workspace/shared/` is populated by the gateway during pod initialization
+  before any slot is assigned, is mounted read-only at the container level so a write returns `EROFS`,
+  and is not modified by the adapter afterwards
+  ([§6.4](06_warm-pod-model.md#64-pod-filesystem-layout)).
+- The pod's health and its disposition. The pod-level phase is the coarse `claimed` whenever occupancy is
+  nonzero, a pod crash, node eviction, or OOM kill fails all active slots simultaneously, and the
+  rolling-window failed slots plus the persistent leaked slots are counted against one whole-pod
+  threshold of `ceil(maxConcurrentSessions/2)` that moves the pod to `draining`
+  ([§6.2](06_warm-pod-model.md#62-pod-state-machine)).
+- The pod's egress identity. `CH-LLMPROXY` binds its lease token to the issuing pod's SPIFFE identity and
+  rejects a request whose peer SPIFFE URI does not match the lease record, which is a cross-pod replay
+  control whose unit is the pod (§28.6,
+  [§4.9](04_system-components.md#49-credential-leasing-service)).
+
+**What the specification does not state.** Each of the following is a question a reader of the traces
+above reaches on a concurrent-session pod and the specification does not answer. None of them is answered
+here by inference from the partitioned or the shared list.
+
+- Whether the adapter's hold state is partitioned per slot. The specification states that while the
+  adapter is in hold state every inbound RPC other than `CoordinatorFence` is rejected with `UNAVAILABLE`
+  and a `coordinator_hold` error detail, and it states that of the adapter rather than of a slot
+  (§28.5.1, §28.6, [§10.1](10_gateway-internals.md#101-horizontal-scaling)). It does not state whether a
+  fence driven for one slot's session holds the RPCs of a sibling slot's session.
+- Whether the adapter's `Interrupt` RPC under the operation lock and the drain barrier are addressed to a
+  slot. The specification qualifies checkpoint admission by `slotId` and states that the lock serializes
+  `Interrupt` across the pod's slots ([§4.7](04_system-components.md#47-runtime-adapter), §28.6). §7.2
+  does state the slot qualification for the `delivery: immediate` interrupt, which targets the specific
+  slot's tool-call context ([§7.2](07_session-lifecycle.md#72-interactive-session-model)). The
+  specification states no slot qualification for the `Interrupt` RPC the operation lock admits or for the
+  drain barrier `CH-BARRIER` carries (§28.5.1).
+- Which replica's connection carries an event on `CH-ADAPTEREVENTS` when more than one replica holds a
+  connection to the pod. `CH-ADAPTEREVENTS` addresses its events to the session's coordinating replica
+  while `LNK-POD-GRPC` states one connection per gateway replica per pod, and the specification does not
+  resolve the two (§28.5.2, §28.6, §28.3).
+- Whether the sessions occupying two slots on one pod may be coordinated by two different replicas.
+  `REG-COORDLEASE` is keyed per tenant and session and `REG-CLAIM` is per pod (§28.3), so no register
+  entry ties one slot's holder to another's, and the specification states no rule requiring the slots of
+  one pod to share a coordinating replica.
+- A buffering or replay policy for a message the adapter holds on `CH-MSGSOCK` while the runtime is
+  absent, which the specification does not state on a pod of either kind (§28.5.3, §28.8).
