@@ -665,3 +665,228 @@ the session to be `running`, which is the only state the interrupt endpoint's pr
     client through the session API and the session's terminal event instead
     ([§6.2](06_warm-pod-model.md#62-pod-state-machine),
     [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
+
+### 29.5 Checkpoint capture
+
+This trace follows one checkpoint attempt from the point at which the gateway decides to take it to the
+point at which the session row records it. Every trigger converges on the one gateway-driven
+`CH-CHECKPOINT` stream: the periodic schedule that enforces the checkpoint freshness requirement, the
+eviction path a terminating agent pod raises, the drain path a `CH-BARRIER` message opens, and the
+pre-scale-down path ([§4.4](04_system-components.md#44-event--checkpoint-store),
+[§10.1](10_gateway-internals.md#101-horizontal-scaling)). The trigger selects the retry budget, the
+abort disposition, and whether the agent is resumed afterwards; every step below holds for all of them
+unless it names a trigger. The steps are numbered and written in the form §29.1 fixes.
+
+The two stores this trace writes carry different roles. The chunk bytes are written to the object store,
+which is where the `ArtifactStore` role places checkpoints and workspace snapshots
+([§12.2](12_storage-architecture.md#122-storage-roles)). The manifest row, the artifact catalog row, and
+the session row are written to Postgres, which is where the `SessionStore` and Event / Checkpoint Store
+roles sit ([§4.4](04_system-components.md#44-event--checkpoint-store),
+[§12.2](12_storage-architecture.md#122-storage-roles)). A chunk object is uploadable only once its
+manifest row is durable in Postgres, so no chunk object exists without a Postgres row that references it
+([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The per-tenant storage counter the reservation
+and the confirmations move is held in Redis and is rehydrated from the Postgres sum on restart, so it is
+a derived counter rather than the record of what was stored
+([§4.4](04_system-components.md#44-event--checkpoint-store),
+[§11.2](11_policy-and-controls.md#112-budgets-and-quotas)).
+
+**Preconditions.** The session is bound to a claimed pod and the gateway replica that drives the
+checkpoint holds the session's coordination lease `REG-COORDLEASE`, because `CH-CHECKPOINT` admits one
+holder per session and the guard is that lease together with the `coordination_generation` stamp the pod
+validates on every gateway-to-pod RPC (§28.5.1 `CH-CHECKPOINT`, §28.6,
+[§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). On the eviction path the agent pod
+cannot open the stream itself: its preStop hook signals its coordinating replica on `CH-ADAPTEREVENTS`,
+and that replica drives the stream under its held lease (§28.5.1 `CH-CHECKPOINT`, §28.5.2
+`CH-ADAPTEREVENTS`, [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+
+1. `gateway`, `internal`. The coordinating replica selects the session to checkpoint. On the periodic
+   trigger the schedule is the freshness requirement that every active session have a successful
+   checkpoint within `periodicCheckpointIntervalSeconds`, default 600s, with each session's first
+   periodic checkpoint offset by a jitter of up to
+   `periodicCheckpointIntervalSeconds × periodicCheckpointJitterFraction`, default fraction 0.2, and
+   subsequent checkpoints scheduled at the fixed interval from the previous one
+   ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+
+2. `gateway`, `internal`. Two checkpoint attempts against the same session and slot serialize on the
+   intent-row write of step 7: that transaction supersedes any prior active partial manifest row for the
+   same session and slot, and two concurrent writers either serialise on the partial-manifest unique
+   index or one of them observes no affected rows on the conditional `UPDATE` and rolls back, so the
+   database never holds two active partial rows for the same session and slot at once
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Above that, the adapter's pod-level
+   operation lock admits one pending checkpoint per distinct `slotId` and coalesces a checkpoint whose
+   `slotId` is already pending, and the coordination lease and the generation stamp exclude a second
+   replica (§28.5.1 `CH-CHECKPOINT`, §28.6,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+3. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The gateway opens the bidirectional
+   `Checkpoint` stream, on which it mints a per-chunk upload capability and confirms each uploaded chunk
+   while the adapter streams the workspace archive to object storage. The pod validates the
+   `coordination_generation` stamp and rejects a stale one, and a replica that has just acquired
+   coordination must have received a successful `CoordinatorFence` acknowledgement before it sends any
+   operational RPC (§28.5.1 `CH-CHECKPOINT`, [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§4.7](04_system-components.md#47-runtime-adapter)).
+
+4. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The gateway sends the parameters the attempt
+   runs under: the gateway-minted `checkpoint_id`, the trigger, the `chunk_size_bytes` the gateway chose,
+   default 16 MiB, and the `chunk_encoding` it chose, which is `tar` or `tar.gz` and is fixed for every
+   chunk of the attempt ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§17.8.1](17_deployment-topology.md#1781-operational-defaults--quick-reference)). It carries them in
+   the stream's `Start` message ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas),
+   [§13.2](13_security-model.md#132-network-isolation)). Every checkpoint path enforces
+   a 60-second timeout measured from the initial quiescence request of step 8 to completion, and a
+   checkpoint the gateway drives against a barrier-held pod is additionally bounded by
+   `checkpointBarrierAckTimeoutSeconds`, default 90s
+   ([§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§4.7](04_system-components.md#47-runtime-adapter),
+   [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)).
+
+5. `agent pod`, `internal`. The adapter takes its pod-level operation lock, which serializes `Checkpoint`
+   and `Interrupt` across the pod's slots and must be free or must promote this checkpoint from its
+   queue, and resolves the workspace roots the attempt covers: `/workspace/current`, and
+   `/workspace/slots/{slotId}/current/` on a pod whose pool sets `sessionPolicy.maxConcurrentSessions`
+   greater than 1 (§28.5.1 `CH-CHECKPOINT`, §28.6,
+   [§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§4.7](04_system-components.md#47-runtime-adapter),
+   [§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)).
+
+6. `adapter` → `gateway`, `CH-CHECKPOINT`, `gateway-to-pod`. The adapter runs the pre-checkpoint
+   workspace size probe, which stats the total size of the resolved roots before the quiescence handshake
+   of step 8, and reports the measured size. When the measured size exceeds `workspaceSizeLimitBytes`,
+   pool-level configuration with a default of 512Mi, the checkpoint is aborted immediately without
+   quiescing the runtime, `lenny_checkpoint_size_exceeded_total` is incremented, a `WorkspaceSizeExceeded`
+   warning is logged, and the session emits a `checkpoint.skipped` event with
+   `reason: "workspace_size_limit"`, so none of the steps below occur
+   ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+
+7. `gateway` → `postgres`, no register entry, the Event / Checkpoint Store
+   ([§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§12.2](12_storage-architecture.md#122-storage-roles)). The gateway takes a storage reservation from
+   the probed size, which is the atomic increment of the tenant's Redis `storage_bytes_used` counter
+   ([§11.2](11_policy-and-controls.md#112-budgets-and-quotas)), and then supersedes any prior partial
+   manifest for the same session and slot by soft-deleting its confirmed chunks' catalog rows, deleting
+   those chunk objects, and releasing its reservation, all of which run before the transaction below
+   commits and do not themselves participate in Postgres atomicity
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+   [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). The supersede-on-write `UPDATE` that
+   soft-deletes the superseded row and the `INSERT` of the intent row commit in one Postgres transaction
+   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The intent row carries `partial = true`,
+   `manifest_reason = 'in_progress'`, `chunk_count = 0`, `workspace_bytes_uploaded = 0`, the chosen
+   `chunk_size_bytes` and `chunk_encoding`, and
+   `chunk_object_key_prefix = /{tenant_id}/checkpoints/{session_id}/{checkpoint_id}/`. The gateway mints
+   no chunk-upload capability before that INSERT commits, which is what keeps every chunk object
+   referenced by a Postgres row (§28.5.5 `CH-OBJSTORE`,
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)). When Postgres is unreachable at this step no
+   chunk upload begins, and the specification does not state what happens to the checkpoint attempt: the
+   eviction fallback of [§4.4](04_system-components.md#44-event--checkpoint-store) is keyed on the object
+   store being unreachable and itself writes to Postgres, and the crash semantics of
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling) cover only a crash after the intent row is
+   already durable.
+
+8. On a Full-level runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`, `intra-pod`. The adapter sends
+   `checkpoint_request` and the runtime quiesces and replies `checkpoint_ready`, which is the cooperative
+   handshake that produces a consistent checkpoint under every isolation profile (§28.5.3
+   `CH-RUNTIMEOPS`, [§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§4.7](04_system-components.md#47-runtime-adapter)). A Basic-level or Standard-level runtime opens no
+   `CH-RUNTIMEOPS` channel, so this step does not occur and the snapshot is taken best-effort without
+   pausing the runtime and tagged `consistency: best-effort`
+   ([§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3).
+
+9. `agent pod`, `internal`. The adapter captures the checkpoint's contents, which are a tar of the
+   resolved workspace roots and a copy of the `/sessions/` contents, and splits the stream into
+   fixed-size chunks of `chunk_size_bytes` under the attempt's `chunk_encoding`
+   ([§4.4](04_system-components.md#44-event--checkpoint-store),
+   [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+10. `adapter` → `gateway`, `CH-CHECKPOINT`, `gateway-to-pod`. The adapter declares one chunk by its index
+    and its exact byte length. The gateway rejects a declared length outside `(0, chunk_size_bytes]` and
+    aborts the attempt with `manifest_reason = 'stream_truncated'` before it signs anything and before any
+    quota arithmetic runs (§28.5.5 `CH-OBJSTORE`,
+    [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+11. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The gateway signs a presigned single-part
+    `PUT` capability for `chunk_object_key_prefix/chunk-{n}.{chunk_encoding}`, where `{n}` is a
+    zero-padded five-digit monotonic index starting at `00000`, at that exact `Content-Length`, and
+    returns it with the signed header values the adapter is to replay. The capability expires after
+    `checkpointCapabilityTTLSeconds`, default 30. At most `checkpointGrantWindow` capabilities, default 4,
+    are outstanding at a time, and the gateway refuses to sign a capability whose `Content-Length` would
+    carry the attempt past its reservation plus the remaining tenant headroom, aborting with
+    `STORAGE_QUOTA_EXCEEDED` before signing (§28.5.5 `CH-OBJSTORE`,
+    [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+    [§13.2](13_security-model.md#132-network-isolation),
+    [§11.2](11_policy-and-controls.md#112-budgets-and-quotas),
+    [§17.8.1](17_deployment-topology.md#1781-operational-defaults--quick-reference)).
+
+12. `adapter` → `object store`, `CH-OBJSTORE`, `pod-egress`. The adapter issues one single-part `PUT` per
+    chunk against the capability, replaying the signed header values verbatim on the SigV4 backends. The
+    pod holds no object-store credential and no `LIST`, `DELETE`, or multipart capability. On the
+    non-eviction triggers a failed upload is retried with exponential backoff from 200ms at factor 2 for
+    up to about 5 seconds in total; on the eviction trigger the budget is 500ms at factor 2, capped at 5s
+    per attempt, for up to 30 seconds in total. A retry that outlives its grant's expiry requests a fresh
+    grant for the same chunk index on the open stream, which the gateway re-signs at the same key and
+    length (§28.5.5 `CH-OBJSTORE`, [§4.4](04_system-components.md#44-event--checkpoint-store),
+    [§13.2](13_security-model.md#132-network-isolation)).
+
+13. `adapter` → `gateway`, `CH-CHECKPOINT`, `gateway-to-pod`. The adapter acknowledges the committed
+    chunk on the stream, which is what lets the gateway mint the next capability within the grant window
+    (§28.5.1 `CH-CHECKPOINT`, [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+14. `gateway` → `object store`, no register entry, the Artifact Store
+    ([§4.5](04_system-components.md#45-artifact-store),
+    [§12.2](12_storage-architecture.md#122-storage-roles)). The gateway confirms the acknowledged chunk
+    with a `StatObject` and reads back its confirmed size. A chunk whose confirmed size exceeds the size
+    signed into its grant aborts the attempt ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+    [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). The §28.3 channel register places
+    `CH-OBJSTORE` on the pod-egress boundary with the pod adapter as its dialling participant, so no
+    register entry covers this gateway-originated request and the step names the store instead, per §29.1.
+
+15. `gateway` → `postgres`, no register entry, the Event / Checkpoint Store
+    ([§4.4](04_system-components.md#44-event--checkpoint-store),
+    [§12.2](12_storage-architecture.md#122-storage-roles)). The gateway inserts the chunk's
+    `artifact_store` catalog row, which is what carries the chunk's bytes into the tenant's storage-quota
+    accounting, and advances the manifest row's `chunk_count` and `workspace_bytes_uploaded` under a
+    guard that makes the counters monotonic, so an out-of-order acknowledgement cannot decrement them.
+    Neither the confirmation of step 14 nor this update gates the next grant, and both must complete
+    before finalisation and before quota reconciliation
+    ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+    [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)). Steps 10 through 15 repeat per chunk, with
+    at most `checkpointGrantWindow` grants outstanding at a time
+    ([§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+16. `adapter` → `gateway`, `CH-CHECKPOINT`, `gateway-to-pod`. The adapter declares the archive complete
+    with the stream's terminal summary. When all upload retries have instead failed on a non-eviction
+    checkpoint, the adapter reports the retry-exhausted failure on this stream in place of the summary,
+    and the gateway increments `lenny_checkpoint_storage_failure_total{reason="retry_exhausted"}`
+    (§28.5.1 `CH-CHECKPOINT`, [§4.4](04_system-components.md#44-event--checkpoint-store),
+    [§10.1](10_gateway-internals.md#101-horizontal-scaling)).
+
+17. `gateway` → `postgres`, no register entry, the Event / Checkpoint Store
+    ([§4.4](04_system-components.md#44-event--checkpoint-store),
+    [§12.2](12_storage-architecture.md#122-storage-roles)). The gateway finalises the manifest row with a
+    final update that flushes the last observed `chunk_count` and `workspace_bytes_uploaded` and releases
+    the part of the reservation the attempt did not keep. A terminal summary whose every declared byte is
+    confirmed finalises `partial = false` and `manifest_reason = 'complete'`, which is the point at which
+    the attempt becomes a valid checkpoint; every other terminal arm finalises `partial = true` with the
+    reason that names it, which is `timeout` for a deadline fire, `stream_truncated` for a truncated
+    stream or an adapter crash, `superseded`, or `quota_exceeded`
+    ([§4.4](04_system-components.md#44-event--checkpoint-store),
+    [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+    [§11.2](11_policy-and-controls.md#112-budgets-and-quotas)).
+
+18. On a Full-level runtime: `adapter` → `runtime`, `CH-RUNTIMEOPS`, `intra-pod`. The adapter resumes the
+    runtime with `checkpoint_complete`. On a non-eviction checkpoint whose upload retries were exhausted
+    the adapter resumes the runtime immediately by the same message. When the runtime has sent
+    `checkpoint_ready` and no `checkpoint_complete` arrives within 60 seconds, it autonomously resumes
+    normal operation and logs a `checkpoint_timeout` warning (§28.5.3 `CH-RUNTIMEOPS`,
+    [§4.4](04_system-components.md#44-event--checkpoint-store)). A Basic-level or Standard-level runtime
+    opens no `CH-RUNTIMEOPS` channel, so this step does not occur and there is no runtime to resume,
+    because step 8 did not pause it
+    ([§15.4.3](15_external-api-surface.md#1543-runtime-integration-levels), §28.5.3). On the eviction
+    trigger the pod is terminating and there is no agent to resume
+    ([§4.4](04_system-components.md#44-event--checkpoint-store)).
+
+19. `gateway` → `postgres`, no register entry, the Postgres `SessionStore` role
+    ([§12.2](12_storage-architecture.md#122-storage-roles)). On a checkpoint that finalised
+    `partial = false`, the gateway updates `last_successful_checkpoint_at` on the session record, which it
+    tracks for every successful checkpoint regardless of trigger and against which the freshness
+    requirement of step 1 is evaluated ([§4.4](04_system-components.md#44-event--checkpoint-store)).

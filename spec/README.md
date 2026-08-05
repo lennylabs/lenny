@@ -209,4 +209,5 @@
   - [29.2 Session start](29_communication-scenarios.md#292-session-start)
   - [29.3 Interactive message send](29_communication-scenarios.md#293-interactive-message-send)
   - [29.4 Interrupt, terminate, and delete](29_communication-scenarios.md#294-interrupt-terminate-and-delete)
+  - [29.5 Checkpoint capture](29_communication-scenarios.md#295-checkpoint-capture)
 
