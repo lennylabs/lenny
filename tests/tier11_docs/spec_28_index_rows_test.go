@@ -1009,16 +1009,40 @@ func stagedSectionBlocks(doc string) [][]string {
 // differs, and a line count that differs. It returns no message when the
 // two are the same text line for line.
 func stagedSectionMismatch(staged, landed []string) []string {
+	// Every staged line must appear in the landed section, in the staged
+	// order, and the landed section may carry lines besides.
+	//
+	// Line-for-line equality was the first form of this check and it cannot
+	// hold: the proposal that authored the section states its opening
+	// subsections, and later sub-steps of the channel migration append to the
+	// same file by their own staged edits, the naming table's rows among them.
+	// Under equality the first such append fails this gate, so a correct
+	// migration could not keep it green, and the gate would be measuring
+	// whether anything had been added rather than whether the staged text is
+	// still true of the tree.
+	//
+	// Ordered containment keeps everything the gate exists for. A staged line
+	// that never landed is reported, because no landed line matches it. A
+	// staged line edited after landing is reported for the same reason. A
+	// reordering is reported, because the scan never goes backwards. What it
+	// stops reporting is an addition, which is what a later staged edit is,
+	// and which the per-class residual scans already hold to their own
+	// enumerations.
 	var out []string
-	for i := 0; i < len(staged) && i < len(landed); i++ {
-		if staged[i] != landed[i] {
-			out = append(out, fmt.Sprintf("line %d differs: staged %q, landed %q", i+1, staged[i], landed[i]))
+	at := 0
+	for _, want := range staged {
+		found := -1
+		for j := at; j < len(landed); j++ {
+			if landed[j] == want {
+				found = j
+				break
+			}
+		}
+		if found < 0 {
+			out = append(out, fmt.Sprintf("the staged line %q is absent from the landed section, or stands before a line already matched", want))
 			break
 		}
-	}
-	if len(staged) != len(landed) {
-		out = append(out, fmt.Sprintf("the staged block carries %d lines and the landed section carries %d",
-			len(staged), len(landed)))
+		at = found + 1
 	}
 	return out
 }
