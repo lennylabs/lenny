@@ -403,3 +403,92 @@ connection.
   detected by the gRPC transport within 15 seconds and puts the adapter into hold state
   ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state what the
   gateway does with a pod whose health check fails after the pod has been marked `idle`.
+
+#### 28.5.2 Pod-to-gateway
+
+This boundary carries the channel whose messages the runtime adapter inside an agent pod originates and the
+gateway replica consumes. The §28.3 channel register places one channel on this boundary,
+`CH-ADAPTEREVENTS`, and it is carried on the same `LNK-POD-GRPC` connection the gateway dials for the
+§28.5.1 channels, so the boundary follows the authority direction rather than the dial direction.
+
+```
+  gateway replica                                            agent pod
+  +------------------+                                +--------------------+
+  |                  |                                |                    |
+  |  gateway replica |   CH-ADAPTEREVENTS   <=====    |   runtime adapter  |
+  |                  |                                |                    |
+  +------------------+                                +--------------------+
+
+  LNK-POD-GRPC: pod IP, TCP 50051, gRPC over mTLS, dialled by the gateway
+```
+
+**`CH-ADAPTEREVENTS`**
+
+- **Link.** `LNK-POD-GRPC` (§28.3).
+- **Endpoint.** The pod IP on TCP 50051 (§28.3 link register). §10.1 names the same port 50051 for this
+  channel ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Gateway-to-pod communication runs over
+  gRPC with mTLS ([§15.3](15_external-api-surface.md#153-internal-control-api-custom-protocol)), whose
+  certificate issuance is stated in [§10.3](10_gateway-internals.md#103-mtls-pki).
+- **Axes.** Control plane, dialled by the gateway, message authority with the pod adapter, gRPC transport
+  (§28.3).
+- **Messages.** The adapter-to-gateway events `RATE_LIMITED` (the current credential is rate-limited and a
+  fallback is requested), `AUTH_EXPIRED` (the credential lease expired or was rejected by the provider),
+  `PROVIDER_UNAVAILABLE` (the provider endpoint is unreachable), `LEASE_REJECTED` (the runtime cannot use
+  the assigned credential), `CheckpointBarrierAck` carrying `barrier_id` and `checkpoint_ref`,
+  `AdapterTerminating` carrying `session_id` and `reason`, and `FINAL_USAGE_REPORT` as the last message
+  before the stream closes ([§4.7](04_system-components.md#47-runtime-adapter)). The channel additionally
+  carries the slot-failure event a concurrent-session pod emits when a slot's session fails
+  ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes)) and the signal
+  an agent pod's preStop hook sends to its coordinating replica to have that replica drive the eviction
+  checkpoint ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). The specification
+  states no message name for either of those two, and it does not state the stream's message envelope in
+  prose; the binding is declared in the published protobuf service definition
+  ([§15.4](15_external-api-surface.md#154-runtime-adapter-specification)).
+- **Preconditions.** The specification states no fence or generation precondition for the adapter's own
+  messages; the `coordination_generation` stamp it states is validated on gateway-to-pod RPCs
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). Per message it states these conditions:
+  `CheckpointBarrierAck` is sent only after quiescence is reached and after the gateway-driven `Checkpoint`
+  stream terminates, echoing the gateway-minted `checkpoint_id`
+  ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling)); `FINAL_USAGE_REPORT` is sent after every
+  in-flight `ReportUsage` pull has settled ([§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease));
+  `AdapterTerminating` is sent when the adapter initiates its own termination, such as at the
+  `coordinatorHoldTimeoutSeconds` expiry ([§10.1](10_gateway-internals.md#101-horizontal-scaling)); and in
+  direct delivery mode `AUTH_EXPIRED` is reported when a lease's local expiry timer fires with no
+  replacement lease delivered, after the adapter deletes the credential file for that provider's entry
+  ([§4.9](04_system-components.md#49-credential-leasing-service)).
+- **Timing.** The specification states no send deadline, retry count, or interval for the channel itself.
+  The connection carrying it uses gRPC keepalive probes at a 10s interval with a 5s timeout
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)). Two messages are bounded by a
+  gateway-side wait: `CheckpointBarrierAck` by the single wall-clock deadline
+  `checkpointBarrierAckTimeoutSeconds`, default 90s, across all the pods a draining replica coordinates
+  ([§4.7](04_system-components.md#47-runtime-adapter),
+  [§10.1](10_gateway-internals.md#101-horizontal-scaling),
+  [§11.3](11_policy-and-controls.md#113-timeouts-and-cancellation)), and `FINAL_USAGE_REPORT` by the usage
+  quiescence timeout, default 5s and configurable through `delegation.usageQuiescenceTimeoutSeconds`
+  ([§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)).
+- **Exclusivity.** The specification states no exclusivity constraint on the channel itself and names no
+  guard that enforces one. The events are addressed to the session's coordinating replica: the preStop
+  eviction signal goes to the coordinating replica, which drives the eviction checkpoint under its held
+  lease ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)), and the coordinating
+  replica is the holder of the session-coordination lease `REG-COORDLEASE`
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). The `LNK-POD-GRPC` register row states
+  one connection per gateway replica per pod (§28.3), so the specification does not state which replica's
+  connection carries an event when more than one replica holds a connection to the pod.
+- **Degradation.** While the adapter is in hold state it pauses runtime activity and originates no new
+  operational messages on this channel, until either a new coordinator fences it or
+  `coordinatorHoldTimeoutSeconds` expires and it sends the final `AdapterTerminating`
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). When the channel is unavailable at that point,
+  because the coordinating replica has itself crashed, the adapter logs the delivery failure and writes the
+  post-mortem to local disk, and the orphan session reconciler detects the terminated pod within one
+  60-second reconcile interval and forcibly transitions the session to `failed` with reason
+  `orphan_pod_terminated`, a worst-case 60-second detection delay against a delivered `AdapterTerminating`
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). A stream close is a terminal signal in its own
+  right on the delegation path: the gateway waits for `FINAL_USAGE_REPORT` or for the stream to close,
+  whichever comes first, and when neither occurs within the usage quiescence timeout it proceeds with the
+  last known usage counter and emits a `delegation.budget_return_usage_lag` warning event
+  ([§8.3](08_recursive-delegation.md#83-delegation-policy-and-lease)). Loss of the underlying connection is
+  detected by the pod's gRPC transport within 15 seconds and puts the adapter into hold state
+  ([§10.1](10_gateway-internals.md#101-horizontal-scaling)). The specification does not state a retry or
+  buffering policy for an event other than `AdapterTerminating` whose delivery fails.
