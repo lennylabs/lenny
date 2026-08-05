@@ -213,4 +213,5 @@
   - [29.6 Restore and resume](29_communication-scenarios.md#296-restore-and-resume)
   - [29.7 Gateway drain](29_communication-scenarios.md#297-gateway-drain)
   - [29.8 Coordinator handoff and crash takeover](29_communication-scenarios.md#298-coordinator-handoff-and-crash-takeover)
+  - [29.9 Agent pod eviction](29_communication-scenarios.md#299-agent-pod-eviction)
 

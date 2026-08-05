@@ -1239,3 +1239,83 @@ pod rejects a stale one ([§10.1](10_gateway-internals.md#101-horizontal-scaling
     (§28.3), and a draining replica reads the row as its barrier-target set (§29.7), so a reader cannot
     determine from the specification whether a barrier fan-out concurrent with this takeover observes the
     prior holder or the acquiring one.
+
+### 29.9 Agent pod eviction
+
+This trace follows the eviction of one agent pod that holds a live session, from the eviction request the
+Kubernetes eviction API admits to the point at which the session is resumable on a replacement pod. It
+traces the voluntary-disruption entry point, on which the eviction traverses the `pods/eviction`
+subresource and the pod's preStop hook runs before the pod is allowed to terminate
+([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.5.6 `CH-ADMISSION`). Other
+entry points and outcomes are named here and are not traced. A spontaneous node failure, an OOM kill, and
+a preemption bypass the eviction API and open no `CH-ADMISSION` channel (§28.5.6). The eviction of a warm
+pod carries no session, and the per-`SandboxTemplate` pod disruption budget selects idle pods alone, so an
+active session pod has no voluntary-disruption protection beyond its preStop hook
+([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). The drain of a gateway replica
+is §29.7 rather than part of this trace. When the coordinating replica is unreachable no replica drives
+the eviction checkpoint until the session's coordination lease lapses and a new holder has fenced the pod
+through the TTL-driven coordinator handoff, which is §29.8
+([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.5.1 `CH-CHECKPOINT`). When
+the object store is unreachable and its retries are exhausted the gateway falls back to a minimal session
+state record in Postgres, and when that write is also exhausted it enters the total-loss path and emits
+`session.lost` with reason `eviction_total_loss`
+([§4.4](04_system-components.md#44-event--checkpoint-store)). When the pod's signal reaches no replica at
+all the orphan session reconciler forces the session to `failed` with reason `orphan_pod_terminated`
+within one 60-second reconcile interval
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.5.2 `CH-ADAPTEREVENTS`). The steps are
+numbered and written in the form §29.1 fixes.
+
+**Preconditions.** The pod is claimed and carries a live session, and the replica holding that session's
+coordination lease `REG-COORDLEASE` is its coordinating replica
+([§10.1](10_gateway-internals.md#101-horizontal-scaling), §28.3). Every agent pod carries a preStop hook
+that triggers a checkpoint through the runtime adapter before termination, and the pod's
+`terminationGracePeriodSeconds`, default 120s, is set high enough to give that checkpoint time to complete
+and be persisted to object storage
+([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+
+1. When the chart's `features.drainReadiness` flag is `true` and the eviction traverses the Kubernetes
+   eviction API: `control plane` → `gateway`, `CH-ADMISSION`, `control-plane`. The `lenny-drain-readiness`
+   validating admission webhook fires on the `CREATE` against the `pods/eviction` resource in the agent
+   namespaces and issues `GET /internal/drain-readiness` against the gateway's internal HTTP port. The
+   gateway answers `HTTP 200` when the drain may proceed and `HTTP 503` when the artifact store is
+   degraded, and the webhook rejects the eviction on a `503` and on an unreachable endpoint. An operator
+   bypasses the check for an emergency drain by annotating the node with `lenny.dev/drain-force: "true"`
+   with justification, in which case the webhook permits the eviction and emits the `node.drain.forced`
+   critical audit event (§28.5.6 `CH-ADMISSION`,
+   [§12.5](12_storage-architecture.md#125-artifact-store)). The flag defaults to `false`, in which case the
+   webhook is not rendered and the eviction is admitted with no such check (§28.5.6 `CH-ADMISSION`).
+
+2. `agent pod`, `internal`. The pod's preStop hook runs before the pod is allowed to terminate, bounded by
+   `terminationGracePeriodSeconds`
+   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+
+3. `agent pod` → `gateway`, `CH-ADAPTEREVENTS`, `pod-to-gateway`. The hook cannot open the gateway-driven
+   `Checkpoint` stream itself, so it signals the session's coordinating replica, which is the holder of
+   `REG-COORDLEASE`, to have that replica drive the eviction checkpoint. The specification states no
+   message name for this signal (§28.5.2 `CH-ADAPTEREVENTS`,
+   [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3).
+
+4a. `gateway` → `adapter`, `CH-CHECKPOINT`, `gateway-to-pod`. The coordinating replica drives the eviction
+    checkpoint on the `Checkpoint` stream under its held lease, with the `TriggerEviction` trigger. The
+    trigger selects the eviction retry budget of exponential backoff from 500ms at factor 2, capped at 5
+    seconds per attempt and 30 seconds in total, and the checkpoint path is bounded by the 60-second
+    checkpoint timeout every checkpoint path enforces from the initial quiescence request to completion.
+    The capture the stream carries is traced in §29.5
+    (§28.5.1 `CH-CHECKPOINT`, [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
+    [§4.4](04_system-components.md#44-event--checkpoint-store)).
+
+4b. `unstated`. The specification names `eviction` among the reasons the adapter's `terminate` frame
+    carries to the runtime on `CH-RUNTIMEOPS`, and states that the adapter sends SIGTERM when the runtime
+    has not exited by that frame's `deadlineMs` ([§4.7](04_system-components.md#47-runtime-adapter),
+    §28.5.3 `CH-RUNTIMEOPS`). It does not state at what point of this path the adapter sends that frame,
+    and it does not fix the relative order of steps 4a and 4b.
+
+5. `agent pod`, `internal`. The pod terminates
+   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)).
+
+6. `gateway`, `internal`. For a session whose pod was checkpointed, the session retry mechanism transitions
+   the session to `resume_pending` and rebuilds it onto a replacement pod under the session's retry policy,
+   which §29.6 names as an entry point it does not trace, reaching the same restore §29.6 traces from the
+   client-driven `POST /v1/sessions/{id}/resume` call
+   ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
+   [§7.2](07_session-lifecycle.md#72-interactive-session-model)).
