@@ -75,9 +75,10 @@ func assertProbeTimeout(t *testing.T, seen time.Duration) {
 // backend. It must report healthy when a HeadBucket-equivalent query
 // against a reachable MinIO succeeds, report unhealthy and stamp
 // MINIO_UNREACHABLE when MinIO is down, and bound the probe at the hard
-// 2-second timeout. spec: §25.3 line 440 ("MinIO (HeadBucket)"), line
-// 441 (hard 2s timeout), lines 527-528 (objectStore.status unhealthy
-// when MinIO is unreachable).
+// 2-second timeout.
+// spec: §25.3 Data Sources (the "MinIO (HeadBucket)" dependency probe and
+// the hard 2s per-probe timeout), §25.3 Degradation (objectStore.status
+// reports unhealthy when MinIO is unreachable).
 func TestObjectStoreCheckerAgainstMinIO(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -134,7 +135,8 @@ func TestObjectStoreCheckerAgainstMinIO(t *testing.T) {
 // must report healthy when /healthz answers, report unhealthy with the
 // INVESTIGATE_KUBE_API inline hint when the API server errors or is
 // unreachable, and bound the probe at the hard 2-second timeout.
-// spec: §25.3 line 440 ("K8s API server (/healthz)"), line 441.
+// spec: §25.3 Data Sources (the "K8s API server (/healthz)" dependency
+// probe and the hard 2s per-probe timeout).
 func TestAPIServerCheckerAgainstStubHealthz(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -313,7 +315,8 @@ func writeCertFixture(t *testing.T, notAfter time.Time) string {
 // inside the expiry-warning window, unhealthy and stamp
 // CERT_EXPIRY_IMMINENT for an expired certificate, and unhealthy for an
 // unreadable one; the probe is bounded at the hard 2-second timeout.
-// spec: §25.3 line 440 ("cert-manager (certificate status)"), line 441.
+// spec: §25.3 Data Sources (the "cert-manager (certificate status)"
+// dependency probe and the hard 2s per-probe timeout).
 func TestCertManagerCheckerAgainstFileFixtures(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

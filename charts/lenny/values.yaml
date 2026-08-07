@@ -3209,11 +3209,12 @@ admin:
 # election (lenny-ops-leader); the leader runs the §25.4 background
 # loops and every replica serves the §25 HTTP surface.
 ops:
-  # spec: §25.16 line 5113 — "Deployment: lenny-ops (1 replica,
-  # leader-elected)". The Minimal topology (line 5093) is a single Pod;
-  # production runs as a Deployment with 1 replica plus leader election.
-  # Operators wanting HA can set replicas >= 2 and the PodDisruptionBudget
-  # renders accordingly (line 5114: "minAvailable 1 (when replicas >= 2)").
+  # spec: §25.16 Production topology — "Deployment: lenny-ops (1 replica,
+  # leader-elected)". The Minimal topology of the same section runs
+  # lenny-ops as a single Pod; production runs as a Deployment with 1
+  # replica plus leader election. Operators wanting HA can set replicas
+  # >= 2 and the PodDisruptionBudget renders accordingly, per the same
+  # table: "minAvailable 1 (when replicas >= 2)".
   replicas: 1
   # httpPort is the port the lenny-ops HTTP surface binds (the binary's
   # --addr flag). The lenny-ops Service exposes it; the Ingress and the

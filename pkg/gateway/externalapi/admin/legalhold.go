@@ -24,7 +24,8 @@ import (
 // hold so the §12.8 erasure preflight can block on artifact-scoped
 // preservation orders. *artifactcatalog.PgStore satisfies it.
 //
-// spec: §12.8 line 735; line 794(b).
+// spec: §12.8 — legal hold, and the erasure legal-hold preflight's
+// artifact-scoped clause.
 type ArtifactLegalHolder interface {
 	// Get returns the catalog record for uri (ErrNotFound when absent),
 	// used to confirm the artifact belongs to the request's tenant
@@ -77,7 +78,8 @@ func (r *Router) WithEscrowReleaser(rel EscrowReleaser) *Router {
 // nil holder leaves the endpoint session-only and skips the artifact
 // half of the preflight.
 //
-// spec: §12.8 line 735; line 794(b).
+// spec: §12.8 — legal hold, and the erasure legal-hold preflight's
+// artifact-scoped clause.
 func (r *Router) WithArtifactLegalHold(h ArtifactLegalHolder) *Router {
 	r.artifactHolds = h
 	return r

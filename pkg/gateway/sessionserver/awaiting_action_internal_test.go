@@ -145,12 +145,13 @@ func TestServerImplementsAwaitingExpiryNotifier_spec_7_3_25(t *testing.T) {
 	})
 }
 
-// spec: §6.2 lines 249/292 — the watchdog's awaiting-action ENTRY hook
-// fires for resume_pending → awaiting_client_action (line 292 wall-clock
-// cap) and resuming → awaiting_client_action (line 249 retries-exhausted
-// branch). Server implements AwaitingClientActionEntryNotifier so the
-// watchdog can drive the §7.3 line 427 webhook + §16.6 op event + §11.7
-// audit row through the existing emit helper. F-6.2.14.
+// spec: §6.2 — the watchdog's awaiting-action ENTRY hook fires for
+// resume_pending → awaiting_client_action under the resume_pending
+// wall-clock cap, and for resuming → awaiting_client_action on the
+// retries-exhausted branch. Server implements
+// AwaitingClientActionEntryNotifier so the watchdog can drive the §7.3
+// webhook, the §16.6 op event, and the §11.7 audit row through the
+// existing emit helper. F-6.2.14.
 func TestServerImplementsAwaitingEntryNotifier_spec_6_2_14(t *testing.T) {
 	sink := &captureLifecycleAudit{}
 	emitter := eventbuffer.NewEmitter(eventbuffer.NewEventBuffer(0), "test")

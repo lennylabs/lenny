@@ -47,7 +47,7 @@ func getSession(t *testing.T, h http.Handler, id string) *httptest.ResponseRecor
 	return rr
 }
 
-// spec: §8.8 lines 806-823 — GET /v1/sessions/{id} materializes the §8.8
+// spec: §8.8 — GET /v1/sessions/{id} materializes the §8.8
 // TaskRecord envelope projected from the row + transcript: caller/agent
 // messages with per-entry text MessageParts, the terminal state on the
 // final agent turn, and treeUsage absent (null) until descendants

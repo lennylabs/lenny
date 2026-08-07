@@ -9,8 +9,9 @@ package coordination
 // deployment the in-memory store is the only tier, so the policy applies
 // to every acquisition.
 //
-// spec: §25.4 lines 2206-2212 (Tier 3 behavior), line 1539
-// (Multi-Replica Scaling trade-off), line 2326 (the error code).
+// spec: §25.4 Remediation Coordination — Storage Tiers ("Tier 3 —
+// In-memory"), Multi-Replica Lenny-Ops Scaling (the recommended-scale
+// trade-off), and Error Codes (REMEDIATION_LOCK_NO_COORDINATION).
 type MemoryTier string
 
 const (

@@ -111,8 +111,9 @@ type Pagination struct {
 	SuggestedAction string `json:"suggestedAction,omitempty"`
 }
 
-// DeliveryPage is the canonical §25.5 webhook-delivery query
-// envelope. spec: §25.5 lines 2569, 2584; row shape lines 2649-2664.
+// DeliveryPage is the canonical §25.5 webhook-delivery query envelope.
+// spec: §25.5 — the deliveries endpoint, the EventStreamService Go
+// interface, and the `ops_event_deliveries` columns.
 type DeliveryPage struct {
 	Items      []Delivery `json:"items"`
 	Pagination Pagination `json:"pagination"`

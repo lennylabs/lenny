@@ -82,8 +82,9 @@ func resolveDelegationTarget(ctx context.Context, deps Deps, target string) (ref
 // non-text parts flattens to the empty string and the child receives no
 // initial message — the same behaviour as an omitted input.
 //
-// spec: §8.2 lines 25-28 (TaskSpec.input is MessagePart[]); §15.4.1
-// lines 1483-1540 (MessagePart envelope, v1 `text` parts).
+// spec: §8.2 (TaskSpec.input is MessagePart[]); §15.4.1 (the adapter
+// `message` type carries its input as a MessagePart array); §15.4
+// Internal MessagePart Format (the envelope and its v1 `text` parts).
 func flattenTaskInput(parts []sessionrecord.MessagePart) string {
 	var b strings.Builder
 	for _, p := range parts {

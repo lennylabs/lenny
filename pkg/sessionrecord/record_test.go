@@ -114,7 +114,7 @@ func TestRetriesExhausted_spec_8_8_936(t *testing.T) {
 	}
 }
 
-// spec: §8.8 lines 806-823 — the TaskRecord envelope serializes with the
+// spec: §8.8 TaskRecord — the TaskRecord envelope serializes with the
 // canonical field names and a messages array carrying caller/agent
 // entries with per-entry MessageParts.
 func TestRecord_JSON_spec_8_8_806(t *testing.T) {

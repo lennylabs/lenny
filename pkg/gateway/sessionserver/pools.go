@@ -40,8 +40,8 @@ type PoolDiscoveryEntry struct {
 	UpdatedAt     string `json:"updatedAt"`
 }
 
-// handleListPools implements GET /v1/pools — the §15.1 line 703
-// session-facing pool-discovery surface. It lists warm pools and their
+// handleListPools implements GET /v1/pools — the §15.1 session-facing
+// pool-discovery surface. It lists warm pools and their
 // configured warm replica counts, filtered to the pools that warm a
 // runtime the caller can already discover through GET /v1/runtimes (the
 // §10.6 transparent environment filter). A pool whose runtimeRef the
@@ -49,7 +49,7 @@ type PoolDiscoveryEntry struct {
 // visibility, and a runtime store read failure fails closed to an empty
 // list. The response uses the canonical §15.1 cursor-paginated envelope.
 //
-// spec: §15.1 line 703; line 1228 (cursor pagination).
+// spec: §15.1 (REST API: GET /v1/pools, cursor-based pagination)
 func (s *Server) handleListPools(w http.ResponseWriter, r *http.Request) {
 	params, ferr := pagination.ParseRequest(r, poolListSortFields, poolListDefaultSort, s.clock())
 	if ferr != nil {

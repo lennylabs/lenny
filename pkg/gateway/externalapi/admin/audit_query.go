@@ -413,12 +413,13 @@ func (r *Router) auditReceipts(ctx context.Context, tenant string) map[uint64]au
 
 // handleListAuditEvents implements GET /v1/admin/audit-events.
 //
-// The query supports the §25.9 line 3659 filter set (since, until,
-// eventType, actorId, resourceType, resourceId, severity, limit, cursor,
-// ocsf_translation_state, eventbus_publish_state) and the line 3703
-// diagnostics ?operationId=. Combining filters is AND. A query without a
-// time bound defaults to the last 24 hours; a span exceeding 90 days
-// without a narrowing filter is rejected with AUDIT_QUERY_TOO_BROAD.
+// The query supports the §25.9 filter set (since, until, eventType,
+// actorId, resourceType, resourceId, severity, limit, cursor,
+// ocsf_translation_state, eventbus_publish_state) together with the
+// §25.9 diagnostics filter ?operationId=. Combining filters is AND. A
+// query without a time bound defaults to the last 24 hours; a span
+// exceeding 90 days without a narrowing filter is rejected with
+// AUDIT_QUERY_TOO_BROAD.
 //
 // The default response wire form is the §4.4 line 232 / §11.7 OCSF
 // v1.1.0 translation: every row runs through `pkg/audit/ocsf.Translate`
@@ -429,7 +430,7 @@ func (r *Router) auditReceipts(ctx context.Context, tenant string) map[uint64]au
 // verdicts and `auditMetadata.suspectedGaps` lists detected temporal
 // gaps (§25.9 lines 3653, 3670-3679).
 //
-// spec: §25.9 lines 3653-3710; §4.4 line 232 (OCSF audit-egress).
+// spec: §25.9 (audit log query API); §4.4 (OCSF audit-egress translator).
 func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request) {
 	start := r.clock()
 	tenant, ok := r.auditTenant(w, req)

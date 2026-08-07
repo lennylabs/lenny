@@ -108,27 +108,26 @@ func (r *lifecycleRevoker) RevokePoolCredentials(_ context.Context, poolID strin
 	return total
 }
 
-// spec: 4.7 (Full-level credential rotation protocol, spec/04_system-components.md:
+// spec: §4.7 (Runtime Adapter) — the Adapter ↔ Runtime Protocol message
+// table defines `credentials_rotated` ("New credentials written; runtime
+// must rebind and reply with credentials_acknowledged") and
+// `credentials_acknowledged` ("Runtime has rebound to the new
+// credential"); the credential-rotation-by-level table defines the Full
+// level ("Gateway calls RotateCredentials RPC; adapter sends
+// credentials_rotated on CH-RUNTIMEOPS; runtime rebinds provider
+// in-place"); the Adapter-Agent Security Boundary credential-file rules
+// require that "the file is rewritten by the adapter on credential
+// rotation; after rewrite, the adapter sends credentials_rotated on the
+// CH-RUNTIMEOPS and awaits credentials_acknowledged from the runtime
+// before resuming operation".
 //
-//	line 723 "credentials_rotated ... New credentials written; runtime must
-//	rebind and reply with credentials_acknowledged"; line 728
-//	"credentials_acknowledged ... Runtime has rebound to the new credential";
-//	line 831 "Full | Gateway calls RotateCredentials RPC; adapter sends
-//	credentials_rotated on CH-RUNTIMEOPS; runtime rebinds provider
-//	in-place"; line 960 "The file is rewritten by the adapter on credential
-//	rotation; after rewrite, the adapter sends credentials_rotated on the
-//	CH-RUNTIMEOPS and awaits credentials_acknowledged from the runtime
-//	before resuming operation"),
-//
-// 4.9 (Emergency Credential Revocation, spec/04_system-components.md lines
-//
-//	1640-1652: revoke marks the credential revoked, terminates its active
-//	leases, and denies it; "For direct-delivery mode: the gateway sends a
-//	RotateCredentials RPC to all pods holding leases against credId ... The
-//	pod's lease is invalidated; it must acquire a new lease from a different
-//	credential in the pool (or the fallback chain) to continue"; line 1649 a
-//	revoked credential is never re-assignable so the step-5 replacement mint
-//	never re-selects it).
+// §4.9 (Credential Leasing Service, Emergency Credential Revocation) —
+// revoke marks the credential revoked, terminates its active leases, and
+// denies it; "For direct-delivery mode: the gateway sends a
+// RotateCredentials RPC to all pods holding leases against credId ... The
+// pod's lease is invalidated; it must acquire a new lease from a
+// different credential in the pool (or the fallback chain) to continue",
+// so the step-5 replacement mint never re-selects the revoked credential.
 //
 // diagnosis: the §4.7/§4.9 direct-delivery credential lifecycle diverged
 //

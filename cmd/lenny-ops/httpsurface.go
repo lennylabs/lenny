@@ -127,8 +127,9 @@ func (w *opsWiring) buildHTTPSurface() {
 		},
 	}
 
-	// §25.4 audit recorder for identity.discovered (line 1641) +
-	// operations.inventory_queried (line 1779). Each emits a durable §11.7
+	// §25.4 audit recorder for the identity.discovered event of Caller
+	// Identity and Capability Discovery and the operations.inventory_queried
+	// event of Operations Inventory. Each emits a durable §11.7
 	// platform-audit row through auditRecorder (logged only in the degraded
 	// no-Postgres mode). F-25.4.22.
 	opsAudit := opsserver.LogAuditRecorder{Sink: func(event string, fields map[string]any) {

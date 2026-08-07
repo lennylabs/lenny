@@ -250,7 +250,7 @@ func (e *DepthExceededError) Error() string {
 // three documented values are the only admissible inputs; any other
 // string is a registration-time error.
 //
-// spec: §8.4 lines 515-521.
+// spec: §8.4.
 // F-8.4.1, F-8.4.2.
 type ApprovalMode string
 

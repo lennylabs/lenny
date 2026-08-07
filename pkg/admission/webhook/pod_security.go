@@ -69,13 +69,14 @@ const (
 // translatePodSpec projects a Kubernetes Pod into the transport-agnostic
 // podsecurity.PodSpec the §13.1 validator consults. Init, regular, and
 // ephemeral containers are all flattened into the validator's container
-// list: §13.1 applies the per-container invariants to "every container
-// in the pod" (line 16), and line 27 calls out ephemeral debug
-// containers attached post-hoc via the pods/ephemeralcontainers
-// subresource as a specific risk surface — an actor that does not trip
-// the dedicated lenny-ephemeral-container-cred-guard can still attach an
-// ephemeral container that breaches the general baseline (privileged,
-// added capabilities, writable root, disabled seccomp). Ephemeral
+// list: §13.1 applies the per-container invariants across init and
+// sidecar containers alike, and its lenny-cred-readers membership
+// boundary calls out ephemeral debug containers attached post-hoc via
+// the pods/ephemeralcontainers subresource as a specific risk surface.
+// An actor that does not trip the dedicated
+// lenny-ephemeral-container-cred-guard can still attach an ephemeral
+// container that breaches the general baseline (privileged, added
+// capabilities, writable root, disabled seccomp). Ephemeral
 // containers are never treated as credential containers, so an ephemeral
 // container that mounts the credential volume trips the §13.1 membership
 // boundary here in addition to the cred-guard.

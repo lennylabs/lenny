@@ -14,7 +14,7 @@
 // packages can all depend on it without an import cycle and without
 // pulling each other's heavy dependencies in transitively.
 //
-// spec: §12.6 lines 363-415 (shared type definitions block).
+// spec: §12.6 (shared type definitions block).
 package store
 
 // ID types are typed strings, so a tenant id cannot be transposed with

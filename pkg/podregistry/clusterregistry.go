@@ -178,9 +178,9 @@ func (r *LocalClusterRegistry) GetCluster(_ context.Context, clusterID ClusterID
 }
 
 // SelectCluster ignores req and returns the local cluster id: v1 is
-// single-cluster, so every claim routes locally. spec: §12.6 line 430
-// ("v1 implementation ignores all fields and returns LocalClusterID()"),
-// line 586.
+// single-cluster, so every claim routes locally. spec: §12.6
+// ("ClusterRegistry"), whose v1 implementation ignores all fields of the
+// selection request and always returns the local cluster id.
 func (r *LocalClusterRegistry) SelectCluster(context.Context, ClusterSelectionRequest) (ClusterID, error) {
 	return r.id, nil
 }

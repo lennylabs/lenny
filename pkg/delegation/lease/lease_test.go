@@ -144,9 +144,10 @@ func TestCheckDepthRejectsZeroMax(t *testing.T) {
 	}
 }
 
-// spec: §8.4 lines 515-521 — the §8.4 closed enum admits "policy",
-// "approval", "deny", and the empty string (which the gateway aliases
-// to ApprovalModePolicy at evaluation time per the v1 default).
+// spec: §8.4 (Approval Modes) — the closed enum admits "policy",
+// "approval", and "deny". §8.3 (Delegation Policy and Lease) gives the
+// lease's approvalMode field a "policy" value, so the gateway aliases
+// the empty string to ApprovalModePolicy at evaluation time.
 // F-8.4.1, F-8.4.2.
 func TestValidateApprovalModeAcceptsClosedEnum_spec_8_4(t *testing.T) {
 	cases := []ApprovalMode{"", ApprovalModePolicy, ApprovalModeApproval, ApprovalModeDeny}

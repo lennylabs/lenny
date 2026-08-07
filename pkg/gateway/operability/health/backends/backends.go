@@ -235,8 +235,9 @@ func SIEM(fwd SIEMForwarder, rate SIEMFailureRate, thresholdPercent float64, nam
 // timeout and reports the component name the §25.3 Degradation section
 // uses ("objectStore"). On failure it stamps MINIO_UNREACHABLE so the
 // aggregator resolves the singular suggestedAction and the minio-failure
-// runbook. spec: §25.3 line 441 ("MinIO (HeadBucket)"), lines 527-528
-// ("If MinIO is unreachable: objectStore.status reports unhealthy").
+// runbook. spec: §25.3 Data Sources ("MinIO (HeadBucket)") and §25.3
+// Degradation ("If MinIO is unreachable: objectStore.status reports
+// unhealthy").
 func ObjectStore(probe ProbeFunc, name string) health.Checker {
 	return health.CheckerFunc{
 		ComponentName: name,

@@ -120,7 +120,7 @@ type Request struct {
 	// *lease.InvalidApprovalModeError so the §8.5 lenny/delegate_task
 	// handler can surface INVALID_LEASE_FIELD.
 	//
-	// spec: §8.4 lines 515-521. F-8.4.1, F-8.4.2, F-8.4.3.
+	// spec: §8.4 Approval Modes. F-8.4.1, F-8.4.2, F-8.4.3.
 	ApprovalMode lease.ApprovalMode
 
 	// CredentialPropagation is the §8.3 credential propagation mode on
@@ -903,8 +903,7 @@ type admission struct {
 // lineage build, and the parent's effective §8.3 contentPolicy. It
 // returns the validated admission context the later stages read.
 //
-// spec: §8.4 lines 515-521; §8.2 lines 38-58; §8.3 lines 311-324.
-// F-8.4.1, F-8.4.2.
+// spec: §8.4 Approval Modes; §8.2; §8.3. F-8.4.1, F-8.4.2.
 func (s *Service) validateDelegation(ctx context.Context, tenantID string, req Request) (admission, error) {
 	// §8.4: validate the closed enum at the service boundary so a
 	// malformed value is rejected with *lease.InvalidApprovalModeError

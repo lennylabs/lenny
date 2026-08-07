@@ -451,12 +451,12 @@ func (s *Service) RetryEmission(ctx context.Context) int {
 
 // Flush is the §25.4 reconciliation pass: when a durable tier is
 // reachable, buffered in-memory escalations are promoted upward. The
-// original CreatedAt and the emitted flag are preserved across the move
-// (§25.4 lines 2411-2412); a destination that already holds the record
-// makes the flush a no-op (line 2413); each flush emits a
-// remediation.escalation_persisted audit event and is rate-limited to
-// the configured writes-per-second (lines 2414-2415). Flush returns the
-// number of escalations promoted.
+// original CreatedAt and the emitted flag are preserved across the move,
+// a destination that already holds the record makes the flush a no-op,
+// and each flush emits a remediation.escalation_persisted audit event
+// and is rate-limited to the configured writes-per-second, all per the
+// §25.4 Reconciliation subsection. Flush returns the number of
+// escalations promoted.
 func (s *Service) Flush(ctx context.Context) (int, error) {
 	if len(s.durable) == 0 {
 		return 0, nil

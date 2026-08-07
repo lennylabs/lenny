@@ -54,21 +54,22 @@ type successCoolOffProvider interface {
 	SuccessCoolOff(ctx context.Context, tenantID, rootSessionID string) time.Duration
 }
 
-// elicitCoordinator drives the §8.6 line 714 elicitation-mode approval
-// flow. Requests are serialized per task tree: a first request opens one
-// generic elicitation (line 718), concurrent requests batch onto it
-// silently without a duplicate prompt (line 719), and an approval opens a
-// success cool-off window during which further requests are auto-granted
-// without re-eliciting (lines 722-723). A rejection marks the requesting
-// subtree extension-denied and starts the rejection cool-off (line 729).
+// elicitCoordinator drives the §8.6 elicitation-mode approval flow.
+// Requests are serialized per task tree: a first request opens one
+// generic elicitation, concurrent requests batch onto it silently
+// without a duplicate prompt, and an approval opens a success cool-off
+// window during which further requests are auto-granted without
+// re-eliciting. A rejection marks the requesting subtree
+// extension-denied and starts the rejection cool-off.
 //
 // The per-tree serialization and success cool-off live in memory on the
-// owning gateway replica. §8.6 line 730 requires only the extension-denied
-// flag and the rejection cool-off expiry to be durable across a
-// coordinator handoff (that durability is the Postgres BudgetSource's
-// concern); a handoff mid-elicitation simply starts a fresh elicitation
-// on the new replica, which is the §8.6 line 718 first-request behaviour.
-// spec: §8.6 lines 714-734
+// owning gateway replica. §8.6 requires only the extension-denied flag
+// and the rejection cool-off expiry to be durable across a coordinator
+// handoff (that durability is the Postgres BudgetSource's concern); a
+// handoff mid-elicitation simply starts a fresh elicitation on the new
+// replica, which is the first-request behaviour the same section
+// describes.
+// spec: §8.6 Lease Extension Approval Modes
 type elicitCoordinator struct {
 	elicitor Elicitor
 	budgets  BudgetSource

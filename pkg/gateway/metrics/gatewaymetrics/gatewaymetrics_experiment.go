@@ -80,12 +80,12 @@ func newExperimentMetrics(reg *prometheus.Registry) (experimentMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	// spec: §16.1 lines 161-163 / §10.7 lines 1120-1132 — the variant-labelled
-	// rollback-trigger metric family. session_type carries the session's
-	// §5.2 ExecutionMode ("session", "service"); variant_id carries
-	// the §10.7 experiment enrollment ("" for control / un-enrolled sessions).
-	// lenny_session_total is the denominator for the variant error rate
-	// (§16.1 line 162); lenny_session_error_total is the numerator (line 161).
+	// spec: §16.1 / §10.7 — the variant-labelled rollback-trigger metric
+	// family. session_type carries the session's §5.2 ExecutionMode
+	// ("session", "service"); variant_id carries the §10.7 experiment
+	// enrollment ("" for control / un-enrolled sessions). Per §16.1,
+	// lenny_session_total is the denominator for the variant error rate and
+	// lenny_session_error_total is its numerator.
 	sessionTotal, err := metrics.NewCounter(prometheus.CounterOpts{
 		Name: "lenny_session_total",
 		Help: "§16.1 line 162 sessions total by variant; denominator for the §10.7 rollback-trigger error rate.",

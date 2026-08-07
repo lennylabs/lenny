@@ -1971,7 +1971,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.resumeWindow <= 0 {
 		s.resumeWindow = DefaultResumeWindow
 	}
-	// spec: §8.10 lines 1014-1027 — the bottom-up delegation-tree
+	// spec: §8.10 — the bottom-up delegation-tree
 	// recovery driver. The required seams (lister, reattacher, terminal
 	// marker) are always available here, so the orchestrator is built
 	// unconditionally; its work is gated to genuinely orphaned nodes by
@@ -2337,7 +2337,7 @@ type SessionResponse struct {
 	// the single-session read (GET /v1/sessions/{id}); the list endpoint
 	// omits it to avoid a transcript fetch per row. Absent when the
 	// gateway has no transcript store wired. F-8.8.1.
-	// spec: §8.8 lines 806-823.
+	// spec: §8.8 (TaskRecord).
 	TaskRecord *sessionrecord.Record `json:"taskRecord,omitempty"`
 }
 
@@ -2829,7 +2829,7 @@ func (s *Server) handleGet(w http.ResponseWriter, r *http.Request) {
 		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
-	// spec: §8.8 lines 806-823 — the single-session read materializes the
+	// spec: §8.8 (TaskRecord) — the single-session read materializes the
 	// §8.8 TaskRecord envelope (projected from the row + transcript) so a
 	// consumer expecting §8.8 semantics can read it off GET
 	// /v1/sessions/{id}. F-8.8.1.

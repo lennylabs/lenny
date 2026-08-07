@@ -85,14 +85,15 @@ func getAuditEnvelope(t *testing.T, router *admin.Router, url string) admin.Audi
 	return env
 }
 
-// spec: §25.9 lines 3653-3710 — "The response envelope carries
-// `ocsfVersion` (\"1.1.0\") and `chainIntegrityReport` ({verified,
-// broken, gap_suspected, rechained_post_outage, redacted_gdpr}) as
-// top-level fields outside `items[]`." The list endpoint params are
-// "?since=, ?until=, ?eventType=, ?actorId=, ?resourceType=, ...
-// ?limit= (default 100, max 1000), ?cursor=" and "Combining filters is
-// AND." Queries "without `since` or `until` default to the last 24
-// hours (not \"all time\")."
+// spec: §25.9. Its wire-format paragraph states that "The response
+// envelope carries `ocsfVersion` ("1.1.0") and `chainIntegrityReport`
+// ({verified, broken, gap_suspected, rechained_post_outage,
+// redacted_gdpr}) as top-level fields outside `items[]`." Its Endpoints
+// table gives the list endpoint params as "?since=, ?until=,
+// ?eventType=, ?actorId=, ?resourceType=, ... ?limit= (default 100, max
+// 1000), ?cursor=" and states that "Combining filters is AND." Its
+// Query Limits and Scatter-Gather subsection makes queries "without
+// `since` or `until` default to the last 24 hours (not "all time")."
 //
 // diagnosis: a failure means the §25.9 query endpoints, when wired to
 // the Postgres-backed auditstore.Store instead of the in-memory chain,

@@ -8,8 +8,8 @@ import (
 )
 
 // ingestResponse converts a runtime `response` frame into the gateway's
-// MessageParts and the §15.4.1 envelope-level degradation annotations a
-// live consumer must surface. The gateway is the live consumer at this
+// MessageParts and the envelope-level degradation annotations a live
+// consumer must surface. The gateway is the live consumer at this
 // boundary: it forward-reads the runtime's parts, so it MUST signal when
 // a part carries a schemaVersion ahead of what it understands and it
 // applies the canonical type-registry fallback per part.
@@ -20,7 +20,9 @@ import (
 // frame). Part-scoped `unregistered_platform_type` warnings ride on each
 // part's own Annotations.
 //
-// spec: §15.4.1 lines 1499-1522.
+// spec: §15.4.1 (the adapter↔binary `response` frame); §15.4 (Internal
+// MessagePart Format — live-consumer forward-read and the canonical
+// type-registry fallback).
 func ingestResponse(env responseEnvelope) ([]MessagePart, map[string]any) {
 	parts := make([]MessagePart, 0, len(env.Output))
 	if env.Text != "" && len(env.Output) == 0 {

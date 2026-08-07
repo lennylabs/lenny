@@ -279,8 +279,10 @@ func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq
 //     children to re-await.
 //
 // Best-effort: a nil event bus or store error simply elides the frames.
-// spec: §10.4 lines 391-397; §7.2 line 138 (session.resumed), line 137
-// (status_change), line 153 (children_reattached). F-7.2.13, F-10.4.2.
+// spec: §10.4 ("Coordinator-handoff reattach — volatile vs.
+// reconstructible events"); §7.2, which defines the session.resumed,
+// status_change, and children_reattached events on the interactive
+// stream. F-7.2.13, F-10.4.2.
 func (s *Server) synthesizeHandoffReattach(ctx context.Context, w http.ResponseWriter, row sessionstore.Session, afterSeq uint64) {
 	if frame, ok := s.handoffResumedFrame(); ok {
 		writeSyntheticSSE(w, "session.resumed", frame)

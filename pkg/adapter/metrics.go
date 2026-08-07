@@ -182,9 +182,9 @@ func incControlEventDropped(event, reason string) {
 	controlEventsDropped.WithLabelValues(event, reason).Inc()
 }
 
-// setCoordinatorHold publishes the §10.1 line 52 coordinator-hold gauge:
-// 1 while the adapter is in hold state, 0 once a fence resolves it or the
-// hold times out into self-termination.
+// setCoordinatorHold publishes the §10.1 coordinator-hold gauge, which
+// reads 1 while the adapter is in hold state and 0 once a fence resolves
+// it or the hold times out into self-termination.
 func setCoordinatorHold(active bool) {
 	v := 0.0
 	if active {

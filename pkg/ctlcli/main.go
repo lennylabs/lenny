@@ -2357,11 +2357,12 @@ func (b bootstrapResult) logSkips(stderr io.Writer) {
 	}
 }
 
-// exitCode maps the bootstrap response to the §17.6 line 420 exit codes:
-// 0 = all resources seeded (created, updated, or already-present skips),
-// 1 = validation error (a security-critical block, or a pure-failure run
-// where nothing succeeded), 2 = partial failure (some succeeded, some
-// failed operationally).
+// exitCode maps the bootstrap response to the exit codes §17.6 defines.
+// Exit 0 means every resource was seeded (created, updated, or skipped
+// because it was already present). Exit 1 means a validation error (a
+// security-critical block, or a pure-failure run where nothing
+// succeeded). Exit 2 means partial failure (some succeeded, some failed
+// operationally).
 func (b bootstrapResult) exitCode() int {
 	succeeded, failed, securityCritical := 0, 0, false
 	for _, s := range b.sections() {

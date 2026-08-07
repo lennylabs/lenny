@@ -91,7 +91,7 @@ func TestOpsAnonymousRejectedOnDeployedBinary_spec_25_4_1567(t *testing.T) {
 		t.Run("anonymous/"+ep.name, func(t *testing.T) {
 			code := opsAnonStatus(t, http.MethodGet, baseURL+ep.path, false)
 			if code != http.StatusUnauthorized && code != http.StatusForbidden {
-				t.Fatalf("anonymous GET %s: status = %d, want 401 or 403; the deployed lenny-ops must deny anonymous callers on every non-/healthz endpoint (§25.4 line 1567; AUTH category is 401 or 403 per line 328)",
+				t.Fatalf("anonymous GET %s: status = %d, want 401 or 403; the deployed lenny-ops must deny anonymous callers on every non-/healthz endpoint (§25.4 authentication; the §25.2 AUTH error category admits 401 or 403)",
 					ep.path, code)
 			}
 		})

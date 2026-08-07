@@ -432,9 +432,10 @@ spec:
                 type: string
               sessionId:
                 description: |-
-                  SessionID records the session a pod is bound to. spec: §12.6
-                  line 421 — PodRecord.SessionID (nullable), and line 442 / the
-                  agent_pod_state.session_id column ("set on claim"). The §4.6.1
+                  SessionID records the session a pod is bound to. spec: §12.6 —
+                  PodRecord.SessionID (nullable) in the store interface table, and
+                  the PodRegistry agent_pod_state.session_id column, which the
+                  schema comment describes as set on claim. The §4.6.1
                   claim path writes it on ClaimPod and clears it on ReleasePod; the
                   orphan-session reconciler (§10.1) cross-references it via the
                   partial session_id index. Empty for an unclaimed pod.

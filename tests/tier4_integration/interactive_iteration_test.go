@@ -23,13 +23,13 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
-// spec: §7.1 (spec/07_session-lifecycle.md:45) "18. Client ↔ Gateway:
-// Full interactive session (prompts, responses, tool use, interrupts,
-// elicitation, credential rotation on RATE_LIMITED)"; §7.2 path 6
-// (lines 326-330), in particular line 327: a `delivery:"immediate"`
-// message whose target session is `suspended` and whose pod is still
-// held atomically resumes the session (`suspended → running`) and
-// delivers the message to the runtime, returning a `delivered` receipt.
+// spec: §7.1 "18. Client ↔ Gateway: Full interactive session (prompts,
+// responses, tool use, interrupts, elicitation, credential rotation on
+// RATE_LIMITED)"; §7.2 path 6, pod-still-held branch: a
+// `delivery:"immediate"` message whose target session is `suspended` and
+// whose pod is still held atomically resumes the session
+// (`suspended → running`) and delivers the message to the runtime,
+// returning a `delivered` receipt.
 // On the single coordinating replica the in-process echo executor is
 // always ready, so the fourth prompt resumes-and-delivers, produces a
 // fourth echo exchange, and returns the session to `running`.

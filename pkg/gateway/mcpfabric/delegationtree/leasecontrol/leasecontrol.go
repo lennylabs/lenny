@@ -563,8 +563,9 @@ func auditOutcomeFor(o leaseextension.Outcome) AuditOutcome {
 	}
 }
 
-// ExtensionAudit is the §8.6 line 743 audit record for one extension
-// request. Every field the spec line 743 enumerates rides on this
+// ExtensionAudit is the §8.6 ("Lease Extension Approval Modes") audit
+// record for one extension request. Every field the spec's Audit
+// paragraph enumerates rides on this
 // struct: requesting session, requested amounts, approval mode,
 // outcome, approver, granted amount, effective max at time of request,
 // resulting new limits, batch id, service_instance_id, client_ip.

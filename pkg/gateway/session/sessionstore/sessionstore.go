@@ -179,8 +179,9 @@ type Session struct {
 	// own origin. A read-path value equal to the row's own ID (or empty,
 	// which collapses to the row's own ID) marks a self-origin, so a
 	// session inherited iff this value is a non-empty ancestor id.
-	// spec: §8.3 line 472 (origin-pool forwarding); line 488 (independent
-	// establishes a new origin); line 474.
+	// spec: §8.3 credential pool identity in multi-hop `inherit` chains
+	// (origin-pool forwarding, and `independent` establishing a new
+	// origin); §8.3 cross-environment compatibility check.
 	CredentialOriginSessionID string
 
 	// CredentialDeny is true iff the delegate_task hop that created this

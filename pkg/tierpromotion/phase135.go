@@ -176,14 +176,14 @@ func CheckBurstAbsorption(in Inputs) CheckResult {
 
 // CheckPhase135Attestations verifies the operator has attested the
 // three Phase 13.5 benchmark results §17.8.3 Step 1 enumerates: the
-// LLM Proxy extraction-ratio benchmark (§17.8.3 line 1263 / 1282), the
-// gateway GC pressure benchmark (§17.8.3 line 1264 / 1283), and the
-// `maxSessionsPerReplica` calibration (§17.8.3 line 1265 / 1284). The
+// LLM Proxy extraction-ratio benchmark, the gateway GC pressure
+// benchmark, and the `maxSessionsPerReplica` calibration. Step 2 of the
+// same subsection restates each one as a NO-GO condition. The
 // `lenny-tier-promote` binary cannot run the benchmark harness itself,
 // but it requires the operator to attest each result before allowing a
 // Tier 3 promotion to proceed. The check is SKIPPED when the target is
 // Tier 1 or Tier 2: §17.8.3 is the Tier 2 → Tier 3 gate.
-// spec: §17.8.3 Step 1 (lines 1257-1267), Step 2 NO-GO (lines 1281-1284).
+// spec: §17.8.3 (tier promotion guide, Step 1 benchmarks and Step 2 NO-GO)
 func CheckPhase135Attestations(in Inputs) CheckResult {
 	const name = "phase-13.5-attestations"
 	if in.To != Tier3 {

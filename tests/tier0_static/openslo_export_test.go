@@ -44,7 +44,7 @@ type openSLOKind struct {
 	Kind string `yaml:"kind"`
 }
 
-// spec: §16.10 lines 742-746 ("the Helm chart renders the latency and
+// spec: §16.10 ("the Helm chart renders the latency and
 // availability SLOs from §16.5 as OpenSLO v1 YAML documents ... the
 // chart emits a ConfigMap containing the OpenSLO SLO, SLI, AlertPolicy,
 // and AlertNotificationTarget objects for the deployer's tooling to

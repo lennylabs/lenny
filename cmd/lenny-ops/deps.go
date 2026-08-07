@@ -706,11 +706,12 @@ func buildBackupService(production bool, deps backupDeps) (*backup.Service, []op
 			},
 		},
 		{
-			// spec: §25.11 line 4309 — publish the
-			// lenny_backup_last_successful_timestamp{type} gauge so the
-			// BackupOverdue alert (line 4317) has a source. Leader-gated
-			// like the other cron jobs; the §16.9 /metrics exposition that
-			// scrapes the gauge is wired (F-16.8.1).
+			// spec: §25.11 — the Metrics table defines the
+			// lenny_backup_last_successful_timestamp{type} gauge and the
+			// Alerting Rules table's BackupOverdue entry reads it, so this
+			// job publishes it. Leader-gated like the other cron jobs; the
+			// §16.9 /metrics exposition that scrapes the gauge is wired
+			// (F-16.8.1).
 			Name:       "backup-metrics",
 			Expression: "* * * * *",
 			Run: func(ctx context.Context) error {
@@ -2092,9 +2093,10 @@ func buildUpgradeChecker(cfg upgradeCheckerConfig, pool *pgxpool.Pool, emitter e
 			releasechannel.ChannelStable: stable,
 		})
 	}
-	// §25.8 line 3414 Caching: a successful check writes the Postgres
-	// cache so an unreachable channel serves cached data (line 3413); in
-	// single-process degraded mode the in-memory cache survives one term.
+	// §25.8 Release Channel Service Details, Caching: a successful check
+	// writes the Postgres cache so that an unreachable channel still
+	// serves cached data; in single-process degraded mode the in-memory
+	// cache survives one term.
 	var cache upgradeservice.CheckCache = upgradeservice.NewMemCheckCache()
 	if pool != nil {
 		cache = upgradepg.NewCheckCache(pool)

@@ -181,8 +181,8 @@ type Variant struct {
 	// ID is the variant identifier. Cannot equal ControlVariantID.
 	ID string
 	// Weight is the traffic fraction routed to this variant; in [0, 1).
-	// spec: §10.7 line 694 / line 743 — fraction in [0.0, 1.0]; the
-	// cross-Σ < 1.0 rule (line 743) bars 1.0 in a single-variant
+	// spec: §10.7 — each variant weight is a fraction in [0.0, 1.0], and
+	// the cross-variant Σ < 1.0 rule bars 1.0 in a single-variant
 	// experiment. A weight of 0.0 is operationally a no-op (no traffic
 	// to the variant) and is admitted so deployers can stage a variant
 	// before turning on traffic.
@@ -263,9 +263,9 @@ func (d Definition) Validate() error {
 		}
 		seen[vt.ID] = true
 		if vt.Weight < 0 || vt.Weight >= 1 {
-			// spec: §10.7 line 694 / line 743 — weight in [0.0, 1.0);
-			// 1.0 always violates the cross-Σ < 1.0 rule (line 743);
-			// 0.0 is admitted (staged variant with no traffic).
+			// spec: §10.7 — weight in [0.0, 1.0); 1.0 always violates
+			// the cross-variant Σ < 1.0 rule; 0.0 is admitted (staged
+			// variant with no traffic).
 			v = append(v, Violation{
 				Code: CodeInvalidVariantWeights, Field: fmt.Sprintf("variants[%d].weight", i), Value: vt.Weight,
 				Message: fmt.Sprintf("variants[%d].weight %g must be in [0, 1)", i, vt.Weight),

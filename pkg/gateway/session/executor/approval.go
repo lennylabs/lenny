@@ -29,9 +29,10 @@ type PendingToolCall struct {
 
 // ApprovalDecision is the verdict the gateway returns to a blocked
 // PodExecutor read once the user resolves a pending tool-use approval.
-// Approved is true for a §7.2 line 124 approve and false for a line 125
-// deny (or a timeout / cancellation, which a non-approve treats as a
-// denial). Reason carries the optional deny reason.
+// Approved is true for the §7.2 tool-use approve endpoint and false for
+// the §7.2 tool-use deny endpoint (or a timeout / cancellation, which a
+// non-approve treats as a denial). Reason carries the optional deny
+// reason.
 type ApprovalDecision struct {
 	Approved bool
 	Reason   string

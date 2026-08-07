@@ -18,12 +18,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
-// spec: §25.9 Audit Log Query API — query filters (line 3659), time
-// window + AUDIT_QUERY_TOO_BROAD (lines 3707-3708), per-row
-// chainIntegrity + auditMetadata (lines 3653, 3670-3679), error codes
-// (lines 3732-3735), audit.query_executed /
-// audit.chain_integrity_broken_detected emission (line 3750), and the
-// summary endpoint (line 3661).
+// spec: §25.9 Audit Log Query API — Endpoints (query filters and the
+// summary endpoint), Query Limits and Scatter-Gather (time window +
+// AUDIT_QUERY_TOO_BROAD), Implementation (per-row chainIntegrity +
+// auditMetadata), Error Codes, and Audit Events (audit.query_executed /
+// audit.chain_integrity_broken_detected emission).
 
 var auditTestClock = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 

@@ -77,7 +77,7 @@ const (
 	ResumingExhaustedOutcome = "exhausted"
 )
 
-// Default budgets per §11.3 line 191-205. Each is operator-tunable
+// Default budgets per the §11.3 timeout table. Each is operator-tunable
 // through the matching Config field. The `runtime.maxSessionAgeSeconds`
 // per-runtime override (§5.1) further caps a runtime's session lifetime
 // below the platform default; the watchdog applies the per-row UpdatedAt

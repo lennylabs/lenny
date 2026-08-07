@@ -106,8 +106,9 @@ type MessagePart struct {
 // envelope-level degradation. Part-scoped warnings such as
 // `unregistered_platform_type` live on the part's own Annotations.
 //
-// spec: §15.4.1 lines 1499-1522 (schema_version_ahead), 1575-1579
-// (blob_ref_unresolvable).
+// spec: §15.4 MessagePart format — the live-consumer obligations that
+// define schema_version_ahead and blob_ref_unresolvable; §15.5
+// degradation annotation catalog.
 type Response struct {
 	Parts       []MessagePart
 	Annotations map[string]any

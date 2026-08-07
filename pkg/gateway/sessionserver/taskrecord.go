@@ -26,7 +26,7 @@ import (
 // task's own consumption (available at any state) and treeUsage the
 // subtree rollup (null until every descendant settles per §8.8 line 917).
 //
-// spec: §8.8 lines 806-823, 897-917; §4.2 line 157. F-8.8.3.
+// spec: §8.8 (TaskRecord and TaskResult); §4.2. F-8.8.3.
 func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) *sessionrecord.Record {
 	if s.transcripts == nil {
 		return nil

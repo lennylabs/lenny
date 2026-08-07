@@ -234,11 +234,11 @@ func runRESTJourney(t *testing.T, gw *journeyGateway, sessionID, prompt string) 
 		t.Fatalf("REST terminate status: %d, body=%s", resp.StatusCode, raw)
 	}
 
-	// spec: §7.2 line 137 (status_change(state)) / line 141
-	// (session_complete(result)) — stream the retained backlog and
-	// confirm the "response" event carries the same echoed prompt the
-	// synchronous call above returned, and that the session's terminal
-	// transition is the last frame the backlog replays.
+	// spec: §7.2 status_change(state) and session_complete(result) —
+	// stream the retained backlog and confirm the "response" event carries
+	// the same echoed prompt the synchronous call above returned, and that
+	// the session's terminal transition is the last frame the backlog
+	// replays.
 	req, err := http.NewRequest(http.MethodGet, gw.rest.URL+"/v1/sessions/"+sessionID+"/events", nil)
 	if err != nil {
 		t.Fatalf("build events request: %v", err)

@@ -218,7 +218,7 @@ func (r *Report) failed() bool {
 // in the Report, not as a returned error, because the §6.2 disposition
 // (warn vs fail) is decided downstream.
 //
-// spec: §5.2 lines 422-437 — scrub procedure; line 438 — best-effort.
+// spec: §5.2 — the Lenny scrub procedure and its best-effort framing.
 func Run(ctx context.Context, ops Ops, cfg Config) (*Report, error) {
 	if ops == nil {
 		return nil, errors.New("scrub: nil Ops")

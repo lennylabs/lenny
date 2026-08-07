@@ -33,8 +33,9 @@ func phaseImmutableFields(phase Phase) []string {
 		// line 1048 PreRoute row).
 		return []string{"tenant_id", "user_id"}
 	case PhasePostRoute:
-		// Resolved runtime and credential assignment (spec: §4.8 line 1052
-		// PostRoute row, line 1060 enforcement paragraph).
+		// Resolved runtime and credential assignment (spec: §4.8 — the
+		// PostRoute row of the phase payload table, and the immutable-field
+		// enforcement paragraph on MODIFY).
 		return []string{"resolved_runtime_name", "credential_pool_id"}
 	case PhasePreToolResult:
 		// Tool-result correlation id (spec: §4.8 line 1053 PreToolResult row).

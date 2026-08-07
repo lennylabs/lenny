@@ -293,9 +293,6 @@ files:
       citations:
         - §12.5 line 278
         - §12.8 line 739 legal-hold reconciler
-    - path: cmd/lenny-ocsf-mapping-gen/main.go
-      citations:
-        - 11_security-trust-model.md line 414
     - path: cmd/lenny-ops/deps.go
       citations:
         - §16.5 line 1569
@@ -366,7 +363,6 @@ files:
     - path: docs/runbooks/tier-promotion.md
       citations:
         - §17.8.2 line 950
-        - '§17.8.3 Step 1 benchmarks: `--llm-proxy-extraction-attested` (line 1263)'
         - §17.8.3 line 1285
         - §17.8.3 line 1285 NO-GO criterion
     - path: migrations/0073_credentials_last_used_at.up.sql
@@ -444,6 +440,12 @@ files:
         - §15.4.1 line 1823
         - §15.4.1 line 1826
         - §15.4.1 line 1826 default
+    - path: pkg/adapter/mcpruntime.go
+      citations:
+        - §15.4.1 line 1524
+    - path: pkg/adapter/mcpruntime_schemaversion_internal_test.go
+      citations:
+        - §15.4.1 line 1524
     - path: pkg/adapter/runtimeops.go
       citations:
         - §15.5 line 2431
@@ -452,12 +454,6 @@ files:
     - path: pkg/adapter/runtimeops_test.go
       citations:
         - §15.5 line 2431 (item 3)
-    - path: pkg/adapter/mcpruntime.go
-      citations:
-        - §15.4.1 line 1524
-    - path: pkg/adapter/mcpruntime_schemaversion_internal_test.go
-      citations:
-        - §15.4.1 line 1524
     - path: pkg/adapter/scrub/scrub.go
       citations:
         - §6.2 occupancy-zero recycle boundary (spec/05_runtime- registry-and-pool-model.md lines 415-465)
@@ -537,10 +533,6 @@ files:
     - path: pkg/alerting/rules/openslo.go
       citations:
         - §16.10 line 733 ("OpenSLO v1 YAML documents")
-        - §16.10 lines 742-746
-    - path: pkg/alerting/rules/openslo_test.go
-      citations:
-        - §16.10 lines 742-746
     - path: pkg/alerting/rules/rules.go
       citations:
         - §17.7 line 745
@@ -558,13 +550,6 @@ files:
     - path: pkg/apis/lenny/v1alpha1/v1_test.go
       citations:
         - §15.5 line 2433
-    - path: pkg/audit/ocsf/catalog.go
-      citations:
-        - 11_security-trust-model.md line 414 (OCSF mapping mirror)
-    - path: pkg/audit/ocsf/catalog_test.go
-      citations:
-        - 11_security-trust-model.md line 365
-        - 11_security-trust-model.md line 414
     - path: pkg/audit/ocsf/mapping.go
       citations:
         - §11.7 line 62
@@ -754,12 +739,6 @@ files:
       citations:
         - §15.4.1 lines 1503, 1522
         - §15.4.1 lines 1575-1579
-    - path: pkg/delegation/lease/lease.go
-      citations:
-        - §8.4 lines 515-521
-    - path: pkg/delegation/lease/lease_test.go
-      citations:
-        - §8.4 lines 515-521
     - path: pkg/elicitation/chain.go
       citations:
         - §9.2 lines 87, line 1 (url-mode security controls 1-2)
@@ -892,7 +871,6 @@ files:
         - §25.9 line 3653 top-level envelope
         - §25.9 lines 3653, 3660, 3732
         - §25.9 lines 3653, 3670-3679
-        - §25.9 lines 3653-3710
     - path: pkg/gateway/externalapi/admin/audit_query_metrics_test.go
       citations:
         - §25.9 line 3653 chainIntegrityReport tally
@@ -984,7 +962,6 @@ files:
         - §11.7 line 62 (`delegation.spawned`)
         - §8.3 line 100
         - §8.3 lines 100, 157-188, 181, 218
-        - §8.4 lines 515-521
         - §8.5 handler maps to BUDGET_EXHAUSTED (spec line 127)
     - path: pkg/gateway/mcpfabric/delegation/service_test.go
       citations:
@@ -1004,10 +981,6 @@ files:
       citations:
         - §8.10 line 129
         - §8.10 line 129 per-replica LRU
-    - path: pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go
-      citations:
-        - §8.10 lines 1014-1027
-        - §8.10 lines 1014-1027 (bottom-up recovery, level/tree timeouts, maxResumeWindowSeconds interaction)
     - path: pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery_test.go
       citations:
         - §8.10 line 1014
@@ -1073,9 +1046,6 @@ files:
     - path: pkg/gateway/mcpfabric/mcptools/create_session_service_test.go
       citations:
         - §15.2.1 rule 1 line 1380
-    - path: pkg/gateway/mcpfabric/mcptools/delegate_target.go
-      citations:
-        - §15.4.1 lines 1483-1540 (MessagePart envelope, v1 `text` parts)
     - path: pkg/gateway/mcpfabric/mcptools/delegate_task_filtering_test.go
       citations:
         - §11.7 lines 99-101
@@ -1326,12 +1296,8 @@ files:
         - §13.4 lines 663-672
         - §7.4 line 433
         - §7.4 line 433 capabilities.midSessionUpload
-    - path: pkg/gateway/runtime/watchdog/watchdog.go
-      citations:
-        - §11.3 line 191-205
     - path: pkg/gateway/session/executor/executor.go
       citations:
-        - §15.4.1 lines 1499-1522 (schema_version_ahead), 1575-1579
         - §15.4.1 lines 1696-1707
         - §6.2 lines 105-117, 305
     - path: pkg/gateway/session/executor/from_test.go
@@ -1339,7 +1305,6 @@ files:
         - §15.4.1 lines 1696-1707
     - path: pkg/gateway/session/executor/ingest.go
       citations:
-        - §15.4.1 lines 1499-1522
         - §15.4.1 lines 1503, 1522
     - path: pkg/gateway/session/executor/ingest_test.go
       citations:
@@ -1524,8 +1489,6 @@ files:
         - §7.4 lines 434, 450, 459, 461
         - §7.5 line 475 captured per-command
         - §7.5 lines 475, 488
-        - §8.10 lines 1014-1027
-        - §8.8 lines 806-823
     - path: pkg/gateway/sessionserver/setup_command_failed_internal_test.go
       citations:
         - §7.5 line 475
@@ -1556,12 +1519,6 @@ files:
     - path: pkg/gateway/sessionserver/startupmetrics_internal_test.go
       citations:
         - §6.3 line 372
-    - path: pkg/gateway/sessionserver/taskrecord.go
-      citations:
-        - §8.8 lines 806-823, 897-917
-    - path: pkg/gateway/sessionserver/taskrecord_test.go
-      citations:
-        - §8.8 lines 806-823
     - path: pkg/gateway/sessionserver/tree_test.go
       citations:
         - §12.5 line 101 single-shard projection
@@ -1737,9 +1694,6 @@ files:
     - path: pkg/outputtype/outputtype_test.go
       citations:
         - §15.4.1 lines 1503, 1522
-    - path: pkg/platform/store/types.go
-      citations:
-        - §12.6 lines 363-415 (shared type definitions block)
     - path: pkg/preflight/cloud_pooler_sentinel.go
       citations:
         - §17.9.7 line 1541
@@ -1800,17 +1754,12 @@ files:
     - path: pkg/sessionrecord/record.go
       citations:
         - §15.4.1 line 1889
-        - §15.4.1 lines 1479-1540 (MessagePart)
-        - §15.4.1 lines 1483-1540
         - §15.4.1 lines 1530-1531
-        - §8.8 lines 804-940 (TaskRecord / TaskResult)
         - §8.8 lines 806, 825-827
-        - §8.8 lines 806-823
     - path: pkg/sessionrecord/record_test.go
       citations:
         - §15.4.1 line 1889
         - §15.4.1 lines 1530-1531
-        - §8.8 lines 806-823
     - path: pkg/storerouter/redisconcern_test.go
       citations:
         - §12.4 line 52 (storerouter)
@@ -1824,7 +1773,6 @@ files:
     - path: pkg/tierpromotion/phase135.go
       citations:
         - §17.8.2 lines 950, 963-977
-        - §17.8.3 Step 1 (lines 1257-1267)
         - §17.8.3 line 1263 / 1282
         - §17.8.3 line 1264 / 1283
         - §17.8.3 line 1265 / 1284
@@ -1932,12 +1880,6 @@ files:
       citations:
         - §12.5 line 280
         - §16.9 line 723
-    - path: tests/tier0_static/openslo_export_test.go
-      citations:
-        - §16.10 lines 742-746 ("the Helm chart renders the latency and availability SLOs from §16.5 as OpenSLO v1 YAML documents ... the chart emits a ConfigMap containing the OpenSLO SLO, SLI, AlertPolicy, and AlertNotificationTarget objects for the deployer's tooling to consume")
-    - path: tests/tier2_component/auditstore/admin_query_test.go
-      citations:
-        - §25.9 lines 3653-3710
     - path: tests/tier2_component/legalholdreconciler/reconciler_test.go
       citations:
         - §12.8 line 739

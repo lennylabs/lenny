@@ -20,9 +20,11 @@ import "github.com/lennylabs/lenny/pkg/ops/conventions"
 // edge is not duplicated here; alternatives that point at a different
 // runbook name it explicitly.
 //
-// spec: §25.3 lines 459-501 — the SuggestedAction struct and the
-// singular vs. ranked contract; lines 484-487 enumerate the four ranked
-// issues and require descending-confidence ordering.
+// spec: §25.3, the "suggestedAction / suggestedActions Contract"
+// subsection. It defines the SuggestedAction structure, states when a
+// health issue carries a single action and when it carries a ranked
+// list, enumerates the issues that carry a ranked list, and requires
+// that list to be ordered by descending confidence.
 func ActionsForIssue(issue, target string) (single *conventions.SuggestedAction, ranked []conventions.SuggestedAction) {
 	if target == "" {
 		target = "{pool}"

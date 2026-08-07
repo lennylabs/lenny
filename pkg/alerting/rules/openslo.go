@@ -181,7 +181,8 @@ type openSLOBurnRateCond struct {
 // monitoring.openslo.notificationTarget.type; the docs and CLI callers pass
 // the concrete OpenSLODefaultNotificationTarget).
 //
-// spec: §16.10 lines 742-746; §16.5 lines 611-640.
+// spec: §16.10 (OpenSLO export documents and the shared notification
+// target); §16.5 (the SLO catalog the export is a view of).
 func RenderOpenSLO(service, tier, notificationTarget string) ([]byte, error) {
 	if service == "" {
 		return nil, fmt.Errorf("rules: OpenSLO service name is required")

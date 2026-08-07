@@ -39,8 +39,8 @@ type Entry struct {
 	// surfaces the column. Empty on the legacy transcript-write path is
 	// harmless — the transcript view does not depend on it.
 	//
-	// spec: §15.4.1 line 1784 — "every message has a stable ID"; line
-	// 1792 — the session_messages table is indexed on (session_id, id,
+	// spec: §15.4 MessageEnvelope format — "every message has a stable
+	// ID", and the session_messages table is indexed on (session_id, id,
 	// thread_id).
 	ID string `json:"id,omitempty"`
 

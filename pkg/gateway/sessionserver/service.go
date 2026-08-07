@@ -81,8 +81,9 @@ func (s *Server) serviceMux() http.Handler {
 // returns the result and a nil error; any other status is decoded as the
 // §15.1 error envelope.
 //
-// spec: §15.2.1 rule 1 line 1380; rule 3 line 1384 (shared error
-// envelope). F-15.2.3.
+// spec: §15.2.1, the semantic-equivalence item (REST and MCP share one
+// service layer) and the shared error-taxonomy item (both surfaces
+// return the same error envelope). F-15.2.3.
 func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target string, body []byte, contentType string, headers map[string]string) (ServiceResult, *ServiceError) {
 	var reader *bytes.Reader
 	if len(body) > 0 {

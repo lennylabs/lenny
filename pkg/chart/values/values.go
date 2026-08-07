@@ -133,9 +133,9 @@ type Global struct {
 	// access policy. The gateway refuses to start when it is unset outside
 	// --dev-mode, so the schema constrains it to the two documented values.
 	NoEnvironmentPolicy string  `json:"noEnvironmentPolicy,omitempty" enum:"deny-all|allow-all" desc:"Platform-wide default access policy for a session that names no environment. §10.6 / §17.6 line 365."`
-	SpiffeTrustDomain   string  `json:"spiffeTrustDomain,omitempty" desc:"SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3 line 316."`
-	TraceSamplingRate   float64 `json:"traceSamplingRate,omitempty" min:"0" max:"1" desc:"Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3 line 359."`
-	SaTokenAudience     string  `json:"saTokenAudience,omitempty" desc:"Projected SA-token audience the gateway validates on every pod→gateway request. §10.3 line 334."`
+	SpiffeTrustDomain   string  `json:"spiffeTrustDomain,omitempty" desc:"SPIFFE trust domain anchoring agent-pod and interceptor identities. Required (no default); helm templating fails when unset. §10.3."`
+	TraceSamplingRate   float64 `json:"traceSamplingRate,omitempty" min:"0" max:"1" desc:"Default probabilistic tail-sampling rate the OpenTelemetry Collector applies to normal traces. §16.3."`
+	SaTokenAudience     string  `json:"saTokenAudience,omitempty" desc:"Projected SA-token audience the gateway validates on every pod→gateway request. §10.3."`
 }
 
 // Playground models the §27 web-playground chart values. The section is

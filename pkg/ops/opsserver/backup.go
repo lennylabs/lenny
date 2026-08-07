@@ -409,13 +409,13 @@ type confirmLegalHoldLedgerRequest struct {
 // requirePlatformAdmin enforces the §25.11 platform-admin-only gate on
 // the destructive recovery endpoints the spec narrows below the general
 // §25.4 admin-API role gate. requireAdminRole admits platform-admin or
-// tenant-admin on every lenny-ops endpoint; §25.11 line 3897 narrows
-// confirm-legal-hold-ledger to platform-admin specifically (the same
-// narrowing line 3898 applies to artifact-replication resume). It
+// tenant-admin on every lenny-ops endpoint; the §25.11 endpoint table
+// narrows confirm-legal-hold-ledger to platform-admin specifically, and
+// carries the same narrowing on artifact-replication resume. It
 // writes the §25.2 canonical 403 envelope and returns false when the
 // caller is not a platform-admin.
 //
-// spec: §25.11 line 3897.
+// spec: §25.11 Endpoints.
 func (s *Server) requirePlatformAdmin(w http.ResponseWriter, r *http.Request) bool {
 	if callerRole(r) == remediationlock.PlatformAdmin {
 		return true

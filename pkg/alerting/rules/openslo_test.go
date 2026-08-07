@@ -69,7 +69,8 @@ func parseOpenSLO(t *testing.T, b []byte) []parsedDoc {
 // AlertNotificationTarget document for the whole fragment. Each is a
 // well-formed OpenSLO v1 document.
 //
-// spec: §16.10 lines 742-746.
+// spec: §16.10 (OpenSLO Export), §16.5 (the bundled multi-window alert
+// catalog the export is a view of).
 func TestRenderOpenSLOEmitsFourDocsPerSLOPlusSharedTarget(t *testing.T) {
 	out, err := RenderOpenSLO(OpenSLOService, "tier1", OpenSLODefaultNotificationTarget)
 	if err != nil {

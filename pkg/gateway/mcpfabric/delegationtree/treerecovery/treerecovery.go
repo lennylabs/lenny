@@ -18,7 +18,7 @@
 // concrete reattach action, marks the nodes that exhaust their budget
 // terminally failed, and emits the §16.1 tree-recovery metrics.
 //
-// spec: §8.10 lines 1014-1027 (bottom-up recovery, level/tree timeouts,
+// spec: §8.10 (bottom-up recovery, level/tree timeouts,
 // maxResumeWindowSeconds interaction).
 package treerecovery
 
@@ -155,7 +155,7 @@ type Summary struct {
 // metric. The traversal is bounded by the configured budgets, so the
 // call returns within maxTreeRecoverySeconds.
 //
-// spec: §8.10 lines 1014-1027.
+// spec: §8.10.
 func (o *Orchestrator) RecoverTree(ctx context.Context, tenantID, rootID string) (Summary, error) {
 	if o == nil || rootID == "" {
 		return Summary{}, nil

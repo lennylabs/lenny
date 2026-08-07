@@ -1703,9 +1703,11 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 // crossEnvReachable's nil-registry behavior; a parent lookup failure also
 // skips it, since the pod-claiming Delegate path rejects a missing parent.
 //
-// spec: §8.3 line 472 (cross-environment compatibility check and exact
-// rejection message); line 472/488 (origin-pool forwarding through
-// contiguous inherit hops); line 474. §15 CREDENTIAL_PROVIDER_MISMATCH is
+// spec: §8.3 ("Delegation Lease") — the cross-environment compatibility
+// check with its exact rejection message, and the credential-pool
+// identity rule that forwards the origin pool through contiguous inherit
+// hops and re-checks it against the immediate target runtime at every
+// environment boundary. §15.1 classifies CREDENTIAL_PROVIDER_MISMATCH as
 // POLICY / 422.
 func crossEnvInheritMismatch(ctx context.Context, deps Deps, tenant, parentSessionID, targetRef string) *mcp.ToolError {
 	if deps.Store == nil || deps.Runtimes == nil || deps.Tenants == nil {
@@ -1773,15 +1775,14 @@ func resolvePoolIsolation(ctx context.Context, deps Deps, poolRef string) isolat
 
 // resolvePoolElicitationPolicy returns the §9.2 per-pool elicitation
 // depth policy and agent-initiated url-mode allowlist configured on the
-// named pool. The §9.2 elicitationDepthPolicy (lines 90-98) and
-// urlModeElicitation (line 86) are per-pool, so the dispatch path
-// resolves them from the raising session's pool rather than from a
+// named pool. The §9.2 elicitationDepthPolicy and urlModeElicitation
+// settings are per-pool, so the dispatch path resolves them from the raising session's pool rather than from a
 // single Register-time platform value. The bool is false when the pool
 // registry is unwired or the pool cannot be resolved, in which case the
 // caller keeps the dispatcher's Register-time defaults (which the
 // §9.2 WalkChain coerces to the platform suppress_at_depth=3 default and
-// the agent-initiated url-mode block). spec: §9.2 lines 86, 90-98.
-// F-9.2.12.
+// the agent-initiated url-mode block). spec: §9.2 (URL-mode elicitation
+// security controls and depth-based restrictions). F-9.2.12.
 func resolvePoolElicitationPolicy(ctx context.Context, deps Deps, poolRef string) (elicitation.DepthPolicy, int, elicitation.URLModeAllowlist, bool) {
 	if deps.Pools == nil || poolRef == "" {
 		return "", 0, elicitation.URLModeAllowlist{}, false

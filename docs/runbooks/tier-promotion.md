@@ -176,4 +176,4 @@ Tier 3 promotion additionally enables the §10.3 mTLS PKI, the §11.7 SIEM forwa
       --gc-pause-attested \
       --max-sessions-per-replica-calibrated
 
-The three attestation flags correspond one-to-one with the §17.8.3 Step 1 benchmarks: `--llm-proxy-extraction-attested` (line 1263), `--gc-pause-attested` (line 1264), and `--max-sessions-per-replica-calibrated` (line 1265).
+The three attestation flags correspond one-to-one with the rows of the §17.8.3 Step 1 benchmark table: `--llm-proxy-extraction-attested` records the LLM Proxy extraction check, `--gc-pause-attested` records the gateway GC pressure check, and `--max-sessions-per-replica-calibrated` records the `maxSessionsPerReplica` validation.

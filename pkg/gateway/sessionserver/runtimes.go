@@ -530,9 +530,10 @@ func (s *Server) requireEnvironmentAdmission(w http.ResponseWriter, r *http.Requ
 // admits the create only when the environment exists in the caller's
 // tenant, the caller holds a role of at least `creator` in it, and the
 // requested runtime is admitted by the environment's runtimeSelector.
-// Each failure is a distinct 403 FORBIDDEN reason. spec: §10.6 line 557
-// (explicit endpoint is opt-in), line 605 (`creator` creates sessions),
-// line 629 (effective scope is bounded by the environment definition).
+// Each failure is a distinct 403 FORBIDDEN reason. spec: §10.6 Two
+// access paths (the explicit environment endpoint is opt-in), §10.6
+// Member roles (the `creator` role), and §10.6 Effective delegation
+// scope (effective scope is bounded by the environment definition).
 // F-10.6.1 / F-10.6.5.
 func (s *Server) requireExplicitEnvironmentAdmission(w http.ResponseWriter, r *http.Request, envName, runtimeRef string, res environmentmw.Resolution) bool {
 	for _, env := range res.AllEnvironments {

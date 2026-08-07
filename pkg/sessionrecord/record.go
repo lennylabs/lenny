@@ -17,8 +17,8 @@
 // (row + transcript → Record) and error classification live in the
 // gateway, where the stores and the §15.2.1 classifier are available.
 //
-// spec: §8.8 lines 804-940 (TaskRecord / TaskResult); §15.4.1 lines
-// 1479-1540 (MessagePart).
+// spec: §8.8 (TaskRecord / TaskResult); §15.4 Internal MessagePart
+// Format, with §15.4.1 for the adapter protocol that carries it.
 package sessionrecord
 
 import (
@@ -53,7 +53,8 @@ const (
 // line 825. v1 producers emit `text` parts; the full canonical type
 // registry (code, image, diff, file, execution_result, error, ...) is
 // an open string per §15.4.1.
-// spec: §15.4.1 lines 1483-1540.
+// spec: §15.4 Internal MessagePart Format, with §15.4.1 for the
+// adapter protocol that carries it.
 type MessagePart struct {
 	SchemaVersion int            `json:"schemaVersion"`
 	ID            string         `json:"id,omitempty"`
@@ -244,7 +245,7 @@ type TreeUsage struct {
 // bridging record for a task. Usage and TreeUsage are pointers so an
 // unpopulated rollup serializes as absent / null rather than a zeroed
 // object.
-// spec: §8.8 lines 806-823.
+// spec: §8.8 TaskRecord.
 type Record struct {
 	SchemaVersion int        `json:"schemaVersion"`
 	TaskID        string     `json:"taskId"`
