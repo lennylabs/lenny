@@ -368,7 +368,7 @@ Setting both `inline` and `ref` on the same part is a validation error (`400 MES
 
 **`status` for streaming parts.** When streaming via `lenny/output`, set `status: "streaming"` on in-progress parts (reusing the same `id` across updates) and emit the final update with `status: "complete"`. For parts that failed mid-stream, emit `status: "failed"`.
 
-**Cross-protocol fidelity.** Field-level round-trip fidelity through each external adapter (MCP, OpenAI Chat Completions, Open Responses, REST, A2A) is documented in [Spec §15.4.1 -- Translation Fidelity Matrix](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#1541-adapterbinary-protocol). Runtimes that need lossless round-trip should restrict clients to REST.
+**Cross-protocol fidelity.** Field-level round-trip fidelity through each external adapter (MCP, OpenAI Chat Completions, Open Responses, REST, A2A) is documented in [Spec §15.4 -- Translation Fidelity Matrix](https://github.com/lennylabs/lenny/blob/main/spec/15_external-api-surface.md#translation-fidelity-matrix). Runtimes that need lossless round-trip should restrict clients to REST.
 
 ### Simplified text shorthand (Basic level)
 
